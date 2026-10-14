@@ -26,7 +26,7 @@ pub(crate) fn merge_range_query_results_with_reducer(
     let mut series = by_fp.into_values().collect::<Vec<_>>();
     series.sort_by_key(|series| label_sort_key(&series.labels));
     for series in &mut series {
-        series.samples.sort_by_key(|(ts_ms, _)| *ts_ms);
+        series.samples.sort_by_key(|sample| sample.timestamp_ms);
         reduce_duplicate_step_samples(&mut series.samples, reducer)?;
     }
     Ok(QueryResult::RangeMatrix(series))

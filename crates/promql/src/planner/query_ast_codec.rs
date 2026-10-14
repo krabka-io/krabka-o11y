@@ -13,6 +13,11 @@ struct Timing {
     expr: Value,
 }
 
+struct PreparedQuery {
+    rewritten: String,
+    timings: BTreeMap<i64, Timing>,
+}
+
 impl Timing {
     fn dynamic(&self) -> bool {
         self.expr["type"] != "numberLiteral"
@@ -72,11 +77,11 @@ fn rewrite_timings(
             continue;
         }
         if starts_offset_keyword(&chars, index)
-            && let Some((operand, end)) = offset_operand(&chars, index + "offset".len())
+            && let Some(operand) = offset_operand(&chars, index + "offset".len())
         {
             output.push_str("offset ");
-            output.push_str(&replace(&operand, false)?);
-            index = end;
+            output.push_str(&replace(&operand.text, false)?);
+            index = operand.end;
             continue;
         }
         output.push(chars[index]);
@@ -85,11 +90,13 @@ fn rewrite_timings(
     Ok(output)
 }
 
-fn prepare(query: &str) -> Result<(String, BTreeMap<i64, Timing>)> {
+fn prepare(query: &str) -> Result<PreparedQuery> {
     let mut timings = BTreeMap::new();
     let rewritten = rewrite_timings(query, |source, positive| {
-        let (seconds, expr) =
+        let parsed =
             DurationExprParser::new(source, DurationExprContext::instant(0)).parse_with_ast()?;
+        let seconds = parsed.seconds;
+        let expr = parsed.expr;
         let index =
             i64::try_from(timings.len()).map_err(|error| PromqlError::Parse(error.to_string()))?;
         let marker = 1_000_000 + index;
@@ -104,7 +111,7 @@ fn prepare(query: &str) -> Result<(String, BTreeMap<i64, Timing>)> {
         timings.insert(marker, Timing { seconds, expr });
         Ok(format!("{marker}ms"))
     })?;
-    Ok((rewritten, timings))
+    Ok(PreparedQuery { rewritten, timings })
 }
 
 /// Serializes the source query using the pinned Prometheus 3.14 AST wire shape,
@@ -113,16 +120,30 @@ fn prepare(query: &str) -> Result<(String, BTreeMap<i64, Timing>)> {
 /// # Errors
 /// Returns a parse error for malformed syntax or duration expressions.
 pub fn serialize_promql_query(query: &str) -> Result<Value> {
+    struct FieldRestore {
+        wire_field: &'static str,
+        ast_field: &'static str,
+    }
+
     fn restore(value: &mut Value, timings: &BTreeMap<i64, Timing>) {
         match value {
             Value::Object(fields) => {
-                for (field, expr_field) in [
-                    ("range", "rangeExpr"),
-                    ("offset", "offsetExpr"),
-                    ("step", "stepExpr"),
+                for field in [
+                    FieldRestore {
+                        wire_field: "range",
+                        ast_field: "rangeExpr",
+                    },
+                    FieldRestore {
+                        wire_field: "offset",
+                        ast_field: "offsetExpr",
+                    },
+                    FieldRestore {
+                        wire_field: "step",
+                        ast_field: "stepExpr",
+                    },
                 ] {
                     if let Some(timing) = fields
-                        .get(field)
+                        .get(field.wire_field)
                         .and_then(Value::as_i64)
                         .and_then(|marker| timings.get(&marker))
                     {
@@ -134,9 +155,9 @@ pub fn serialize_promql_query(query: &str) -> Result<Value> {
                                 .to_i64()
                                 .expect("validated duration fits milliseconds")
                         };
-                        fields.insert(field.to_owned(), serde_json::json!(milliseconds));
+                        fields.insert(field.wire_field.to_owned(), serde_json::json!(milliseconds));
                         fields.insert(
-                            expr_field.to_owned(),
+                            field.ast_field.to_owned(),
                             if timing.dynamic() {
                                 timing.expr.clone()
                             } else {
@@ -157,7 +178,9 @@ pub fn serialize_promql_query(query: &str) -> Result<Value> {
             _ => {}
         }
     }
-    let (rewritten, timings) = prepare(query)?;
+    let prepared = prepare(query)?;
+    let rewritten = prepared.rewritten;
+    let timings = prepared.timings;
     let expr = parse_promql(&rewritten)?;
     let mut wire =
         serialize_promql_expr(&expr).map_err(|error| PromqlError::Exec(error.to_string()))?;
@@ -213,7 +236,9 @@ fn duration_text(node: &Value) -> String {
 /// # Panics
 /// Panics if a previously validated duration cannot be represented by the formatter.
 pub fn format_promql_query(query: &str) -> Result<String> {
-    let (rewritten, timings) = prepare(query)?;
+    let prepared = prepare(query)?;
+    let rewritten = prepared.rewritten;
+    let timings = prepared.timings;
     let expr = parse_promql(&rewritten)?;
     rewrite_timings(&format_promql_expr(&expr), |source, _| {
         let seconds = DurationExprParser::new(source, DurationExprContext::instant(0)).parse()?;

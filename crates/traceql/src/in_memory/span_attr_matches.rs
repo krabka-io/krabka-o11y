@@ -9,8 +9,8 @@ pub(crate) fn span_attr_matches(
     let values = span
         .attrs
         .iter()
-        .filter(|(attr_key, _)| attr_key == key)
-        .map(|(_, value)| value)
+        .filter(|attribute| attribute.key == key)
+        .map(|attribute| &attribute.value)
         .collect::<Vec<_>>();
     attr_values_match(&values, op, expected)
 }

@@ -1,35 +1,37 @@
 use prost::Message as _;
 
-use super::*;
+use super::{
+    Arc, BodyBytes, DistributorState, ExportMetricsPartialSuccess, ExportMetricsServiceResponse,
+    Extension, HeaderMap, HeaderValue, IngestRequest, IngestRequestStart, IntoResponse,
+    OtlpPushOutcome, Principal, PushError, RequestOutcome, Response, State, StdDurationExt,
+    otlp_push_inner,
+};
 
-pub(crate) async fn otlp_push(
-    State(state): State<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    body: BodyBytes,
+super::ingest_push_handler!(otlp_push, otlp_push_inner, respond_otlp_push);
+
+fn respond_otlp_push(
+    state: &DistributorState,
+    ingest: &IngestRequestStart,
+    result: Result<OtlpPushOutcome, PushError>,
 ) -> Response {
-    let ingest = IngestRequestStart::begin(&headers, &principal, &body);
-    // ONE ingest span per OTLP HTTP push request; series recorded post-decode.
-    let result =
-        async { otlp_push_inner(&state, ingest.authorized_tenant()?, &headers, &body).await }
-            .instrument(ingest.span())
-            .await;
     if let Some(metrics) = &state.metrics {
         metrics.record_ingest(IngestRequest {
             outcome: RequestOutcome::from_result(&result),
             body: ingest.body_size,
-            items: result.as_ref().map_or(0, |(_, items, _)| *items),
+            items: result.as_ref().map_or(0, |outcome| outcome.items),
             elapsed: ingest.started.elapsed().as_time(),
         });
     }
     match result {
-        Ok((success, _items, partial_success)) => {
-            let mut response = success.into_response();
+        Ok(outcome) => {
+            let mut response = outcome.success.into_response();
             let body = ExportMetricsServiceResponse {
-                partial_success: partial_success.map(|partial| ExportMetricsPartialSuccess {
-                    rejected_data_points: i64::try_from(partial.rejected_data_points)
-                        .unwrap_or(i64::MAX),
-                    error_message: partial.error_message,
+                partial_success: outcome.partial_success.map(|partial| {
+                    ExportMetricsPartialSuccess {
+                        rejected_data_points: i64::try_from(partial.rejected_data_points)
+                            .unwrap_or(i64::MAX),
+                        error_message: partial.error_message,
+                    }
                 }),
             }
             .encode_to_vec();

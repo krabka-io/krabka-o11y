@@ -36,6 +36,27 @@ const METRIC: &str = "deployment_temperature";
 // Fixed input makes every sample and evaluation timestamp independently known.
 const START_MS: i64 = 1_700_000_000_000;
 
+struct LabelValue {
+    name: &'static str,
+    value: &'static str,
+}
+struct TenantValue<T> {
+    tenant: &'static str,
+    value: T,
+}
+struct ExpectedQuery {
+    query: String,
+    expected: Value,
+}
+struct CommandOutput {
+    name: &'static str,
+    contents: Vec<u8>,
+}
+struct ProtocolHeaders {
+    content_type: &'static str,
+    version: &'static str,
+}
+
 #[path = "support/mimir_deployment.rs"]
 mod mimir_deployment;
 
@@ -166,7 +187,16 @@ fn query_role(network: &str) -> ContainerRequest<GenericImage> {
 }
 
 fn write_body(version: RemoteWrite, value: f64) -> TestResult<Vec<u8>> {
-    let labels = [("__name__", METRIC), ("site", "office")];
+    let labels = [
+        LabelValue {
+            name: "__name__",
+            value: METRIC,
+        },
+        LabelValue {
+            name: "site",
+            value: "office",
+        },
+    ];
     let samples = [0_i32, 1, 2].map(|step| pb::v1::Sample {
         timestamp: START_MS + i64::from(step) * 1000,
         value: value + f64::from(step),
@@ -176,9 +206,9 @@ fn write_body(version: RemoteWrite, value: f64) -> TestResult<Vec<u8>> {
             timeseries: vec![pb::v1::TimeSeries {
                 labels: labels
                     .into_iter()
-                    .map(|(name, value)| pb::v1::Label {
-                        name: name.to_string(),
-                        value: value.to_string(),
+                    .map(|label| pb::v1::Label {
+                        name: label.name.to_string(),
+                        value: label.value.to_string(),
                     })
                     .collect(),
                 samples: samples.to_vec(),
@@ -219,12 +249,13 @@ async fn range(client: &Client, base: &str, tenant: &str) -> TestResult<Value> {
 
 async fn range_query(client: &Client, base: &str, tenant: &str, query: &str) -> TestResult<Value> {
     let mut url = url::Url::parse(&format!("{base}/api/v1/query_range"))?;
-    url.query_pairs_mut().extend_pairs([
-        ("query", query.to_string()),
-        ("start", (START_MS / 1000).to_string()),
-        ("end", (START_MS / 1000 + 2).to_string()),
-        ("step", "1".to_string()),
-    ]);
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs.append_pair("query", query);
+        pairs.append_pair("start", &(START_MS / 1000).to_string());
+        pairs.append_pair("end", &(START_MS / 1000 + 2).to_string());
+        pairs.append_pair("step", "1");
+    }
     let response = client
         .get(url)
         .header("X-Scope-OrgID", tenant)
@@ -304,16 +335,22 @@ async fn check_compound_queries(
             ]}])
         },
     );
-    for (query, expected) in [
-        (compound, expected_compound),
-        (format!(r#"sum({METRIC}{{site="missing"}})"#), json!([])),
+    for case in [
+        ExpectedQuery {
+            query: compound,
+            expected: expected_compound,
+        },
+        ExpectedQuery {
+            query: format!(r#"sum({METRIC}{{site="missing"}})"#),
+            expected: json!([]),
+        },
     ] {
-        let result = wait_range_query(client, base, tenant, &query, &expected).await;
+        let result = wait_range_query(client, base, tenant, &case.query, &case.expected).await;
         record_evidence(
             evidence,
             QueryOutcome {
-                request: json!({"phase":phase, "tenant":tenant, "query":query}),
-                expected: &expected,
+                request: json!({"phase":phase, "tenant":tenant, "query":case.query}),
+                expected: &case.expected,
                 outcome: &result,
             }
             .evidence_case(),
@@ -336,18 +373,36 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     let hot = base_url(&deployment.hot, DATA_PORT).await?;
     let cold = deployment.cold().await?;
     let cold_url = base_url(&cold, DATA_PORT).await?;
-    for (tenant, value) in [("tenant-a", 7.0), ("tenant-b", 19.0)] {
-        push(client, &write, version, tenant, value).await?;
+    for case in [
+        TenantValue {
+            tenant: "tenant-a",
+            value: 7.0,
+        },
+        TenantValue {
+            tenant: "tenant-b",
+            value: 19.0,
+        },
+    ] {
+        push(client, &write, version, case.tenant, case.value).await?;
     }
     // No builder is running yet. This answer can only come from the WAL head.
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        wait_samples(client, &hot, tenant, &expected(value)).await?;
-        assert!(range(client, &cold_url, tenant).await? == json!([]));
+    for case in [
+        TenantValue {
+            tenant: "tenant-a",
+            value: 7,
+        },
+        TenantValue {
+            tenant: "tenant-b",
+            value: 19,
+        },
+    ] {
+        wait_samples(client, &hot, case.tenant, &expected(case.value)).await?;
+        assert!(range(client, &cold_url, case.tenant).await? == json!([]));
         check_compound_queries(
             client,
             &hot,
-            tenant,
-            Some(value),
+            case.tenant,
+            Some(case.value),
             "hot-only",
             &mut evidence,
             filename,
@@ -356,7 +411,7 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         check_compound_queries(
             client,
             &cold_url,
-            tenant,
+            case.tenant,
             None,
             "cold-before-publication",
             &mut evidence,
@@ -376,17 +431,26 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     )
     .await?;
     let builder = deployment.builder().await?;
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        wait_samples(client, &cold_url, tenant, &expected(value)).await?;
+    for case in [
+        TenantValue {
+            tenant: "tenant-a",
+            value: 7,
+        },
+        TenantValue {
+            tenant: "tenant-b",
+            value: 19,
+        },
+    ] {
+        wait_samples(client, &cold_url, case.tenant, &expected(case.value)).await?;
         // Expire the hot querier's pre-publication cold snapshot.
         tokio::time::sleep(Duration::from_millis(100)).await;
         // The hot and stored copies must not create duplicate query samples.
-        assert!(range(client, &hot, tenant).await? == expected(value));
+        assert!(range(client, &hot, case.tenant).await? == expected(case.value));
         check_compound_queries(
             client,
             &hot,
-            tenant,
-            Some(value),
+            case.tenant,
+            Some(case.value),
             "hot-cold-overlap",
             &mut evidence,
             filename,
@@ -395,8 +459,8 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         check_compound_queries(
             client,
             &cold_url,
-            tenant,
-            Some(value),
+            case.tenant,
+            Some(case.value),
             "persisted",
             &mut evidence,
             filename,
@@ -419,13 +483,20 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     // Read a finite snapshot after the query wait, preserving its timing and
     // result even if diagnostics fail. This includes both writer lifetimes.
     let diagnostics = async {
-        for (name, contents) in [
-            ("stdout", builder.stdout_to_vec().await?),
-            ("stderr", builder.stderr_to_vec().await?),
+        for output in [
+            CommandOutput {
+                name: "stdout",
+                contents: builder.stdout_to_vec().await?,
+            },
+            CommandOutput {
+                name: "stderr",
+                contents: builder.stderr_to_vec().await?,
+            },
         ] {
             eprintln!(
-                "[block-builder restart {name}] {}",
-                String::from_utf8_lossy(&contents)
+                "[block-builder restart {}] {}",
+                output.name,
+                String::from_utf8_lossy(&output.contents)
             );
         }
         let admin = base_url(&builder, ADMIN_PORT).await?;
@@ -458,13 +529,22 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         filename,
     )
     .await?;
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        wait_samples(client, &reopened_url, tenant, &expected(value)).await?;
+    for case in [
+        TenantValue {
+            tenant: "tenant-a",
+            value: 7,
+        },
+        TenantValue {
+            tenant: "tenant-b",
+            value: 19,
+        },
+    ] {
+        wait_samples(client, &reopened_url, case.tenant, &expected(case.value)).await?;
         check_compound_queries(
             client,
             &reopened_url,
-            tenant,
-            Some(value),
+            case.tenant,
+            Some(case.value),
             "restart",
             &mut evidence,
             filename,
@@ -498,19 +578,22 @@ async fn push(
     tenant: &str,
     value: f64,
 ) -> TestResult {
-    let (content_type, protocol_version) = match version {
-        RemoteWrite::V1 => ("application/x-protobuf", "0.1.0"),
-        RemoteWrite::V2 => (
-            "application/x-protobuf;proto=io.prometheus.write.v2.Request",
-            "2.0.0",
-        ),
+    let headers = match version {
+        RemoteWrite::V1 => ProtocolHeaders {
+            content_type: "application/x-protobuf",
+            version: "0.1.0",
+        },
+        RemoteWrite::V2 => ProtocolHeaders {
+            content_type: "application/x-protobuf;proto=io.prometheus.write.v2.Request",
+            version: "2.0.0",
+        },
     };
     let response = client
         .post(format!("{base}/api/v1/push"))
         .header("X-Scope-OrgID", tenant)
-        .header("Content-Type", content_type)
+        .header("Content-Type", headers.content_type)
         .header("Content-Encoding", "snappy")
-        .header("X-Prometheus-Remote-Write-Version", protocol_version)
+        .header("X-Prometheus-Remote-Write-Version", headers.version)
         .body(write_body(version, value)?)
         .send()
         .await?;

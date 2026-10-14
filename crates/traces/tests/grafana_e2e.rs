@@ -282,7 +282,9 @@ fn trace_a_otlp_bytes() -> Vec<u8> {
 fn trace_b_otlp_bytes() -> Vec<u8> {
     let base = now_minus_60s_ns();
     let mut spans = Vec::new();
-    for (idx, id) in (0x31u8..=0x35u8).enumerate() {
+    for entry in (0x31u8..=0x35u8).enumerate() {
+        let idx = entry.0;
+        let id = entry.1;
         spans.push(OtlpSpan {
             trace_id: vec![0x22; 16],
             span_id: vec![id; 8],
@@ -526,6 +528,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
 ///
 /// The assertions check door-specific decode fidelity, not merely
 /// presence-by-name.
+#[allow(clippy::items_after_statements)]
 fn assert_all_doors_present(records: &[SpanRecord]) {
     let names: Vec<&str> = records.iter().map(|r| r.span.name.as_str()).collect();
     // D1 (OTLP HTTP, Trace A root), D2 (Tempo push, Trace B), D3 (Zipkin),
@@ -577,23 +580,44 @@ fn assert_all_doors_present(records: &[SpanRecord]) {
 
     // Per-door decode fidelity: process/resource service.name mapping, plus
     // (where expected) error tag/bool -> ERROR status (`Some(2)`).
+    #[derive(bon::Builder)]
+    struct DecodeFidelityCase {
+        name: &'static str,
+        service: &'static str,
+        error_status: Option<i32>,
+    }
     let cases = [
         // D4 (Jaeger binary thrift): process.service_name -> resource
         // service.name, error tag -> ERROR status (binary decode path).
-        ("GET /binary", "checkout", Some(2)),
+        DecodeFidelityCase::builder()
+            .name("GET /binary")
+            .service("checkout")
+            .error_status(2)
+            .build(),
         // D5 (OTLP gRPC): resource service.name from the independent gRPC OTLP
         // body (no error expectation).
-        ("otlp grpc op", "grpc-otlp-svc", None),
+        DecodeFidelityCase::builder()
+            .name("otlp grpc op")
+            .service("grpc-otlp-svc")
+            .build(),
         // D6 (Jaeger gRPC): process.service_name -> resource, error bool -> ERROR.
-        ("jaeger grpc op", "jaeger-grpc-svc", Some(2)),
+        DecodeFidelityCase::builder()
+            .name("jaeger grpc op")
+            .service("jaeger-grpc-svc")
+            .error_status(2)
+            .build(),
         // D7 (Jaeger compact thrift): the compact decode path (shared with the
         // UDP datagram receiver). process.service_name -> resource, error -> ERROR.
-        ("compact thrift op", "compact-svc", Some(2)),
+        DecodeFidelityCase::builder()
+            .name("compact thrift op")
+            .service("compact-svc")
+            .error_status(2)
+            .build(),
     ];
-    for (name, service, error_status) in cases {
-        let record = by_name(name);
-        assert2::assert!(resource_attr(&record.span, "service.name") == Some(service));
-        if let Some(expected) = error_status {
+    for case in cases {
+        let record = by_name(case.name);
+        assert2::assert!(resource_attr(&record.span, "service.name") == Some(case.service));
+        if let Some(expected) = case.error_status {
             assert2::assert!(record.span.status.as_i32() == expected);
         }
     }
@@ -721,7 +745,18 @@ async fn get_json(client: &reqwest::Client, url: &str) -> TestResult<JsonValue> 
     Ok(serde_json::from_slice(&body)?)
 }
 
-async fn get_text(client: &reqwest::Client, url: &str) -> TestResult<(ReqwestStatusCode, String)> {
+struct TestHttpResponse {
+    status: ReqwestStatusCode,
+    body: String,
+}
+
+#[derive(PartialEq)]
+struct TagValue<'a> {
+    type_: &'a str,
+    value: &'a str,
+}
+
+async fn get_text(client: &reqwest::Client, url: &str) -> TestResult<TestHttpResponse> {
     let resp = client
         .get(url)
         .basic_auth(GRAFANA_ADMIN, Some(GRAFANA_ADMIN))
@@ -729,7 +764,7 @@ async fn get_text(client: &reqwest::Client, url: &str) -> TestResult<(ReqwestSta
         .await?;
     let status = resp.status();
     let body = resp.text().await?;
-    Ok((status, body))
+    Ok(TestHttpResponse { status, body })
 }
 
 async fn get_json_until_positive_metric_total(
@@ -846,6 +881,7 @@ struct GrafanaStack {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires Docker (Grafana + Prometheus containers)"]
+#[allow(clippy::items_after_statements)]
 async fn grafana_e2e_full_surface() -> TestResult {
     let client = reqwest::Client::new();
 
@@ -908,14 +944,28 @@ async fn grafana_e2e_full_surface() -> TestResult {
     };
 
     // E1 — /api/echo; E2 — /ready; E3 — /status (alias of /ready).
+    #[derive(bon::Builder)]
+    struct ProxyBodyCase {
+        path: &'static str,
+        expected_body: &'static str,
+    }
     let cases = [
-        ("api/echo", "echo"),  // E1
-        ("ready", "ready\n"),  // E2
-        ("status", "ready\n"), // E3
+        ProxyBodyCase::builder()
+            .path("api/echo")
+            .expected_body("echo")
+            .build(), // E1
+        ProxyBodyCase::builder()
+            .path("ready")
+            .expected_body("ready\n")
+            .build(), // E2
+        ProxyBodyCase::builder()
+            .path("status")
+            .expected_body("ready\n")
+            .build(), // E3
     ];
-    for (path, expected_body) in cases {
-        let (status, body) = get_text(&client, &proxy(path)).await?;
-        assert2::assert!((status, body.as_str()) == (ReqwestStatusCode::OK, expected_body));
+    for case in cases {
+        let TestHttpResponse { status, body } = get_text(&client, &proxy(case.path)).await?;
+        assert2::assert!(status == ReqwestStatusCode::OK && body == case.expected_body);
     }
 
     // E4 — trace-by-id, Trace A: COMPLETE, all 4 spans, root span present. The
@@ -992,12 +1042,12 @@ async fn grafana_e2e_full_surface() -> TestResult {
     assert2::assert!(pb_spans == 4);
 
     // E6 — bad-length trace id -> 400.
-    let (status, body) = get_text(&client, &proxy("api/v2/traces/abcd")).await?;
+    let TestHttpResponse { status, body } = get_text(&client, &proxy("api/v2/traces/abcd")).await?;
     assert2::assert!(status == ReqwestStatusCode::BAD_REQUEST);
     assert2::assert!(body.contains("trace id must be 32 hex chars"));
 
     // E7 — absent trace -> 404.
-    let (status, body) = get_text(
+    let TestHttpResponse { status, body } = get_text(
         &client,
         &proxy(&format!(
             "api/v2/traces/00000000000000000000000000000000?{range}"
@@ -1134,6 +1184,7 @@ async fn grafana_e2e_search(stack: GrafanaStack, window: QueryWindow) -> TestRes
     .await
 }
 
+#[allow(clippy::items_after_statements)]
 async fn grafana_e2e_tags(stack: GrafanaStack, window: QueryWindow) -> TestResult {
     let GrafanaStack {
         client,
@@ -1162,13 +1213,27 @@ async fn grafana_e2e_tags(stack: GrafanaStack, window: QueryWindow) -> TestResul
     for required in ["resource", "intrinsic", "link", "event", "instrumentation"] {
         assert2::assert!(scope_names.contains(&required));
     }
+    #[derive(bon::Builder)]
+    struct TagScopeCase {
+        scope: &'static str,
+        tag: &'static str,
+    }
     let cases = [
-        ("resource", "service.name"),
-        ("intrinsic", "span:name"),
-        ("intrinsic", "span:duration"),
+        TagScopeCase::builder()
+            .scope("resource")
+            .tag("service.name")
+            .build(),
+        TagScopeCase::builder()
+            .scope("intrinsic")
+            .tag("span:name")
+            .build(),
+        TagScopeCase::builder()
+            .scope("intrinsic")
+            .tag("span:duration")
+            .build(),
     ];
-    for (scope, tag) in cases {
-        assert2::assert!(scope_tags(&tags, scope).contains(&tag.to_string()));
+    for case in cases {
+        assert2::assert!(scope_tags(&tags, case.scope).contains(&case.tag.to_string()));
     }
 
     // E14 — v2 tags scoped to resource only.
@@ -1187,7 +1252,8 @@ async fn grafana_e2e_tags(stack: GrafanaStack, window: QueryWindow) -> TestResul
     assert2::assert!(scope_tags(&tags, "resource").contains(&"service.name".to_string()));
 
     // E15 — invalid scope -> 400.
-    let (status, body) = get_text(&client, &proxy("api/v2/search/tags?scope=bogus")).await?;
+    let TestHttpResponse { status, body } =
+        get_text(&client, &proxy("api/v2/search/tags?scope=bogus")).await?;
     assert2::assert!(status == ReqwestStatusCode::BAD_REQUEST);
     assert2::assert!(body.contains("invalid scope"));
 
@@ -1199,18 +1265,29 @@ async fn grafana_e2e_tags(stack: GrafanaStack, window: QueryWindow) -> TestResul
         )),
     )
     .await?;
-    let typed: Vec<(&str, &str)> = values["tagValues"]
+    let typed: Vec<TagValue<'_>> = values["tagValues"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|v| Some((v["type"].as_str()?, v["value"].as_str()?)))
+        .filter_map(|v| {
+            Some(TagValue {
+                type_: v["type"].as_str()?,
+                value: v["value"].as_str()?,
+            })
+        })
         .collect();
     // resource.service.name values are the per-trace ROOT services (the store
     // groups each trace under one root); checkout-frontend (Trace A) and
     // bulk-svc (Trace B) are both roots. cart-backend is a non-root service, so
     // it appears as a span attribute, not a resource value.
-    assert2::assert!(typed.contains(&("string", "checkout-frontend")));
-    assert2::assert!(typed.contains(&("string", "bulk-svc")));
+    assert2::assert!(typed.contains(&TagValue {
+        type_: "string",
+        value: "checkout-frontend"
+    }));
+    assert2::assert!(typed.contains(&TagValue {
+        type_: "string",
+        value: "bulk-svc"
+    }));
 
     // E17 — v2 typed values for the intrinsic span:duration (type "duration").
     let values = get_json(
@@ -1403,7 +1480,7 @@ async fn grafana_e2e_metrics(stack: GrafanaStack, window: QueryWindow) -> TestRe
         |params: &str| format!("{}/api/metrics/query_range?{params}", krabka.local_base_url);
 
     // E27 — metrics query_range rejects a non-positive `step` -> 400.
-    let (status, body) = get_text(
+    let TestHttpResponse { status, body } = get_text(
         &client,
         &direct_metrics_url(&format!(
             "q={mq}&start={metric_start}&end={metric_end}&step=0"
@@ -1414,7 +1491,7 @@ async fn grafana_e2e_metrics(stack: GrafanaStack, window: QueryWindow) -> TestRe
     assert2::assert!(body.contains("step must be positive"));
 
     // E28 — metrics query_range rejects end < start -> 400.
-    let (status, body) = get_text(
+    let TestHttpResponse { status, body } = get_text(
         &client,
         &direct_metrics_url(&format!(
             "q={mq}&start={metric_end}&end={metric_start}&step=30s"

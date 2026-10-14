@@ -1,6 +1,7 @@
 use super::*;
 
 impl_rational_division_ops!(MetricValue);
+impl_rational_float_conversion!(MetricValue);
 
 impl MetricValue {
     pub(crate) fn zero() -> Self {
@@ -36,12 +37,7 @@ impl MetricValue {
     }
 
     pub(crate) fn subtract(self, other: Self) -> Self {
-        Self::new(
-            self.numerator * i128::try_from(other.denominator).expect("denominator fits in i128")
-                - other.numerator
-                    * i128::try_from(self.denominator).expect("denominator fits in i128"),
-            self.denominator * other.denominator,
-        )
+        self.difference(other)
     }
 
     pub(crate) fn multiply(self, other: Self) -> Self {
@@ -55,14 +51,17 @@ impl MetricValue {
         if self.cmp_value(other) == Ordering::Less {
             Self::zero()
         } else {
-            Self::new(
-                self.numerator
-                    * i128::try_from(other.denominator).expect("denominator fits in i128")
-                    - other.numerator
-                        * i128::try_from(self.denominator).expect("denominator fits in i128"),
-                self.denominator * other.denominator,
-            )
+            self.difference(other)
         }
+    }
+
+    fn difference(self, other: Self) -> Self {
+        Self::new(
+            self.numerator * i128::try_from(other.denominator).expect("denominator fits in i128")
+                - other.numerator
+                    * i128::try_from(self.denominator).expect("denominator fits in i128"),
+            self.denominator * other.denominator,
+        )
     }
 
     pub(crate) fn divide_by(self, divisor: u64) -> Self {
@@ -109,17 +108,6 @@ impl MetricValue {
             &(other.numerator
                 * i128::try_from(self.denominator).expect("denominator fits in i128")),
         )
-    }
-
-    pub(crate) fn to_f64(self) -> Option<f64> {
-        rational_to_f64(self.numerator, self.denominator)
-    }
-
-    pub(crate) fn from_f64(value: f64) -> Option<Self> {
-        Some(Self::new(
-            decimal_scaled_numerator(value)?,
-            METRIC_DECIMAL_SCALE,
-        ))
     }
 }
 

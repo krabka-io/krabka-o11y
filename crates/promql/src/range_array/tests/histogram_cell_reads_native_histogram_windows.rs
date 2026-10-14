@@ -5,7 +5,9 @@ pub(crate) fn histogram_cell_reads_native_histogram_windows() {
     let rows = native_histogram_rows();
     let batch = encode_native_histograms(&rows).unwrap();
     let histograms = native_histogram_struct_array(&batch);
-    let range_array = RangeArray::from_ranges(histograms, [(0_u32, 2_u32), (2, 1)]).unwrap();
+    let range_array =
+        RangeArray::from_ranges(histograms, [RangeWindow::new(0, 2), RangeWindow::new(2, 1)])
+            .unwrap();
 
     let first_cell = range_array.histogram_cell(0).unwrap();
     check!(first_cell.len() == 2);

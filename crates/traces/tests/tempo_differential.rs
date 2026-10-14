@@ -73,6 +73,71 @@ const ERROR_SPAN_ID_HEX: &str = "0404040404040404";
 const OTLP_STATUS_CODE_ERROR: i32 = 2;
 const DOCKER_HOST_ALIAS: &str = "host.testcontainers.internal";
 const GRAFANA_TEMPO_DATASOURCE_UID: &str = "krabka-traces";
+
+struct RetrievalArtifactCase<'a> {
+    name: &'a str,
+    result: &'a TestResult<RetrievedProtobuf>,
+}
+
+struct MetricOperationCase {
+    stable_id: &'static str,
+    operation: &'static str,
+}
+
+struct ExpressionOutputCase {
+    id: &'static str,
+    expression: &'static str,
+    expected: JsonValue,
+}
+
+struct LabelFieldCase {
+    id: &'static str,
+    field: &'static str,
+}
+
+struct SampledMetricCase {
+    id: &'static str,
+    metric: &'static str,
+    values: SampledCounts,
+}
+
+struct MetricGroupingCase {
+    stable_id: &'static str,
+    grouping: &'static str,
+}
+
+struct OccupiedMetricSample<'a> {
+    sample: &'a JsonValue,
+    value: f64,
+}
+
+struct CorruptedRetrievalCase {
+    key: &'static str,
+    value: JsonValue,
+}
+
+struct ForestSpanCase {
+    id: u8,
+    parent: u8,
+    name: &'static str,
+    kind: &'static str,
+}
+
+struct TypedGroupCase {
+    stable_id: &'static str,
+    grouping: &'static str,
+}
+
+struct InvalidatedMetricGroupCase {
+    group: usize,
+    replacement: JsonValue,
+}
+
+struct JsonReplacementCase {
+    path: &'static str,
+    replacement: JsonValue,
+}
+
 /// Tempo query-frontend HTTP port inside the container. It matches
 /// `http_listen_port` in [`TEMPO_CONFIG`].
 const TEMPO_HTTP_PORT: u16 = 3200;
@@ -129,6 +194,19 @@ struct QueryCase {
     expected_span_id: Option<&'static str>,
 }
 
+#[derive(bon::Builder)]
+struct ForestSearchCase<'a> {
+    query: &'a str,
+    expected_span_ids: Vec<u8>,
+}
+
+fn forest_search_case(query: &str, expected_span_ids: Vec<u8>) -> ForestSearchCase<'_> {
+    ForestSearchCase::builder()
+        .query(query)
+        .expected_span_ids(expected_span_ids)
+        .build()
+}
+
 fn differential_search_corpus() -> Vec<QueryCase> {
     vec![
         QueryCase {
@@ -176,7 +254,9 @@ fn differential_search_corpus_covers_selector_structural_and_pipeline_queries() 
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
 async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     let client = reqwest::Client::new();
-    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
+    let tempo = start_ready_tempo(&client).await?;
+    let tempo_query = tempo.query_url;
+    let tempo_otlp = tempo.otlp_url;
 
     let query_range = "start=0&end=1";
     let mut fixture = TracesData::decode(sample_otlp_body().as_slice())?;
@@ -242,37 +322,39 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     // Independently assigned trees mirror the behavioral relationships in the
     // pinned Tempo vParquet5 tests, including unrelated and partial branches.
     let mut forest_evidence = Vec::new();
-    for (query, expected_ids) in [
-        (
+    for case in [
+        forest_search_case(
             "{ name = \"ancestor1\" } >> { .kind = \"descendant\" }",
-            vec![11_u8, 12],
+            vec![11, 12],
         ),
-        (
+        forest_search_case(
             "{ name = \"ancestor2\" } > { .kind = \"descendant\" }",
             vec![21, 22],
         ),
-        (
+        forest_search_case(
             "{ name = \"ancestor2\" } >> { .kind = \"descendant\" }",
             vec![21, 22, 23],
         ),
-        (
+        forest_search_case(
             "{ name = \"ancestor1\" } !>> { .kind = \"descendant\" }",
             vec![21, 22, 23],
         ),
-        (
+        forest_search_case(
             "{ name = \"ancestor1\" } &>> { .kind = \"descendant\" }",
             vec![10, 11, 12],
         ),
-        (
+        forest_search_case(
             "{ name = \"descendant2a\" } ~ { .kind = \"descendant\" }",
             vec![22],
         ),
-        ("{ .foo = .bar }", vec![11]),
-        (
+        forest_search_case("{ .foo = .bar }", vec![11]),
+        forest_search_case(
             "{ resource.service.name = \"forest\" && .kind = \"missing\" }",
             vec![],
         ),
     ] {
+        let query = case.query;
+        let expected_ids = case.expected_span_ids;
         let encoded = url_encoded(query);
         let upstream_url =
             format!("{tempo_query}/api/search?q={encoded}&{query_range}&limit=100&spss=100");
@@ -289,13 +371,15 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
         let expected = if expected_ids.is_empty() {
             BTreeMap::new()
         } else {
-            BTreeMap::from([(
+            let mut expected = BTreeMap::new();
+            expected.insert(
                 "09090909090909090909090909090909".to_owned(),
                 expected_ids
                     .iter()
                     .map(|id| hex::encode([*id; 8]))
                     .collect::<Vec<_>>(),
-            )])
+            );
+            expected
         };
         forest_evidence.push(
             json!({"query":query, "expected":expected, "upstream":upstream, "krabka":actual, "status": if search_identities(&upstream)? == expected && search_identities(&actual)? == expected { "matched" } else { "mismatch" }}),
@@ -367,14 +451,15 @@ async fn compare_generated_trace_queries(targets: QueryTargets<'_>) -> TestResul
         || std::env::temp_dir().join(format!("krabka-trace-generated-{}", std::process::id())),
         std::path::PathBuf::from,
     );
-    let expected_checkout = BTreeMap::from([(
+    let mut expected_checkout = BTreeMap::new();
+    expected_checkout.insert(
         TRACE_ID_HEX.to_owned(),
         vec![
             "0202020202020202".to_owned(),
             CHILD_SPAN_ID_HEX.to_owned(),
             ERROR_SPAN_ID_HEX.to_owned(),
         ],
-    )]);
+    );
     let checkout =
         TypedExpr::trace_string_compare("resource", "service.name", CompareOp::Eq, "checkout");
     generated_differential::run_typed(
@@ -417,7 +502,8 @@ async fn compare_generated_trace_queries(targets: QueryTargets<'_>) -> TestResul
     )
     .await?;
 
-    let expected_field_match = BTreeMap::from([("09".repeat(16), vec!["0b".repeat(8)])]);
+    let mut expected_field_match = BTreeMap::new();
+    expected_field_match.insert("09".repeat(16), vec!["0b".repeat(8)]);
     generated_differential::run_typed(
         "traceql-field-comparisons",
         &[TypedExpr::trace_field_compare(
@@ -476,9 +562,13 @@ async fn compare_generated_trace_queries(targets: QueryTargets<'_>) -> TestResul
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
 async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult {
     let client = reqwest::Client::new();
-    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
+    let tempo = start_ready_tempo(&client).await?;
+    let tempo_query = tempo.query_url;
+    let tempo_otlp = tempo.otlp_url;
 
-    let (trace_start_secs, query_range) = metrics_window()?;
+    let window = metrics_window()?;
+    let trace_start_secs = window.trace_start_secs;
+    let query_range = window.query_range;
     let otlp_body = reservoir_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
@@ -546,6 +636,25 @@ struct QueryTargets<'a> {
     query_range: &'a str,
 }
 
+#[derive(bon::Builder, Clone, Copy)]
+struct QueryEndpoint<'a> {
+    implementation: &'a str,
+    base: &'a str,
+    tenant: Option<&'a str>,
+}
+
+fn query_endpoint<'a>(
+    implementation: &'a str,
+    base: &'a str,
+    tenant: Option<&'a str>,
+) -> QueryEndpoint<'a> {
+    QueryEndpoint::builder()
+        .implementation(implementation)
+        .base(base)
+        .maybe_tenant(tenant)
+        .build()
+}
+
 /// Where a live comparison records each case's evidence and each failure.
 struct ComparisonLedger<'a> {
     cases: &'a mut Vec<JsonValue>,
@@ -568,20 +677,22 @@ async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> 
     } = targets;
     let end = anchor + 90;
     let rows = [
-        ("default-since", format!("end={end}")),
-        ("empty-start", format!("start=&end={end}")),
-        ("explicit-since", format!("end={end}&since=2m")),
-        ("ignored-time", format!("end={end}&time=bogus")),
-        ("nanoseconds", format!("end={end}123456789")),
-        ("fractional-seconds", format!("end={end}.123456789")),
-        ("default-clock", "time=bogus".into()),
-        ("start-only", format!("start={}", anchor - 60)),
-        ("short-since", format!("end={end}&since=30s")),
-        ("rate", format!("end={end}&since=2m")),
+        instant_bounds_case("default-since", format!("end={end}")),
+        instant_bounds_case("empty-start", format!("start=&end={end}")),
+        instant_bounds_case("explicit-since", format!("end={end}&since=2m")),
+        instant_bounds_case("ignored-time", format!("end={end}&time=bogus")),
+        instant_bounds_case("nanoseconds", format!("end={end}123456789")),
+        instant_bounds_case("fractional-seconds", format!("end={end}.123456789")),
+        instant_bounds_case("default-clock", "time=bogus".into()),
+        instant_bounds_case("start-only", format!("start={}", anchor - 60)),
+        instant_bounds_case("short-since", format!("end={end}&since=30s")),
+        instant_bounds_case("rate", format!("end={end}&since=2m")),
     ];
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (id, params) in rows {
+    for row in rows {
+        let id = row.id;
+        let params = row.params;
         let operation = if id == "rate" {
             "rate"
         } else {
@@ -604,9 +715,17 @@ async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> 
         };
         let suffix = format!("/api/metrics/query?q={encoded}&{params}");
         let mut observations = Vec::new();
-        for (base, tenant) in [(oracle, None), (candidate, Some(TENANT))] {
+        for endpoint in [
+            query_endpoint("upstream", oracle, None),
+            query_endpoint("krabka", candidate, Some(TENANT)),
+        ] {
             let before = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            let response = get_json(client, &format!("{base}{suffix}"), tenant).await;
+            let response = get_json(
+                client,
+                &format!("{}{suffix}", endpoint.base),
+                endpoint.tenant,
+            )
+            .await;
             let after = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             let body = json_or_error(&response);
             let result = response.and_then(|body| {
@@ -620,7 +739,9 @@ async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> 
                 if series.len() != expected_rows.len() {
                     return Err("instant series count differs".into());
                 }
-                for (actual, expected) in series.iter().zip(expected_rows) {
+                for index in 0..series.len() {
+                    let actual = &series[index];
+                    let expected = &expected_rows[index];
                     let fields = actual.as_object().ok_or("invalid instant series")?;
                     let actual_value = actual.get("value").map_or(Ok(0.0), |value| {
                         value.as_f64().ok_or("invalid instant scalar")
@@ -643,7 +764,7 @@ async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> 
                 Ok(())
             });
             if let Err(error) = &result {
-                failures.push(format!("{id}/{base}: {error}"));
+                failures.push(format!("{id}/{}: {error}", endpoint.implementation));
             }
             observations.push(json!({"body":body,"clock_ms":[before,after],
                 "error":result.err().map(|error|error.to_string())}));
@@ -668,6 +789,16 @@ async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> 
     }
 }
 
+#[derive(bon::Builder)]
+struct InstantBoundsCase<'a> {
+    id: &'a str,
+    params: String,
+}
+
+fn instant_bounds_case(id: &str, params: String) -> InstantBoundsCase<'_> {
+    InstantBoundsCase::builder().id(id).params(params).build()
+}
+
 async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> TestResult {
     let QueryTargets {
         client,
@@ -682,8 +813,8 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
             .checked_mul(1000)
             .ok_or("fixture timestamp overflow")?)
     };
-    let count = pipeline_count_expectation(anchor, (1.0, 2.0))?;
-    let zero = pipeline_count_expectation(anchor, (0.0, 0.0))?;
+    let count = pipeline_count_expectation(anchor, sampled_counts(1.0, 2.0))?;
+    let zero = pipeline_count_expectation(anchor, sampled_counts(0.0, 0.0))?;
     let occupied = |samples: JsonValue| json!({"series":[{"labels":[{"key":"__name__","value":{"stringValue":"count_over_time"}}],"samples":samples,"exemplars":[]}]});
     let first = occupied(json!([{"timestampMs":timestamp(0)?.to_string(),"value":1.0}]));
     let both = occupied(
@@ -696,62 +827,66 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
     let selector = "{ resource.service.name = \"checkout\" }";
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (id, pipeline, hints, expected) in [
-        (
+    for case in [
+        pipeline_hint_case(
             "ordered-ranks",
             "sum_over_time(duration) by(name) > 0 | topk(2) | bottomk(1)",
             "exemplars=false",
             ranked,
         ),
-        (
+        pipeline_hint_case(
             "chained-filters",
             "count_over_time() > 0 < 2",
             "exemplars=false",
             first,
         ),
-        (
+        pipeline_hint_case(
             "scalar-before-metrics",
             "count() > 2 | count_over_time()",
             "exemplars=false",
             count.clone(),
         ),
-        (
+        pipeline_hint_case(
             "scalar-before-metrics-negative",
             "count() > 3 | count_over_time()",
             "exemplars=false",
             zero.clone(),
         ),
-        (
+        pipeline_hint_case(
             "group-filter-before-metrics",
             "by(span.limit) | count() > 2 | count_over_time()",
             "exemplars=false",
             count.clone(),
         ),
-        (
+        pipeline_hint_case(
             "group-filter-before-metrics-negative",
             "by(name) | count() > 1 | count_over_time()",
             "exemplars=false",
             zero,
         ),
-        (
+        pipeline_hint_case(
             "typed-unknown-hints",
             "count_over_time()",
             "exemplars=false, unused=\"opaque\", most_recent=5, timeout=1s",
             count.clone(),
         ),
-        (
+        pipeline_hint_case(
             "typed-float-hint",
             "count_over_time()",
             "exemplars=false, sample=1.0",
             count,
         ),
-        (
+        pipeline_hint_case(
             "scalar-rank-filter-composition",
             "avg(span.limit) >= 3 | count_over_time() > 0 < 3 | topk(2) | bottomk(1)",
             "exemplars=false, sample=0.0",
             both,
         ),
     ] {
+        let id = case.id;
+        let pipeline = case.pipeline;
+        let hints = case.hints;
+        let expected = case.expected;
         let query = format!("{selector} | {pipeline} with({hints})");
         let OracleAndCandidate {
             upstream: upstream_result,
@@ -780,31 +915,33 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
         },
     )
     .await?;
-    for (id, expression) in [
-        (
+    for case in [
+        pipeline_rejection_case(
             "aggregate-result-arithmetic-rejected",
             "count() + sum(span.limit) > 10 | count_over_time()",
         ),
-        (
+        pipeline_rejection_case(
             "aggregate-result-comparison-rejected",
             "count() > sum(span.limit) | count_over_time()",
         ),
-        (
+        pipeline_rejection_case(
             "dynamic-hint-rejected",
             "count_over_time() with(sample=span.limit)",
         ),
     ] {
+        let id = case.id;
+        let expression = case.expression;
         let query = format!("{selector} | {expression}");
         let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
         let mut responses = Vec::new();
         let mut rejected = true;
-        for (implementation, base, tenant) in [
-            ("upstream", oracle, None),
-            ("krabka", candidate, Some(TENANT)),
+        for endpoint in [
+            query_endpoint("upstream", oracle, None),
+            query_endpoint("krabka", candidate, Some(TENANT)),
         ] {
-            let mut request = client.get(format!("{base}{suffix}"));
-            if let Some(tenant) = tenant {
+            let mut request = client.get(format!("{}{suffix}", endpoint.base));
+            if let Some(tenant) = endpoint.tenant {
                 request = request.header("x-scope-orgid", tenant);
             }
             let response = request.send().await?;
@@ -819,7 +956,7 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
             };
             let query_error = status == 400 && error_code.is_some();
             rejected &= query_error;
-            responses.push(json!({"implementation":implementation,"http_status":status,"body":body,"query_rejection":query_error,"canonical":{"status":status,"error_code":error_code}}));
+            responses.push(json!({"implementation":endpoint.implementation,"http_status":status,"body":body,"query_rejection":query_error,"canonical":{"status":status,"error_code":error_code}}));
         }
         if !rejected {
             failures.push(format!("{id}: expected pinned query rejection"));
@@ -837,11 +974,56 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
     }
 }
 
-fn pipeline_count_expectation(anchor: u64, occupied: (f64, f64)) -> TestResult<JsonValue> {
+#[derive(bon::Builder)]
+struct PipelineHintCase<'a> {
+    id: &'a str,
+    pipeline: &'a str,
+    hints: &'a str,
+    expected: JsonValue,
+}
+
+fn pipeline_hint_case<'a>(
+    id: &'a str,
+    pipeline: &'a str,
+    hints: &'a str,
+    expected: JsonValue,
+) -> PipelineHintCase<'a> {
+    PipelineHintCase::builder()
+        .id(id)
+        .pipeline(pipeline)
+        .hints(hints)
+        .expected(expected)
+        .build()
+}
+
+#[derive(bon::Builder)]
+struct PipelineRejectionCase<'a> {
+    id: &'a str,
+    expression: &'a str,
+}
+
+fn pipeline_rejection_case<'a>(id: &'a str, expression: &'a str) -> PipelineRejectionCase<'a> {
+    PipelineRejectionCase::builder()
+        .id(id)
+        .expression(expression)
+        .build()
+}
+
+#[derive(bon::Builder, Clone, Copy)]
+struct SampledCounts {
+    first: f64,
+    second: f64,
+}
+
+fn sampled_counts(first: f64, second: f64) -> SampledCounts {
+    SampledCounts::builder().first(first).second(second).build()
+}
+
+fn pipeline_count_expectation(anchor: u64, occupied: SampledCounts) -> TestResult<JsonValue> {
     let anchor_ms = i64::try_from(anchor)?
         .checked_mul(1000)
         .ok_or("fixture timestamp overflow")?;
-    let samples = (-2_i64..=4).map(|index| json!({"timestampMs":(anchor_ms + index * 30_000).to_string(),"value":match index { 0 => occupied.0, 1 => occupied.1, _ => 0.0 }})).collect::<Vec<_>>();
+    let samples = (-2_i64..=4).map(|index| json!({"timestampMs":(anchor_ms + index * 30_000).to_string(),"value":match index { 0 => occupied.first, 1 => occupied.second, _ => 0.0 }})).collect::<Vec<_>>();
     Ok(
         json!({"series":[{"labels":[{"key":"__name__","value":{"stringValue":"count_over_time"}}],"samples":samples,"exemplars":[]}]}),
     )
@@ -853,9 +1035,12 @@ fn sampled_pipeline_expectations(anchor: u64, traces: bool) -> TestResult<Vec<Js
     // sampler admits 2 of 4 complete traces and scales by 2. Physical storage
     // order can decide whether the checkout root belongs to the admitted set.
     let occupied = if traces {
-        [(0.0, 8.0), (2.0, 8.0)]
+        [sampled_counts(0.0, 8.0), sampled_counts(2.0, 8.0)]
     } else {
-        [(0.0, 9.0), (9.0 / 5.0, 4.0 * (9.0 / 5.0))]
+        [
+            sampled_counts(0.0, 9.0),
+            sampled_counts(9.0 / 5.0, 4.0 * (9.0 / 5.0)),
+        ]
     };
     occupied
         .into_iter()
@@ -898,26 +1083,30 @@ async fn compare_live_sampled_pipelines(
         query_range: range, ..
     } = targets;
     let ComparisonLedger { cases, failures } = ledger;
-    for (id, expression, traces, average) in [
-        (
+    for case in [
+        sampled_pipeline_case(
             "fractional-span-sampling",
             "{} | count_over_time() with(sample=0.5, exemplars=false)",
             false,
             false,
         ),
-        (
+        sampled_pipeline_case(
             "fractional-trace-sampling",
             "{} | count() > 1 | count_over_time() with(sample=0.5, exemplars=false)",
             true,
             false,
         ),
-        (
+        sampled_pipeline_case(
             "fractional-span-average",
             "{} | avg_over_time(span.sample.constant) with(sample=0.5, exemplars=false)",
             false,
             true,
         ),
     ] {
+        let id = case.id;
+        let expression = case.expression;
+        let traces = case.traces;
+        let average = case.average;
         let allowed = if average {
             sampled_average_expectations(anchor)?
         } else {
@@ -948,23 +1137,47 @@ async fn compare_live_sampled_pipelines(
     Ok(())
 }
 
+#[derive(bon::Builder, Clone, Copy)]
+struct SampledPipelineCase<'a> {
+    id: &'a str,
+    expression: &'a str,
+    traces: bool,
+    average: bool,
+}
+
+fn sampled_pipeline_case<'a>(
+    id: &'a str,
+    expression: &'a str,
+    traces: bool,
+    average: bool,
+) -> SampledPipelineCase<'a> {
+    SampledPipelineCase::builder()
+        .id(id)
+        .expression(expression)
+        .traces(traces)
+        .average(average)
+        .build()
+}
+
 #[test]
 fn sampled_pipeline_ledger_rejects_partial_traces_wrong_scaling_and_wrong_buckets() {
     let allowed = sampled_pipeline_expectations(300, true).unwrap();
     check_sampled_pipeline_ledger(&allowed[0], &allowed).unwrap();
     check_sampled_pipeline_ledger(&allowed[1], &allowed).unwrap();
-    let partial_trace = pipeline_count_expectation(300, (9.0 / 5.0, 4.0 * (9.0 / 5.0))).unwrap();
+    let partial_trace =
+        pipeline_count_expectation(300, sampled_counts(9.0 / 5.0, 4.0 * (9.0 / 5.0))).unwrap();
     assert2::assert!(check_sampled_pipeline_ledger(&partial_trace, &allowed).is_err());
-    for (path, value) in [
-        ("/series/0/samples/3/value", json!(6)),
-        ("/series/0/samples/2/timestampMs", json!("300001")),
-        ("/series/0/labels/0/value", json!({"stringValue":"rate"})),
+    for patch in [
+        json_patch("/series/0/samples/3/value", json!(6)),
+        json_patch("/series/0/samples/2/timestampMs", json!("300001")),
+        json_patch("/series/0/labels/0/value", json!({"stringValue":"rate"})),
     ] {
         let mut wrong = allowed[1].clone();
-        *wrong.pointer_mut(path).unwrap() = value;
+        *wrong.pointer_mut(patch.path).unwrap() = patch.value;
         assert2::assert!(
             check_sampled_pipeline_ledger(&wrong, &allowed).is_err(),
-            "{path}"
+            "{}",
+            patch.path
         );
     }
     let span_allowed = sampled_pipeline_expectations(300, false).unwrap();
@@ -993,6 +1206,16 @@ fn sampled_average_domain_rejects_value_scaling_and_missing_mandatory_bucket() {
     assert2::assert!(check_sampled_pipeline_ledger(&missing, &allowed).is_err());
 }
 
+#[derive(bon::Builder)]
+struct JsonPatch<'a> {
+    path: &'a str,
+    value: JsonValue,
+}
+
+fn json_patch(path: &str, value: JsonValue) -> JsonPatch<'_> {
+    JsonPatch::builder().path(path).value(value).build()
+}
+
 async fn compare_live_retrieval_shapes(targets: QueryTargets<'_>) -> TestResult {
     let QueryTargets {
         client,
@@ -1009,38 +1232,44 @@ async fn compare_live_retrieval_shapes(targets: QueryTargets<'_>) -> TestResult 
         get_retrieval_protobuf(client, candidate, Some(TENANT), query_range).await;
     let upstream_v1 = upstream_protobuf.as_ref().map_or_else(
         |error| json!({"error":error.to_string()}),
-        |(_, value)| value.clone(),
+        |retrieved| retrieved.value.clone(),
     );
     let actual_v1 = actual_protobuf.as_ref().map_or_else(
         |error| json!({"error":error.to_string()}),
-        |(_, value)| value.clone(),
+        |retrieved| retrieved.value.clone(),
     );
     if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        for (name, result) in [
-            ("upstream", &upstream_protobuf),
-            ("krabka", &actual_protobuf),
+        for RetrievalArtifactCase { name, result } in [
+            RetrievalArtifactCase {
+                name: "upstream",
+                result: &upstream_protobuf,
+            },
+            RetrievalArtifactCase {
+                name: "krabka",
+                result: &actual_protobuf,
+            },
         ] {
-            if let Ok((bytes, _)) = result {
+            if let Ok(retrieved) = result {
                 std::fs::write(
                     std::path::PathBuf::from(&output).join(format!("tempo-retrieval-{name}.pb")),
-                    bytes,
+                    &retrieved.bytes,
                 )?;
             }
         }
     }
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (id, expected) in retrieval_expected_values() {
-        let key = format!("retrieval.{id}");
+    for case in retrieval_expected_values() {
+        let key = format!("retrieval.{}", case.id);
+        let expected = case.expected;
         let result: TestResult = (|| {
             let expected = canonical_metric_any_value(&expected)?;
             let oracle_values = retrieval_values(&upstream, &key)?;
             let candidate_values = retrieval_values(&actual, &key)?;
-            let independent = BTreeMap::from([
-                ("span", expected.clone()),
-                ("event", expected.clone()),
-                ("link", expected),
-            ]);
+            let mut independent = BTreeMap::new();
+            independent.insert("span", expected.clone());
+            independent.insert("event", expected.clone());
+            independent.insert("link", expected);
             let oracle_v1 = retrieval_values(&upstream_v1, &key)?;
             let candidate_v1 = retrieval_values(&actual_v1, &key)?;
             if oracle_values != independent
@@ -1053,9 +1282,9 @@ async fn compare_live_retrieval_shapes(targets: QueryTargets<'_>) -> TestResult 
             Ok(())
         })();
         if let Err(error) = &result {
-            failures.push(format!("{id}: {error}"));
+            failures.push(format!("{}: {error}", case.id));
         }
-        cases.push(json!({"stableid":format!("tempo-live-retrieval-shape-{id}"),"request":{"path":format!("/api/v2/traces/{TRACE_ID_HEX}"),"range":query_range,"formats":["v2-json","v1-protobuf"]},"independent_expected":{"trace_id":TRACE_ID_HEX,"span_id":"0202020202020202","attribute_key":key,"locations":["span","event","link"],"value":expected},"upstream":upstream,"krabka":actual,"v1_protobuf":{"upstream":upstream_v1,"krabka":actual_v1,"upstream_artifact":"tempo-retrieval-upstream.pb","krabka_artifact":"tempo-retrieval-krabka.pb"},"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error:Box<dyn std::error::Error + Send + Sync>|error.to_string())}));
+        cases.push(json!({"stableid":format!("tempo-live-retrieval-shape-{}", case.id),"request":{"path":format!("/api/v2/traces/{TRACE_ID_HEX}"),"range":query_range,"formats":["v2-json","v1-protobuf"]},"independent_expected":{"trace_id":TRACE_ID_HEX,"span_id":"0202020202020202","attribute_key":key,"locations":["span","event","link"],"value":expected},"upstream":upstream,"krabka":actual,"v1_protobuf":{"upstream":upstream_v1,"krabka":actual_v1,"upstream_artifact":"tempo-retrieval-upstream.pb","krabka_artifact":"tempo-retrieval-krabka.pb"},"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error:Box<dyn std::error::Error + Send + Sync>|error.to_string())}));
     }
     write_conformance_report(
         "tempo-retrieval-shape-conformance.json",
@@ -1073,7 +1302,7 @@ async fn get_retrieval_protobuf(
     endpoint: &str,
     tenant: Option<&str>,
     range: &str,
-) -> TestResult<(Vec<u8>, JsonValue)> {
+) -> TestResult<RetrievedProtobuf> {
     let mut request = client
         .get(format!("{endpoint}/api/traces/{TRACE_ID_HEX}?{range}"))
         .header("Accept", "application/protobuf");
@@ -1098,33 +1327,47 @@ async fn get_retrieval_protobuf(
     }
     let trace = TracesData::decode(bytes.as_slice())?;
     let mut value = serde_json::to_value(&trace)?;
-    for (index, resource) in trace.resource_spans.iter().enumerate() {
+    for index in 0..trace.resource_spans.len() {
+        let resource = &trace.resource_spans[index];
         let json = &mut value["resourceSpans"][index];
         if let Some(resource) = &resource.resource {
             restore_retrieval_attributes(&mut json["resource"], &resource.attributes);
         }
-        for (index, scope) in resource.scope_spans.iter().enumerate() {
+        for index in 0..resource.scope_spans.len() {
+            let scope = &resource.scope_spans[index];
             let json = &mut json["scopeSpans"][index];
             if let Some(scope) = &scope.scope {
                 restore_retrieval_attributes(&mut json["scope"], &scope.attributes);
             }
-            for (index, span) in scope.spans.iter().enumerate() {
+            for index in 0..scope.spans.len() {
+                let span = &scope.spans[index];
                 let json = &mut json["spans"][index];
                 restore_retrieval_attributes(json, &span.attributes);
-                for (index, event) in span.events.iter().enumerate() {
+                for index in 0..span.events.len() {
+                    let event = &span.events[index];
                     restore_retrieval_attributes(&mut json["events"][index], &event.attributes);
                 }
-                for (index, link) in span.links.iter().enumerate() {
+                for index in 0..span.links.len() {
+                    let link = &span.links[index];
                     restore_retrieval_attributes(&mut json["links"][index], &link.attributes);
                 }
             }
         }
     }
-    Ok((bytes, json!({"trace":value})))
+    Ok(RetrievedProtobuf {
+        bytes,
+        value: json!({"trace":value}),
+    })
+}
+
+struct RetrievedProtobuf {
+    bytes: Vec<u8>,
+    value: JsonValue,
 }
 
 fn restore_retrieval_attributes(owner: &mut JsonValue, attributes: &[OtlpKeyValue]) {
-    for (index, attribute) in attributes.iter().enumerate() {
+    for index in 0..attributes.len() {
+        let attribute = &attributes[index];
         if let Some(value) = &attribute.value {
             owner["attributes"][index]["value"] = AttrValue::encode_otlp_json(value);
         }
@@ -1147,7 +1390,12 @@ fn retrieval_values(
         return Err("retrieval root span missing or duplicated".into());
     }
     let span = spans[0];
-    for (field, expected) in [("traceId", vec![1; 16]), ("spanId", vec![2; 8])] {
+    for identity in [
+        retrieval_identity("traceId", vec![1; 16]),
+        retrieval_identity("spanId", vec![2; 8]),
+    ] {
+        let field = identity.field;
+        let expected = identity.expected_bytes;
         let value = span[field].as_str().ok_or("retrieval identity missing")?;
         let decoded = if value.len() == expected.len() * 2
             && value.bytes().all(|value| value.is_ascii_hexdigit())
@@ -1161,63 +1409,101 @@ fn retrieval_values(
         }
     }
     let mut result = BTreeMap::new();
-    for (location, owner) in [
-        ("span", span),
-        ("event", &span["events"][0]),
-        ("link", &span["links"][0]),
+    for location in [
+        RetrievedLocation {
+            name: "span",
+            owner: span,
+        },
+        RetrievedLocation {
+            name: "event",
+            owner: &span["events"][0],
+        },
+        RetrievedLocation {
+            name: "link",
+            owner: &span["links"][0],
+        },
     ] {
-        let values = owner["attributes"]
+        let values = location.owner["attributes"]
             .as_array()
             .ok_or("retrieval attributes missing")?
             .iter()
             .filter(|attribute| attribute["key"] == key)
             .collect::<Vec<_>>();
         if values.len() != 1 {
-            return Err(format!("retrieval {key}/{location} missing or duplicated").into());
+            return Err(format!("retrieval {key}/{} missing or duplicated", location.name).into());
         }
-        result.insert(location, canonical_metric_any_value(&values[0]["value"])?);
+        result.insert(
+            location.name,
+            canonical_metric_any_value(&values[0]["value"])?,
+        );
     }
     Ok(result)
 }
 
-fn retrieval_expected_values() -> Vec<(&'static str, JsonValue)> {
+struct RetrievalIdentity {
+    field: &'static str,
+    expected_bytes: Vec<u8>,
+}
+
+fn retrieval_identity(field: &'static str, expected_bytes: Vec<u8>) -> RetrievalIdentity {
+    RetrievalIdentity {
+        field,
+        expected_bytes,
+    }
+}
+
+struct RetrievedLocation<'a> {
+    name: &'static str,
+    owner: &'a JsonValue,
+}
+
+struct RetrievalExpectedValue {
+    id: &'static str,
+    expected: JsonValue,
+}
+
+fn retrieval_expected_value(id: &'static str, expected: JsonValue) -> RetrievalExpectedValue {
+    RetrievalExpectedValue { id, expected }
+}
+
+fn retrieval_expected_values() -> Vec<RetrievalExpectedValue> {
     vec![
-        ("empty", json!({"arrayValue":{"values":[]}})),
-        ("empty-oneof", json!({"arrayValue":{"values":[{}]}})),
-        (
+        retrieval_expected_value("empty", json!({"arrayValue":{"values":[]}})),
+        retrieval_expected_value("empty-oneof", json!({"arrayValue":{"values":[{}]}})),
+        retrieval_expected_value(
             "singleton-int",
             json!({"arrayValue":{"values":[{"intValue":"9223372036854775807"}]}}),
         ),
-        (
+        retrieval_expected_value(
             "multi-int",
             json!({"arrayValue":{"values":[{"intValue":"1"},{"intValue":"2"}]}}),
         ),
-        (
+        retrieval_expected_value(
             "multi-float",
             json!({"arrayValue":{"values":[{"doubleValue":1.5},{"doubleValue":2.5}]}}),
         ),
-        (
+        retrieval_expected_value(
             "multi-string",
             json!({"arrayValue":{"values":[{"stringValue":"one"},{"stringValue":"two"}]}}),
         ),
-        (
+        retrieval_expected_value(
             "multi-bool",
             json!({"arrayValue":{"values":[{"boolValue":true},{"boolValue":false}]}}),
         ),
-        (
+        retrieval_expected_value(
             "mixed",
             json!({"arrayValue":{"values":[{"intValue":"1"},{"stringValue":"1"}]}}),
         ),
-        (
+        retrieval_expected_value(
             "nested",
             json!({"arrayValue":{"values":[{"arrayValue":{"values":[{"intValue":"1"},{"intValue":"2"}]}}]}}),
         ),
-        ("bytes", json!({"bytesValue":"AP8="})),
-        (
+        retrieval_expected_value("bytes", json!({"bytesValue":"AP8="})),
+        retrieval_expected_value(
             "kvlist",
             json!({"kvlistValue":{"values":[{"key":"answer","value":{"intValue":"9223372036854775807"}}]}}),
         ),
-        (
+        retrieval_expected_value(
             "nonfinite-mixed",
             json!({"arrayValue":{"values":[{"doubleValue":"Infinity"},{"doubleValue":"-Infinity"},{"doubleValue":"NaN"},{"stringValue":"finite-decoy"}]}}),
         ),
@@ -1233,13 +1519,34 @@ async fn compare_live_numeric_metrics(targets: QueryTargets<'_>) -> TestResult {
     } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (stableid, operation) in [
-        ("avg-duration", "avg_over_time(duration)"),
-        ("min-duration", "min_over_time(duration)"),
-        ("max-duration", "max_over_time(duration)"),
-        ("sum-duration", "sum_over_time(duration)"),
-        ("quantile-duration", "quantile_over_time(duration, .5, .9)"),
-        ("histogram-duration", "histogram_over_time(duration)"),
+    for MetricOperationCase {
+        stable_id,
+        operation,
+    } in [
+        MetricOperationCase {
+            stable_id: "avg-duration",
+            operation: "avg_over_time(duration)",
+        },
+        MetricOperationCase {
+            stable_id: "min-duration",
+            operation: "min_over_time(duration)",
+        },
+        MetricOperationCase {
+            stable_id: "max-duration",
+            operation: "max_over_time(duration)",
+        },
+        MetricOperationCase {
+            stable_id: "sum-duration",
+            operation: "sum_over_time(duration)",
+        },
+        MetricOperationCase {
+            stable_id: "quantile-duration",
+            operation: "quantile_over_time(duration, .5, .9)",
+        },
+        MetricOperationCase {
+            stable_id: "histogram-duration",
+            operation: "histogram_over_time(duration)",
+        },
     ] {
         let query = format!(
             r#"{{ resource.service.name = "checkout" }} | {operation} with(exemplars=false)"#
@@ -1254,9 +1561,9 @@ async fn compare_live_numeric_metrics(targets: QueryTargets<'_>) -> TestResult {
         let actual = json_or_error(&candidate_result);
         let result = metric_series_match(&upstream, &actual);
         if let Err(error) = &result {
-            failures.push(format!("{stableid}: {error}"));
+            failures.push(format!("{stable_id}: {error}"));
         }
-        cases.push(json!({"stableid":format!("tempo-live-metric-{stableid}"),"query":query,
+        cases.push(json!({"stableid":format!("tempo-live-metric-{stable_id}"),"query":query,
             "request":{"range":query_range,"step":"30s","exemplars":false},
             "expected_fixture_duration_seconds":[0.5,0.15,0.14],
             "upstream":upstream,"krabka":actual,"status":if result.is_ok() {"matched"} else {"mismatch"},
@@ -1283,7 +1590,13 @@ struct CheckoutSpanSearches<'a> {
     /// The file name the cases are written to.
     artifact: &'a str,
     /// Each case's stable id, its predicate, and the span IDs it must select.
-    search_cases: Vec<(&'a str, &'a str, Vec<&'a str>)>,
+    search_cases: Vec<CheckoutSpanSearchCase<'a>>,
+}
+
+struct CheckoutSpanSearchCase<'a> {
+    stable_id: &'a str,
+    predicate: &'a str,
+    expected_span_ids: Vec<&'a str>,
 }
 
 // Search Tempo and Krabka for the checkout spans each case's predicate
@@ -1303,7 +1616,12 @@ async fn compare_checkout_span_searches(
     } = searches;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (stableid, predicate, expected_span_ids) in search_cases {
+    for CheckoutSpanSearchCase {
+        stable_id,
+        predicate,
+        expected_span_ids,
+    } in search_cases
+    {
         let query = format!("{{ resource.service.name = \"checkout\" && {predicate} }}");
         let encoded = url_encoded(&query);
         let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
@@ -1314,10 +1632,11 @@ async fn compare_checkout_span_searches(
         let upstream = json_or_error(&upstream_result);
         let actual = json_or_error(&candidate_result);
         let expected_count = expected_span_ids.len();
-        let expected = BTreeMap::from([(
+        let mut expected = BTreeMap::new();
+        expected.insert(
             TRACE_ID_HEX.to_owned(),
             expected_span_ids.into_iter().map(str::to_owned).collect(),
-        )]);
+        );
         let result = upstream_result.and_then(|upstream| {
             candidate_result.and_then(|actual| {
                 let upstream_ids = search_identities(&upstream)?;
@@ -1331,10 +1650,10 @@ async fn compare_checkout_span_searches(
             })
         });
         if let Err(error) = &result {
-            failures.push(format!("{stableid}: {error}"));
+            failures.push(format!("{stable_id}: {error}"));
         }
         cases.push(
-            json!({"stableid":format!("{case_prefix}-{stableid}"),"query":query,
+            json!({"stableid":format!("{case_prefix}-{stable_id}"),"query":query,
             "request":{"range":query_range,"limit":10,"spss":10},
             "independent_expected":{"span_ids_by_trace":expected,"span_count":expected_count},
             "upstream":upstream,"krabka":actual,
@@ -1369,26 +1688,26 @@ async fn compare_live_field_arithmetic(targets: QueryTargets<'_>) -> TestResult 
             case_prefix: "tempo-live-arithmetic",
             artifact: "tempo-field-arithmetic-conformance.json",
             search_cases: vec![
-                (
-                    "multiply-duration",
-                    "duration * 2 > duration && name != \"GET /checkout\"",
-                    vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-                ),
-                (
-                    "divide-duration",
-                    "duration / 2 < duration && name = \"SELECT cart\"",
-                    vec![CHILD_SPAN_ID_HEX],
-                ),
-                (
-                    "add-duration",
-                    "duration + duration >= duration && name != \"charge card\"",
-                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-                ),
-                (
-                    "negate-duration",
-                    "-duration < 0s && name = \"charge card\"",
-                    vec![ERROR_SPAN_ID_HEX],
-                ),
+                CheckoutSpanSearchCase {
+                    stable_id: "multiply-duration",
+                    predicate: "duration * 2 > duration && name != \"GET /checkout\"",
+                    expected_span_ids: vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "divide-duration",
+                    predicate: "duration / 2 < duration && name = \"SELECT cart\"",
+                    expected_span_ids: vec![CHILD_SPAN_ID_HEX],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "add-duration",
+                    predicate: "duration + duration >= duration && name != \"charge card\"",
+                    expected_span_ids: vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "negate-duration",
+                    predicate: "-duration < 0s && name = \"charge card\"",
+                    expected_span_ids: vec![ERROR_SPAN_ID_HEX],
+                },
             ],
         },
     )
@@ -1407,52 +1726,56 @@ async fn compare_live_expression_outputs(targets: QueryTargets<'_>, anchor: u64)
     let set = |ids: &[&str], attributes: JsonValue| json!({"span_ids":ids,"matched":ids.len(),"attributes":attributes});
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (id, expression, expected) in [
-        (
-            "aggregate-arithmetic",
-            "sum(span.limit + 1) > 10",
-            json!([set(
+    for ExpressionOutputCase {
+        id,
+        expression,
+        expected,
+    } in [
+        ExpressionOutputCase {
+            id: "aggregate-arithmetic",
+            expression: "sum(span.limit + 1) > 10",
+            expected: json!([set(
                 &all_ids,
                 json!([
                     {"key":"sum(span.limit + 1)","value":{"intValue":"12"}}
                 ])
             )]),
-        ),
-        (
-            "aggregate-average",
-            "avg(span.limit + 1) = 4",
-            json!([set(
+        },
+        ExpressionOutputCase {
+            id: "aggregate-average",
+            expression: "avg(span.limit + 1) = 4",
+            expected: json!([set(
                 &all_ids,
                 json!([
                     {"key":"avg(span.limit + 1)","value":{"doubleValue":4.0}}
                 ])
             )]),
-        ),
-        (
-            "boolean-group-filter",
-            "by(duration > 200ms) | count() > 1",
-            json!([set(
+        },
+        ExpressionOutputCase {
+            id: "boolean-group-filter",
+            expression: "by(duration > 200ms) | count() > 1",
+            expected: json!([set(
                 &all_ids[1..],
                 json!([
                     {"key":"by(duration > 200ms)","value":{"boolValue":false}},
                     {"key":"count()","value":{"intValue":"2"}}
                 ])
             )]),
-        ),
-        (
-            "boolean-group-coalesce",
-            "by(duration > 200ms) | coalesce() | count() > 2",
-            json!([set(
+        },
+        ExpressionOutputCase {
+            id: "boolean-group-coalesce",
+            expression: "by(duration > 200ms) | coalesce() | count() > 2",
+            expected: json!([set(
                 &all_ids,
                 json!([
                     {"key":"count()","value":{"intValue":"3"}}
                 ])
             )]),
-        ),
-        (
-            "array-group-attributes",
-            "by(span.numbers)",
-            json!([
+        },
+        ExpressionOutputCase {
+            id: "array-group-attributes",
+            expression: "by(span.numbers)",
+            expected: json!([
                 set(
                     &all_ids[..1],
                     json!([{"key":"by(span.numbers)","value":{"arrayValue":{"values":[{"intValue":"2"},{"intValue":"4"}]}}}])
@@ -1466,7 +1789,7 @@ async fn compare_live_expression_outputs(targets: QueryTargets<'_>, anchor: u64)
                     json!([{"key":"by(span.numbers)","value":{"arrayValue":{"values":[{"intValue":"6"},{"intValue":"8"}]}}}])
                 ),
             ]),
-        ),
+        },
     ] {
         let query = format!("{checkout} | {expression}");
         let encoded = url_encoded(&query);
@@ -1528,12 +1851,21 @@ async fn compare_live_metric_label_outputs(
     } = targets;
     let ComparisonLedger { cases, failures } = ledger;
     let checkout = "{ resource.service.name = \"checkout\" }";
-    for (id, field) in [
-        ("bare-name-label", "name"),
-        ("scoped-name-label", "span:name"),
-        ("array-metric-label", "span.numbers"),
+    for case in [
+        LabelFieldCase {
+            id: "bare-name-label",
+            field: "name",
+        },
+        LabelFieldCase {
+            id: "scoped-name-label",
+            field: "span:name",
+        },
+        LabelFieldCase {
+            id: "array-metric-label",
+            field: "span.numbers",
+        },
     ] {
-        let selector = if field == "span.numbers" {
+        let selector = if case.field == "span.numbers" {
             // Keep the predicate to independently establish that arrays exist.
             // Tempo 3.0.3 StaticFromAnyValue drops ArrayValue at its metric
             // frontend, so the public result coalesces these labels to nil.
@@ -1541,11 +1873,18 @@ async fn compare_live_metric_label_outputs(
         } else {
             checkout
         };
-        if field == "span.numbers" {
+        if case.field == "span.numbers" {
             record_array_metric_frontend_observation(targets, anchor).await?;
         }
-        let query = format!("{selector} | count_over_time() by({field}) with(exemplars=false)");
-        let label_key = if field == "span:name" { "name" } else { field };
+        let query = format!(
+            "{selector} | count_over_time() by({}) with(exemplars=false)",
+            case.field
+        );
+        let label_key = if case.field == "span:name" {
+            "name"
+        } else {
+            case.field
+        };
         let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
         let upstream_result =
@@ -1553,12 +1892,12 @@ async fn compare_live_metric_label_outputs(
         let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
         let upstream = json_or_error(&upstream_result);
         let actual = json_or_error(&actual_result);
-        let expected_values = if field == "span.numbers" {
+        let expected_values = if case.field == "span.numbers" {
             json!([{"stringValue":"nil"}])
         } else {
             json!([{"stringValue":"GET /checkout"},{"stringValue":"SELECT cart"},{"stringValue":"charge card"}])
         };
-        let expected_legends = if field == "span.numbers" {
+        let expected_legends = if case.field == "span.numbers" {
             vec![r#"{"span.numbers"="<nil>"}"#]
         } else {
             vec![
@@ -1567,10 +1906,14 @@ async fn compare_live_metric_label_outputs(
                 r#"{name="charge card"}"#,
             ]
         };
-        let independent_series = (field == "span.numbers")
+        let independent_series = (case.field == "span.numbers")
             .then(|| array_metric_frontend_expectation(anchor))
             .transpose()?;
-        let each_total = if field == "span.numbers" { 3.0 } else { 1.0 };
+        let each_total = if case.field == "span.numbers" {
+            3.0
+        } else {
+            1.0
+        };
         let result = upstream_result.and_then(|upstream| {
             actual_result.and_then(|actual| {
                 metric_series_match(&upstream, &actual)?;
@@ -1611,13 +1954,13 @@ async fn compare_live_metric_label_outputs(
         if let Err(error) = &result {
             failures.push(error.to_string());
         }
-        cases.push(json!({"stableid":format!("tempo-live-output-{id}"),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":{"label_key":label_key,"label_values":expected_values,"prom_labels":expected_legends,"group_count":expected_values.as_array().unwrap().len(),"each_total":each_total,"complete_series":independent_series},"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+        cases.push(json!({"stableid":format!("tempo-live-output-{}",case.id),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":{"label_key":label_key,"label_values":expected_values,"prom_labels":expected_legends,"group_count":expected_values.as_array().unwrap().len(),"each_total":each_total,"complete_series":independent_series},"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
     Ok(())
 }
 
 fn array_metric_frontend_expectation(anchor: u64) -> TestResult<JsonValue> {
-    let mut expected = pipeline_count_expectation(anchor, (1.0, 2.0))?;
+    let mut expected = pipeline_count_expectation(anchor, sampled_counts(1.0, 2.0))?;
     expected["series"][0]["labels"] = json!([{"key":"span.numbers","value":{"stringValue":"nil"}}]);
     Ok(expected)
 }
@@ -1631,21 +1974,46 @@ async fn record_array_metric_frontend_observation(
     let mut failures = Vec::new();
     // Three source spans occupy two buckets: root 500ms, children 150ms/140ms.
     // Independent reducers pool the two child values after frontend nil decoding.
-    for (id, metric, values) in [
-        ("count", "count_over_time()", (1.0, 2.0)),
-        ("sum", "sum_over_time(duration)", (0.5, 0.29)),
-        ("avg", "avg_over_time(duration)", (0.5, 0.145)),
-        ("min", "min_over_time(duration)", (0.5, 0.14)),
-        ("max", "max_over_time(duration)", (0.5, 0.15)),
-        ("avg-filter", "avg_over_time(duration)", (0.5, 0.145)),
+    for case in [
+        SampledMetricCase {
+            id: "count",
+            metric: "count_over_time()",
+            values: sampled_counts(1.0, 2.0),
+        },
+        SampledMetricCase {
+            id: "sum",
+            metric: "sum_over_time(duration)",
+            values: sampled_counts(0.5, 0.29),
+        },
+        SampledMetricCase {
+            id: "avg",
+            metric: "avg_over_time(duration)",
+            values: sampled_counts(0.5, 0.145),
+        },
+        SampledMetricCase {
+            id: "min",
+            metric: "min_over_time(duration)",
+            values: sampled_counts(0.5, 0.14),
+        },
+        SampledMetricCase {
+            id: "max",
+            metric: "max_over_time(duration)",
+            values: sampled_counts(0.5, 0.15),
+        },
+        SampledMetricCase {
+            id: "avg-filter",
+            metric: "avg_over_time(duration)",
+            values: sampled_counts(0.5, 0.145),
+        },
     ] {
-        let stages = if id == "avg-filter" {
+        let stages = if case.id == "avg-filter" {
             " > 0.14 < 0.2"
         } else {
             ""
         };
         let query = format!(
-            "{{ resource.service.name = \"checkout\" }} | {metric} by(span.numbers){stages} with(exemplars=false)"
+            "{{ resource.service.name = \"checkout\" }} | {} by(span.numbers){stages} with(exemplars=false)",
+            case.metric
         );
         let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
@@ -1658,11 +2026,11 @@ async fn record_array_metric_frontend_observation(
         let mut expected = array_metric_frontend_expectation(anchor)?;
         let samples = expected["series"][0]["samples"].as_array_mut().unwrap();
         // Count fills the complete grid; other reducers omit empty buckets.
-        if id != "count" {
+        if case.id != "count" {
             samples.retain(|sample| sample["value"].as_f64().unwrap() > 0.0);
-            samples[0]["value"] = json!(values.0);
-            samples[1]["value"] = json!(values.1);
-            if id == "avg-filter" {
+            samples[0]["value"] = json!(case.values.first);
+            samples[1]["value"] = json!(case.values.second);
+            if case.id == "avg-filter" {
                 samples.remove(0);
             }
         }
@@ -1673,9 +2041,9 @@ async fn record_array_metric_frontend_observation(
             })
         });
         if let Err(error) = &result {
-            failures.push(format!("{id}: {error}"));
+            failures.push(format!("{}: {error}", case.id));
         }
-        cases.push(json!({"stableid":format!("tempo-array-frontend-{id}"),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+        cases.push(json!({"stableid":format!("tempo-array-frontend-{}",case.id),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
     write_conformance_report(
         "tempo-array-metric-frontend-conformance.json",
@@ -1730,23 +2098,24 @@ fn canonical_spanset_ledger(ledger: &JsonValue) -> TestResult<JsonValue> {
 fn spanset_output_ledger_rejects_wrong_groups_attributes_and_counts() {
     let expected = json!({"traces":[{"traceID":TRACE_ID_HEX,"spanSets":[{"matched":1,"spans":[{"spanID":CHILD_SPAN_ID_HEX}],"attributes":[{"key":"by(span.cost > 1)","value":{"boolValue":false}},{"key":"count()","value":{"intValue":"1"}}]}]}]});
     let expected_ledger = search_spanset_ledger(&expected).unwrap();
-    for (path, value) in [
-        ("/traces/0/spanSets/0/matched", json!(2)),
-        (
+    for patch in [
+        json_patch("/traces/0/spanSets/0/matched", json!(2)),
+        json_patch(
             "/traces/0/spanSets/0/attributes/0/value",
             json!({"stringValue":"false"}),
         ),
-        ("/traces/0/spanSets/0/attributes/1/key", json!("avg()")),
-        (
+        json_patch("/traces/0/spanSets/0/attributes/1/key", json!("avg()")),
+        json_patch(
             "/traces/0/spanSets/0/spans/0/spanID",
             json!(ERROR_SPAN_ID_HEX),
         ),
     ] {
         let mut corrupt = expected.clone();
-        *corrupt.pointer_mut(path).unwrap() = value;
+        *corrupt.pointer_mut(patch.path).unwrap() = patch.value;
         assert2::assert!(
             search_spanset_ledger(&corrupt).unwrap() != expected_ledger,
-            "{path}"
+            "{}",
+            patch.path
         );
     }
 }
@@ -1767,66 +2136,78 @@ async fn compare_live_supported_scopes(targets: QueryTargets<'_>) -> TestResult 
             case_prefix: "tempo-live-supported",
             artifact: "tempo-supported-scopes-conformance.json",
             search_cases: vec![
-                (
-                    "event-arithmetic-types",
-                    "event.cost + 1 = span.limit",
-                    vec!["0202020202020202"],
-                ),
-                (
-                    "event-field-comparison",
-                    "event.peer = name",
-                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-                ),
-                (
-                    "instrumentation-event-composition",
-                    "instrumentation.cost + event.cost > span.limit",
-                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-                ),
-                (
-                    "instrumentation-intrinsic",
-                    "instrumentation:name = instrumentation.peer",
-                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-                ),
-                (
-                    "event-time-intrinsic",
-                    "event:timeSinceStart * 2 < duration && event:name = name",
-                    vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
-                ),
-                (
-                    "link-arithmetic",
-                    "link.cost * 2 = span.limit + 1",
-                    vec!["0202020202020202"],
-                ),
-                (
-                    "id-intrinsic-composition",
-                    "span:id = link:spanID && trace:id = link:traceID",
-                    vec!["0202020202020202", CHILD_SPAN_ID_HEX],
-                ),
-                (
-                    "trace-child-intrinsic",
-                    "trace:duration >= duration && span:childCount + 1 > 2",
-                    vec!["0202020202020202"],
-                ),
-                (
-                    "trace-root-intrinsic",
-                    "trace:rootName = name",
-                    vec!["0202020202020202"],
-                ),
-                (
-                    "integer-power-outside-range",
-                    "span.exponent ^ span.base < 0",
-                    vec!["0202020202020202", ERROR_SPAN_ID_HEX],
-                ),
-                (
-                    "array-scalar-ordering",
-                    "span.numbers > span.limit",
-                    vec!["0202020202020202", ERROR_SPAN_ID_HEX],
-                ),
-                (
-                    "scalar-array-ordering",
-                    "span.limit < span.numbers && name != \"GET /checkout\"",
-                    vec![ERROR_SPAN_ID_HEX],
-                ),
+                CheckoutSpanSearchCase {
+                    stable_id: "event-arithmetic-types",
+                    predicate: "event.cost + 1 = span.limit",
+                    expected_span_ids: vec!["0202020202020202"],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "event-field-comparison",
+                    predicate: "event.peer = name",
+                    expected_span_ids: vec![
+                        "0202020202020202",
+                        CHILD_SPAN_ID_HEX,
+                        ERROR_SPAN_ID_HEX,
+                    ],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "instrumentation-event-composition",
+                    predicate: "instrumentation.cost + event.cost > span.limit",
+                    expected_span_ids: vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "instrumentation-intrinsic",
+                    predicate: "instrumentation:name = instrumentation.peer",
+                    expected_span_ids: vec![
+                        "0202020202020202",
+                        CHILD_SPAN_ID_HEX,
+                        ERROR_SPAN_ID_HEX,
+                    ],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "event-time-intrinsic",
+                    predicate: "event:timeSinceStart * 2 < duration && event:name = name",
+                    expected_span_ids: vec![
+                        "0202020202020202",
+                        CHILD_SPAN_ID_HEX,
+                        ERROR_SPAN_ID_HEX,
+                    ],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "link-arithmetic",
+                    predicate: "link.cost * 2 = span.limit + 1",
+                    expected_span_ids: vec!["0202020202020202"],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "id-intrinsic-composition",
+                    predicate: "span:id = link:spanID && trace:id = link:traceID",
+                    expected_span_ids: vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "trace-child-intrinsic",
+                    predicate: "trace:duration >= duration && span:childCount + 1 > 2",
+                    expected_span_ids: vec!["0202020202020202"],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "trace-root-intrinsic",
+                    predicate: "trace:rootName = name",
+                    expected_span_ids: vec!["0202020202020202"],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "integer-power-outside-range",
+                    predicate: "span.exponent ^ span.base < 0",
+                    expected_span_ids: vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "array-scalar-ordering",
+                    predicate: "span.numbers > span.limit",
+                    expected_span_ids: vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+                },
+                CheckoutSpanSearchCase {
+                    stable_id: "scalar-array-ordering",
+                    predicate: "span.limit < span.numbers && name != \"GET /checkout\"",
+                    expected_span_ids: vec![ERROR_SPAN_ID_HEX],
+                },
             ],
         },
     )
@@ -1845,9 +2226,19 @@ async fn compare_live_exemplar_reservoir(
     } = targets;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (stableid, grouping) in [("ungrouped", ""), ("grouped", " by(span.lane)")] {
+    for case in [
+        MetricGroupingCase {
+            stable_id: "ungrouped",
+            grouping: "",
+        },
+        MetricGroupingCase {
+            stable_id: "grouped",
+            grouping: " by(span.lane)",
+        },
+    ] {
         let query = format!(
-            "{{ resource.service.name = \"reservoir\" && span:id != \"\" }} | count_over_time(){grouping}"
+            "{{ resource.service.name = \"reservoir\" && span:id != \"\" }} | count_over_time(){}",
+            case.grouping
         );
         let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s&exemplars=100");
@@ -1868,13 +2259,13 @@ async fn compare_live_exemplar_reservoir(
             }
         }
         let result = metric_series_match(&upstream_values, &actual_values).and_then(|()| {
-            validate_reservoir_response(&upstream, anchor_secs, !grouping.is_empty())?;
-            validate_reservoir_response(&actual, anchor_secs, !grouping.is_empty())
+            validate_reservoir_response(&upstream, anchor_secs, !case.grouping.is_empty())?;
+            validate_reservoir_response(&actual, anchor_secs, !case.grouping.is_empty())
         });
         if let Err(error) = &result {
-            failures.push(format!("{stableid}: {error}"));
+            failures.push(format!("{}: {error}", case.stable_id));
         }
-        cases.push(json!({"stableid":format!("tempo-live-exemplar-reservoir-{stableid}"),"query":query,
+        cases.push(json!({"stableid":format!("tempo-live-exemplar-reservoir-{}",case.stable_id),"query":query,
             "request":{"range":range,"step":"30s","exemplars":100},
             "independent_expected":{"span_count":6,"trace_count":3,"exemplar_count":2,"one_per_trace":true,"occupied_timestamp_ms":(anchor_secs+30)*1000,
                 "exemplar_timestamp_precision_ms":15000,
@@ -1913,12 +2304,12 @@ fn validate_reservoir_response(
         .iter()
         .filter_map(|sample| match metric_value(sample) {
             Ok(value) if value.to_bits() == 0.0_f64.to_bits() => None,
-            result => Some(result.map(|value| (sample, value))),
+            result => Some(result.map(|value| OccupiedMetricSample { sample, value })),
         })
         .collect::<TestResult<Vec<_>>>()?;
     if occupied.len() != 1
-        || occupied[0].1.to_bits() != 6.0_f64.to_bits()
-        || metric_timestamp(occupied[0].0)? != i64::try_from((anchor_secs + 30) * 1000)?
+        || occupied[0].value.to_bits() != 6.0_f64.to_bits()
+        || metric_timestamp(occupied[0].sample)? != i64::try_from((anchor_secs + 30) * 1000)?
     {
         return Err(
             "reservoir spans must occupy exactly the independently expected right-closed bucket"
@@ -1940,20 +2331,16 @@ fn validate_reservoir_response(
         let labels = exemplar["labels"]
             .as_array()
             .ok_or("missing exemplar labels")?;
-        let actual = labels
-            .iter()
-            .map(|label| {
-                Ok((
-                    label["key"]
-                        .as_str()
-                        .ok_or("missing exemplar label key")?
-                        .to_owned(),
-                    canonical_metric_any_value(&label["value"])?,
-                ))
-            })
-            .collect::<TestResult<BTreeMap<_, _>>>()?;
-        if actual.len() != labels.len() {
-            return Err("duplicate exemplar label keys".into());
+        let mut actual = BTreeMap::new();
+        for label in labels {
+            let key = label["key"]
+                .as_str()
+                .ok_or("missing exemplar label key")?
+                .to_owned();
+            let value = canonical_metric_any_value(&label["value"])?;
+            if actual.insert(key, value).is_some() {
+                return Err("duplicate exemplar label keys".into());
+            }
         }
         let trace = actual
             .get("trace:id")
@@ -1977,14 +2364,13 @@ fn validate_reservoir_response(
                     && (anchor_secs + 15) * 1000 == timestamp
             })
             .ok_or("exemplar does not identify an ingested span")?;
-        let mut expected = BTreeMap::from([
-            ("trace:id".into(), json!({"stringValue":trace})),
-            ("span:id".into(), json!({"stringValue":span})),
-            (
-                "resource.service.name".into(),
-                json!({"stringValue":"reservoir"}),
-            ),
-        ]);
+        let mut expected = BTreeMap::new();
+        expected.insert("trace:id".into(), json!({"stringValue":trace}));
+        expected.insert("span:id".into(), json!({"stringValue":span}));
+        expected.insert(
+            "resource.service.name".into(),
+            json!({"stringValue":"reservoir"}),
+        );
         if grouped {
             expected.insert("span.lane".into(), json!({"stringValue":"main"}));
         }
@@ -2119,9 +2505,13 @@ async fn real_tempo_and_krabka_accept_query_param_alias() -> TestResult {
     // existing tests all send `q=`, so they could not catch this — this leg
     // mirrors the live datasource exactly.
     let client = reqwest::Client::new();
-    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
+    let tempo = start_ready_tempo(&client).await?;
+    let tempo_query = tempo.query_url;
+    let tempo_otlp = tempo.otlp_url;
 
-    let (trace_start_secs, query_range) = metrics_window()?;
+    let window = metrics_window()?;
+    let trace_start_secs = window.trace_start_secs;
+    let query_range = window.query_range;
     let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
@@ -2167,9 +2557,13 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
     // previously emitted the scope-stripped key (`service.name`), which left the
     // breakdown blank even though the data and totals were correct.
     let client = reqwest::Client::new();
-    let (_tempo, tempo_query, tempo_otlp) = start_ready_tempo(&client).await?;
+    let tempo = start_ready_tempo(&client).await?;
+    let tempo_query = tempo.query_url;
+    let tempo_otlp = tempo.otlp_url;
 
-    let (trace_start_secs, query_range) = metrics_window()?;
+    let window = metrics_window()?;
+    let trace_start_secs = window.trace_start_secs;
+    let query_range = window.query_range;
     let otlp_body = typed_grouping_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
@@ -2446,7 +2840,7 @@ async fn grafana_service_graph_prometheus_datasource_and_series() -> TestResult 
         request_total
             .labels
             .iter()
-            .any(|(k, v)| k == key && v == value)
+            .any(|label| label.key == key && label.value == value)
     };
     check!(
         (count - 1.0).abs() < 1e-9,
@@ -2558,19 +2952,32 @@ async fn start_krabka_pair_on(
 
 // Start Tempo and wait until it is ready, returning the container with its
 // query and OTLP base URLs.
-async fn start_ready_tempo(
-    client: &reqwest::Client,
-) -> TestResult<(testcontainers::ContainerAsync<GenericImage>, String, String)> {
+struct ReadyTempo {
+    _container: testcontainers::ContainerAsync<GenericImage>,
+    query_url: String,
+    otlp_url: String,
+}
+
+async fn start_ready_tempo(client: &reqwest::Client) -> TestResult<ReadyTempo> {
     let tempo = start_tempo().await?;
     let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
     let tempo_otlp = mapped_base_url(&tempo, TEMPO_OTLP_PORT).await?;
     wait_for_http_ok(client, &tempo_query, &["/ready", "/status"]).await?;
-    Ok((tempo, tempo_query, tempo_otlp))
+    Ok(ReadyTempo {
+        _container: tempo,
+        query_url: tempo_query,
+        otlp_url: tempo_otlp,
+    })
 }
 
 // A trace start three minutes back, aligned to 30s, and the `start`/`end`
 // query range that covers it with a minute before and two after.
-fn metrics_window() -> TestResult<(u64, String)> {
+struct MetricsWindow {
+    trace_start_secs: u64,
+    query_range: String,
+}
+
+fn metrics_window() -> TestResult<MetricsWindow> {
     let trace_start_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_secs()
@@ -2579,10 +2986,10 @@ fn metrics_window() -> TestResult<(u64, String)> {
         * 30;
     let query_start = trace_start_secs.saturating_sub(60);
     let query_end = trace_start_secs + 120;
-    Ok((
+    Ok(MetricsWindow {
         trace_start_secs,
-        format!("start={query_start}&end={query_end}"),
-    ))
+        query_range: format!("start={query_start}&end={query_end}"),
+    })
 }
 
 // A result's JSON, or an `error` object naming why there is none, so a
@@ -2768,19 +3175,22 @@ async fn compare_generated_trace_rejection(
     let encoded = url_encoded(&query);
     let mut responses = Vec::with_capacity(2);
     let mut rejected = true;
-    for (implementation, base, tenant) in [
-        ("upstream", oracle_base, None),
-        ("krabka", krabka_base, Some(TENANT)),
+    for endpoint in [
+        query_endpoint("upstream", oracle_base, None),
+        query_endpoint("krabka", krabka_base, Some(TENANT)),
     ] {
-        let mut request = client.get(format!("{base}/api/search?q={encoded}&{query_range}"));
-        if let Some(tenant) = tenant {
+        let mut request = client.get(format!(
+            "{}/api/search?q={encoded}&{query_range}",
+            endpoint.base
+        ));
+        if let Some(tenant) = endpoint.tenant {
             request = request.header("x-scope-orgid", tenant);
         }
         let response = request.send().await?;
         rejected &= record_rejection_response(
             &mut responses,
             ImplementationAnswer {
-                implementation,
+                implementation: endpoint.implementation,
                 response,
             },
             traceql_query_rejection_kind,
@@ -3244,7 +3654,9 @@ fn metric_series_match(expected: &JsonValue, actual: &JsonValue) -> TestResult {
     if !expected.keys().eq(actual.keys()) {
         return Err("metric labels differ".into());
     }
-    for (labels, expected_series) in expected {
+    for expected_entry in expected {
+        let labels = expected_entry.0;
+        let expected_series = expected_entry.1;
         let actual_series = actual[&labels];
         // Pinned SeriesSet::ToProto omits promLabels. When an oracle response
         // carries it, require the exact legend; independent live ledgers also
@@ -3261,7 +3673,9 @@ fn metric_series_match(expected: &JsonValue, actual: &JsonValue) -> TestResult {
                 return Err(format!("{labels}/{field}: different lengths").into());
             }
             // Tempo guarantees oldest-first samples and exemplars; retain that order.
-            for (expected_item, actual_item) in expected_items.iter().zip(actual_items) {
+            for compared_item in expected_items.iter().zip(actual_items) {
+                let expected_item = compared_item.0;
+                let actual_item = compared_item.1;
                 if metric_timestamp(expected_item)? != metric_timestamp(actual_item)? {
                     return Err(format!("{labels}/{field}: timestamp differs").into());
                 }
@@ -3350,24 +3764,43 @@ fn metrics_comparator_rejects_labels_timestamps_cancelling_values_and_exemplars(
         .unwrap()
         .reverse();
     metric_series_match(&expected, &reordered_labels).unwrap();
-    for (path, replacement) in [
-        ("/series/0/labels/0/value/stringValue", json!("POST")),
-        ("/series/0/promLabels", json!("{span_method=\"GET\"}")),
-        ("/series/0/samples/0/timestampMs", json!("1001")),
-        (
-            "/series/0/exemplars/0/labels/0/value/stringValue",
-            json!("wrong-trace"),
-        ),
-        (
-            "/series/0/exemplars/0/labels/1/value/stringValue",
-            json!(ERROR_SPAN_ID_HEX),
-        ),
-        ("/series/0/exemplars/0/timestampMs", json!("1001")),
-        ("/series/0/exemplars/0/value", json!(2.0)),
+    for case in [
+        JsonReplacementCase {
+            path: "/series/0/labels/0/value/stringValue",
+            replacement: json!("POST"),
+        },
+        JsonReplacementCase {
+            path: "/series/0/promLabels",
+            replacement: json!("{span_method=\"GET\"}"),
+        },
+        JsonReplacementCase {
+            path: "/series/0/samples/0/timestampMs",
+            replacement: json!("1001"),
+        },
+        JsonReplacementCase {
+            path: "/series/0/exemplars/0/labels/0/value/stringValue",
+            replacement: json!("wrong-trace"),
+        },
+        JsonReplacementCase {
+            path: "/series/0/exemplars/0/labels/1/value/stringValue",
+            replacement: json!(ERROR_SPAN_ID_HEX),
+        },
+        JsonReplacementCase {
+            path: "/series/0/exemplars/0/timestampMs",
+            replacement: json!("1001"),
+        },
+        JsonReplacementCase {
+            path: "/series/0/exemplars/0/value",
+            replacement: json!(2.0),
+        },
     ] {
         let mut actual = expected.clone();
-        *actual.pointer_mut(path).expect("fixture path") = replacement;
-        assert2::assert!(metric_series_match(&expected, &actual).is_err(), "{path}");
+        *actual.pointer_mut(case.path).expect("fixture path") = case.replacement;
+        assert2::assert!(
+            metric_series_match(&expected, &actual).is_err(),
+            "{}",
+            case.path
+        );
     }
     let mut cancelling = expected.clone();
     cancelling["series"][0]["samples"][0]["value"] = json!(2.0);
@@ -3405,13 +3838,23 @@ fn search_comparator_rejects_wrong_trace_and_span_selection() {
     let expected = json!({"traces": [{"traceID": TRACE_ID_HEX,
         "spanSets": [{"spans": [{"spanID": CHILD_SPAN_ID_HEX}]}]}]});
     let identities = search_identities(&expected).unwrap();
-    for (path, replacement) in [
-        ("/traces/0/traceID", "ffffffffffffffffffffffffffffffff"),
-        ("/traces/0/spanSets/0/spans/0/spanID", ERROR_SPAN_ID_HEX),
+    for patch in [
+        json_patch(
+            "/traces/0/traceID",
+            json!("ffffffffffffffffffffffffffffffff"),
+        ),
+        json_patch(
+            "/traces/0/spanSets/0/spans/0/spanID",
+            json!(ERROR_SPAN_ID_HEX),
+        ),
     ] {
         let mut actual = expected.clone();
-        *actual.pointer_mut(path).expect("fixture path") = json!(replacement);
-        assert2::assert!(search_identities(&actual).unwrap() != identities, "{path}");
+        *actual.pointer_mut(patch.path).expect("fixture path") = patch.value;
+        assert2::assert!(
+            search_identities(&actual).unwrap() != identities,
+            "{}",
+            patch.path
+        );
     }
 }
 
@@ -3437,7 +3880,7 @@ fn metric_series_label_keys(resp: &JsonValue) -> BTreeSet<String> {
 fn metric_prom_labels_list(resp: &JsonValue) -> Vec<String> {
     resp.get("series")
         .and_then(JsonValue::as_array)
-        .map(|series| {
+        .map_or_else(Default::default, |series| {
             series
                 .iter()
                 .filter_map(|s| {
@@ -3447,7 +3890,6 @@ fn metric_prom_labels_list(resp: &JsonValue) -> Vec<String> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 fn metric_points_total(value: &JsonValue) -> f64 {
@@ -3577,7 +4019,9 @@ fn sample_otlp_body_at(start_ns: u64) -> Vec<u8> {
         scalar_kv("cost", Value::IntValue(3)),
         string_kv("peer", "krabka-differential"),
     ]);
-    for (index, span) in scope.spans.iter_mut().enumerate() {
+    for indexed_span in scope.spans.iter_mut().enumerate() {
+        let index = indexed_span.0;
+        let span = indexed_span.1;
         span.attributes.extend([
             scalar_kv("limit", Value::IntValue(3)),
             scalar_kv("exponent", Value::IntValue([63, 62, 1024][index])),
@@ -3763,56 +4207,112 @@ fn retrieval_shape_ledger_rejects_type_collapse_order_and_nonfinite_corruption()
     span["events"] = json!([{"attributes":span["attributes"]}]);
     span["links"] = json!([{"attributes":span["attributes"]}]);
     let response = json!({"trace":{"resourceSpans":[{"scopeSpans":[{"spans":[span]}]}]}});
-    for (id, expected) in retrieval_expected_values() {
+    for case in retrieval_expected_values() {
+        let id = case.id;
+        let expected = case.expected;
         let values = retrieval_values(&response, &format!("retrieval.{id}")).unwrap();
         assert2::assert!(values.values().all(|value| value == &expected));
     }
-    for (key, corrupted) in [
-        ("retrieval.empty", json!({"stringValue":"nil"})),
-        ("retrieval.empty-oneof", json!({"arrayValue":{"values":[]}})),
-        (
-            "retrieval.singleton-int",
-            json!({"intValue":"9223372036854775807"}),
-        ),
-        (
-            "retrieval.multi-int",
-            json!({"arrayValue":{"values":[{"intValue":"2"},{"intValue":"1"}]}}),
-        ),
-        (
-            "retrieval.mixed",
-            json!({"arrayValue":{"values":[{"intValue":"1"},{"intValue":"1"}]}}),
-        ),
-        (
-            "retrieval.nonfinite-mixed",
-            json!({"arrayValue":{"values":[{"doubleValue":null},{"doubleValue":"-Infinity"},{"doubleValue":"NaN"},{"stringValue":"finite-decoy"}]}}),
-        ),
+    for case in [
+        CorruptedRetrievalCase {
+            key: "retrieval.empty",
+            value: json!({"stringValue":"nil"}),
+        },
+        CorruptedRetrievalCase {
+            key: "retrieval.empty-oneof",
+            value: json!({"arrayValue":{"values":[]}}),
+        },
+        CorruptedRetrievalCase {
+            key: "retrieval.singleton-int",
+            value: json!({"intValue":"9223372036854775807"}),
+        },
+        CorruptedRetrievalCase {
+            key: "retrieval.multi-int",
+            value: json!({"arrayValue":{"values":[{"intValue":"2"},{"intValue":"1"}]}}),
+        },
+        CorruptedRetrievalCase {
+            key: "retrieval.mixed",
+            value: json!({"arrayValue":{"values":[{"intValue":"1"},{"intValue":"1"}]}}),
+        },
+        CorruptedRetrievalCase {
+            key: "retrieval.nonfinite-mixed",
+            value: json!({"arrayValue":{"values":[{"doubleValue":null},{"doubleValue":"-Infinity"},{"doubleValue":"NaN"},{"stringValue":"finite-decoy"}]}}),
+        },
     ] {
-        let expected = retrieval_values(&response, key).unwrap();
+        let expected = retrieval_values(&response, case.key).unwrap();
         let mut wrong = response.clone();
         let attrs = wrong["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
             .as_array_mut()
             .unwrap();
         attrs
             .iter_mut()
-            .find(|attribute| attribute["key"] == key)
-            .unwrap()["value"] = corrupted;
-        assert2::assert!(retrieval_values(&wrong, key).map_or(true, |values| values != expected));
+            .find(|attribute| attribute["key"] == case.key)
+            .unwrap()["value"] = case.value;
+        assert2::assert!(
+            retrieval_values(&wrong, case.key).map_or(true, |values| values != expected)
+        );
     }
 }
 
 fn forest_otlp_fixture() -> TracesData {
     let spans = [
-        (10_u8, 0_u8, "ancestor1", "ancestor"),
-        (11, 10, "descendant1a", "descendant"),
-        (12, 10, "descendant1b", "descendant"),
-        (20, 0, "ancestor2", "ancestor"),
-        (21, 20, "descendant2a", "descendant"),
-        (22, 20, "descendant2b", "descendant"),
-        (23, 22, "descendant2bb", "descendant"),
-        (30, 99, "partial", "disconnected"),
+        ForestSpanCase {
+            id: 10,
+            parent: 0,
+            name: "ancestor1",
+            kind: "ancestor",
+        },
+        ForestSpanCase {
+            id: 11,
+            parent: 10,
+            name: "descendant1a",
+            kind: "descendant",
+        },
+        ForestSpanCase {
+            id: 12,
+            parent: 10,
+            name: "descendant1b",
+            kind: "descendant",
+        },
+        ForestSpanCase {
+            id: 20,
+            parent: 0,
+            name: "ancestor2",
+            kind: "ancestor",
+        },
+        ForestSpanCase {
+            id: 21,
+            parent: 20,
+            name: "descendant2a",
+            kind: "descendant",
+        },
+        ForestSpanCase {
+            id: 22,
+            parent: 20,
+            name: "descendant2b",
+            kind: "descendant",
+        },
+        ForestSpanCase {
+            id: 23,
+            parent: 22,
+            name: "descendant2bb",
+            kind: "descendant",
+        },
+        ForestSpanCase {
+            id: 30,
+            parent: 99,
+            name: "partial",
+            kind: "disconnected",
+        },
     ]
     .into_iter()
-    .map(|(id, parent, name, kind)| {
+    .map(|case| {
+        let ForestSpanCase {
+            id,
+            parent,
+            name,
+            kind,
+        } = case;
         let mut attributes = vec![string_kv("kind", kind)];
         if id == 11 {
             attributes.extend([string_kv("foo", "same"), string_kv("bar", "same")]);
@@ -3897,7 +4397,9 @@ fn typed_grouping_otlp_body_at(start_ns: u64) -> Vec<u8> {
     ]
     .into_iter()
     .enumerate()
-    .map(|(index, mixed)| {
+    .map(|indexed_value| {
+        let index = indexed_value.0;
+        let mixed = indexed_value.1;
         let mut attributes = vec![OtlpKeyValue {
             key: "present".into(),
             value: Some(AnyValue {
@@ -3951,15 +4453,19 @@ async fn compare_live_typed_groups(targets: QueryTargets<'_>) -> TestResult {
     std::fs::create_dir_all(&output)?;
     let mut cases = Vec::new();
     let mut failures = Vec::new();
-    for (stableid, grouping) in [
-        ("tempo-live-group-heterogeneous-scalars", "span.mixed"),
-        (
-            "tempo-live-group-heterogeneous-and-missing",
-            "span.mixed,span.present",
-        ),
+    for case in [
+        TypedGroupCase {
+            stable_id: "tempo-live-group-heterogeneous-scalars",
+            grouping: "span.mixed",
+        },
+        TypedGroupCase {
+            stable_id: "tempo-live-group-heterogeneous-and-missing",
+            grouping: "span.mixed,span.present",
+        },
     ] {
         let query = format!(
-            "{{ resource.service.name = \"typed\" }} | count_over_time() by ({grouping}) with(exemplars=false)"
+            "{{ resource.service.name = \"typed\" }} | count_over_time() by ({}) with(exemplars=false)",
+            case.grouping
         );
         let encoded = url_encoded(&query);
         let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
@@ -3967,15 +4473,15 @@ async fn compare_live_typed_groups(targets: QueryTargets<'_>) -> TestResult {
             get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
                 .await?;
         let actual = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await?;
-        let independent = typed_group_expectation(grouping);
+        let independent = typed_group_expectation(case.grouping);
         let result = metric_series_match(&upstream, &actual).and_then(|()| {
-            check_typed_group_ledger(&upstream, grouping, &independent)?;
-            check_typed_group_ledger(&actual, grouping, &independent)
+            check_typed_group_ledger(&upstream, case.grouping, &independent)?;
+            check_typed_group_ledger(&actual, case.grouping, &independent)
         });
         if let Err(error) = &result {
-            failures.push(format!("{stableid}: {error}"));
+            failures.push(format!("{}: {error}", case.stable_id));
         }
-        cases.push(json!({"stableid":stableid,"query":query,"request":{"range":range,"step":"30s","exemplars":false},"independent_expected":independent,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+        cases.push(json!({"stableid":case.stable_id,"query":query,"request":{"range":range,"step":"30s","exemplars":false},"independent_expected":independent,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
         std::fs::write(
             output.join("tempo-typed-group-conformance.json"),
             serde_json::to_vec_pretty(&json!({"cases":cases}))?,
@@ -4072,15 +4578,30 @@ fn typed_group_ledger_rejects_type_coercion_with_unchanged_counts() {
     let mut equivalent = correct.clone();
     equivalent["series"][2]["labels"][0]["value"] = json!({"doubleValue":1});
     assert2::assert!(check_typed_group_ledger(&equivalent, "span.mixed", &expected).is_ok());
-    for (group, replacement) in [
-        (0, json!({"stringValue":"1"})),
-        (1, json!({"doubleValue":1})),
-        (2, json!({"intValue":"1"})),
-        (3, json!({"intValue":"1"})),
-        (4, json!({"boolValue":true})),
+    for case in [
+        InvalidatedMetricGroupCase {
+            group: 0,
+            replacement: json!({"stringValue":"1"}),
+        },
+        InvalidatedMetricGroupCase {
+            group: 1,
+            replacement: json!({"doubleValue":1}),
+        },
+        InvalidatedMetricGroupCase {
+            group: 2,
+            replacement: json!({"intValue":"1"}),
+        },
+        InvalidatedMetricGroupCase {
+            group: 3,
+            replacement: json!({"intValue":"1"}),
+        },
+        InvalidatedMetricGroupCase {
+            group: 4,
+            replacement: json!({"boolValue":true}),
+        },
     ] {
         let mut conflated = equivalent.clone();
-        conflated["series"][group]["labels"][0]["value"] = replacement;
+        conflated["series"][case.group]["labels"][0]["value"] = case.replacement;
         assert2::assert!(metric_points_total(&conflated).to_bits() == 7.0_f64.to_bits());
         assert2::assert!(check_typed_group_ledger(&conflated, "span.mixed", &expected).is_err());
     }

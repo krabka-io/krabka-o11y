@@ -10,19 +10,42 @@ mod scoped_querier_config;
 
 use scoped_querier_config::scoped_querier_config;
 
+struct TargetCase {
+    target: &'static str,
+    role: Role,
+}
+
+struct QuantityCase {
+    flag: &'static str,
+    value: &'static str,
+}
+
 #[test]
 fn parses_explicit_service_targets() {
-    for (target, expected) in [
-        ("distributor", Role::Distributor),
-        ("block-builder", Role::BlockBuilder),
-        ("querier", Role::Querier),
-        ("all", Role::All),
+    for case in [
+        TargetCase {
+            target: "distributor",
+            role: Role::Distributor,
+        },
+        TargetCase {
+            target: "block-builder",
+            role: Role::BlockBuilder,
+        },
+        TargetCase {
+            target: "querier",
+            role: Role::Querier,
+        },
+        TargetCase {
+            target: "all",
+            role: Role::All,
+        },
     ] {
         let config =
-            ServiceConfig::try_parse_from(["krabka-observability", "--target", target]).unwrap();
+            ServiceConfig::try_parse_from(["krabka-observability", "--target", case.target])
+                .unwrap();
 
-        assert!(config.target == expected);
-        assert!(run(config).unwrap().role == expected);
+        assert!(config.target == case.role);
+        assert!(run(config).unwrap().role == case.role);
     }
 }
 
@@ -67,14 +90,29 @@ fn parses_unit_bearing_query_length() {
 
 #[test]
 fn rejects_negative_quantity_limits() {
-    for (flag, value) in [
-        ("--max-query-range", "-1ns"),
-        ("--max-query-read", "-1B"),
-        ("--max-query-string-bytes", "-1B"),
-        ("--max-ingest-body", "-1B"),
-        ("--wal-append-timeout", "-1ms"),
+    for case in [
+        QuantityCase {
+            flag: "--max-query-range",
+            value: "-1ns",
+        },
+        QuantityCase {
+            flag: "--max-query-read",
+            value: "-1B",
+        },
+        QuantityCase {
+            flag: "--max-query-string-bytes",
+            value: "-1B",
+        },
+        QuantityCase {
+            flag: "--max-ingest-body",
+            value: "-1B",
+        },
+        QuantityCase {
+            flag: "--wal-append-timeout",
+            value: "-1ms",
+        },
     ] {
-        let argument = format!("{flag}={value}");
+        let argument = format!("{}={}", case.flag, case.value);
         assert!(
             ServiceConfig::try_parse_from([
                 "krabka-observability",
@@ -83,7 +121,9 @@ fn rejects_negative_quantity_limits() {
                 &argument,
             ])
             .is_err(),
-            "{flag} accepted {value}"
+            "{} accepted {}",
+            case.flag,
+            case.value
         );
     }
 }

@@ -78,8 +78,10 @@ async fn native_histogram_cardinality_reports_latest_bucket_counts() {
         Arc::new(search_store()),
         EngineOpts::default(),
     ));
-    let (status, body) =
+    let response =
         annotated_query_body(state, "/api/v1/cardinality/active_native_histogram_metrics").await;
+    let status = response.status;
+    let body = response.body;
 
     assert2::assert!(status == StatusCode::OK);
     assert2::check!(body["data"][0]["metric"] == "request_duration_seconds");

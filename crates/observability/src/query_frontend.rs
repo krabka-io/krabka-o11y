@@ -276,8 +276,8 @@ pub(crate) async fn execute_index_shards_query(
     let raw_query = raw_query.ok_or(HttpQueryError::MissingQueryParameter("query"))?;
     let params = crate::parse_query_params(Some(raw_query))?;
     let target = url::form_urlencoded::parse(raw_query.as_bytes())
-        .find(|(key, _)| key == "targetBytesPerShard")
-        .map(|(_, value)| value.into_owned())
+        .find(|pair| pair.0 == "targetBytesPerShard")
+        .map(|pair| pair.1.into_owned())
         .ok_or(HttpQueryError::MissingQueryParameter("targetBytesPerShard"))?;
     let target_bytes = target
         .parse::<u64>()
@@ -387,7 +387,9 @@ pub(crate) fn fingerprint_shards(
     let mut shards = Vec::new();
     let mut min = 0;
     let mut bytes = 0_u64;
-    for (index, fingerprint) in ordered.iter().copied().enumerate() {
+    for item in ordered.iter().copied().enumerate() {
+        let index = item.0;
+        let fingerprint = item.1;
         bytes = bytes.saturating_add(weights.get(&fingerprint).copied().unwrap_or_default());
         if bytes >= target_bytes && index + 1 < ordered.len() {
             shards.push(FingerprintBounds {
@@ -476,8 +478,8 @@ pub(crate) fn merge_frontend_results(
 
 fn merge_one_result(target: &mut Value, mut source: Value) {
     let source_results = source["data"]["result"].as_array_mut().map(std::mem::take);
-    if let (Some(source_results), Some(target_results)) =
-        (source_results, target["data"]["result"].as_array_mut())
+    if let Some(source_results) = source_results
+        && let Some(target_results) = target["data"]["result"].as_array_mut()
     {
         target_results.extend(source_results);
     }
@@ -547,19 +549,25 @@ fn entry_timestamp(entry: &Value) -> i64 {
 fn compare_entry_timestamps(left: &Value, right: &Value) -> std::cmp::Ordering {
     let left = left.as_array().and_then(|entry| entry.first());
     let right = right.as_array().and_then(|entry| entry.first());
-    match (
-        left.and_then(Value::as_str)
-            .and_then(|value| value.parse::<i64>().ok()),
-        right
-            .and_then(Value::as_str)
-            .and_then(|value| value.parse::<i64>().ok()),
-    ) {
-        (Some(left), Some(right)) => left.cmp(&right),
-        _ => left
-            .and_then(Value::as_f64)
-            .partial_cmp(&right.and_then(Value::as_f64))
-            .unwrap_or(std::cmp::Ordering::Equal),
+    let left_integer = left
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<i64>().ok());
+    let right_integer = right
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<i64>().ok());
+    if let (Some(left), Some(right)) = (left_integer, right_integer) {
+        return left.cmp(&right);
     }
+    left.and_then(Value::as_f64)
+        .partial_cmp(&right.and_then(Value::as_f64))
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
+#[derive(Clone, Copy)]
+struct StreamEntryOrder {
+    timestamp: i64,
+    stream_index: usize,
+    entry_index: usize,
 }
 
 pub(crate) fn apply_global_stream_limit(
@@ -600,36 +608,44 @@ pub(crate) fn apply_global_stream_limit(
         return;
     }
     let mut entries = Vec::new();
-    for (stream_index, stream) in streams.iter().enumerate() {
+    for stream_row in streams.iter().enumerate() {
+        let stream_index = stream_row.0;
+        let stream = stream_row.1;
         if let Some(values) = stream["values"].as_array() {
-            entries.extend(
-                values.iter().enumerate().map(|(entry_index, entry)| {
-                    (entry_timestamp(entry), stream_index, entry_index)
-                }),
-            );
+            entries.extend(values.iter().enumerate().map(|row| StreamEntryOrder {
+                timestamp: entry_timestamp(row.1),
+                stream_index,
+                entry_index: row.0,
+            }));
         }
     }
     // Only membership in the first `limit` entries matters. Keep original
     // stream order below rather than sorting the rest of the global response.
-    let compare = |left: &(i64, usize, usize), right: &(i64, usize, usize)| {
+    let compare = |left: &StreamEntryOrder, right: &StreamEntryOrder| {
         let time_order = match direction {
-            LokiDirection::Forward => left.0.cmp(&right.0),
-            LokiDirection::Backward => right.0.cmp(&left.0),
+            LokiDirection::Forward => left.timestamp.cmp(&right.timestamp),
+            LokiDirection::Backward => right.timestamp.cmp(&left.timestamp),
         };
         time_order
-            .then_with(|| left.1.cmp(&right.1))
-            .then_with(|| left.2.cmp(&right.2))
+            .then_with(|| left.stream_index.cmp(&right.stream_index))
+            .then_with(|| left.entry_index.cmp(&right.entry_index))
     };
     // Stream and entry positions make the order unique, so a strict cutoff
     // keeps exactly `limit` entries without building a membership set.
     let cutoff = *entries.select_nth_unstable_by(limit, compare).1;
     drop(entries);
-    for (stream_index, stream) in streams.iter_mut().enumerate() {
+    for stream_row in streams.iter_mut().enumerate() {
+        let stream_index = stream_row.0;
+        let stream = stream_row.1;
         if let Some(values) = stream["values"].as_array_mut() {
             let mut entry_index = 0;
             values.retain(|entry| {
                 let keep = compare(
-                    &(entry_timestamp(entry), stream_index, entry_index),
+                    &StreamEntryOrder {
+                        timestamp: entry_timestamp(entry),
+                        stream_index,
+                        entry_index,
+                    },
                     &cutoff,
                 )
                 .is_lt();

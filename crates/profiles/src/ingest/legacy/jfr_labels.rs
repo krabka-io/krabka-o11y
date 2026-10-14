@@ -2,8 +2,8 @@ use super::HashMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct JfrLabels {
-    pub(crate) global: Vec<(String, String)>,
-    pub(crate) contexts: HashMap<i64, Vec<(String, String)>>,
+    pub(crate) global: Vec<krabka_blockstore::LabelPair>,
+    pub(crate) contexts: HashMap<i64, Vec<krabka_blockstore::LabelPair>>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]

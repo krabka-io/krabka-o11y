@@ -11,7 +11,26 @@ use super::{Uri, query_param};
 
 const HOUR_NS: i64 = 3_600_000_000_000;
 
-pub(crate) fn instant_metric_bounds(uri: &Uri) -> Result<(i64, i64, i64, i64), String> {
+struct ParsedTimestampZone<'a> {
+    calendar: &'a str,
+    offset_seconds: i64,
+}
+
+struct DurationUnit {
+    order: u8,
+    multiplier: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
+pub(crate) struct InstantMetricBounds {
+    pub(crate) start_ns: i64,
+    pub(crate) end_ns: i64,
+    pub(crate) step_ns: i64,
+    pub(crate) query_end_ns: i64,
+}
+
+pub(crate) fn instant_metric_bounds(uri: &Uri) -> Result<InstantMetricBounds, String> {
     let now_ns = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -22,7 +41,7 @@ pub(crate) fn instant_metric_bounds(uri: &Uri) -> Result<(i64, i64, i64, i64), S
 
 // Tempo pkg/api/http.go ParseQueryInstantRequest/determineBounds defaults to
 // one hour ending now, independently defaults either bound, and ignores time.
-fn instant_metric_bounds_at(uri: &Uri, now_ns: i64) -> Result<(i64, i64, i64, i64), String> {
+fn instant_metric_bounds_at(uri: &Uri, now_ns: i64) -> Result<InstantMetricBounds, String> {
     let since = query_param(uri, "since").filter(|value| !value.is_empty());
     let since_ns = since.as_deref().map_or(Ok(HOUR_NS), parse_since)?;
     let end_ns = timestamp_param(uri, "end", now_ns)?;
@@ -35,7 +54,12 @@ fn instant_metric_bounds_at(uri: &Uri, now_ns: i64) -> Result<(i64, i64, i64, i6
         .checked_sub(start_ns)
         .filter(|step| *step > 0)
         .ok_or_else(|| "end must be > start".to_string())?;
-    Ok((start_ns, end_ns, step_ns, end_ns))
+    Ok(InstantMetricBounds {
+        start_ns,
+        end_ns,
+        step_ns,
+        query_end_ns: end_ns,
+    })
 }
 
 fn timestamp_param(uri: &Uri, key: &str, default: i64) -> Result<i64, String> {
@@ -77,11 +101,15 @@ fn parse_timestamp(value: &str) -> Option<i64> {
     if !grammar.is_match(value) {
         return None;
     }
-    let (calendar, offset_seconds) = if let Some(calendar) = value.strip_suffix('Z') {
-        (calendar, 0_i64)
+    let parsed_zone = if let Some(calendar) = value.strip_suffix('Z') {
+        ParsedTimestampZone {
+            calendar,
+            offset_seconds: 0,
+        }
     } else {
         let split = value.len().checked_sub(6)?;
-        let (calendar, zone) = value.split_at(split);
+        let calendar = value.get(..split)?;
+        let zone = value.get(split..)?;
         let hour = zone[1..3].parse::<i64>().ok()?;
         let minute = zone[4..6].parse::<i64>().ok()?;
         // Go's fallback RFC3339 parser accepts 24 hours and 60 minutes.
@@ -89,9 +117,13 @@ fn parse_timestamp(value: &str) -> Option<i64> {
             return None;
         }
         let sign = if zone.starts_with('-') { -1 } else { 1 };
-        (calendar, sign * (hour * 3_600 + minute * 60))
+        ParsedTimestampZone {
+            calendar,
+            offset_seconds: sign * (hour * 3_600 + minute * 60),
+        }
     };
-    let mut calendar = calendar.replace(',', ".");
+    let offset_seconds = parsed_zone.offset_seconds;
+    let mut calendar = parsed_zone.calendar.replace(',', ".");
     // Go time.Parse falls back to its layout parser, which permits one digit
     // for the hour; Arrow's fixed-position calendar parser requires two.
     if calendar.as_bytes().get(12) == Some(&b':') {
@@ -129,14 +161,35 @@ fn parse_since(value: &str) -> Result<i64, String> {
             .take_while(|byte| !byte.is_ascii_digit())
             .count();
         let unit = &rest[..unit_end];
-        let (order, multiplier) = match unit {
-            "y" => (0, 31_536_000_000_000_000_i64),
-            "w" => (1, 604_800_000_000_000),
-            "d" => (2, 86_400_000_000_000),
-            "h" => (3, HOUR_NS),
-            "m" => (4, 60_000_000_000),
-            "s" => (5, 1_000_000_000),
-            "ms" => (6, 1_000_000),
+        let unit = match unit {
+            "y" => DurationUnit {
+                order: 0,
+                multiplier: 31_536_000_000_000_000_i64,
+            },
+            "w" => DurationUnit {
+                order: 1,
+                multiplier: 604_800_000_000_000,
+            },
+            "d" => DurationUnit {
+                order: 2,
+                multiplier: 86_400_000_000_000,
+            },
+            "h" => DurationUnit {
+                order: 3,
+                multiplier: HOUR_NS,
+            },
+            "m" => DurationUnit {
+                order: 4,
+                multiplier: 60_000_000_000,
+            },
+            "s" => DurationUnit {
+                order: 5,
+                multiplier: 1_000_000_000,
+            },
+            "ms" => DurationUnit {
+                order: 6,
+                multiplier: 1_000_000,
+            },
             "" => return Err(invalid()),
             _ => {
                 return Err(format!(
@@ -144,17 +197,17 @@ fn parse_since(value: &str) -> Result<i64, String> {
                 ));
             }
         };
-        if previous.is_some_and(|prior| order <= prior) {
+        if previous.is_some_and(|prior| unit.order <= prior) {
             return Err(invalid());
         }
         total = i64::try_from(amount)
             .ok()
-            .and_then(|amount| amount.checked_mul(multiplier))
+            .and_then(|amount| amount.checked_mul(unit.multiplier))
             .and_then(|chunk| total.checked_add(chunk))
             .ok_or_else(|| {
                 "could not parse 'since' parameter: duration out of range".to_string()
             })?;
-        previous = Some(order);
+        previous = Some(unit.order);
         rest = &rest[unit_end..];
     }
     Ok(total)
@@ -166,7 +219,7 @@ mod tests {
 
     use super::*;
 
-    fn at(query: &str) -> Result<(i64, i64, i64, i64), String> {
+    fn at(query: &str) -> Result<InstantMetricBounds, String> {
         instant_metric_bounds_at(
             &format!("/api/metrics/query?{query}").parse().unwrap(),
             7_200_000_000_000,
@@ -175,7 +228,7 @@ mod tests {
 
     #[test]
     fn defaults_ignore_time_and_independently_fill_bounds() {
-        let default = (
+        let default = expected(
             3_600_000_000_000,
             7_200_000_000_000,
             3_600_000_000_000,
@@ -186,65 +239,143 @@ mod tests {
         }
         assert!(
             at("end=6000")
-                == Ok((
+                == Ok(expected(
                     2_400_000_000_000,
                     6_000_000_000_000,
                     3_600_000_000_000,
-                    6_000_000_000_000
+                    6_000_000_000_000,
                 ))
         );
         assert!(
             at("end=8000&since=30m")
-                == Ok((
+                == Ok(expected(
                     5_400_000_000_000,
                     8_000_000_000_000,
                     2_600_000_000_000,
-                    8_000_000_000_000
+                    8_000_000_000_000,
                 ))
         );
         assert!(
             at("start=7000&since=1m")
-                == Ok((
+                == Ok(expected(
                     7_000_000_000_000,
                     7_200_000_000_000,
                     200_000_000_000,
-                    7_200_000_000_000
+                    7_200_000_000_000,
                 ))
         );
         assert!(at("start=6000&end=6100&since=bogus").is_err());
         assert!(at("start=7201").is_err());
         assert!(at("since=0").is_err());
-        assert!(at("start=0&end=9223372036854775807") == Ok((0, i64::MAX, i64::MAX, i64::MAX)));
+        assert!(
+            at("start=0&end=9223372036854775807") == Ok(expected(0, i64::MAX, i64::MAX, i64::MAX))
+        );
         assert!(at("start=-10000000000&end=9223372036854775807").is_err());
+    }
+
+    fn expected(
+        start_ns: i64,
+        end_ns: i64,
+        step_ns: i64,
+        query_end_ns: i64,
+    ) -> InstantMetricBounds {
+        InstantMetricBounds {
+            start_ns,
+            end_ns,
+            step_ns,
+            query_end_ns,
+        }
     }
 
     #[test]
     fn source_timestamp_forms_keep_integer_precision_and_fractional_rounding() {
-        for (input, expected) in [
-            ("12", 12_000_000_000),
-            ("0x1.8p1", 3_000_000_000),
-            ("0x_1.8p1", 3_000_000_000),
-            ("-0x1.8p1", -3_000_000_000),
-            ("1_2.5", 12_500_000_000),
-            ("1.5e0_1", 15_000_000_000),
-            ("10000000001", 10_000_000_001),
-            ("1700000000000000001", 1_700_000_000_000_000_001),
-            ("12.12349", 12_123_000_000),
-            ("12.1235", 12_123_000_000),
-            ("12.12351", 12_124_000_000),
-            ("-12.1235", -12_123_000_000),
-            ("1970-01-01T00:00:01.000000001Z", 1_000_000_001),
-            ("1970-01-01T0:00:01Z", 1_000_000_000),
-            ("1970-01-01T1:00:01.5+01:00", 1_500_000_000),
-            ("1970-01-01T01:00:01+01:00", 1_000_000_000),
-            ("1970-01-01T00:00:01+24:60", -89_999_000_000_000),
-            ("1970-01-01T00:00:01,1234567891Z", 1_123_456_789),
-            (
-                "0000-01-01T00:00:00Z",
-                (-62_167_219_200_i64).wrapping_mul(1_000_000_000),
-            ),
+        struct TimestampCase {
+            input: &'static str,
+            expected_ns: i64,
+        }
+        for case in [
+            TimestampCase {
+                input: "12",
+                expected_ns: 12_000_000_000,
+            },
+            TimestampCase {
+                input: "0x1.8p1",
+                expected_ns: 3_000_000_000,
+            },
+            TimestampCase {
+                input: "0x_1.8p1",
+                expected_ns: 3_000_000_000,
+            },
+            TimestampCase {
+                input: "-0x1.8p1",
+                expected_ns: -3_000_000_000,
+            },
+            TimestampCase {
+                input: "1_2.5",
+                expected_ns: 12_500_000_000,
+            },
+            TimestampCase {
+                input: "1.5e0_1",
+                expected_ns: 15_000_000_000,
+            },
+            TimestampCase {
+                input: "10000000001",
+                expected_ns: 10_000_000_001,
+            },
+            TimestampCase {
+                input: "1700000000000000001",
+                expected_ns: 1_700_000_000_000_000_001,
+            },
+            TimestampCase {
+                input: "12.12349",
+                expected_ns: 12_123_000_000,
+            },
+            TimestampCase {
+                input: "12.1235",
+                expected_ns: 12_123_000_000,
+            },
+            TimestampCase {
+                input: "12.12351",
+                expected_ns: 12_124_000_000,
+            },
+            TimestampCase {
+                input: "-12.1235",
+                expected_ns: -12_123_000_000,
+            },
+            TimestampCase {
+                input: "1970-01-01T00:00:01.000000001Z",
+                expected_ns: 1_000_000_001,
+            },
+            TimestampCase {
+                input: "1970-01-01T0:00:01Z",
+                expected_ns: 1_000_000_000,
+            },
+            TimestampCase {
+                input: "1970-01-01T1:00:01.5+01:00",
+                expected_ns: 1_500_000_000,
+            },
+            TimestampCase {
+                input: "1970-01-01T01:00:01+01:00",
+                expected_ns: 1_000_000_000,
+            },
+            TimestampCase {
+                input: "1970-01-01T00:00:01+24:60",
+                expected_ns: -89_999_000_000_000,
+            },
+            TimestampCase {
+                input: "1970-01-01T00:00:01,1234567891Z",
+                expected_ns: 1_123_456_789,
+            },
+            TimestampCase {
+                input: "0000-01-01T00:00:00Z",
+                expected_ns: (-62_167_219_200_i64).wrapping_mul(1_000_000_000),
+            },
         ] {
-            assert!(parse_timestamp(input) == Some(expected), "{input}");
+            assert!(
+                parse_timestamp(case.input) == Some(case.expected_ns),
+                "{}",
+                case.input
+            );
         }
         for input in [
             "bogus",

@@ -49,20 +49,15 @@ mod tests {
 
     #[test]
     fn fingerprint_is_injective_across_delimiter_ambiguity() {
-        for (_name, left, right) in [
-            (
-                "embedded equals sign",
-                Labels::from_pairs([("a", "b=c")]),
-                Labels::from_pairs([("a=b", "c")]),
-            ),
-            (
-                "embedded newline",
-                Labels::from_pairs([("x", "y"), ("z", "")]),
-                Labels::from_pairs([("x", "y\nz=")]),
-            ),
-        ] {
-            assert2::assert!(left.fingerprint() != right.fingerprint());
-        }
+        let embedded_equals_left = Labels::from_pairs([LabelPair::new("a", "b=c")]);
+        let embedded_equals_right = Labels::from_pairs([LabelPair::new("a=b", "c")]);
+        assert2::assert!(embedded_equals_left.fingerprint() != embedded_equals_right.fingerprint());
+        let embedded_newline_left =
+            Labels::from_pairs([LabelPair::new("x", "y"), LabelPair::new("z", "")]);
+        let embedded_newline_right = Labels::from_pairs([LabelPair::new("x", "y\nz=")]);
+        assert2::assert!(
+            embedded_newline_left.fingerprint() != embedded_newline_right.fingerprint()
+        );
     }
 
     #[test]
@@ -70,60 +65,85 @@ mod tests {
         let mut l = Labels::new();
         assert2::assert!(&l == &Labels::new());
         l.insert("app", "api");
-        assert2::assert!(&l == &Labels::from_pairs([("app", "api")]));
+        assert2::assert!(&l == &Labels::from_pairs([LabelPair::new("app", "api")]));
         assert2::assert!(l.get("app") == Some("api"));
         assert2::assert!(l.get("missing") == None);
         l.insert("env", "prod");
-        let pairs = l
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_str()))
-            .collect::<Vec<_>>();
-        assert2::assert!(&l == &Labels::from_pairs([("app", "api"), ("env", "prod")]));
-        assert2::assert!(pairs == vec![("app", "api"), ("env", "prod")]);
+        let pairs = l.iter().collect::<Vec<_>>();
+        assert2::assert!(
+            &l == &Labels::from_pairs([
+                LabelPair::new("app", "api"),
+                LabelPair::new("env", "prod"),
+            ])
+        );
+        assert2::assert!(
+            pairs
+                == vec![
+                    LabelPairRef {
+                        name: "app",
+                        value: "api"
+                    },
+                    LabelPairRef {
+                        name: "env",
+                        value: "prod"
+                    },
+                ]
+        );
     }
 
     #[test]
     fn owned_iteration_keeps_sorted_pairs_and_duplicate_replacement() {
-        for (pairs, expected) in [
-            (vec![], vec![]),
-            (
-                vec![("z", "discard"), ("a", "first"), ("z", "last")],
-                vec![("a", "first"), ("z", "last")],
-            ),
-            (
-                vec![("α", "v\0x"), ("", ""), ("a=b", "c\nd")],
-                vec![("", ""), ("a=b", "c\nd"), ("α", "v\0x")],
-            ),
-        ] {
-            let labels = Labels::from_pairs(pairs);
-            let actual = labels.into_iter().collect::<Vec<_>>();
-            let expected = expected
-                .into_iter()
-                .map(|(name, value)| (name.to_owned(), value.to_owned()))
-                .collect::<Vec<_>>();
-            assert2::assert!(actual == expected);
-        }
+        let empty = Labels::from_pairs(Vec::new());
+        assert2::assert!(empty.into_iter().collect::<Vec<_>>().is_empty());
+        let labels = Labels::from_pairs([
+            LabelPair::new("z", "discard"),
+            LabelPair::new("a", "first"),
+            LabelPair::new("z", "last"),
+        ]);
+        assert2::assert!(
+            labels.into_iter().collect::<Vec<_>>()
+                == vec![LabelPair::new("a", "first"), LabelPair::new("z", "last"),]
+        );
+        let labels = Labels::from_pairs([
+            LabelPair::new("α", "v\0x"),
+            LabelPair::new("", ""),
+            LabelPair::new("a=b", "c\nd"),
+        ]);
+        assert2::assert!(
+            labels.into_iter().collect::<Vec<_>>()
+                == vec![
+                    LabelPair::new("", ""),
+                    LabelPair::new("a=b", "c\nd"),
+                    LabelPair::new("α", "v\0x"),
+                ]
+        );
     }
 
     #[test]
     fn from_iterator_preserves_pairs() {
-        let labels = vec![
-            ("app".to_string(), "api".to_string()),
-            ("env".to_string(), "prod".to_string()),
-        ]
-        .into_iter()
-        .collect::<Labels>();
+        let labels = vec![LabelPair::new("app", "api"), LabelPair::new("env", "prod")]
+            .into_iter()
+            .collect::<Labels>();
 
-        let pairs = labels
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_str()))
-            .collect::<Vec<_>>();
-        assert2::assert!(pairs == vec![("app", "api"), ("env", "prod")]);
+        let pairs = labels.iter().collect::<Vec<_>>();
+        assert2::assert!(
+            pairs
+                == vec![
+                    LabelPairRef {
+                        name: "app",
+                        value: "api"
+                    },
+                    LabelPairRef {
+                        name: "env",
+                        value: "prod"
+                    },
+                ]
+        );
     }
 }
 
 mod labels_type;
 mod series_fingerprint;
 
-pub use labels_type::Labels;
+pub use labels_type::{LabelPair, LabelPairRef, Labels, LabelsIntoIter, LabelsIter, SeriesLabels};
 pub use series_fingerprint::SeriesFingerprint;

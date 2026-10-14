@@ -18,6 +18,9 @@ use krabka_traces::frontend::{
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
 
+#[path = "support/mod.rs"]
+mod support;
+
 fn block(id: &str) -> BlockMetaInfo {
     BlockMetaInfo {
         block_id: id.to_string(),
@@ -32,10 +35,7 @@ fn block(id: &str) -> BlockMetaInfo {
 }
 
 async fn spawn(app: axum::Router) -> std::net::SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, authenticated(app)).await.unwrap() });
-    addr
+    support::spawn_axum(authenticated(app)).await
 }
 
 // Serve a frontend over `backend` and `catalog`, with every block cold and
@@ -52,6 +52,21 @@ async fn serve_frontend(backend: MockQuerier, catalog: MockCatalog) -> std::net:
         MembershipView::fixed(["q1:3200"]),
     ));
     spawn(router_with_backend(qf, RoleReadiness::new())).await
+}
+
+async fn get_json(
+    client: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    path: &str,
+) -> serde_json::Value {
+    let response = client
+        .get(format!("http://{addr}{path}"))
+        .header("X-Scope-OrgID", "t1")
+        .send()
+        .await
+        .unwrap();
+    assert2::assert!(response.status().is_success());
+    response.json().await.unwrap()
 }
 
 fn one_completed_job() -> Metrics {
@@ -165,14 +180,12 @@ async fn server_by_id_returns_v2_envelope() {
     let addr = serve_frontend(backend, catalog).await;
     let client = reqwest::Client::new();
 
-    let resp = client
-        .get(format!("http://{addr}/api/v2/traces/{}", "0a".repeat(16)))
-        .header("X-Scope-OrgID", "t1")
-        .send()
-        .await
-        .unwrap();
-    assert2::assert!(resp.status().is_success());
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body = get_json(
+        &client,
+        addr,
+        &format!("/api/v2/traces/{}", "0a".repeat(16)),
+    )
+    .await;
     assert2::assert!(
         (
             &body["status"],
@@ -295,14 +308,7 @@ async fn server_tags_round_trip() {
     });
     let addr = serve_frontend(backend, catalog).await;
     let client = reqwest::Client::new();
-    let resp = client
-        .get(format!("http://{addr}/api/v2/search/tags?start=0&end=100"))
-        .header("X-Scope-OrgID", "t1")
-        .send()
-        .await
-        .unwrap();
-    assert2::assert!(resp.status().is_success());
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body = get_json(&client, addr, "/api/v2/search/tags?start=0&end=100").await;
     assert2::assert!(
         body["scopes"][0]
             == serde_json::json!({

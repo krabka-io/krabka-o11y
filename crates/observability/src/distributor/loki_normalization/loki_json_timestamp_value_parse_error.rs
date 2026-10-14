@@ -14,7 +14,7 @@ pub(crate) fn loki_json_timestamp_value_parse_error(
             let start = line
                 .char_indices()
                 .nth(line.chars().count().saturating_sub(6))
-                .map_or(0, |(offset, _)| offset);
+                .map_or(0, |character| character.0);
             format!("{}\"]]}}]}}", &line[start..])
         },
     );

@@ -1,6 +1,6 @@
 use super::{
     IntoResponse, Json, QuerierRequest, Response, SpanStore, StatusCode, instant_metric_bounds,
-    scan_options_param, trace_metrics_instant_json,
+    scan_options_param, status_text_response, trace_metrics_instant_json,
 };
 
 pub(crate) async fn query_instant_inner<S>(request: &QuerierRequest<S>) -> Response
@@ -18,9 +18,8 @@ where
     S: SpanStore + 'static,
 {
     let QuerierRequest { state, uri, .. } = request;
-    let (tenant, query) = request.metrics_request()?;
-    let (start_ns, end_ns, step_ns, _) =
-        instant_metric_bounds(uri).map_err(|err| Box::new(bad_request_response(err)))?;
+    let metrics = request.metrics_request()?;
+    let bounds = instant_metric_bounds(uri).map_err(|err| Box::new(bad_request_response(err)))?;
     let mut scan_options =
         scan_options_param(uri).map_err(|err| Box::new(bad_request_response(err)))?;
     // The public frontend dispatches one unrestricted job, so reduction can
@@ -32,21 +31,21 @@ where
         match state
             .engine
             .query_range_with_options(
-                tenant.as_str(),
-                &query,
-                start_ns,
-                end_ns,
-                step_ns,
+                metrics.tenant.as_str(),
+                &metrics.query,
+                bounds.start_ns,
+                bounds.end_ns,
+                bounds.step_ns,
                 scan_options,
             )
             .await
         {
-            Ok(resp) => Json(trace_metrics_instant_json(&resp, &query)).into_response(),
-            Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+            Ok(resp) => Json(trace_metrics_instant_json(&resp, &metrics.query)).into_response(),
+            Err(err) => status_text_response(StatusCode::BAD_REQUEST, err.to_string()),
         },
     )
 }
 
 fn bad_request_response(err: String) -> Response {
-    (StatusCode::BAD_REQUEST, err).into_response()
+    status_text_response(StatusCode::BAD_REQUEST, err)
 }

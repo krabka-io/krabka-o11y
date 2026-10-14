@@ -21,9 +21,14 @@ pub(crate) struct TimeColumn<'a> {
     pub(crate) name: &'a str,
 }
 
+pub(crate) struct FoundTimeColumn<'a> {
+    pub(crate) index: usize,
+    pub(crate) timestamps: &'a Int64Array,
+}
+
 impl TimeColumn<'_> {
     /// Finds the column in `batch`, and returns its index and timestamps.
-    pub(crate) fn find<'b>(&self, batch: &'b RecordBatch) -> DfResult<(usize, &'b Int64Array)> {
+    pub(crate) fn find<'b>(&self, batch: &'b RecordBatch) -> DfResult<FoundTimeColumn<'b>> {
         let index = batch
             .schema()
             .index_of(self.name)
@@ -38,7 +43,7 @@ impl TimeColumn<'_> {
                     self.node, self.name
                 ))
             })?;
-        Ok((index, timestamps))
+        Ok(FoundTimeColumn { index, timestamps })
     }
 }
 
@@ -61,7 +66,9 @@ pub(crate) fn take_rows_with_timestamps(
     let take_indices = UInt32Array::from_iter_values(selection.rows);
     let mut timestamps = Some(selection.timestamps);
     let mut columns = Vec::with_capacity(batch.num_columns());
-    for (index, column) in batch.columns().iter().enumerate() {
+    for column_entry in batch.columns().iter().enumerate() {
+        let index = column_entry.0;
+        let column = column_entry.1;
         if index == time_column_index
             && let Some(timestamps) = timestamps.take()
         {

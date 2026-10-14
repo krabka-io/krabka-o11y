@@ -12,6 +12,11 @@ use super::{
     urlquery_template_string,
 };
 
+struct DurationScale {
+    scale: f64,
+    suffix: &'static str,
+}
+
 pub(crate) fn evaluate_template_function(
     name: &str,
     args: &[TemplateRuntimeValue],
@@ -190,26 +195,8 @@ fn render_template_function(name: &str, args: &[String]) -> String {
                 };
                 regex.find_iter(&args[1]).count().to_string()
             }
-            "regexReplaceAll" => {
-                if args.len() < 3 {
-                    return String::new();
-                }
-                let Ok(regex) = Regex::new(&args[0]) else {
-                    return String::new();
-                };
-                regex.replace_all(&args[1], args[2].as_str()).into_owned()
-            }
-            "regexReplaceAllLiteral" => {
-                if args.len() < 3 {
-                    return String::new();
-                }
-                let Ok(regex) = Regex::new(&args[0]) else {
-                    return String::new();
-                };
-                regex
-                    .replace_all(&args[1], NoExpand(args[2].as_str()))
-                    .into_owned()
-            }
+            "regexReplaceAll" => regex_replace_template(args, false),
+            "regexReplaceAllLiteral" => regex_replace_template(args, true),
             "round" => format_template_float_round(args),
             "trunc" => {
                 if args.len() < 2 {
@@ -224,7 +211,10 @@ fn render_template_function(name: &str, args: &[String]) -> String {
                 if args.len() < 3 {
                     return String::new();
                 }
-                let (Ok(start), Ok(end)) = (args[0].parse::<i64>(), args[1].parse::<i64>()) else {
+                let Ok(start) = args[0].parse::<i64>() else {
+                    return String::new();
+                };
+                let Ok(end) = args[1].parse::<i64>() else {
                     return String::new();
                 };
                 substring_template_string(&args[2], start, end)
@@ -278,6 +268,22 @@ fn render_template_function(name: &str, args: &[String]) -> String {
                 .map_or_else(String::new, |value| urldecode_template_string(value)),
             _ => String::new(),
         })
+}
+
+fn regex_replace_template(args: &[String], literal: bool) -> String {
+    if args.len() < 3 {
+        return String::new();
+    }
+    let Ok(regex) = Regex::new(&args[0]) else {
+        return String::new();
+    };
+    if literal {
+        regex
+            .replace_all(&args[1], NoExpand(args[2].as_str()))
+            .into_owned()
+    } else {
+        regex.replace_all(&args[1], args[2].as_str()).into_owned()
+    }
 }
 
 fn evaluate_prometheus_template_function(name: &str, args: &[String]) -> Option<String> {
@@ -375,14 +381,27 @@ fn humanize_duration(value: &str) -> String {
     let sign = if seconds < 0.0 { "-" } else { "" };
     let mut seconds = seconds.abs();
     if seconds < 1.0 {
-        for (scale, suffix) in [
-            (1_000.0, "ms"),
-            (1_000_000.0, "us"),
-            (1_000_000_000.0, "ns"),
+        for duration_scale in [
+            DurationScale {
+                scale: 1_000.0,
+                suffix: "ms",
+            },
+            DurationScale {
+                scale: 1_000_000.0,
+                suffix: "us",
+            },
+            DurationScale {
+                scale: 1_000_000_000.0,
+                suffix: "ns",
+            },
         ] {
-            let scaled = seconds * scale;
+            let scaled = seconds * duration_scale.scale;
             if scaled >= 1.0 {
-                return format!("{sign}{}{suffix}", four_significant_digits(scaled));
+                return format!(
+                    "{sign}{}{suffix}",
+                    four_significant_digits(scaled),
+                    suffix = duration_scale.suffix
+                );
             }
         }
         return format!("{sign}{}s", four_significant_digits(seconds));

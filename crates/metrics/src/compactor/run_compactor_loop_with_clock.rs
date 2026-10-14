@@ -46,36 +46,32 @@ where
             compaction_wal_records_from_consumer_records(&config.wal_topic, &records)?;
         let compacted_records = wal_records.len();
 
-        let now = context.clock.now();
-        buffer.extend(wal_records, now);
+        let iteration_offsets = match super::append_compaction_records_until_due(
+            &mut buffer,
+            wal_records,
+            &config,
+            context.clock,
+        ) {
+            Some(buffered) => {
+                flush_buffer(
+                    block_writer,
+                    index_sink,
+                    committer,
+                    &buffered,
+                    &mut summary,
+                    context.metrics,
+                )
+                .await?
+            }
+            None => Vec::new(),
+        };
 
-        let mut iteration_offsets = Vec::new();
-        if buffer.should_flush(&config, now) {
-            let buffered = buffer.take();
-            iteration_offsets = flush_buffer(
-                block_writer,
-                index_sink,
-                committer,
-                &buffered,
-                &mut summary,
-                context.metrics,
-            )
-            .await?;
-        }
-
-        summary.polls += 1;
-        summary.polled_records += polled_records;
-        summary.compacted_records += compacted_records;
-
-        let result = CompactionPollResult {
+        let result = poll_result(
+            &mut summary,
             polled_records,
             compacted_records,
-            batch: CompactionBatchResult {
-                partition_results: Vec::new(),
-                writes: Vec::new(),
-                committed_offsets: iteration_offsets,
-            },
-        };
+            iteration_offsets,
+        );
 
         if should_stop(&result) {
             // Shutdown: flush whatever is still buffered so no records are lost.
@@ -93,4 +89,25 @@ where
         }
     }
     Ok(summary)
+}
+
+pub(super) fn poll_result(
+    summary: &mut CompactionLoopResult,
+    polled_records: usize,
+    compacted_records: usize,
+    committed_offsets: Vec<super::CompactionPartitionOffset>,
+) -> CompactionPollResult {
+    summary.polls += 1;
+    summary.polled_records += polled_records;
+    summary.compacted_records += compacted_records;
+
+    CompactionPollResult {
+        polled_records,
+        compacted_records,
+        batch: CompactionBatchResult {
+            partition_results: Vec::new(),
+            writes: Vec::new(),
+            committed_offsets,
+        },
+    }
 }

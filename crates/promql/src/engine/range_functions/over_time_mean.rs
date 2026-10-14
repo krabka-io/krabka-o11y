@@ -23,7 +23,9 @@ pub(crate) fn over_time_mean(mut values: impl Iterator<Item = f64>) -> f64 {
     for value in values {
         count += 1.0;
         if !incremental {
-            let (new_sum, new_comp) = kahan_sum_inc(value, sum, comp);
+            let mut new_sum = sum;
+            let mut new_comp = comp;
+            kahan_sum_inc(value, &mut new_sum, &mut new_comp);
             if !new_sum.is_infinite() {
                 sum = new_sum;
                 comp = new_comp;
@@ -34,7 +36,9 @@ pub(crate) fn over_time_mean(mut values: impl Iterator<Item = f64>) -> f64 {
             comp /= count - 1.0;
         }
         let weight = (count - 1.0) / count;
-        (mean, comp) = kahan_sum_inc(value / count, weight * mean, weight * comp);
+        mean *= weight;
+        comp *= weight;
+        kahan_sum_inc(value / count, &mut mean, &mut comp);
     }
     if incremental {
         return mean + comp;

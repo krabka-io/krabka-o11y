@@ -35,10 +35,12 @@ impl Index {
         let mut written = BTreeSet::new();
         let mut bytes_written = 0_usize;
 
-        for (tenant, tenant_index) in &self.tenants {
-            for (range, ordinals) in plan_tenant_index_shards(tenant_index, width) {
-                let (blocks, postings) = tenant_index.blocks.shard_local(&ordinals);
-                let selected = postings
+        for tenant in self.tenants.keys() {
+            let tenant_index = &self.tenants[tenant];
+            for shard in plan_tenant_index_shards(tenant_index, width) {
+                let local = tenant_index.blocks.shard_local(&shard.ordinals);
+                let selected = local
+                    .postings
                     .keys()
                     .copied()
                     .filter(|fingerprint| tenant_index.series.contains_key(fingerprint))
@@ -48,10 +50,10 @@ impl Index {
                     tenant,
                     series: &tenant_index.series,
                     selected,
-                    blocks,
-                    postings,
+                    blocks: local.blocks,
+                    postings: local.postings,
                 };
-                let object_key = index_shard_object_key(key, tenant, range);
+                let object_key = index_shard_object_key(key, tenant, shard.range);
                 bytes_written += put(store, &object_key, encode_index_shard(&payload)).await?;
                 written.insert(object_key);
             }
@@ -101,11 +103,10 @@ async fn prune_unnamed_shards(
     let mut listing = store.list(Some(&Path::from(shards_prefix.clone())));
     while let Some(meta) = listing.next().await {
         let location = meta?.location;
-        let Some((_, object)) = parse_index_shard_location(&shards_prefix, location.as_ref())
-        else {
+        let Some(parsed) = parse_index_shard_location(&shards_prefix, location.as_ref()) else {
             continue;
         };
-        if matches!(object, IndexShardObject::Foreign) {
+        if matches!(parsed.object, IndexShardObject::Foreign) {
             continue;
         }
         if !written.contains(location.as_ref()) {

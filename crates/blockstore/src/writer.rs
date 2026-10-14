@@ -297,10 +297,7 @@ mod tests {
 
     /// The summary of `batches`, folded one batch at a time exactly as the
     /// writer folds them.
-    fn summarize(
-        batches: &[RecordBatch],
-        columns: &SummaryColumns,
-    ) -> Result<(i64, i64, usize, Vec<SeriesFingerprint>)> {
+    fn summarize(batches: &[RecordBatch], columns: &SummaryColumns) -> Result<BlockSummaryResult> {
         let mut summary = BlockSummary::new();
         for batch in batches {
             summary.push(batch, columns)?;
@@ -314,24 +311,24 @@ mod tests {
         // the per-row FNV pass should be skipped and the set left empty. Time
         // bounds and row count must still be summarized.
         let batch = span_summary_batch();
-        let (min_ts, max_ts, row_count, fps) = summarize(
+        let summary = summarize(
             &[batch],
             &SummaryColumns::new("trace_id", "start_unix_nano"),
         )
         .unwrap();
-        assert2::assert!(min_ts == 100);
-        assert2::assert!(max_ts == 200);
-        assert2::assert!(row_count == 2);
-        assert2::assert!(fps.is_empty());
+        assert2::assert!(summary.min_ts == 100);
+        assert2::assert!(summary.max_ts == 200);
+        assert2::assert!(summary.row_count == 2);
+        assert2::assert!(summary.fingerprints.is_empty());
     }
 
     #[test]
     fn summarize_still_fingerprints_series_blocks() {
         let schema = log_line_schema();
         let batch = sample_batch(&schema);
-        let (_min, _max, _rows, mut fps) = summarize(&[batch], &SummaryColumns::series()).unwrap();
-        fps.sort_unstable();
-        assert2::assert!(fps == vec![10_u64, 20]);
+        let mut summary = summarize(&[batch], &SummaryColumns::series()).unwrap();
+        summary.fingerprints.sort_unstable();
+        assert2::assert!(summary.fingerprints == vec![10_u64, 20]);
     }
 
     /// A block summarized in pieces is the block summarized whole: the same
@@ -443,11 +440,22 @@ mod tests {
 
     /// A row group's `sorting_columns` as plain tuples, which compare without
     /// depending on how the Parquet crate derives equality for its own type.
-    fn sorting_of(properties: &WriterProperties) -> Option<Vec<(i32, bool, bool)>> {
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct SortingColumnShape {
+        column_index: i32,
+        descending: bool,
+        nulls_first: bool,
+    }
+
+    fn sorting_of(properties: &WriterProperties) -> Option<Vec<SortingColumnShape>> {
         properties.sorting_columns().map(|columns| {
             columns
                 .iter()
-                .map(|column| (column.column_idx, column.descending, column.nulls_first))
+                .map(|column| SortingColumnShape {
+                    column_index: column.column_idx,
+                    descending: column.descending,
+                    nulls_first: column.nulls_first,
+                })
                 .collect()
         })
     }
@@ -513,10 +521,28 @@ mod tests {
         let sorting = group.sorting_columns().map(|columns| {
             columns
                 .iter()
-                .map(|column| (column.column_idx, column.descending, column.nulls_first))
+                .map(|column| SortingColumnShape {
+                    column_index: column.column_idx,
+                    descending: column.descending,
+                    nulls_first: column.nulls_first,
+                })
                 .collect::<Vec<_>>()
         });
-        assert2::assert!(sorting == Some(vec![(0, false, true), (1, false, true)]));
+        assert2::assert!(
+            sorting
+                == Some(vec![
+                    SortingColumnShape {
+                        column_index: 0,
+                        descending: false,
+                        nulls_first: true
+                    },
+                    SortingColumnShape {
+                        column_index: 1,
+                        descending: false,
+                        nulls_first: true
+                    },
+                ])
+        );
     }
 
     /// A span-shaped block: two identity columns, one of which leads the sort
@@ -562,14 +588,7 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
         let schema = span_shaped_schema();
-        let decl = BlockSchema {
-            required: vec![
-                RequiredColumn::new(SCOL_TRACE_ID, DataType::FixedSizeBinary(16), false),
-                RequiredColumn::new(SCOL_START_NANO, DataType::Int64, false),
-            ],
-            sort_key: vec![SCOL_TRACE_ID.to_string(), SCOL_START_NANO.to_string()],
-            bloom_columns: vec![SCOL_SPAN_ID.to_string()],
-        };
+        let decl = crate::span_block_decl();
 
         writer
             .write_block_with_decl(
@@ -945,7 +964,21 @@ mod tests {
 
         let properties = block_writer_properties(&schema, &series_block_schema()).unwrap();
 
-        assert2::assert!(sorting_of(&properties) == Some(vec![(2, false, true), (3, false, true)]));
+        assert2::assert!(
+            sorting_of(&properties)
+                == Some(vec![
+                    SortingColumnShape {
+                        column_index: 2,
+                        descending: false,
+                        nulls_first: true
+                    },
+                    SortingColumnShape {
+                        column_index: 3,
+                        descending: false,
+                        nulls_first: true
+                    },
+                ])
+        );
     }
 
     #[test]
@@ -984,8 +1017,16 @@ mod tests {
         assert2::assert!(
             sorting_of(&properties)
                 == Some(vec![
-                    (i32::try_from(trace_id).unwrap(), false, true),
-                    (i32::try_from(start).unwrap(), false, true),
+                    SortingColumnShape {
+                        column_index: i32::try_from(trace_id).unwrap(),
+                        descending: false,
+                        nulls_first: true
+                    },
+                    SortingColumnShape {
+                        column_index: i32::try_from(start).unwrap(),
+                        descending: false,
+                        nulls_first: true
+                    },
                 ])
         );
     }
@@ -1011,6 +1052,8 @@ use abort_on_part_failure_store::AbortOnPartFailureStore;
 pub use block_row_group_rows::BLOCK_ROW_GROUP_ROWS;
 pub use block_stream_writer::BlockStreamWriter;
 use block_summary::BlockSummary;
+#[cfg(test)]
+use block_summary::BlockSummaryResult;
 pub use block_writer::BlockWriter;
 pub use block_writer_properties::block_writer_properties;
 pub use block_zstd_level::BLOCK_ZSTD_LEVEL;

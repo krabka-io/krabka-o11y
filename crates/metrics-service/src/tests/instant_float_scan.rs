@@ -29,6 +29,42 @@ struct Fixture {
     parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
 }
 
+struct SampleInput {
+    timestamp_ms: i64,
+    value: f64,
+    start_timestamp_ms: Option<i64>,
+}
+
+struct TenantRange {
+    tenant: &'static str,
+    start_ms: i64,
+    end_ms: i64,
+}
+
+struct JobValue {
+    job: &'static str,
+    value: f64,
+}
+
+struct JobTimestamp {
+    job: &'static str,
+    timestamp_ms: i64,
+}
+
+fn float_sample(
+    fingerprint: u64,
+    timestamp_ms: i64,
+    value: f64,
+    start_timestamp_ms: Option<i64>,
+) -> krabka_metrics::FloatSampleRow {
+    krabka_metrics::FloatSampleRow {
+        fingerprint,
+        timestamp_ms,
+        value,
+        start_timestamp_ms,
+    }
+}
+
 impl Fixture {
     /// The generic merged store over `5_000..=end_ms`, a control that always
     /// takes the full scan.
@@ -44,10 +80,63 @@ impl Fixture {
 }
 
 fn labels() -> Labels {
-    Labels::from_pairs([("__name__", "up"), ("job", "api")])
+    Labels::from_pairs([
+        krabka_metrics::MetricLabelPair::new("__name__", "up"),
+        krabka_metrics::MetricLabelPair::new("job", "api"),
+    ])
 }
 
-async fn fixture(cold: &[(&str, i64)]) -> Fixture {
+fn labels_for_job(job: &str) -> Labels {
+    Labels::from_pairs([
+        krabka_metrics::MetricLabelPair::new("__name__", "up"),
+        krabka_metrics::MetricLabelPair::new("job", job),
+    ])
+}
+
+fn aggregate_result(ts_ms: i64, value: f64) -> QueryResult {
+    serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {}, "ts_ms": ts_ms, "value": {"Float": value}}]
+    }))
+    .unwrap()
+}
+
+struct LatestHotSampleEngine {
+    engine: PromqlEngine<RefreshingMetricBlockStore>,
+    expected: QueryResult,
+}
+
+async fn latest_hot_sample_engine(fixture: &Fixture, opts: EngineOpts) -> LatestHotSampleEngine {
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
+    let expected = api_up_seven_at_12s();
+    assert!(
+        engine
+            .query_instant(&TenantId::new("tenant-a").unwrap(), "up", 12_000)
+            .await
+            .unwrap()
+            == expected
+    );
+    LatestHotSampleEngine { engine, expected }
+}
+
+#[derive(Clone, Copy)]
+struct ColdBlock {
+    job: &'static str,
+    timestamp_ms: i64,
+}
+
+struct FetchLimitCase {
+    max_samples: usize,
+    max_fetched_series: usize,
+    expected: FetchLimitResult,
+}
+
+enum FetchLimitResult {
+    Success,
+    SeriesExceeded,
+    SamplesExceeded,
+}
+
+async fn fixture(cold: &[ColdBlock]) -> Fixture {
     let list_calls = Arc::new(AtomicUsize::new(0));
     let objects = Arc::new(CountingObjectStore::new(
         Arc::clone(&list_calls),
@@ -59,13 +148,15 @@ async fn fixture(cold: &[(&str, i64)]) -> Fixture {
     let base = url::Url::parse("memory:///").unwrap();
     let writer = BlockStore::new(Arc::clone(&objects), base.clone());
     let sink = ObjectStoreCompactionIndexSink::new(Arc::clone(&objects));
-    for (offset, &(job, stamp)) in cold.iter().enumerate() {
+    for entry in cold.iter().enumerate() {
+        let offset = entry.0;
+        let block = entry.1;
         write_float_manifest(
             &writer,
             &sink,
             "tenant-a",
-            job,
-            stamp,
+            block.job,
+            block.timestamp_ms,
             &format!("metrics/tenant-a/float/{offset}.parquet"),
             i64::try_from(offset).unwrap(),
         )
@@ -74,13 +165,35 @@ async fn fixture(cold: &[(&str, i64)]) -> Fixture {
     let mut hot = InMemoryMetricStore::new();
     // Out-of-order arrivals and a conflicting duplicate. The first hot row
     // at timestamp 11,000 wins, and its creation timestamp remains attached.
-    for (stamp, value, start) in [
-        (9_000, 3.0, None),
-        (11_000, 7.0, Some(5_000)),
-        (11_000, 99.0, None),
-        (10_000, 4.0, None),
+    for sample in [
+        SampleInput {
+            timestamp_ms: 9_000,
+            value: 3.0,
+            start_timestamp_ms: None,
+        },
+        SampleInput {
+            timestamp_ms: 11_000,
+            value: 7.0,
+            start_timestamp_ms: Some(5_000),
+        },
+        SampleInput {
+            timestamp_ms: 11_000,
+            value: 99.0,
+            start_timestamp_ms: None,
+        },
+        SampleInput {
+            timestamp_ms: 10_000,
+            value: 4.0,
+            start_timestamp_ms: None,
+        },
     ] {
-        hot.push_float_with_start_timestamp("tenant-a", labels(), stamp, value, start);
+        hot.push_float_with_start_timestamp(
+            "tenant-a",
+            labels(),
+            sample.timestamp_ms,
+            sample.value,
+            sample.start_timestamp_ms,
+        );
     }
     let head = WalHead::from_store(hot);
     let store = Arc::new(RefreshingMetricBlockStore::new(
@@ -123,11 +236,27 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
         .unwrap();
     assert!(mapped == BTreeMap::from([(labels().fingerprint(), Arc::clone(&hot[0]))]));
     assert!(Arc::ptr_eq(&mapped[&labels().fingerprint()], &hot[0]));
-    for (tenant, start, end) in [("other", 5_000, 12_000), ("tenant-a", 12_001, 13_000)] {
+    for range in [
+        TenantRange {
+            tenant: "other",
+            start_ms: 5_000,
+            end_ms: 12_000,
+        },
+        TenantRange {
+            tenant: "tenant-a",
+            start_ms: 12_001,
+            end_ms: 13_000,
+        },
+    ] {
         assert!(
             fixture
                 .store
-                .series_shared_by_fingerprint(tenant, &matchers, start, end)
+                .series_shared_by_fingerprint(
+                    range.tenant,
+                    &matchers,
+                    range.start_ms,
+                    range.end_ms,
+                )
                 .await
                 .unwrap()
                 .is_empty()
@@ -200,7 +329,15 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
         .await
         .unwrap()
         .unwrap();
-    assert!(cold_first_scan.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        cold_first_scan.samples
+            == vec![float_sample(
+                labels().fingerprint(),
+                11_000,
+                7.0,
+                Some(5_000)
+            )]
+    );
     assert!(cold_first_scan.labels.len() == 1);
     assert!(cold_first_scan.labels[&labels().fingerprint()].as_ref() == &labels());
     assert!(!Arc::ptr_eq(
@@ -247,7 +384,11 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
 
 #[tokio::test]
 async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_window() {
-    let fixture = fixture(&[("api", 10_000)]).await;
+    let fixture = fixture(&[ColdBlock {
+        job: "api",
+        timestamp_ms: 10_000,
+    }])
+    .await;
     let tenant = TenantId::new("tenant-a").unwrap();
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
     let latest = fixture
@@ -255,7 +396,15 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
         .try_latest_float_samples("tenant-a", &matchers, 5_000, 12_000, 5)
         .await
         .unwrap();
-    assert!(latest == Some(vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]));
+    assert!(
+        latest
+            == Some(vec![float_sample(
+                labels().fingerprint(),
+                11_000,
+                7.0,
+                Some(5_000)
+            )])
+    );
     let engine = PromqlEngine::new(
         Arc::clone(&fixture.store),
         EngineOpts {
@@ -265,10 +414,7 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
     );
     let expected = api_up_seven_at_12s();
     assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
-    let aggregate: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {}, "ts_ms": 12_000, "value": {"Float": 7.0}}]
-    }))
-    .unwrap();
+    let aggregate = aggregate_result(12_000, 7.0);
     assert!(
         engine
             .query_instant(&tenant, "sum(up)", 12_000)
@@ -344,7 +490,22 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
 async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_selected() {
     let tenant = TenantId::new("tenant-a").unwrap();
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
-    for cold in [vec![("api", 12_000)], vec![("api", 10_000), ("db", 10_000)]] {
+    for cold in [
+        vec![ColdBlock {
+            job: "api",
+            timestamp_ms: 12_000,
+        }],
+        vec![
+            ColdBlock {
+                job: "api",
+                timestamp_ms: 10_000,
+            },
+            ColdBlock {
+                job: "db",
+                timestamp_ms: 10_000,
+            },
+        ],
+    ] {
         let fixture = fixture(&cold).await;
         assert!(
             fixture
@@ -370,7 +531,11 @@ async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_select
             );
         }
     }
-    let fixture = fixture(&[("api", 10_000)]).await;
+    let fixture = fixture(&[ColdBlock {
+        job: "api",
+        timestamp_ms: 10_000,
+    }])
+    .await;
     fixture.head.update(|hot| {
         hot.push_float(
             "tenant-a",
@@ -393,12 +558,7 @@ async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_select
         },
     );
     fixture.head.update(|hot| {
-        hot.push_float(
-            "tenant-a",
-            Labels::from_pairs([("__name__", "up"), ("job", "db")]),
-            13_000,
-            9.0,
-        );
+        hot.push_float("tenant-a", labels_for_job("db"), 13_000, 9.0);
     });
     assert!(matches!(
         limited.query_instant(&tenant, "up", 14_000).await,
@@ -422,16 +582,28 @@ async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_select
 
 #[tokio::test]
 async fn latest_aggregate_preserves_compensated_sums_across_series() {
-    let fixture = fixture(&[("api", 10_000)]).await;
+    let fixture = fixture(&[ColdBlock {
+        job: "api",
+        timestamp_ms: 10_000,
+    }])
+    .await;
     let tenant = TenantId::new("tenant-a").unwrap();
     fixture.head.update(|hot| {
-        for (job, value) in [("api", 1e16), ("db", 1.0), ("worker", -1e16)] {
-            hot.push_float(
-                "tenant-a",
-                Labels::from_pairs([("__name__", "up"), ("job", job)]),
-                13_000,
-                value,
-            );
+        for sample in [
+            JobValue {
+                job: "api",
+                value: 1e16,
+            },
+            JobValue {
+                job: "db",
+                value: 1.0,
+            },
+            JobValue {
+                job: "worker",
+                value: -1e16,
+            },
+        ] {
+            hot.push_float("tenant-a", labels_for_job(sample.job), 13_000, sample.value);
         }
     });
     let captured = fixture
@@ -452,9 +624,9 @@ async fn latest_aggregate_preserves_compensated_sums_across_series() {
     assert!(
         captured.samples
             == vec![
-                (0x01b8_550f_8631_0fb1, 13_000, -1e16, None),
-                (0x54b3_866d_77d1_1fda, 13_000, 1e16, None),
-                (0x7115_4d29_6d09_a369, 13_000, 1.0, None),
+                float_sample(0x01b8_550f_8631_0fb1, 13_000, -1e16, None),
+                float_sample(0x54b3_866d_77d1_1fda, 13_000, 1e16, None),
+                float_sample(0x7115_4d29_6d09_a369, 13_000, 1.0, None),
             ]
     );
     assert!(
@@ -468,7 +640,7 @@ async fn latest_aggregate_preserves_compensated_sums_across_series() {
                 (0x54b3_866d_77d1_1fda, "api"),
                 (0x7115_4d29_6d09_a369, "db"),
             ]
-            .map(|(fp, job)| (fp, Labels::from_pairs([("__name__", "up"), ("job", job)])))
+            .map(|(fp, job)| (fp, labels_for_job(job)))
             .to_vec()
     );
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
@@ -485,8 +657,17 @@ async fn latest_aggregate_preserves_compensated_sums_across_series() {
 
 #[tokio::test]
 async fn newer_cold_block_does_not_force_reads_of_dominated_history() {
-    let mut blocks = vec![("api", 10_000); 9];
-    blocks.push(("api", 12_000));
+    let mut blocks = vec![
+        ColdBlock {
+            job: "api",
+            timestamp_ms: 10_000
+        };
+        9
+    ];
+    blocks.push(ColdBlock {
+        job: "api",
+        timestamp_ms: 12_000,
+    });
     let fixture = fixture(&blocks).await;
     let tenant = TenantId::new("tenant-a").unwrap();
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
@@ -523,14 +704,22 @@ async fn newer_cold_block_does_not_force_reads_of_dominated_history() {
 
 #[tokio::test]
 async fn conflicting_cold_ties_keep_the_full_scan() {
-    let fixture = fixture(&[("api", 12_000)]).await;
+    let fixture = fixture(&[ColdBlock {
+        job: "api",
+        timestamp_ms: 12_000,
+    }])
+    .await;
     let writer = BlockStore::new(
         Arc::clone(&fixture.objects),
         url::Url::parse("memory:///").unwrap(),
     );
-    let batch =
-        krabka_metrics::encode_float_samples(&[(labels().fingerprint(), 12_000, 2.0, None)])
-            .unwrap();
+    let batch = krabka_metrics::encode_float_samples(&[krabka_metrics::FloatSampleRow {
+        fingerprint: labels().fingerprint(),
+        timestamp_ms: 12_000,
+        value: 2.0,
+        start_timestamp_ms: None,
+    }])
+    .unwrap();
     let block = writer
         .writer()
         .write_block(
@@ -589,13 +778,14 @@ async fn conflicting_cold_ties_keep_the_full_scan() {
 
 #[tokio::test]
 async fn latest_aggregate_refreshes_one_window_for_samples_and_labels() {
-    let fixture = fixture(&[("api", 10_000)]).await;
+    let fixture = fixture(&[ColdBlock {
+        job: "api",
+        timestamp_ms: 10_000,
+    }])
+    .await;
     let tenant = TenantId::new("tenant-a").unwrap();
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-    let expected: QueryResult = serde_json::from_value(serde_json::json!({
-        "InstantVector": [{"labels": {}, "ts_ms": 12_000, "value": {"Float": 7.0}}]
-    }))
-    .unwrap();
+    let expected = aggregate_result(12_000, 7.0);
     assert!(
         engine
             .query_instant(&tenant, "sum(up)", 12_000)
@@ -611,16 +801,40 @@ async fn latest_aggregate_refreshes_one_window_for_samples_and_labels() {
 
 #[tokio::test]
 async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
-    let fixture = fixture(&[("api", 10_000), ("cold-boundary", 9_000)]).await;
+    let fixture = fixture(&[
+        ColdBlock {
+            job: "api",
+            timestamp_ms: 10_000,
+        },
+        ColdBlock {
+            job: "cold-boundary",
+            timestamp_ms: 9_000,
+        },
+    ])
+    .await;
     let tenant = TenantId::new("tenant-a").unwrap();
-    let job_labels = |job| Labels::from_pairs([("__name__", "up"), ("job", job)]);
+    let job_labels = |job| labels_for_job(job);
     fixture.head.update(|hot| {
-        for (job, stamp) in [
-            ("float-boundary", 9_000),
-            ("outside", 8_000),
-            ("future", 13_000),
+        for sample in [
+            JobTimestamp {
+                job: "float-boundary",
+                timestamp_ms: 9_000,
+            },
+            JobTimestamp {
+                job: "outside",
+                timestamp_ms: 8_000,
+            },
+            JobTimestamp {
+                job: "future",
+                timestamp_ms: 13_000,
+            },
         ] {
-            hot.push_float("tenant-a", job_labels(job), stamp, 42.0);
+            hot.push_float(
+                "tenant-a",
+                job_labels(sample.job),
+                sample.timestamp_ms,
+                42.0,
+            );
         }
         hot.push_float("tenant-b", labels(), 11_000, 42.0);
         hot.push_histogram(
@@ -637,7 +851,15 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
         .await
         .unwrap()
         .unwrap();
-    assert!(captured.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        captured.samples
+            == vec![float_sample(
+                labels().fingerprint(),
+                11_000,
+                7.0,
+                Some(5_000)
+            )]
+    );
     let mut expected_labels = ["api", "cold-boundary", "float-boundary", "hist-boundary"]
         .map(job_labels)
         .to_vec();
@@ -673,9 +895,9 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
         lookback_delta: secs(3),
         ..EngineOpts::default()
     };
-    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
-    let expected = api_up_seven_at_12s();
-    assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
+    let latest = latest_hot_sample_engine(&fixture, opts).await;
+    let engine = latest.engine;
+    let expected = latest.expected;
     let control = PromqlEngine::new(
         Arc::new(fixture.store.current_store(5_000, 12_000).await.unwrap()),
         opts,
@@ -693,7 +915,27 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
                 == control.query_instant(&tenant, query, 12_000).await.unwrap()
         );
     }
-    for (max_samples, max_fetched_series) in [(3, 4), (4, 3), (1, 4)] {
+    for FetchLimitCase {
+        max_samples,
+        max_fetched_series,
+        expected: outcome,
+    } in [
+        FetchLimitCase {
+            max_samples: 3,
+            max_fetched_series: 4,
+            expected: FetchLimitResult::Success,
+        },
+        FetchLimitCase {
+            max_samples: 4,
+            max_fetched_series: 3,
+            expected: FetchLimitResult::SeriesExceeded,
+        },
+        FetchLimitCase {
+            max_samples: 1,
+            max_fetched_series: 4,
+            expected: FetchLimitResult::SamplesExceeded,
+        },
+    ] {
         let limited = PromqlEngine::new(
             Arc::clone(&fixture.store),
             EngineOpts {
@@ -703,22 +945,21 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
             },
         );
         let result = limited.query_instant(&tenant, "up", 12_000).await;
-        match (max_samples, max_fetched_series) {
-            (3, 4) => assert!(result.unwrap() == expected),
-            (4, 3) => assert!(matches!(
+        match outcome {
+            FetchLimitResult::Success => assert!(result.unwrap() == expected),
+            FetchLimitResult::SeriesExceeded => assert!(matches!(
                 result,
                 Err(PromqlError::Limit(
                     LimitError::SeriesPerQueryExceeded { .. }
                 ))
             )),
-            (1, 4) => assert!(matches!(
+            FetchLimitResult::SamplesExceeded => assert!(matches!(
                 result,
                 Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
                     limit: 1,
                     ..
                 }))
             )),
-            _ => unreachable!(),
         }
     }
     fixture
@@ -734,7 +975,15 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
             == QueryResult::InstantVector(Vec::new())
     );
     fixture.head.delete_tenant("tenant-a");
-    assert!(captured.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        captured.samples
+            == vec![float_sample(
+                labels().fingerprint(),
+                11_000,
+                7.0,
+                Some(5_000)
+            )]
+    );
     assert!(
         captured
             .labels
@@ -748,15 +997,18 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
 #[tokio::test]
 async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_values() {
     let fixture = fixture(&[]).await;
-    let boundary = Labels::from_pairs([("__name__", "up"), ("job", "float-boundary")]);
-    let histogram = Labels::from_pairs([("__name__", "up"), ("job", "hist-boundary")]);
+    let boundary = labels_for_job("float-boundary");
+    let histogram = labels_for_job("hist-boundary");
     fixture.head.update(|hot| {
         hot.push_float("tenant-a", labels(), 1_000, 1.0);
         hot.push_float("tenant-a", boundary.clone(), 8_000, 40.0);
         hot.push_float("tenant-a", boundary.clone(), 9_000, 42.0);
         hot.push_float(
             "tenant-a",
-            Labels::from_pairs([("__name__", "down"), ("job", "future")]),
+            Labels::from_pairs([
+                krabka_metrics::MetricLabelPair::new("__name__", "down"),
+                krabka_metrics::MetricLabelPair::new("job", "future"),
+            ]),
             13_000,
             99.0,
         );
@@ -774,7 +1026,15 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
         .await
         .unwrap()
         .unwrap();
-    assert!(captured.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        captured.samples
+            == vec![float_sample(
+                labels().fingerprint(),
+                11_000,
+                7.0,
+                Some(5_000)
+            )]
+    );
     assert!(
         captured
             .labels
@@ -795,9 +1055,9 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
         max_samples: 3,
         ..EngineOpts::default()
     };
-    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
-    let expected = api_up_seven_at_12s();
-    assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
+    let latest = latest_hot_sample_engine(&fixture, opts).await;
+    let engine = latest.engine;
+    let expected = latest.expected;
     // Aggregates' full scan counts the inclusive label boundary. Preserve
     // the original latest hot-row path when a summary bound exceeds the cap.
     let aggregate: QueryResult = serde_json::from_value(serde_json::json!({
@@ -839,7 +1099,11 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
 
     // The combined hot/cold bound can exceed the cap even when the original
     // hot-row count plus the selected cold block count still fits exactly.
-    let cold_fixture = self::fixture(&[("api", 10_000)]).await;
+    let cold_fixture = self::fixture(&[ColdBlock {
+        job: "api",
+        timestamp_ms: 10_000,
+    }])
+    .await;
     cold_fixture
         .head
         .update(|hot| hot.push_float("tenant-a", labels(), 1_000, 1.0));
@@ -849,7 +1113,15 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
         .await
         .unwrap()
         .unwrap();
-    assert!(exact.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        exact.samples
+            == vec![float_sample(
+                labels().fingerprint(),
+                11_000,
+                7.0,
+                Some(5_000)
+            )]
+    );
     assert!(
         exact
             .labels

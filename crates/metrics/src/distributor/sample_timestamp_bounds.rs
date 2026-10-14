@@ -1,16 +1,17 @@
 use super::DecodedSeries;
 
-pub(crate) fn sample_timestamp_bounds(series: &DecodedSeries) -> Option<(i64, i64)> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SampleTimestampBounds {
+    pub min_ms: i64,
+    pub max_ms: i64,
+}
+
+pub(crate) fn sample_timestamp_bounds(series: &DecodedSeries) -> Option<SampleTimestampBounds> {
     series
         .samples
         .iter()
         .map(|sample| sample.timestamp_ms)
-        .chain(
-            series
-                .histograms
-                .iter()
-                .map(|(timestamp_ms, _)| *timestamp_ms),
-        )
+        .chain(series.histograms.iter().map(|sample| sample.timestamp_ms))
         .chain(
             series
                 .exemplars
@@ -18,9 +19,13 @@ pub(crate) fn sample_timestamp_bounds(series: &DecodedSeries) -> Option<(i64, i6
                 .map(|exemplar| exemplar.timestamp_ms),
         )
         .fold(None, |bounds, timestamp| match bounds {
-            None => Some((timestamp, timestamp)),
-            Some((min_timestamp, max_timestamp)) => {
-                Some((min_timestamp.min(timestamp), max_timestamp.max(timestamp)))
-            }
+            None => Some(SampleTimestampBounds {
+                min_ms: timestamp,
+                max_ms: timestamp,
+            }),
+            Some(bounds) => Some(SampleTimestampBounds {
+                min_ms: bounds.min_ms.min(timestamp),
+                max_ms: bounds.max_ms.max(timestamp),
+            }),
         })
 }

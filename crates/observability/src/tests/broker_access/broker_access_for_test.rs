@@ -22,6 +22,12 @@ pub(crate) struct ManualClock {
     pub(crate) offset: Mutex<Duration>,
 }
 
+pub(crate) struct BrokerAccessFixture {
+    pub(crate) cache: BrokerAccessCache,
+    pub(crate) connected: Arc<AtomicBool>,
+    pub(crate) clock: Arc<ManualClock>,
+}
+
 impl ManualClock {
     pub(crate) fn advance(&self, by: Time) {
         *self.offset.lock().expect("clock lock") += by.to_std();
@@ -37,7 +43,7 @@ impl ManualClock {
 pub(crate) fn broker_access_for_test(
     source: &Arc<CountingBrokerAccess>,
     capacity: usize,
-) -> (BrokerAccessCache, Arc<AtomicBool>, Arc<ManualClock>) {
+) -> BrokerAccessFixture {
     let connected = Arc::new(AtomicBool::new(false));
     let clock = Arc::new(ManualClock {
         base: Instant::now(),
@@ -51,5 +57,15 @@ pub(crate) fn broker_access_for_test(
     );
     let reading = Arc::clone(&clock);
     cache.clock = Arc::new(move || reading.now());
-    (cache, connected, clock)
+    BrokerAccessFixture {
+        cache,
+        connected,
+        clock,
+    }
+}
+
+pub(crate) fn security_disabled_broker_access() -> Arc<CountingBrokerAccess> {
+    Arc::new(CountingBrokerAccess::answering(Ok(
+        AclSet::SecurityDisabled,
+    )))
 }

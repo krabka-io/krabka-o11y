@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use krabka_blockstore::{
-    BlockKey, LabelIndex, LogBlockIndex, LogRow, TimeRange, labels,
+    BlockKey, LabelIndex, LabelPair, LogBlockIndex, LogRow, TimeRange, labels,
     write_log_block_to_object_store, write_tenant_log_index_manifest_to_object_store,
     write_tenant_log_index_shards_to_object_store,
 };
@@ -68,9 +68,9 @@ impl LogQueryFixture {
         let mut random = Seeded::new(0x10C5_B10C);
         for stream in 0..streams {
             let source = labels([
-                ("app", if stream % 4 == 0 { "api" } else { "worker" }),
-                ("series", &format!("{stream:08}")),
-                (
+                LabelPair::new("app", if stream % 4 == 0 { "api" } else { "worker" }),
+                LabelPair::new("series", format!("{stream:08}")),
+                LabelPair::new(
                     "bucket",
                     if stream.is_multiple_of(64) {
                         "rare"

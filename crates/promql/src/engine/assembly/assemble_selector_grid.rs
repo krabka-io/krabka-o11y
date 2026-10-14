@@ -1,6 +1,6 @@
 use super::{
-    Array, BTreeMap, Float64Array, GridPoint, Int64Array, PromqlError, RecordBatch, Result,
-    SeriesFingerprint, StepGrid, labels_from_batch, leaf, row_fingerprints,
+    Array, BTreeMap, GridPoint, Int64Array, PromqlError, RecordBatch, Result, SeriesFingerprint,
+    StepGrid, labels_from_batch, leaf, row_fingerprints,
 };
 
 /// Assembles a grid-driven instant-vector-selector plan's output into one point
@@ -26,21 +26,14 @@ pub(crate) fn assemble_selector_grid(
     batches: &[RecordBatch],
     grid: StepGrid,
 ) -> Result<Vec<Vec<GridPoint>>> {
-    let mut steps: Vec<BTreeMap<SeriesFingerprint, (i64, f64)>> =
+    let mut steps: Vec<BTreeMap<SeriesFingerprint, super::FloatSample>> =
         vec![BTreeMap::new(); grid.point_count()];
     for batch in batches {
         let grid_timestamps = int64_column(batch, leaf::TIME_COLUMN)?;
         let sample_timestamps = int64_column(batch, leaf::SAMPLE_TIME_COLUMN)?;
-        let values = batch
-            .column_by_name(leaf::VALUE_COLUMN)
-            .and_then(|column| column.as_any().downcast_ref::<Float64Array>())
-            .ok_or_else(|| {
-                PromqlError::Exec("planner leaf missing Float64 value column".to_string())
-            })?;
-        for (row, fp) in row_fingerprints(batch, labels_from_batch)
-            .into_iter()
-            .enumerate()
-        {
+        let values = super::float64_value_column(batch)?;
+        let fingerprints = row_fingerprints(batch, labels_from_batch);
+        for (row, fp) in fingerprints.iter().copied().enumerate() {
             let Some(index) = grid.index_of(grid_timestamps.value(row)) else {
                 continue;
             };
@@ -51,18 +44,28 @@ pub(crate) fn assemble_selector_grid(
             let value = values.value(row);
             step.entry(fp)
                 .and_modify(|latest| {
-                    if sample_ts_ms > latest.0 {
-                        *latest = (sample_ts_ms, value);
+                    if sample_ts_ms > latest.timestamp_ms {
+                        *latest = super::FloatSample {
+                            timestamp_ms: sample_ts_ms,
+                            value,
+                        };
                     }
                 })
-                .or_insert((sample_ts_ms, value));
+                .or_insert(super::FloatSample {
+                    timestamp_ms: sample_ts_ms,
+                    value,
+                });
         }
     }
     Ok(steps
         .into_iter()
         .map(|step| {
             step.into_iter()
-                .map(|(fp, (ts_ms, value))| GridPoint { fp, ts_ms, value })
+                .map(|entry| GridPoint {
+                    fp: entry.0,
+                    ts_ms: entry.1.timestamp_ms,
+                    value: entry.1.value,
+                })
                 .collect()
         })
         .collect())

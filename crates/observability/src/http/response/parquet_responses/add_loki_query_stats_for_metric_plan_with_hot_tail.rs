@@ -6,13 +6,19 @@ use super::{
     loki_query_stats, planned_block_bytes, populate_loki_query_scan_stats,
 };
 
+#[derive(Clone, Copy)]
+pub(crate) struct MetricEvaluationWindow {
+    pub(crate) range: TimeRange,
+    pub(crate) step_ns: i64,
+}
+
 pub(crate) fn add_loki_query_stats_for_metric_plan_with_hot_tail<R: Borrow<WalLogRecord> + Sync>(
     mut value: Value,
     plan: &StreamPlan,
     query: &MetricQuery,
     hot_tail: &[R],
     frontier: &CompactionFrontier,
-    evaluation: (TimeRange, i64),
+    evaluation: MetricEvaluationWindow,
     delete_filters: &[ActiveLogDeleteFilter],
 ) -> Value {
     let bytes = planned_block_bytes(plan);

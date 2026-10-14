@@ -47,12 +47,12 @@ mod tests {
                 .unwrap();
 
         assert!(back.queries.len() == 1);
-        let (selectors, start, end) = matchers_to_selectors(&back.queries[0]).unwrap();
-        check!(start == 1000);
-        check!(end == 2000);
-        check!(selectors[0].name == "__name__");
-        check!(selectors[0].op == MatchOp::Eq);
-        check!(selectors[0].value == "http_requests_total");
+        let selectors = matchers_to_selectors(&back.queries[0]).unwrap();
+        check!(selectors.start_timestamp_ms == 1000);
+        check!(selectors.end_timestamp_ms == 2000);
+        check!(selectors.selectors[0].name == "__name__");
+        check!(selectors.selectors[0].op == MatchOp::Eq);
+        check!(selectors.selectors[0].value == "http_requests_total");
     }
 
     /// A `remote_read` snappy block that declares a huge uncompressed length
@@ -76,7 +76,19 @@ mod tests {
         let mut labels = Labels::new();
         labels.insert("job", "api");
         labels.insert("__name__", "x");
-        let result = series_to_timeseries(vec![(labels, vec![(2_i64, 2.0_f64), (1, 1.0)])]);
+        let result = series_to_timeseries(vec![RemoteReadSeries {
+            labels,
+            samples: vec![
+                RemoteReadSample {
+                    timestamp_ms: 2,
+                    value: 2.0,
+                },
+                RemoteReadSample {
+                    timestamp_ms: 1,
+                    value: 1.0,
+                },
+            ],
+        }]);
 
         let ts = &result.timeseries[0];
         check!(ts.labels[0].name == "__name__");
@@ -175,14 +187,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert!(frames.len() == 1);
-        let (length, delimiter_len) = read_uvarint(&frames[0]);
+        let length = read_uvarint(&frames[0]);
         let checksum = u32::from_be_bytes(
-            frames[0][delimiter_len..delimiter_len + 4]
+            frames[0][length.encoded_len..length.encoded_len + 4]
                 .try_into()
                 .unwrap(),
         );
-        let payload = &frames[0][delimiter_len + 4..];
-        check!(length == payload.len() as u64);
+        let payload = &frames[0][length.encoded_len + 4..];
+        check!(length.value == payload.len() as u64);
         check!(checksum == crc32c::crc32c(payload));
 
         let decoded = v1::ChunkedReadResponse::decode(payload).unwrap();
@@ -214,8 +226,9 @@ mod tests {
         let frames = encode_chunked_read_frames(response)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let (_, delimiter_len) = read_uvarint(&frames[0]);
-        let decoded = v1::ChunkedReadResponse::decode(&frames[0][delimiter_len + 4..]).unwrap();
+        let delimiter = read_uvarint(&frames[0]);
+        let decoded =
+            v1::ChunkedReadResponse::decode(&frames[0][delimiter.encoded_len + 4..]).unwrap();
         let chunk = &decoded.chunked_series[0].chunks[0];
 
         check!(chunk.r#type == v1::chunk::Encoding::FloatHistogram as i32);
@@ -242,12 +255,22 @@ mod tests {
         check!(chunks[1].max_time_ms == 120);
     }
 
-    fn read_uvarint(bytes: &[u8]) -> (u64, usize) {
+    struct DecodedVarint {
+        value: u64,
+        encoded_len: usize,
+    }
+
+    fn read_uvarint(bytes: &[u8]) -> DecodedVarint {
         let mut value = 0_u64;
-        for (index, byte) in bytes.iter().copied().enumerate() {
+        for byte_entry in bytes.iter().copied().enumerate() {
+            let index = byte_entry.0;
+            let byte = byte_entry.1;
             value |= u64::from(byte & 0x7f) << (index * 7);
             if byte & 0x80 == 0 {
-                return (value, index + 1);
+                return DecodedVarint {
+                    value,
+                    encoded_len: index + 1,
+                };
             }
         }
         panic!("unterminated uvarint")
@@ -272,7 +295,7 @@ pub use encode_chunked_read_frames::encode_chunked_read_frames;
 use encode_histogram_chunk::encode_histogram_chunks;
 pub use encode_read_response::encode_read_response;
 use encode_xor_chunk::encode_xor_chunks;
-pub use matchers_to_selectors::matchers_to_selectors;
+pub use matchers_to_selectors::{RemoteReadSelectors, matchers_to_selectors};
 pub use negotiate_read_response_type::negotiate_read_response_type;
 pub use remote_read_error::RemoteReadError;
-pub use series_to_timeseries::series_to_timeseries;
+pub use series_to_timeseries::{RemoteReadSample, RemoteReadSeries, series_to_timeseries};

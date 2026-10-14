@@ -18,7 +18,9 @@ pub(crate) async fn prometheus_rules_json<S: MetricStore>(
         return Ok(Vec::new());
     };
     let mut out = Vec::new();
-    for (rule_index, rule) in rules.iter().enumerate() {
+    for indexed_rule in rules.iter().enumerate() {
+        let rule_index = indexed_rule.0;
+        let rule = indexed_rule.1;
         if !rule_names.is_empty()
             && !rule
                 .get("record")

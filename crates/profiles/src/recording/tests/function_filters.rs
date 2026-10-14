@@ -3,9 +3,9 @@ use krabka_observability::server_security::ServerSecurity;
 
 use super::*;
 use crate::{
-    blockbuilder::build_block_with_positions,
+    blockbuilder::{PositionedProfileRecord, build_block_with_positions},
     query::{QuerierState, serve},
-    wal::WalPosition,
+    wal::{WalLine, WalPosition},
 };
 
 fn function_filter(name: &str) -> pb::settings::v1::StacktraceFilter {
@@ -17,12 +17,33 @@ fn function_filter(name: &str) -> pb::settings::v1::StacktraceFilter {
     }
 }
 
+struct RecordingResponse {
+    status: reqwest::StatusCode,
+    body: serde_json::Value,
+}
+
+struct GenerationFilterCase {
+    generation: i32,
+    filter: serde_json::Value,
+}
+
+struct FilterTotalCase {
+    filter: Option<pb::settings::v1::StacktraceFilter>,
+    expected_total: f64,
+}
+
+struct FilterTotalsCase {
+    filter: Option<pb::settings::v1::StacktraceFilter>,
+    expected_api: f64,
+    expected_idle: f64,
+}
+
 async fn request(
     bound: std::net::SocketAddr,
     tenant: &str,
     method: &str,
     body: serde_json::Value,
-) -> (reqwest::StatusCode, serde_json::Value) {
+) -> RecordingResponse {
     let response = reqwest::Client::new()
         .post(format!(
             "http://{bound}/settings.v1.RecordingRulesService/{method}"
@@ -34,33 +55,33 @@ async fn request(
         .send()
         .await
         .unwrap();
-    (response.status(), response.json().await.unwrap())
+    RecordingResponse {
+        status: response.status(),
+        body: response.json().await.unwrap(),
+    }
 }
 
 async fn assert_stored_rule(bound: std::net::SocketAddr, expected: &serde_json::Value) {
-    for (method, expected_response) in [
-        (
-            "GetRecordingRule",
-            serde_json::json!({"rule": expected.clone()}),
-        ),
-        (
-            "ListRecordingRules",
-            serde_json::json!({"rules": [expected.clone()]}),
-        ),
+    struct StoredRuleCase {
+        method: &'static str,
+        request_body: serde_json::Value,
+        expected_response: serde_json::Value,
+    }
+    for case in [
+        StoredRuleCase {
+            method: "GetRecordingRule",
+            request_body: serde_json::json!({"id": "filtered"}),
+            expected_response: serde_json::json!({"rule": expected.clone()}),
+        },
+        StoredRuleCase {
+            method: "ListRecordingRules",
+            request_body: serde_json::json!({}),
+            expected_response: serde_json::json!({"rules": [expected.clone()]}),
+        },
     ] {
+        let response = request(bound, "tenant-a", case.method, case.request_body).await;
         assert!(
-            request(
-                bound,
-                "tenant-a",
-                method,
-                if method == "GetRecordingRule" {
-                    serde_json::json!({"id": "filtered"})
-                } else {
-                    serde_json::json!({})
-                }
-            )
-            .await
-                == (reqwest::StatusCode::OK, expected_response)
+            response.status == reqwest::StatusCode::OK && response.body == case.expected_response
         );
     }
 }
@@ -69,13 +90,13 @@ async fn assert_stored_rule(bound: std::net::SocketAddr, expected: &serde_json::
 async fn recording_function_filters_round_trip_updates_conflicts_and_tenants() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let state = Arc::new(QuerierState::empty().with_admin_store(store));
-    let (shutdown, stopped) = tokio::sync::oneshot::channel();
+    let channel = tokio::sync::oneshot::channel();
     let bound = serve(
         "127.0.0.1:0".parse().unwrap(),
         state,
         &ServerSecurity::default(),
         async move {
-            let _ = stopped.await;
+            let _ = channel.1.await;
         },
     )
     .await
@@ -86,8 +107,8 @@ async fn recording_function_filters_round_trip_updates_conflicts_and_tenants() {
         "groupBy": ["service_name"],
         "stacktraceFilter": {"functionName": {"functionName": "target", "metricType": "TOTAL"}}
     });
-    let (status, created) = request(bound, "tenant-a", "UpsertRecordingRule", body.clone()).await;
-    assert!(status == reqwest::StatusCode::OK);
+    let created = request(bound, "tenant-a", "UpsertRecordingRule", body.clone()).await;
+    assert!(created.status == reqwest::StatusCode::OK);
     let mut expected = body.clone();
     expected
         .as_object_mut()
@@ -102,23 +123,22 @@ async fn recording_function_filters_round_trip_updates_conflicts_and_tenants() {
         .as_object_mut()
         .unwrap()
         .remove("metricType");
-    assert!(created == serde_json::json!({"rule": expected}));
+    assert!(created.body == serde_json::json!({"rule": expected}));
     assert_stored_rule(bound, &expected).await;
     body["generation"] = "1".into();
     body["stacktraceFilter"]["functionName"]["functionName"] = "other".into();
     expected["generation"] = "2".into();
     expected["stacktraceFilter"]["functionName"]["functionName"] = "other".into();
     assert!(
-        request(bound, "tenant-a", "UpsertRecordingRule", body.clone()).await
-            == (
-                reqwest::StatusCode::OK,
-                serde_json::json!({"rule": expected})
-            )
+        request(bound, "tenant-a", "UpsertRecordingRule", body.clone())
+            .await
+            .body
+            == serde_json::json!({"rule": expected})
     );
     assert!(
         request(bound, "tenant-a", "UpsertRecordingRule", body.clone())
             .await
-            .0
+            .status
             == reqwest::StatusCode::CONFLICT
     );
     assert!(
@@ -129,7 +149,8 @@ async fn recording_function_filters_round_trip_updates_conflicts_and_tenants() {
             serde_json::json!({"id": "filtered"})
         )
         .await
-        .0 == reqwest::StatusCode::NOT_FOUND
+        .status
+            == reqwest::StatusCode::NOT_FOUND
     );
     assert!(
         request(
@@ -139,21 +160,27 @@ async fn recording_function_filters_round_trip_updates_conflicts_and_tenants() {
             serde_json::json!({})
         )
         .await
-            == (reqwest::StatusCode::OK, serde_json::json!({}))
+        .body
+            == serde_json::json!({})
     );
     // Both an absent function and an empty function name are accepted filters.
-    for (generation, filter) in [
-        (2, serde_json::json!({})),
-        (3, serde_json::json!({"functionName": {}})),
+    for case in [
+        GenerationFilterCase {
+            generation: 2,
+            filter: serde_json::json!({}),
+        },
+        GenerationFilterCase {
+            generation: 3,
+            filter: serde_json::json!({"functionName": {}}),
+        },
     ] {
-        body["generation"] = generation.to_string().into();
-        body["stacktraceFilter"] = filter.clone();
-        let (status, updated) =
-            request(bound, "tenant-a", "UpsertRecordingRule", body.clone()).await;
-        assert!(status == reqwest::StatusCode::OK);
-        assert!(updated["rule"]["stacktraceFilter"] == filter);
+        body["generation"] = case.generation.to_string().into();
+        body["stacktraceFilter"] = case.filter.clone();
+        let updated = request(bound, "tenant-a", "UpsertRecordingRule", body.clone()).await;
+        assert!(updated.status == reqwest::StatusCode::OK);
+        assert!(updated.body["rule"]["stacktraceFilter"] == case.filter);
     }
-    shutdown.send(()).unwrap();
+    channel.0.send(()).unwrap();
 }
 
 fn stack_fixture() -> ProfileRecord {
@@ -175,17 +202,32 @@ fn stack_fixture() -> ProfileRecord {
         WalLocation {
             address: 1,
             mapping_id: 0,
-            lines: vec![(1, 1)],
+            lines: vec![WalLine {
+                function_id: 1,
+                line: 1,
+            }],
         },
         WalLocation {
             address: 2,
             mapping_id: 0,
-            lines: vec![(2, 2), (1, 3)],
+            lines: vec![
+                WalLine {
+                    function_id: 2,
+                    line: 2,
+                },
+                WalLine {
+                    function_id: 1,
+                    line: 3,
+                },
+            ],
         },
         WalLocation {
             address: 3,
             mapping_id: 0,
-            lines: vec![(3, 4)],
+            lines: vec![WalLine {
+                function_id: 3,
+                line: 4,
+            }],
         },
     ]);
     // target is not the root; recursion repeats it twice in the first stack.
@@ -213,15 +255,15 @@ fn stack_fixture() -> ProfileRecord {
 fn expected_series(id: &str, service: &str, value: f64) -> TimeSeries {
     TimeSeries {
         labels: [
-            ("__name__", "profiles_recorded_function_total"),
-            ("profiles_rule_id", id),
-            ("service_name", service),
-            ("team", "profiles"),
+            krabka_blockstore::LabelPair::new("__name__", "profiles_recorded_function_total"),
+            krabka_blockstore::LabelPair::new("profiles_rule_id", id),
+            krabka_blockstore::LabelPair::new("service_name", service),
+            krabka_blockstore::LabelPair::new("team", "profiles"),
         ]
         .into_iter()
-        .map(|(name, value)| Label {
-            name: name.into(),
-            value: value.into(),
+        .map(|label| Label {
+            name: label.name,
+            value: label.value,
         })
         .collect(),
         samples: vec![Sample {
@@ -259,30 +301,48 @@ async fn distinct_profiles_at_one_timestamp_add_to_unfiltered_and_function_total
         &store,
         "tenant-a",
         0,
-        &[(positions[0], recursive), (positions[1], inline)],
-        (7, 11),
+        &[
+            PositionedProfileRecord::new(Some(positions[0]), recursive),
+            PositionedProfileRecord::new(Some(positions[1]), inline),
+        ],
+        krabka_blockstore::OffsetRange::new(7, 11),
         &krabka_blockstore::ObjectStoreMetrics::unregistered(),
     )
     .await
     .unwrap()
     .remove(0);
     let rule = function_total_rule("same-time");
-    for (filter, total) in [
-        (None, 18.0),
-        (Some(function_filter("main")), 18.0),
-        (Some(function_filter("target")), 18.0),
-        (Some(function_filter("leaf")), 11.0),
-        (Some(function_filter("missing")), 0.0),
+    for case in [
+        FilterTotalCase {
+            filter: None,
+            expected_total: 18.0,
+        },
+        FilterTotalCase {
+            filter: Some(function_filter("main")),
+            expected_total: 18.0,
+        },
+        FilterTotalCase {
+            filter: Some(function_filter("target")),
+            expected_total: 18.0,
+        },
+        FilterTotalCase {
+            filter: Some(function_filter("leaf")),
+            expected_total: 11.0,
+        },
+        FilterTotalCase {
+            filter: Some(function_filter("missing")),
+            expected_total: 0.0,
+        },
     ] {
         let rule = pb::settings::v1::RecordingRule {
-            stacktrace_filter: filter,
+            stacktrace_filter: case.filter,
             ..rule.clone()
         };
         assert!(
             evaluate_block(&store, &index, &block, &[rule])
                 .await
                 .unwrap()
-                == vec![expected_series("same-time", "api", total)]
+                == vec![expected_series("same-time", "api", case.expected_total)]
         );
     }
 }
@@ -292,14 +352,14 @@ async fn recording_functions_match_any_inline_frame_once_and_preserve_zero_group
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let first = stack_fixture();
     let mut idle = profile_record(5);
-    idle.labels.last_mut().unwrap().1 = "idle".into();
+    idle.labels.last_mut().unwrap().value = "idle".into();
     let records = [first, idle];
     let block = build_block(
         &store,
         "tenant-a",
         0,
         &records,
-        (0, 0),
+        krabka_blockstore::OffsetRange::new(0, 0),
         &krabka_blockstore::ObjectStoreMetrics::unregistered(),
     )
     .await
@@ -313,7 +373,7 @@ async fn recording_functions_match_any_inline_frame_once_and_preserve_zero_group
             .unwrap();
     }
     let mut secret = profile_record(23);
-    secret.labels.last_mut().unwrap().1 = "secret".into();
+    secret.labels.last_mut().unwrap().value = "secret".into();
     let labels = Labels::from_pairs(secret.labels);
     index
         .add_series("tenant-b", labels.fingerprint(), &labels)
@@ -325,23 +385,55 @@ async fn recording_functions_match_any_inline_frame_once_and_preserve_zero_group
     };
     // Independently counted sample ledger: target 7+11; leaf 11; root 48;
     // missing 0. Repeated target and inline frames never multiply the value.
-    for (filter, expected_api, expected_idle) in [
-        (Some(function_filter("target")), 18.0, 0.0),
-        (Some(function_filter("leaf")), 11.0, 0.0),
-        (Some(function_filter("target[go.shape.int]")), 17.0, 0.0),
-        (Some(function_filter("main")), 48.0, 5.0),
-        (Some(function_filter("missing")), 0.0, 0.0),
-        (Some(function_filter("Target")), 0.0, 0.0),
-        (Some(function_filter("")), 48.0, 5.0),
-        (
-            Some(pb::settings::v1::StacktraceFilter::default()),
-            48.0,
-            5.0,
-        ),
-        (None, 48.0, 5.0),
+    for case in [
+        FilterTotalsCase {
+            filter: Some(function_filter("target")),
+            expected_api: 18.0,
+            expected_idle: 0.0,
+        },
+        FilterTotalsCase {
+            filter: Some(function_filter("leaf")),
+            expected_api: 11.0,
+            expected_idle: 0.0,
+        },
+        FilterTotalsCase {
+            filter: Some(function_filter("target[go.shape.int]")),
+            expected_api: 17.0,
+            expected_idle: 0.0,
+        },
+        FilterTotalsCase {
+            filter: Some(function_filter("main")),
+            expected_api: 48.0,
+            expected_idle: 5.0,
+        },
+        FilterTotalsCase {
+            filter: Some(function_filter("missing")),
+            expected_api: 0.0,
+            expected_idle: 0.0,
+        },
+        FilterTotalsCase {
+            filter: Some(function_filter("Target")),
+            expected_api: 0.0,
+            expected_idle: 0.0,
+        },
+        FilterTotalsCase {
+            filter: Some(function_filter("")),
+            expected_api: 48.0,
+            expected_idle: 5.0,
+        },
+        FilterTotalsCase {
+            filter: Some(pb::settings::v1::StacktraceFilter::default()),
+            expected_api: 48.0,
+            expected_idle: 5.0,
+        },
+        FilterTotalsCase {
+            filter: None,
+            expected_api: 48.0,
+            expected_idle: 5.0,
+        },
     ] {
         let rule = pb::settings::v1::RecordingRule {
-            stacktrace_filter: filter,
+            stacktrace_filter: case.filter,
             ..rule.clone()
         };
         let actual = evaluate_block(&store, &index, &block, &[rule])
@@ -350,8 +442,8 @@ async fn recording_functions_match_any_inline_frame_once_and_preserve_zero_group
         assert!(
             actual
                 == vec![
-                    expected_series("filtered", "api", expected_api),
-                    expected_series("filtered", "idle", expected_idle)
+                    expected_series("filtered", "api", case.expected_api),
+                    expected_series("filtered", "idle", case.expected_idle)
                 ]
         );
     }

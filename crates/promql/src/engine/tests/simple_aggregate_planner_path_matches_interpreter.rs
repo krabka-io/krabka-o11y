@@ -1,23 +1,75 @@
 use super::*;
 
+struct AggregateInput {
+    job: &'static str,
+    group: &'static str,
+    instance: &'static str,
+    value: f64,
+}
+
+struct TimestampedInput {
+    instance: &'static str,
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct MinMaxInput {
+    group: &'static str,
+    instance: &'static str,
+    value: f64,
+}
+
+struct CounterInput {
+    job: &'static str,
+    path: &'static str,
+    factor: f64,
+}
+
+struct GroupInput {
+    group: &'static str,
+    instance: &'static str,
+}
+
+type AggregateQueryCase = QueryAt;
+
 #[tokio::test]
 pub(crate) async fn simple_aggregate_planner_path_matches_interpreter() {
     // A float-only multi-label store: two jobs across two groups, an
     // instance dimension for `without`, plus counters for the rate case.
     let mut store = InMemoryMetricStore::new();
-    for (job, group, instance, value) in [
-        ("api", "prod", "0", 1.0),
-        ("api", "prod", "1", 2.0),
-        ("api", "canary", "0", 4.0),
-        ("db", "prod", "0", 8.0),
+    for input in [
+        AggregateInput {
+            job: "api",
+            group: "prod",
+            instance: "0",
+            value: 1.0,
+        },
+        AggregateInput {
+            job: "api",
+            group: "prod",
+            instance: "1",
+            value: 2.0,
+        },
+        AggregateInput {
+            job: "api",
+            group: "canary",
+            instance: "0",
+            value: 4.0,
+        },
+        AggregateInput {
+            job: "db",
+            group: "prod",
+            instance: "0",
+            value: 8.0,
+        },
     ] {
         let lbls = labels(&[
-            ("__name__", "http_requests"),
-            ("job", job),
-            ("group", group),
-            ("instance", instance),
+            crate::test_support::TestLabelPair::new("__name__", "http_requests"),
+            crate::test_support::TestLabelPair::new("job", input.job),
+            crate::test_support::TestLabelPair::new("group", input.group),
+            crate::test_support::TestLabelPair::new("instance", input.instance),
         ]);
-        store.push_float("t", lbls, 120_000, value);
+        store.push_float("t", lbls, 120_000, input.value);
     }
     // A dedicated NaN metric exercising the post-fix selection semantics
     // through `sum`/`count`. instance=0 is a finite value, instance=1's
@@ -26,19 +78,39 @@ pub(crate) async fn simple_aggregate_planner_path_matches_interpreter() {
     // 2), and instance=2's latest in-window sample is a STALE-NaN marker
     // (must be DROPPED before aggregation, so it does not contribute to
     // `count`). Both paths must agree.
-    for (instance, ts, value) in [
-        ("0", 120_000_i64, 3.0),
-        ("1", 60_000, 5.0),
-        ("1", 120_000, f64::NAN),
-        ("2", 60_000, 9.0),
-        ("2", 120_000, stale_nan()),
+    for input in [
+        TimestampedInput {
+            instance: "0",
+            timestamp_ms: 120_000_i64,
+            value: 3.0,
+        },
+        TimestampedInput {
+            instance: "1",
+            timestamp_ms: 60_000,
+            value: 5.0,
+        },
+        TimestampedInput {
+            instance: "1",
+            timestamp_ms: 120_000,
+            value: f64::NAN,
+        },
+        TimestampedInput {
+            instance: "2",
+            timestamp_ms: 60_000,
+            value: 9.0,
+        },
+        TimestampedInput {
+            instance: "2",
+            timestamp_ms: 120_000,
+            value: stale_nan(),
+        },
     ] {
         let lbls = labels(&[
-            ("__name__", "nan_metric"),
-            ("job", "api"),
-            ("instance", instance),
+            crate::test_support::TestLabelPair::new("__name__", "nan_metric"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", input.instance),
         ]);
-        store.push_float("t", lbls, ts, value);
+        store.push_float("t", lbls, input.timestamp_ms, input.value);
     }
     // A dedicated metric pinning the `min`/`max` NaN-ignoring rule. Group
     // g="mixed" holds genuine NaN alongside finite samples: Prometheus (and
@@ -48,30 +120,74 @@ pub(crate) async fn simple_aggregate_planner_path_matches_interpreter() {
     // Arrow's built-in min/max instead order floats with total_cmp and
     // PROPAGATE NaN, so the operator path must use the NaN-ignoring UDAFs to
     // match the interpreter here.
-    for (group, instance, value) in [
-        ("mixed", "0", f64::NAN),
-        ("mixed", "1", 4.0),
-        ("mixed", "2", 1.0),
-        ("mixed", "3", f64::NAN),
-        ("allnan", "0", f64::NAN),
-        ("allnan", "1", f64::NAN),
+    for input in [
+        MinMaxInput {
+            group: "mixed",
+            instance: "0",
+            value: f64::NAN,
+        },
+        MinMaxInput {
+            group: "mixed",
+            instance: "1",
+            value: 4.0,
+        },
+        MinMaxInput {
+            group: "mixed",
+            instance: "2",
+            value: 1.0,
+        },
+        MinMaxInput {
+            group: "mixed",
+            instance: "3",
+            value: f64::NAN,
+        },
+        MinMaxInput {
+            group: "allnan",
+            instance: "0",
+            value: f64::NAN,
+        },
+        MinMaxInput {
+            group: "allnan",
+            instance: "1",
+            value: f64::NAN,
+        },
     ] {
         let lbls = labels(&[
-            ("__name__", "minmax_nan"),
-            ("g", group),
-            ("instance", instance),
+            crate::test_support::TestLabelPair::new("__name__", "minmax_nan"),
+            crate::test_support::TestLabelPair::new("g", input.group),
+            crate::test_support::TestLabelPair::new("instance", input.instance),
         ]);
-        store.push_float("t", lbls, 120_000, value);
+        store.push_float("t", lbls, 120_000, input.value);
     }
     // Counters for `sum by (...) (rate(...))` (slope = step factor / 60s).
-    for (job, path, factor) in [("api", "a", 1.0), ("api", "b", 2.0), ("db", "a", 5.0)] {
-        let lbls = labels(&[("__name__", "reqs_total"), ("job", job), ("path", path)]);
+    for input in [
+        CounterInput {
+            job: "api",
+            path: "a",
+            factor: 1.0,
+        },
+        CounterInput {
+            job: "api",
+            path: "b",
+            factor: 2.0,
+        },
+        CounterInput {
+            job: "db",
+            path: "a",
+            factor: 5.0,
+        },
+    ] {
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "reqs_total"),
+            crate::test_support::TestLabelPair::new("job", input.job),
+            crate::test_support::TestLabelPair::new("path", input.path),
+        ]);
         for step in 0..=3_i32 {
             store.push_float(
                 "t",
                 lbls.clone(),
                 i64::from(step) * 60_000,
-                f64::from(step) * factor,
+                f64::from(step) * input.factor,
             );
         }
     }
@@ -84,18 +200,30 @@ pub(crate) async fn simple_aggregate_planner_path_matches_interpreter() {
     //   g="allsparse": every member is a single-sample (no-value) series, so
     //     the whole group collapses to NO result row (series absent), matching
     //     the interpreter, which forms no group when no sample reaches it.
-    for (g, instance) in [
-        ("mix", "dense"),
-        ("mix", "sparse"),
-        ("allsparse", "0"),
-        ("allsparse", "1"),
+    for input in [
+        GroupInput {
+            group: "mix",
+            instance: "dense",
+        },
+        GroupInput {
+            group: "mix",
+            instance: "sparse",
+        },
+        GroupInput {
+            group: "allsparse",
+            instance: "0",
+        },
+        GroupInput {
+            group: "allsparse",
+            instance: "1",
+        },
     ] {
         let lbls = labels(&[
-            ("__name__", "sparse_total"),
-            ("g", g),
-            ("instance", instance),
+            crate::test_support::TestLabelPair::new("__name__", "sparse_total"),
+            crate::test_support::TestLabelPair::new("g", input.group),
+            crate::test_support::TestLabelPair::new("instance", input.instance),
         ]);
-        if instance == "dense" {
+        if input.instance == "dense" {
             // A full counter history: rate has a value at t=180_000.
             for step in 0..=3_i32 {
                 store.push_float(
@@ -113,65 +241,166 @@ pub(crate) async fn simple_aggregate_planner_path_matches_interpreter() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let queries = [
-        ("sum by (group) (http_requests)", 120_000_i64),
-        ("avg by (group) (http_requests)", 120_000),
-        ("min by (group) (http_requests)", 120_000),
-        ("max by (group) (http_requests)", 120_000),
-        ("count by (group) (http_requests)", 120_000),
-        ("group by (group) (http_requests)", 120_000),
-        ("sum without (instance) (http_requests)", 120_000),
-        ("sum without () (http_requests)", 120_000),
-        ("sum by () (http_requests)", 120_000),
-        ("sum(http_requests)", 120_000),
-        ("sum by (job, nonexistent) (http_requests)", 120_000),
-        ("sum(((http_requests)))", 120_000),
+        AggregateQueryCase {
+            query: "sum by (group) (http_requests)",
+            time_ms: 120_000_i64,
+        },
+        AggregateQueryCase {
+            query: "avg by (group) (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "min by (group) (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "max by (group) (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "count by (group) (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "group by (group) (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "sum without (instance) (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "sum without () (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "sum by () (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "sum(http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "sum by (job, nonexistent) (http_requests)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "sum(((http_requests)))",
+            time_ms: 120_000,
+        },
         // Empty-input aggregations must yield an empty vector (no global
         // group row), matching Prometheus and the interpreter.
-        ("sum by () (does_not_exist)", 120_000),
-        ("sum(does_not_exist)", 120_000),
-        ("count by (group) (does_not_exist)", 120_000),
+        AggregateQueryCase {
+            query: "sum by () (does_not_exist)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "sum(does_not_exist)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "count by (group) (does_not_exist)",
+            time_ms: 120_000,
+        },
         // Aggregation over a rate call: the marquee operator-path case.
         // `sum by (l) (rate(x[range]))` mirrors the diff-corpus query
         // `sum by (method) (rate(http_requests_total[30s]))`.
-        ("sum by (job) (rate(reqs_total[3m]))", 180_000),
-        ("sum by (path) (rate(reqs_total[90s]))", 180_000),
-        ("max without (path) (rate(reqs_total[3m]))", 180_000),
+        AggregateQueryCase {
+            query: "sum by (job) (rate(reqs_total[3m]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "sum by (path) (rate(reqs_total[90s]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "max without (path) (rate(reqs_total[3m]))",
+            time_ms: 180_000,
+        },
         // SPARSE aggregate-over-rate (the headline divergence the fix closes):
         // a group mixing a dense rate with a no-value (sparse) rate must
         // exclude the no-value series, and an all-no-value group must produce
         // no result row. Every simple op must agree with the interpreter.
-        ("sum by (g) (rate(sparse_total[2m]))", 180_000),
-        ("avg by (g) (rate(sparse_total[2m]))", 180_000),
-        ("min by (g) (rate(sparse_total[2m]))", 180_000),
-        ("max by (g) (rate(sparse_total[2m]))", 180_000),
-        ("count by (g) (rate(sparse_total[2m]))", 180_000),
-        ("group by (g) (rate(sparse_total[2m]))", 180_000),
+        AggregateQueryCase {
+            query: "sum by (g) (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "avg by (g) (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "min by (g) (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "max by (g) (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "count by (g) (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "group by (g) (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
         // No grouping: the global aggregate is over the single dense rate
         // (every sparse series is no-value and excluded). One result row.
-        ("sum (rate(sparse_total[2m]))", 180_000),
-        ("count (rate(sparse_total[2m]))", 180_000),
+        AggregateQueryCase {
+            query: "sum (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
+        AggregateQueryCase {
+            query: "count (rate(sparse_total[2m]))",
+            time_ms: 180_000,
+        },
         // The same fix on `*_over_time`: avg_over_time has a value for the
         // single-sample sparse members too, but a TIGHT window can strand
         // them. Use a window narrow enough that the sparse members fall
         // outside it at t=180000 while the dense member still reduces.
-        ("count by (g) (avg_over_time(sparse_total[30s]))", 180_000),
+        AggregateQueryCase {
+            query: "count by (g) (avg_over_time(sparse_total[30s]))",
+            time_ms: 180_000,
+        },
         // Genuine NaN flows into the aggregate (sum -> NaN), and the
         // stale-NaN marker is dropped before counting (count -> 2).
-        ("sum(nan_metric)", 120_000),
-        ("count(nan_metric)", 120_000),
+        AggregateQueryCase {
+            query: "sum(nan_metric)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "count(nan_metric)",
+            time_ms: 120_000,
+        },
         // NaN-ignoring min/max: the "mixed" group's extremum is over its
         // non-NaN samples (min=1, max=4); the "allnan" group keeps the
         // series with a NaN result. The operator path (NaN-ignoring UDAFs)
         // must match the interpreter bit-for-bit on every group, including
         // the all-NaN -> NaN case (a plain `value != value` filter would
         // instead drop the all-NaN series).
-        ("min by (g) (minmax_nan)", 120_000),
-        ("max by (g) (minmax_nan)", 120_000),
-        ("min(minmax_nan)", 120_000),
-        ("max(minmax_nan)", 120_000),
+        AggregateQueryCase {
+            query: "min by (g) (minmax_nan)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "max by (g) (minmax_nan)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "min(minmax_nan)",
+            time_ms: 120_000,
+        },
+        AggregateQueryCase {
+            query: "max(minmax_nan)",
+            time_ms: 120_000,
+        },
     ];
 
-    for (query, time_ms) in queries {
+    for case in queries {
+        let query = case.query;
+        let time_ms = case.time_ms;
         let SortedParity {
             via_operators,
             via_interpreter,

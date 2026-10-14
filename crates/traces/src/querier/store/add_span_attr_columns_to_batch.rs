@@ -30,8 +30,8 @@ pub(crate) fn add_span_attr_columns_to_batch(
         for row in 0..batch.num_rows() {
             let value = attr_values_with_resource(batch, row, *resource)?
                 .into_iter()
-                .find(|(key, _)| key == lookup_key)
-                .map(|(_, value)| value);
+                .find(|attribute| attribute.key == *lookup_key)
+                .map(|attribute| attribute.value);
             values.push(value);
         }
         // Keep strings and booleans distinct from numbers. Numeric projections

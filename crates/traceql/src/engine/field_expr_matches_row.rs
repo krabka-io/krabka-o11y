@@ -13,7 +13,9 @@ pub(crate) fn field_expr_matches_row(
             super::scalar_expression_value(lhs, row)
                 .ok()
                 .zip(super::scalar_expression_value(rhs, row).ok())
-                .is_some_and(|(lhs, rhs)| super::field_comparison::scalar_matches(&lhs, *op, &rhs))
+                .is_some_and(|values| {
+                    super::field_comparison::scalar_matches(&values.0, *op, &values.1)
+                })
         }
         FieldExpr::Const(value) => *value,
         FieldExpr::And(a, b) => {

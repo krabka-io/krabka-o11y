@@ -74,12 +74,15 @@ impl TemplateQueryResult {
     }
     pub(crate) fn replace_prefix(&self, replacement: &[TemplateRuntimeValue]) -> Self {
         let mut values = self.values.lock().expect("slice backing not poisoned");
-        for (index, value) in replacement.iter().cloned().enumerate() {
+        let mut index = 0;
+        while index < replacement.len() {
+            let value = replacement[index].clone();
             if let Some(existing) = values.get_mut(index) {
                 *existing = value;
             } else {
                 values.push(value);
             }
+            index += 1;
         }
         Self {
             start: 0,

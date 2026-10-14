@@ -9,8 +9,7 @@ pub fn decode_jaeger_grpc_batch(batch: api_v2::Batch) -> Result<Vec<Span>, WireE
     let batch_process = batch
         .process
         .as_ref()
-        .map(process_from_proto)
-        .unwrap_or_default();
+        .map_or_else(Default::default, process_from_proto);
     let mut spans = Vec::with_capacity(batch.spans.len());
     for span in batch.spans {
         let process = span

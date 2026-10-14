@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use datafusion::{catalog::MemTable, prelude::SessionContext};
 use krabka_blockstore::SeriesFingerprint;

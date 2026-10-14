@@ -12,13 +12,47 @@ use url::form_urlencoded;
 
 use super::{
     ApiError, ERASURE_REQUEST_PREFIX, Extension, Principal, PrometheusApiState, QueryResponseStats,
-    RequestAuth, acquire_query_permit, apply_result_limit, authorized_tenant_from_headers,
-    check_range_resolution, duration_param, enforce_query_range_limit, exemplar_key,
-    exemplars_json, has_erasure_requests, optional_timestamp_ms, parse_limit_parameter,
-    query_timeout, record_query_response, required_form_param, selector_matchers,
-    success_data_response, success_response, success_response_with_stats, timestamp_ms,
-    validate_timestamp_range,
+    RequestAuth, StdDurationExt, TenantId, acquire_query_permit, apply_result_limit,
+    authorized_tenant_from_headers, check_range_resolution, duration_param,
+    enforce_query_range_limit, exemplar_key, exemplars_json, has_erasure_requests,
+    optional_timestamp_ms, parse_limit_parameter, query_timeout, record_query_response,
+    required_form_param, selector_matchers, success_data_response, success_response,
+    success_response_with_stats, timestamp_ms, validate_timestamp_range,
 };
+
+#[allow(clippy::result_large_err)]
+fn authorized_query_tenant(
+    headers: &HeaderMap,
+    principal: &Principal,
+) -> Result<TenantId, Response> {
+    authorized_tenant_from_headers(headers, principal).map_err(IntoResponse::into_response)
+}
+
+pub(super) struct QueryDispatchRequest<'a, S: MetricStore, P> {
+    pub state: &'a Arc<PrometheusApiState<S>>,
+    pub headers: &'a HeaderMap,
+    pub principal: &'a Principal,
+    pub params: P,
+    pub timing: QueryRequestTiming,
+}
+
+fn finish_query_evaluation<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    query_kind: &'static str,
+    mut evaluated: EvaluatedQuery,
+    eval_started: std::time::Instant,
+    limit: Option<usize>,
+    timing: QueryRequestTiming,
+) -> Response {
+    let evaluation = eval_started.elapsed();
+    state.record_eval(
+        query_kind,
+        krabka_observability::service_metrics::RequestOutcome::from_result(&evaluated.outcome),
+        evaluation.as_time(),
+    );
+    evaluated.evaluation = evaluation;
+    evaluated_query_response(evaluated, limit, timing)
+}
 use crate::{
     AnnotatedQueryResult, MetricStore,
     engine::{PerStepSampleStats, collect_query_sample_stats, query_stats_step},
@@ -46,6 +80,36 @@ mod query_request_timing;
 mod range_query_params;
 mod range_query_params_from_form;
 mod run_timed_query;
+
+pub(super) struct QueryRangeFormFields {
+    pub(super) query: String,
+    pub(super) start: String,
+    pub(super) end: String,
+}
+
+pub(super) fn query_range_form_fields(
+    body: &[u8],
+    mut handle_extra: impl FnMut(&str, &str) -> Result<(), ApiError>,
+) -> Result<QueryRangeFormFields, ApiError> {
+    let mut query = None;
+    let mut start = None;
+    let mut end = None;
+    for pair in form_urlencoded::parse(body) {
+        let name = pair.0;
+        let value = pair.1;
+        match name.as_ref() {
+            "query" => query = Some(value.into_owned()),
+            "start" => start = Some(value.into_owned()),
+            "end" => end = Some(value.into_owned()),
+            _ => handle_extra(name.as_ref(), value.as_ref())?,
+        }
+    }
+    Ok(QueryRangeFormFields {
+        query: required_form_param(query, "query")?,
+        start: required_form_param(start, "start")?,
+        end: required_form_param(end, "end")?,
+    })
+}
 
 use evaluated_query_response::{EvaluatedQuery, evaluated_query_response};
 use exemplars_query_params::ExemplarsQueryParams;

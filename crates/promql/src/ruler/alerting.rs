@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use krabka_blockstore::TenantId;
-use krabka_metrics::SamplePayload;
 use krabka_units::prelude::*;
 
 use super::{

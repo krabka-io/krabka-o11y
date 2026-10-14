@@ -8,9 +8,9 @@ use crate::{
         AuditOutcome, OPERATION_DELETE_REQUEST_CANCEL, OPERATION_DELETE_REQUEST_CREATE,
         RESOURCE_DELETE_REQUEST, RESOURCE_TENANT, resource,
     },
-    current_unix_time_ns, decode_form_component, decode_query_pair, form_body_query, json,
-    json_response, parse_decimal_seconds_timestamp, parse_loki_duration_query_param, parse_query,
-    resolve_single_tenant, split_query_param_pairs, tenant_header_value,
+    current_unix_time_ns, decode_query_pair, form_body_query, json, json_response,
+    parse_decimal_seconds_timestamp, parse_loki_duration_query_param, parse_query,
+    resolve_single_tenant, tenant_header_value,
 };
 
 mod active_log_delete_filters;
@@ -48,3 +48,24 @@ pub(crate) use parse_list_delete_requests_params::parse_list_delete_requests_par
 pub(crate) use parse_loki_delete_timestamp_query_param::parse_loki_delete_timestamp_query_param;
 pub(crate) use ranges_overlap::ranges_overlap;
 pub(crate) use request_query_or_form_body::request_query_or_form_body;
+
+fn audit_delete_request_write<E>(
+    security: &RequestSecurity,
+    operation: &'static str,
+    tenant: &TenantId,
+    request_id: &str,
+    persisted: &Result<(), E>,
+) {
+    security.admin_operation(
+        operation,
+        vec![
+            resource(RESOURCE_TENANT, tenant.as_str()),
+            resource(RESOURCE_DELETE_REQUEST, request_id),
+        ],
+        if persisted.is_ok() {
+            AuditOutcome::Success
+        } else {
+            AuditOutcome::Failure
+        },
+    );
+}

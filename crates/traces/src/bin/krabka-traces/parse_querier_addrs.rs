@@ -2,6 +2,12 @@ use krabka_traces::frontend::QuerierScheme;
 
 use super::Url;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParsedQuerierAddresses {
+    pub(crate) scheme: QuerierScheme,
+    pub(crate) addresses: Vec<String>,
+}
+
 /// Parse `--querier-url` into the scheme and the bare `host:port` addresses
 /// that the [`HttpQuerier`] pool dials.
 ///
@@ -12,7 +18,7 @@ use super::Url;
 /// [`HttpQuerier`]: krabka_traces::frontend::HttpQuerier
 pub(crate) fn parse_querier_addrs(
     value: &str,
-) -> Result<(QuerierScheme, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<ParsedQuerierAddresses, Box<dyn std::error::Error + Send + Sync>> {
     let mut scheme = None;
     let mut addrs = Vec::new();
     for raw in value.split(',').map(str::trim).filter(|v| !v.is_empty()) {
@@ -40,7 +46,10 @@ pub(crate) fn parse_querier_addrs(
         addrs.push(addr);
     }
     match scheme {
-        Some(scheme) => Ok((scheme, addrs)),
+        Some(scheme) => Ok(ParsedQuerierAddresses {
+            scheme,
+            addresses: addrs,
+        }),
         None => Err(format!("no querier addresses parsed from {value:?}").into()),
     }
 }

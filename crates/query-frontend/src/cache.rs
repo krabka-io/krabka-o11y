@@ -3,7 +3,7 @@ use std::{
     fmt::Write as _,
     marker::PhantomData,
     num::NonZeroUsize,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -165,13 +165,24 @@ pub trait QueryCache<V>: Send + Sync {
 
 /// Process-local TTL cache, primarily useful for tests and single-process deployments.
 pub struct InMemoryCache<V> {
-    entries: Mutex<BTreeMap<CacheKey, (i64, usize, V)>>,
+    entries: Mutex<BTreeMap<CacheKey, MemoryCacheEntry<V>>>,
     order: Mutex<VecDeque<CacheKey>>,
     ttl: Option<Duration>,
     policy: CachePolicy,
     weigh: fn(&V) -> usize,
     clock: Arc<dyn Clock>,
     metrics: Arc<CacheMetrics>,
+}
+
+struct MemoryCacheEntry<V> {
+    stored_at_ms: i64,
+    bytes: usize,
+    value: V,
+}
+
+struct MemoryCacheLocks<'a, V> {
+    entries: MutexGuard<'a, BTreeMap<CacheKey, MemoryCacheEntry<V>>>,
+    order: MutexGuard<'a, VecDeque<CacheKey>>,
 }
 
 impl<V> Default for InMemoryCache<V> {
@@ -186,6 +197,48 @@ impl<V> Default for InMemoryCache<V> {
             metrics: Arc::new(CacheMetrics::default()),
         }
     }
+}
+
+impl<V> InMemoryCache<V> {
+    fn lock_memory(&self) -> MemoryCacheLocks<'_, V> {
+        MemoryCacheLocks {
+            entries: self
+                .entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            order: self
+                .order
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        }
+    }
+}
+
+macro_rules! cache_policy_methods {
+    () => {
+        #[must_use]
+        pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+            self.clock = clock;
+            self
+        }
+
+        #[must_use]
+        pub fn with_policy(mut self, policy: CachePolicy) -> Self {
+            self.policy = policy;
+            self
+        }
+
+        #[must_use]
+        pub fn metrics(&self) -> Arc<CacheMetrics> {
+            Arc::clone(&self.metrics)
+        }
+
+        #[must_use]
+        pub fn with_metrics(mut self, metrics: Arc<CacheMetrics>) -> Self {
+            self.metrics = metrics;
+            self
+        }
+    };
 }
 
 impl<V> InMemoryCache<V> {
@@ -208,32 +261,11 @@ impl<V> InMemoryCache<V> {
         }
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    #[must_use]
-    pub fn with_policy(mut self, policy: CachePolicy) -> Self {
-        self.policy = policy;
-        self
-    }
+    cache_policy_methods!();
 
     #[must_use]
     pub fn with_weigher(mut self, weigh: fn(&V) -> usize) -> Self {
         self.weigh = weigh;
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<CacheMetrics> {
-        Arc::clone(&self.metrics)
-    }
-
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<CacheMetrics>) -> Self {
-        self.metrics = metrics;
         self
     }
 
@@ -247,9 +279,13 @@ impl<V> InMemoryCache<V> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let expired = entries
-            .iter()
-            .filter(|(_, (stored_at_ms, _, _))| is_expired(*stored_at_ms, now_ms, ttl))
-            .map(|(key, _)| key.clone())
+            .keys()
+            .filter(|key| {
+                entries
+                    .get(*key)
+                    .is_some_and(|entry| is_expired(entry.stored_at_ms, now_ms, ttl))
+            })
+            .cloned()
             .collect::<Vec<_>>();
         let mut order = self
             .order
@@ -277,13 +313,13 @@ where
             .entries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some((stored_at_ms, _, value)) = entries.get(key) else {
+        let Some(entry) = entries.get(key) else {
             self.metrics.misses.inc();
             return Ok(None);
         };
         if self
             .ttl
-            .is_some_and(|ttl| is_expired(*stored_at_ms, self.clock.now_epoch_millis(), ttl))
+            .is_some_and(|ttl| is_expired(entry.stored_at_ms, self.clock.now_epoch_millis(), ttl))
         {
             let mut order = self
                 .order
@@ -295,19 +331,15 @@ where
             return Ok(None);
         }
         self.metrics.hits.inc();
-        Ok(Some(value.clone()))
+        Ok(Some(entry.value.clone()))
     }
 
     async fn insert(&self, key: &CacheKey, value: &V) -> Result<(), Self::Error> {
         self.sweep_expired();
-        let mut entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut order = self
-            .order
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let MemoryCacheLocks {
+            mut entries,
+            mut order,
+        } = self.lock_memory();
         if entries.contains_key(key) {
             remove_memory_entry(&mut entries, &mut order, key, &self.metrics);
         }
@@ -346,7 +378,7 @@ where
                 .map_or(usize::MAX, NonZeroUsize::get)
             || entries
                 .values()
-                .map(|(_, bytes, _)| bytes)
+                .map(|entry| entry.bytes)
                 .sum::<usize>()
                 .saturating_add(bytes)
                 > self.policy.max_bytes.map_or(usize::MAX, NonZeroUsize::get)
@@ -358,7 +390,11 @@ where
         order.push_back(key.clone());
         entries.insert(
             key.clone(),
-            (self.clock.now_epoch_millis(), bytes, value.clone()),
+            MemoryCacheEntry {
+                stored_at_ms: self.clock.now_epoch_millis(),
+                bytes,
+                value: value.clone(),
+            },
         );
         self.metrics.bytes.inc_by(gauge_bytes(bytes));
         Ok(())
@@ -369,14 +405,10 @@ where
     }
 
     async fn invalidate_tenant(&self, tenant: &str) -> Result<usize, Self::Error> {
-        let mut entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut order = self
-            .order
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let MemoryCacheLocks {
+            mut entries,
+            mut order,
+        } = self.lock_memory();
         let keys = entries
             .keys()
             .filter(|key| key.tenant() == tenant)
@@ -389,34 +421,35 @@ where
     }
 }
 
-fn tenant_objects<V>(entries: &BTreeMap<CacheKey, (i64, usize, V)>, tenant: &str) -> usize {
+fn tenant_objects<V>(entries: &BTreeMap<CacheKey, MemoryCacheEntry<V>>, tenant: &str) -> usize {
     entries.keys().filter(|key| key.tenant() == tenant).count()
 }
 
-fn tenant_bytes<V>(entries: &BTreeMap<CacheKey, (i64, usize, V)>, tenant: &str) -> usize {
+fn tenant_bytes<V>(entries: &BTreeMap<CacheKey, MemoryCacheEntry<V>>, tenant: &str) -> usize {
     entries
-        .iter()
-        .filter(|(key, _)| key.tenant() == tenant)
-        .map(|(_, (_, bytes, _))| *bytes)
+        .keys()
+        .filter(|key| key.tenant() == tenant)
+        .filter_map(|key| entries.get(key))
+        .map(|entry| entry.bytes)
         .sum()
 }
 
 fn remove_memory_entry<V>(
-    entries: &mut BTreeMap<CacheKey, (i64, usize, V)>,
+    entries: &mut BTreeMap<CacheKey, MemoryCacheEntry<V>>,
     order: &mut VecDeque<CacheKey>,
     key: &CacheKey,
     metrics: &CacheMetrics,
 ) -> bool {
-    let Some((_, bytes, _)) = entries.remove(key) else {
+    let Some(entry) = entries.remove(key) else {
         return false;
     };
     order.retain(|candidate| candidate != key);
-    metrics.bytes.dec_by(gauge_bytes(bytes));
+    metrics.bytes.dec_by(gauge_bytes(entry.bytes));
     true
 }
 
 fn evict_oldest_memory<V>(
-    entries: &mut BTreeMap<CacheKey, (i64, usize, V)>,
+    entries: &mut BTreeMap<CacheKey, MemoryCacheEntry<V>>,
     order: &mut VecDeque<CacheKey>,
     tenant: Option<&str>,
     metrics: &CacheMetrics,
@@ -529,32 +562,11 @@ impl<V> ObjectStoreCache<V> {
         }
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.clock = clock;
-        self
-    }
+    cache_policy_methods!();
 
     #[must_use]
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
-        self
-    }
-
-    #[must_use]
-    pub fn with_policy(mut self, policy: CachePolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<CacheMetrics> {
-        Arc::clone(&self.metrics)
-    }
-
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<CacheMetrics>) -> Self {
-        self.metrics = metrics;
         self
     }
 
@@ -766,7 +778,9 @@ where
             });
         }
         stored.sort_by(|left, right| {
-            (left.stored_at_ms, left.path.as_ref()).cmp(&(right.stored_at_ms, right.path.as_ref()))
+            left.stored_at_ms
+                .cmp(&right.stored_at_ms)
+                .then_with(|| left.path.as_ref().cmp(right.path.as_ref()))
         });
         while tenant_objects
             > self

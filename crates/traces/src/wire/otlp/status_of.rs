@@ -1,8 +1,14 @@
-use super::{Status, StatusCode};
+use super::{Status, StatusCode, WireSpanStatus};
 
-pub(crate) fn status_of(status: Option<&Status>) -> (StatusCode, String) {
+pub(crate) fn status_of(status: Option<&Status>) -> WireSpanStatus {
     match status {
-        Some(status) => (StatusCode::from_i32(status.code), status.message.clone()),
-        None => (StatusCode::Unset, String::new()),
+        Some(status) => WireSpanStatus {
+            code: StatusCode::from_i32(status.code),
+            message: status.message.clone(),
+        },
+        None => WireSpanStatus {
+            code: StatusCode::Unset,
+            message: String::new(),
+        },
     }
 }

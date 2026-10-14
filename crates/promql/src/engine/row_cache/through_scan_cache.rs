@@ -43,16 +43,16 @@ where
             guard.fill_window(start_ms, end_ms)
         }
     };
-    let Some((fill_start_ms, fill_end_ms)) = fill else {
+    let Some(fill) = fill else {
         return Ok(Arc::new(load(start_ms, end_ms).await?));
     };
-    let value = Arc::new(load(fill_start_ms, fill_end_ms).await?);
+    let value = Arc::new(load(fill.start_ms, fill.end_ms).await?);
     let mut guard = cache.lock().expect("range scan cache poisoned");
     entries(&mut guard).insert(
         key,
         Windowed {
-            start_ms: fill_start_ms,
-            end_ms: fill_end_ms,
+            start_ms: fill.start_ms,
+            end_ms: fill.end_ms,
             value: Arc::clone(&value),
         },
     );

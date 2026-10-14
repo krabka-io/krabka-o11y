@@ -63,12 +63,17 @@ use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 struct RecordingObjectStore {
     inner: Arc<dyn ObjectStore>,
     get_paths: Arc<std::sync::Mutex<Vec<String>>>,
-    put_paths: Arc<std::sync::Mutex<Vec<(String, usize)>>>,
+    put_paths: Arc<std::sync::Mutex<Vec<PutPath>>>,
     /// Every put and every delete in the order the store saw them. The two
     /// path lists above cannot say which came first, and the retention sweep's
     /// contract is exactly an order: the index before the object.
     writes: Arc<std::sync::Mutex<Vec<ObjectStoreWrite>>>,
     put_failures: Arc<PutFailures>,
+}
+
+#[derive(Clone)]
+struct PutPath {
+    path: String,
 }
 
 /// Which `put`s a [`RecordingObjectStore`] refuses with a transient error,
@@ -174,7 +179,7 @@ impl RecordingObjectStore {
         self.get_paths.lock().unwrap().clone()
     }
 
-    fn put_paths(&self) -> Vec<(String, usize)> {
+    fn put_paths(&self) -> Vec<PutPath> {
         self.put_paths.lock().unwrap().clone()
     }
 
@@ -195,18 +200,27 @@ impl fmt::Display for RecordingObjectStore {
     }
 }
 
+struct LoadedShardIndexes {
+    labels: LabelIndex,
+    blocks: BlockIndex,
+}
+
 async fn read_all_tenant_shard_indexes(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     tenant: &str,
-) -> Result<(LabelIndex, BlockIndex), LogBlockStoreError> {
-    read_tenant_log_index_shards_from_object_store(
+) -> Result<LoadedShardIndexes, LogBlockStoreError> {
+    let indexes = read_tenant_log_index_shards_from_object_store(
         store,
         prefix,
         tenant,
         TimeRange::new(i64::MIN, i64::MAX)?,
     )
-    .await
+    .await?;
+    Ok(LoadedShardIndexes {
+        labels: indexes.labels,
+        blocks: indexes.blocks,
+    })
 }
 
 #[async_trait]
@@ -223,10 +237,9 @@ impl ObjectStore for RecordingObjectStore {
                 source: "transient put failure".into(),
             });
         }
-        self.put_paths
-            .lock()
-            .unwrap()
-            .push((location.to_string(), payload.content_length()));
+        self.put_paths.lock().unwrap().push(PutPath {
+            path: location.to_string(),
+        });
         self.writes
             .lock()
             .unwrap()
@@ -301,7 +314,13 @@ async fn compactor_writes_block_then_tenant_index_manifest() {
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("observability/logs");
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let mut block_index = BlockIndex::default();
     let key = BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap());
 
@@ -331,9 +350,11 @@ async fn compactor_writes_block_then_tenant_index_manifest() {
         .unwrap();
     assert!(lines(&rows) == vec!["api ok", "api error"]);
 
-    let (loaded_labels, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
 
     assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
     assert!(
@@ -426,9 +447,13 @@ impl CompactionTarget {
         &mut self,
         descriptor: &BlockDescriptor,
     ) -> krabka_blockstore::SeriesFingerprint {
-        let api = self
-            .label_index
-            .insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+        let api = self.label_index.insert_series(
+            "tenant-a",
+            labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+            ]),
+        );
         check!(
             self.block_index
                 .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
@@ -500,10 +525,11 @@ async fn compactor_commits_partition_offset_after_writing_block_and_index() {
 
     assert!(target.block_lines(&key).await == ["api ok", "api error"]);
 
-    let (_, loaded_blocks) =
+    let loaded_indexes =
         read_tenant_log_index_manifest_from_object_store(&target.store, &target.prefix, "tenant-a")
             .await
             .unwrap();
+    let loaded_blocks = loaded_indexes.blocks;
     assert!(
         loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
             == vec![descriptor]
@@ -560,7 +586,10 @@ async fn compactor_decodes_native_kafka_log_records_from_headers() {
     let rows = read_log_block_from_object_store(&target.store, &target.prefix, &key)
         .await
         .unwrap();
-    let labels = labels([("app", "api"), ("env", "prod")]);
+    let labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let fingerprint = series_fingerprint(&labels);
     assert!(
         rows == vec![LogRow::new(
@@ -571,10 +600,11 @@ async fn compactor_decodes_native_kafka_log_records_from_headers() {
         )]
     );
 
-    let (loaded_labels, loaded_blocks) =
-        read_all_tenant_shard_indexes(&target.store, &target.prefix, "tenant-a")
-            .await
-            .unwrap();
+    let loaded_indexes = read_all_tenant_shard_indexes(&target.store, &target.prefix, "tenant-a")
+        .await
+        .unwrap();
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
     assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
     assert!(
         loaded_blocks.match_blocks(
@@ -714,7 +744,7 @@ struct SecretBlock {
 
 impl SecretBlock {
     /// The block's key and rows.
-    fn key_and_rows(&self) -> (BlockKey, Vec<LogRow>) {
+    fn key_and_rows(&self) -> SecretBlockRows {
         let SecretBlock {
             api,
             first_offset,
@@ -731,16 +761,32 @@ impl SecretBlock {
         let rows = seconds
             .into_iter()
             .zip(SECRET_LINES)
-            .map(|(second, line)| LogRow::new(api, second * 1_000_000_000, line, BTreeMap::new()))
+            .map(|row| LogRow::new(api, row.0 * 1_000_000_000, row.1, BTreeMap::new()))
             .collect();
-        (key, rows)
+        SecretBlockRows { key, rows }
     }
 }
 
-fn api_label_index() -> (LabelIndex, u64) {
+struct SecretBlockRows {
+    key: BlockKey,
+    rows: Vec<LogRow>,
+}
+
+struct ApiLabelIndex {
+    labels: LabelIndex,
+    fingerprint: u64,
+}
+
+fn api_label_index() -> ApiLabelIndex {
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    (label_index, api)
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
+    ApiLabelIndex {
+        labels: label_index,
+        fingerprint: api,
+    }
 }
 
 /// Accepts a delete request for the secret lines in `range`, then runs one
@@ -823,14 +869,14 @@ async fn compactor_runtime_materializes_active_delete_requests_in_existing_block
         config,
     } = DeletingCompactor::new();
     let prefix = ObjectPath::from("observability/logs");
-    let (label_index, api) = api_label_index();
-    let (key, rows) = SecretBlock {
-        api,
+    let index = api_label_index();
+    let rows = SecretBlock {
+        api: index.fingerprint,
         first_offset: 42,
         first_second: 14,
     }
     .key_and_rows();
-    let descriptor = write_log_block_to_object_store(&store, &prefix, &key, rows)
+    let descriptor = write_log_block_to_object_store(&store, &prefix, &rows.key, rows.rows)
         .await
         .unwrap();
     let mut block_index = BlockIndex::default();
@@ -839,7 +885,7 @@ async fn compactor_runtime_materializes_active_delete_requests_in_existing_block
         &store,
         &prefix,
         "tenant-a",
-        &label_index,
+        &index.labels,
         &block_index,
     )
     .await
@@ -847,35 +893,36 @@ async fn compactor_runtime_materializes_active_delete_requests_in_existing_block
 
     delete_secrets_then_compact_idle(&config, &store, "start=14&end=16").await;
 
-    assert!(object_block_lines(&store, &key).await == ["api ok", "api later secret"]);
-    let (_, loaded_blocks) =
+    assert!(object_block_lines(&store, &rows.key).await == ["api ok", "api later secret"]);
+    let loaded_indexes =
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
             .unwrap();
-    check_one_block_for(&loaded_blocks, &key, api);
+    let loaded_blocks = loaded_indexes.blocks;
+    check_one_block_for(&loaded_blocks, &rows.key, index.fingerprint);
 }
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_existing_local_manifest_blocks() {
     let DeletingCompactor { dir, store, config } = DeletingCompactor::new();
-    let (label_index, api) = api_label_index();
-    let (key, rows) = SecretBlock {
-        api,
+    let index = api_label_index();
+    let block_rows = SecretBlock {
+        api: index.fingerprint,
         first_offset: 42,
         first_second: 14,
     }
     .key_and_rows();
-    let descriptor = write_log_block(dir.path(), &key, rows).unwrap();
+    let descriptor = write_log_block(dir.path(), &block_rows.key, block_rows.rows).unwrap();
     let mut block_index = BlockIndex::default();
     block_index.insert(descriptor);
-    write_log_index_manifest(dir.path(), &label_index, &block_index).unwrap();
+    write_log_index_manifest(dir.path(), &index.labels, &block_index).unwrap();
 
     delete_secrets_then_compact_idle(&config, &store, "start=14&end=16").await;
 
-    let rows = read_log_block(dir.path(), &key).unwrap();
+    let rows = read_log_block(dir.path(), &block_rows.key).unwrap();
     assert!(lines(&rows) == vec!["api ok", "api later secret"]);
-    let (_, loaded_blocks) = read_log_index_manifest(dir.path()).unwrap();
-    check_one_block_for(&loaded_blocks, &key, api);
+    let loaded_blocks = read_log_index_manifest(dir.path()).unwrap().blocks;
+    check_one_block_for(&loaded_blocks, &block_rows.key, index.fingerprint);
 }
 
 #[tokio::test]
@@ -895,16 +942,17 @@ async fn delete_existing_shard(catalog_exists: bool) {
         config,
     } = DeletingCompactor::new();
     let prefix = ObjectPath::from("observability/logs");
-    let (label_index, api) = api_label_index();
-    let (key, rows) = SecretBlock {
-        api,
+    let index = api_label_index();
+    let block_rows = SecretBlock {
+        api: index.fingerprint,
         first_offset: 52,
         first_second: 24,
     }
     .key_and_rows();
-    let descriptor = write_log_block_to_object_store(&store, &prefix, &key, rows)
-        .await
-        .unwrap();
+    let descriptor =
+        write_log_block_to_object_store(&store, &prefix, &block_rows.key, block_rows.rows)
+            .await
+            .unwrap();
     let mut block_index = BlockIndex::default();
     block_index.insert(descriptor);
     let shard_range = TimeRange::new(24_000_000_000, 27_000_000_000).unwrap();
@@ -913,7 +961,7 @@ async fn delete_existing_shard(catalog_exists: bool) {
         &prefix,
         "tenant-a",
         &[shard_range],
-        &label_index,
+        &index.labels,
         &block_index,
     )
     .await
@@ -931,12 +979,13 @@ async fn delete_existing_shard(catalog_exists: bool) {
 
     delete_secrets_then_compact_idle(&config, &store, "start=24&end=26").await;
 
-    assert!(object_block_lines(&store, &key).await == ["api ok", "api later secret"]);
-    let (_, loaded_blocks) =
+    assert!(object_block_lines(&store, &block_rows.key).await == ["api ok", "api later secret"]);
+    let loaded_indexes =
         read_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", shard_range)
             .await
             .unwrap();
-    check_one_block_for(&loaded_blocks, &key, api);
+    let loaded_blocks = loaded_indexes.blocks;
+    check_one_block_for(&loaded_blocks, &block_rows.key, index.fingerprint);
 }
 
 #[tokio::test]
@@ -944,9 +993,9 @@ async fn compactor_once_loads_existing_manifest_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let (first_descriptor, second_descriptor) = compact_ok_then_error_runs(&config, &store).await;
+    let runs = compact_ok_then_error_runs(&config, &store).await;
 
-    assert_api_blocks_indexed(&store, &[first_descriptor, second_descriptor]).await;
+    assert_api_blocks_indexed(&store, &[runs.first, runs.second]).await;
 }
 
 #[tokio::test]
@@ -954,24 +1003,21 @@ async fn compactor_runtime_updates_object_store_shard_catalog_incrementally() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let (first_descriptor, second_descriptor) = compact_ok_then_error_runs(&config, &store).await;
+    let runs = compact_ok_then_error_runs(&config, &store).await;
 
     let prefix = ObjectPath::from("observability/logs");
     let shard_ranges =
         list_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
             .await
             .unwrap();
-    assert!(
-        shard_ranges
-            == vec![
-                first_descriptor.key.time_range,
-                second_descriptor.key.time_range
-            ]
-    );
+    assert!(shard_ranges == vec![runs.first.key.time_range, runs.second.key.time_range]);
 
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = series_fingerprint(&api_labels);
-    let (loaded_labels, loaded_blocks) = read_tenant_log_index_shards_from_object_store(
+    let loaded_indexes = read_tenant_log_index_shards_from_object_store(
         &store,
         &prefix,
         "tenant-a",
@@ -979,11 +1025,13 @@ async fn compactor_runtime_updates_object_store_shard_catalog_incrementally() {
     )
     .await
     .unwrap();
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
 
     assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
     assert!(
         loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == vec![first_descriptor, second_descriptor]
+            == vec![runs.first, runs.second]
     );
 }
 
@@ -1071,22 +1119,26 @@ async fn compactor_runtime_writes_shard_indexes_without_index_metadata_rewrites(
     let manifest_puts = store
         .put_paths()
         .into_iter()
-        .filter(|(path, _)| path == &manifest_path)
+        .filter(|put| put.path == manifest_path)
         .count();
     let shard_catalog_puts = store
         .put_paths()
         .into_iter()
-        .filter(|(path, _)| path == &shard_catalog_path)
+        .filter(|put| put.path == shard_catalog_path)
         .count();
-    let (_, loaded_blocks) = read_tenant_log_index_shards_from_object_store(
+    let loaded_blocks = read_tenant_log_index_shards_from_object_store(
         &store,
         &prefix,
         "tenant-a",
         TimeRange::new(i64::MIN, i64::MAX).unwrap(),
     )
     .await
-    .unwrap();
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
+    .unwrap()
+    .blocks;
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
 
     check!(
         manifest_puts == 0,
@@ -1126,23 +1178,28 @@ async fn compactor_runtime_writes_shards_with_only_the_new_block() {
         .unwrap();
 
     let prefix = ObjectPath::from("observability/logs");
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let (_, first_blocks) = read_tenant_log_index_shard_from_object_store(
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
+    let first_blocks = read_tenant_log_index_shard_from_object_store(
         &store,
         &prefix,
         "tenant-a",
         descriptors[0].key.time_range,
     )
     .await
-    .unwrap();
-    let (_, second_blocks) = read_tenant_log_index_shard_from_object_store(
+    .unwrap()
+    .blocks;
+    let second_blocks = read_tenant_log_index_shard_from_object_store(
         &store,
         &prefix,
         "tenant-a",
         descriptors[1].key.time_range,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .blocks;
 
     assert!(
         first_blocks.match_blocks("tenant-a", TimeRange::new(0, 50).unwrap(), &[api])
@@ -1185,7 +1242,10 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
     let old_range = TimeRange::new(1, 1).unwrap();
     let old_key = BlockKey::new(tenant, 5, 40, 40, old_range);
     let mut old_labels = LabelIndex::default();
-    let old_fingerprint = old_labels.insert_series(tenant, labels([("app", "api")]));
+    let old_fingerprint = old_labels.insert_series(
+        tenant,
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut old_blocks = BlockIndex::default();
     old_blocks.insert(krabka_blockstore::BlockDescriptor::new_with_size(
         old_key,
@@ -1226,6 +1286,7 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn compactor_runtime_splits_mixed_tenant_wal_batch_into_tenant_blocks() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
@@ -1261,35 +1322,47 @@ async fn compactor_runtime_splits_mixed_tenant_wal_batch_into_tenant_blocks() {
     );
 
     let prefix = ObjectPath::from("observability/logs");
-    let (first_tenant_labels, first_tenant_blocks) =
-        read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
-            .await
-            .unwrap();
-    let (second_tenant_labels, second_tenant_blocks) =
-        read_all_tenant_shard_indexes(&store, &prefix, "tenant-b")
-            .await
-            .unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+        .await
+        .unwrap();
+    let first_tenant_labels = loaded_indexes.labels;
+    let first_tenant_blocks = loaded_indexes.blocks;
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-b")
+        .await
+        .unwrap();
+    let second_tenant_labels = loaded_indexes.labels;
+    let second_tenant_blocks = loaded_indexes.blocks;
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = series_fingerprint(&api_labels);
 
-    for (tenant_labels, tenant_blocks, tenant, descriptor) in [
-        (
-            &first_tenant_labels,
-            &first_tenant_blocks,
-            "tenant-a",
-            &descriptors[0],
-        ),
-        (
-            &second_tenant_labels,
-            &second_tenant_blocks,
-            "tenant-b",
-            &descriptors[1],
-        ),
+    struct TenantShardIndexCase<'a> {
+        labels: &'a LabelIndex,
+        blocks: &'a BlockIndex,
+        tenant: &'a str,
+        descriptor: &'a BlockDescriptor,
+    }
+    for case in [
+        TenantShardIndexCase {
+            labels: &first_tenant_labels,
+            blocks: &first_tenant_blocks,
+            tenant: "tenant-a",
+            descriptor: &descriptors[0],
+        },
+        TenantShardIndexCase {
+            labels: &second_tenant_labels,
+            blocks: &second_tenant_blocks,
+            tenant: "tenant-b",
+            descriptor: &descriptors[1],
+        },
     ] {
-        assert!(tenant_labels.label_values(tenant, "app") == BTreeSet::from(["api".into()]));
+        assert!(case.labels.label_values(case.tenant, "app") == BTreeSet::from(["api".into()]));
         assert!(
-            tenant_blocks.match_blocks(tenant, TimeRange::new(0, 30).unwrap(), &[api])
-                == vec![descriptor.clone()]
+            case.blocks
+                .match_blocks(case.tenant, TimeRange::new(0, 30).unwrap(), &[api])
+                == vec![case.descriptor.clone()]
         );
     }
 }
@@ -1523,10 +1596,15 @@ async fn compactor_runtime_reprocesses_uncommitted_wal_without_duplicate_manifes
     assert!(lines(&rows) == vec!["api ok"]);
     assert!(rewritten_bytes == first_bytes);
 
-    let (_, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
+    let _ = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = series_fingerprint(&api_labels);
 
     assert!(descriptors.len() == 1);
@@ -1782,7 +1860,9 @@ async fn querier_service_stops_serving_when_its_spawned_wal_consumer_loop_panics
     };
     let trigger = Arc::new(tokio::sync::Notify::new());
     let dependencies = panicking_wal_dependencies(&trigger);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     let server =
         tokio::spawn(
@@ -1818,7 +1898,9 @@ async fn spawn_listener_over(
     config: ServiceConfig,
     dependencies: ServiceDependencies,
 ) -> SpawnedListener {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     let server_store = Arc::clone(store);
     let server = tokio::spawn(async move {
@@ -1977,7 +2059,10 @@ async fn list_log_block_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> V
 fn wal_record(timestamp_ns: i64, offset: i64, line: &str) -> WalLogRecord {
     WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         timestamp_ns,
         line: line.to_string(),
         structured_metadata: BTreeMap::new(),
@@ -2013,7 +2098,10 @@ fn wal_record_without_position(timestamp_ns: i64, line: &str) -> WalLogRecord {
 fn wal_record_for_tenant(tenant: &str, timestamp_ns: i64, line: &str) -> WalLogRecord {
     WalLogRecord {
         tenant: tenant.to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         timestamp_ns,
         line: line.to_string(),
         structured_metadata: BTreeMap::new(),
@@ -2081,17 +2169,20 @@ async fn seed_tenant_log_blocks(
     timestamps_ns: &[i64],
 ) -> Vec<BlockKey> {
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series(tenant, labels([("app", "api")]));
+    let api = label_index.insert_series(
+        tenant,
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut block_index = BlockIndex::default();
     let mut keys = Vec::new();
-    for (offset, timestamp_ns) in timestamps_ns.iter().enumerate() {
-        let offset = i64::try_from(offset).unwrap();
+    for row in timestamps_ns.iter().enumerate() {
+        let offset = i64::try_from(row.0).unwrap();
         let key = BlockKey::new(
             tenant,
             0,
             offset,
             offset,
-            TimeRange::new(*timestamp_ns, *timestamp_ns).unwrap(),
+            TimeRange::new(*row.1, *row.1).unwrap(),
         );
         compact_log_block_to_object_store(
             store,
@@ -2101,7 +2192,7 @@ async fn seed_tenant_log_blocks(
             &mut block_index,
             vec![LogRow::new(
                 api,
-                *timestamp_ns,
+                *row.1,
                 format!("api ok {offset}"),
                 BTreeMap::new(),
             )],
@@ -2182,10 +2273,11 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
     // The tenant manifest, the shard manifest and the object, in that order of
     // increasing consequence. A block that left one and stayed in another is
     // exactly the state this sweep exists to avoid.
-    let (_, manifest_blocks) =
+    let manifest_blocks =
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
-            .unwrap();
+            .unwrap()
+            .blocks;
     check!(block_keys(&manifest_blocks) == vec![kept.clone()]);
     // Empty manifests fence concurrent appends without deleting their mutable key.
     let expired_shard = read_tenant_log_index_shard_from_object_store(
@@ -2196,10 +2288,18 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
     )
     .await
     .unwrap();
-    check!(expired_shard == (LabelIndex::default(), BlockIndex::default()));
-    let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    check!(
+        expired_shard
+            == krabka_blockstore::LogIndexes {
+                labels: LabelIndex::default(),
+                blocks: BlockIndex::default()
+            }
+    );
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
+    let _ = loaded_indexes.labels;
+    let shard_blocks = loaded_indexes.blocks;
     check!(block_keys(&shard_blocks) == vec![kept.clone()]);
     check!(
         list_log_block_paths(&store, &prefix).await
@@ -2239,7 +2339,7 @@ async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
             .unwrap()
             == vec![expired.time_range, kept.time_range]
     );
-    let (empty_labels, empty_blocks) = read_tenant_log_index_shard_from_object_store(
+    let empty_indexes = read_tenant_log_index_shard_from_object_store(
         &store,
         &prefix,
         "tenant-a",
@@ -2247,13 +2347,21 @@ async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
     )
     .await
     .unwrap();
-    check!((empty_labels, empty_blocks) == (LabelIndex::default(), BlockIndex::default()));
+    check!(
+        empty_indexes
+            == krabka_blockstore::LogIndexes {
+                labels: LabelIndex::default(),
+                blocks: BlockIndex::default()
+            }
+    );
 
     // A query that reads the tenant after the sweep still answers, and it
     // answers with the block the window keeps.
-    let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
+    let _ = loaded_indexes.labels;
+    let shard_blocks = loaded_indexes.blocks;
     check!(block_keys(&shard_blocks) == vec![kept.clone()]);
 }
 
@@ -2291,9 +2399,11 @@ async fn a_query_that_read_the_catalog_before_the_sweep_still_succeeds() {
     .await
     .unwrap();
 
-    let (labels_index, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
+    let labels_index = loaded_indexes.labels;
+    let shard_blocks = loaded_indexes.blocks;
     check!(shard_blocks.blocks().is_empty());
     check!(labels_index.label_values("tenant-a", "app") == BTreeSet::new());
 }
@@ -2357,10 +2467,10 @@ async fn the_retention_sweep_finds_a_tenant_whose_name_needs_escaping() {
     .await;
 
     check!(list_log_block_paths(&store, &prefix).await == Vec::<String>::new());
-    let (_, manifest_blocks) =
-        read_tenant_log_index_manifest_from_object_store(&store, &prefix, tenant)
-            .await
-            .unwrap();
+    let manifest_blocks = read_tenant_log_index_manifest_from_object_store(&store, &prefix, tenant)
+        .await
+        .unwrap()
+        .blocks;
     check!(manifest_blocks.blocks().is_empty());
 }
 
@@ -2407,7 +2517,10 @@ async fn a_block_a_delete_request_empties_has_its_object_deleted() {
     config.data_root = dir.path().to_path_buf();
     let prefix = ObjectPath::from("observability/logs");
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut block_index = BlockIndex::default();
     let emptied = BlockKey::new(
         "tenant-a",
@@ -2466,10 +2579,11 @@ async fn a_block_a_delete_request_empties_has_its_object_deleted() {
     // The descriptor left the index, so nothing names the object any more. An
     // object no index names is unreachable, and leaving it would grow the
     // bucket for as long as it lives.
-    let (_, manifest_blocks) =
+    let manifest_blocks =
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
-            .unwrap();
+            .unwrap()
+            .blocks;
     check!(block_keys(&manifest_blocks) == vec![kept.clone()]);
     check!(
         list_log_block_paths(&store, &prefix).await
@@ -2482,7 +2596,9 @@ async fn a_query_planned_before_the_sweep_still_answers_without_the_deleted_bloc
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("observability/logs");
-    let (expired, kept) = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let blocks = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let expired = blocks.expired;
+    let kept = blocks.kept;
 
     // A querier that resolves the tenant index per request and caches it. The
     // cache is what makes a query outlive the index it planned against, which
@@ -2616,10 +2732,15 @@ fn polls(partition: PartitionIndex, batches: &[&[Polled<'_>]]) -> ServiceDepende
 /// hold exactly `expected` for the `api` series.
 async fn assert_api_blocks_indexed(store: &dyn ObjectStore, expected: &[BlockDescriptor]) {
     let prefix = ObjectPath::from("observability/logs");
-    let (loaded_labels, loaded_blocks) = read_all_tenant_shard_indexes(store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(store, &prefix, "tenant-a")
         .await
         .unwrap();
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
 
     assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
     assert!(
@@ -2632,7 +2753,7 @@ async fn assert_api_blocks_indexed(store: &dyn ObjectStore, expected: &[BlockDes
 async fn compact_ok_then_error_runs(
     config: &ServiceConfig,
     store: &LocalFileSystem,
-) -> (BlockDescriptor, BlockDescriptor) {
+) -> CompactedRuns {
     let first_descriptor = run_compactor_once(
         config,
         polls(
@@ -2655,7 +2776,15 @@ async fn compact_ok_then_error_runs(
     .await
     .unwrap()
     .expect("second compacted descriptor");
-    (first_descriptor, second_descriptor)
+    CompactedRuns {
+        first: first_descriptor,
+        second: second_descriptor,
+    }
+}
+
+struct CompactedRuns {
+    first: BlockDescriptor,
+    second: BlockDescriptor,
 }
 
 /// Runs the compactor for 250 ms over one "api ok" record on partition 6, and
@@ -2697,23 +2826,28 @@ impl SeededRetentionStore {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
         let prefix = ObjectPath::from("observability/logs");
-        let (expired, kept) = seed_expired_and_kept_blocks(&store, &prefix).await;
+        let blocks = seed_expired_and_kept_blocks(&store, &prefix).await;
         Self {
             _dir: dir,
             store,
             prefix,
-            expired,
-            kept,
+            expired: blocks.expired,
+            kept: blocks.kept,
         }
     }
 }
 
 /// Seeds tenant-a with a block two hours old and a block one minute old, and
 /// returns their keys in that order.
+struct ExpiredAndKeptBlocks {
+    expired: BlockKey,
+    kept: BlockKey,
+}
+
 async fn seed_expired_and_kept_blocks(
     store: &LocalFileSystem,
     prefix: &ObjectPath,
-) -> (BlockKey, BlockKey) {
+) -> ExpiredAndKeptBlocks {
     let now_ns = now_unix_nanos();
     let keys = seed_tenant_log_blocks(
         store,
@@ -2722,7 +2856,10 @@ async fn seed_expired_and_kept_blocks(
         &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
     )
     .await;
-    (keys[0].clone(), keys[1].clone())
+    ExpiredAndKeptBlocks {
+        expired: keys[0].clone(),
+        kept: keys[1].clone(),
+    }
 }
 
 /// Runs the compactor with a one-hour retention for tenant-a over the blocks
@@ -2812,7 +2949,9 @@ async fn the_retention_period_flag_sweeps_without_an_overrides_file() {
         ..compactor_config("observability/logs")
     };
     let prefix = ObjectPath::from("observability/logs");
-    let (expired, kept) = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let blocks = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let expired = blocks.expired;
+    let kept = blocks.kept;
 
     tokio::time::timeout(
         Duration::from_secs(10),
@@ -2854,6 +2993,7 @@ async fn the_retention_period_flag_sweeps_without_an_overrides_file() {
 /// By default the store is in memory. See `docs/object_store_contract.md` to
 /// run it against a provider.
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     let mut lifecycle = LifecycleStore::open("logs", "block_lifecycle");
     let store = lifecycle.store();
@@ -2892,19 +3032,38 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
         .expect("the second block is written");
 
     // Query: the index names both blocks, and each block reads.
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let (_, blocks) = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
+    let loaded_indexes = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
         .await
         .unwrap();
+    let _ = loaded_indexes.labels;
+    let blocks = loaded_indexes.blocks;
     check!(
         blocks.match_blocks("tenant-a", TimeRange::new(0, i64::MAX).unwrap(), &[api])
             == vec![old.clone(), new.clone()]
     );
-    for (descriptor, line) in [(&old, "api old"), (&new, "api new")] {
-        let rows = read_log_block_from_object_store(store.as_ref(), &prefix, &descriptor.key)
-            .await
-            .unwrap();
-        check!(lines(&rows) == vec![line]);
+    struct ExpectedBlockLine<'a> {
+        descriptor: &'a BlockDescriptor,
+        line: &'a str,
+    }
+    for expected in [
+        ExpectedBlockLine {
+            descriptor: &old,
+            line: "api old",
+        },
+        ExpectedBlockLine {
+            descriptor: &new,
+            line: "api new",
+        },
+    ] {
+        let rows =
+            read_log_block_from_object_store(store.as_ref(), &prefix, &expected.descriptor.key)
+                .await
+                .unwrap();
+        check!(lines(&rows) == vec![expected.line]);
     }
 
     // Retention: the two-hour-old block is past a one-hour window.
@@ -2916,9 +3075,11 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
         swept_block: &old.key,
     })
     .await;
-    let (_, blocks) = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
         .await
         .unwrap();
+    let _ = loaded_indexes.labels;
+    let blocks = loaded_indexes.blocks;
     check!(blocks.blocks().to_vec() == vec![new.clone()]);
     check!(
         list_log_block_paths(store.as_ref(), &prefix).await

@@ -1,5 +1,11 @@
 use super::*;
 
+struct RetentionCase {
+    description: &'static str,
+    tenant: &'static str,
+    window: Time,
+}
+
 /// The sentinel reading, pinned in both directions.
 ///
 /// `Loki` ships `retention_period: 0s`, and zero there means "no retention".
@@ -18,24 +24,28 @@ pub(crate) fn a_zero_retention_window_keeps_every_block_rather_than_none() {
     )
     .expect("the overrides file parses");
 
-    for (name, tenant, window) in [
-        (
-            "a tenant with a window of its own",
-            "tenant-short",
-            hours(1),
-        ),
-        (
-            "a tenant that turns retention off",
-            "tenant-forever",
-            Time::ZERO,
-        ),
-        (
-            "a tenant with no entry at all",
-            "tenant-unlisted",
-            minutes(90),
-        ),
+    for case in [
+        RetentionCase {
+            description: "a tenant with a window of its own",
+            tenant: "tenant-short",
+            window: hours(1),
+        },
+        RetentionCase {
+            description: "a tenant that turns retention off",
+            tenant: "tenant-forever",
+            window: Time::ZERO,
+        },
+        RetentionCase {
+            description: "a tenant with no entry at all",
+            tenant: "tenant-unlisted",
+            window: minutes(90),
+        },
     ] {
-        check!(provider.block_retention(tenant) == window, "{name}");
+        check!(
+            provider.block_retention(case.tenant) == case.window,
+            "{}",
+            case.description
+        );
     }
 
     // The sweep costs a pass over the object store, so a deployment where no

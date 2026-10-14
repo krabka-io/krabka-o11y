@@ -13,20 +13,23 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn samples_schema_has_fold_keys_and_value() {
+    #[yare::parameterized(
+        stacktrace_partition = { PCOL_STACKTRACE_PARTITION, DataType::UInt64 },
+        stacktrace_id = { PCOL_STACKTRACE_ID, DataType::UInt64 },
+        value = { PCOL_VALUE, DataType::Int64 },
+    )]
+    fn samples_schema_has_fold_keys_and_value(column: &'static str, want: DataType) {
         let schema = profile_samples_schema();
-        for (column, want) in [
-            (PCOL_STACKTRACE_PARTITION, DataType::UInt64),
-            (PCOL_STACKTRACE_ID, DataType::UInt64),
-            (PCOL_VALUE, DataType::Int64),
-        ] {
-            assert!(
-                schema.column_with_name(column).unwrap().1.data_type() == &want,
-                "{column}"
-            );
-        }
-        let (_, field) = schema.column_with_name(PCOL_TRACE_ID).unwrap();
+        assert2::assert!(
+            schema.field_with_name(column).unwrap().data_type() == &want,
+            "{column}"
+        );
+    }
+
+    #[test]
+    fn samples_schema_has_optional_trace_id() {
+        let schema = profile_samples_schema();
+        let field = schema.field_with_name(PCOL_TRACE_ID).unwrap();
         assert!(field.is_nullable() && field.data_type() == &DataType::Binary);
     }
 }

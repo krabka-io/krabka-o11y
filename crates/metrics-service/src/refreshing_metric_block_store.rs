@@ -122,14 +122,17 @@ impl RefreshingMetricBlockStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<MergedMetricStore<MetricBlockStore, WalHead>, MetricsServiceError> {
-        let (start_ms, end_ms) = normalize_refresh_range(
+        let range = normalize_refresh_range(
             start_ms,
             end_ms,
             self.unbounded_compatibility_lookback,
             unix_time_ms(),
         );
 
-        let requested = MillisRange { start_ms, end_ms };
+        let requested = MillisRange {
+            start_ms: range.start_ms,
+            end_ms: range.end_ms,
+        };
         if let Some(store) = self.fresh_cached_store(requested).await {
             return Ok(store);
         }
@@ -142,8 +145,8 @@ impl RefreshingMetricBlockStore {
         let manifests = load_compaction_manifests_for_range_with_cache(
             self.store.clone(),
             &self.manifest_prefix,
-            start_ms,
-            end_ms,
+            range.start_ms,
+            range.end_ms,
             &self.manifest_cache,
         )
         .await?;
@@ -154,7 +157,7 @@ impl RefreshingMetricBlockStore {
                 .manifests
                 .iter()
                 .zip(&manifests)
-                .all(|(old, new)| Arc::ptr_eq(old, new))
+                .all(|pair| Arc::ptr_eq(pair.0, pair.1))
         {
             previous.cold.clone()
         } else {

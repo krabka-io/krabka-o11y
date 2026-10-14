@@ -1,6 +1,5 @@
 use super::{
-    ComparisonOp, Field, GroupJoinSql, RankDirection, RankLimit, Result, aggregate_filter_sql,
-    group_join_sql,
+    Field, GroupJoinSql, RankDirection, RankLimit, Result, aggregate_filter_sql, group_join_sql,
 };
 
 pub(crate) fn grouped_rank_sql(
@@ -8,8 +7,8 @@ pub(crate) fn grouped_rank_sql(
     by: &[Field],
     expr: &str,
     rank: RankLimit,
-    pre_filter: Option<(ComparisonOp, f64)>,
-    post_filter: Option<(ComparisonOp, f64)>,
+    pre_filter: Option<super::RankFilter>,
+    post_filter: Option<super::RankFilter>,
 ) -> Result<String> {
     let GroupJoinSql {
         group_exprs,
@@ -19,13 +18,16 @@ pub(crate) fn grouped_rank_sql(
         RankDirection::Top => "DESC",
         RankDirection::Bottom => "ASC",
     };
-    let having = if let Some((op, value)) = pre_filter {
-        format!(" HAVING {}", aggregate_filter_sql(expr, op, value)?)
+    let having = if let Some(filter) = pre_filter {
+        format!(
+            " HAVING {}",
+            aggregate_filter_sql(expr, filter.op, filter.value)?
+        )
     } else {
         String::new()
     };
-    let passing_source = if let Some((op, value)) = post_filter {
-        let pred = aggregate_filter_sql("rank_value", op, value)?;
+    let passing_source = if let Some(filter) = post_filter {
+        let pred = aggregate_filter_sql("rank_value", filter.op, filter.value)?;
         format!("SELECT * FROM ranked WHERE {pred}")
     } else {
         "SELECT * FROM ranked".to_string()

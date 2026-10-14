@@ -3,10 +3,7 @@
 use std::sync::Arc;
 
 use arrow::{
-    array::{
-        ArrayRef, Float64Array, Float64Builder, Int64Array, Int64Builder, UInt64Array,
-        UInt64Builder,
-    },
+    array::{Float64Array, Int64Array, Int64Builder, UInt64Array},
     record_batch::RecordBatch,
 };
 
@@ -25,9 +22,24 @@ mod tests {
     #[test]
     fn float_samples_round_trip() {
         let rows = [
-            (1_u64, 100_i64, 1.5_f64, Some(50)),
-            (2, 200, -3.0, None),
-            (1, 300, 0.0, Some(250)),
+            FloatSampleRow {
+                fingerprint: 1,
+                timestamp_ms: 100,
+                value: 1.5,
+                start_timestamp_ms: Some(50),
+            },
+            FloatSampleRow {
+                fingerprint: 2,
+                timestamp_ms: 200,
+                value: -3.0,
+                start_timestamp_ms: None,
+            },
+            FloatSampleRow {
+                fingerprint: 1,
+                timestamp_ms: 300,
+                value: 0.0,
+                start_timestamp_ms: Some(250),
+            },
         ];
 
         let batch = encode_float_samples(&rows).unwrap();
@@ -41,9 +53,29 @@ mod col_value;
 mod decode_float_samples;
 mod encode_float_samples;
 
+impl crate::numeric_sample_columns::NumericSampleRow for FloatSampleRow {
+    fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.timestamp_ms
+    }
+
+    fn value(&self) -> f64 {
+        self.value
+    }
+}
+
 use col_value::COL_VALUE;
 pub use decode_float_samples::decode_float_samples;
 pub use encode_float_samples::encode_float_samples;
 
-/// One encoded float sample: fingerprint, timestamp, value, and optional creation timestamp.
-pub type FloatSampleRow = (u64, i64, f64, Option<i64>);
+/// One encoded float sample with its optional creation timestamp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FloatSampleRow {
+    pub fingerprint: u64,
+    pub timestamp_ms: i64,
+    pub value: f64,
+    pub start_timestamp_ms: Option<i64>,
+}

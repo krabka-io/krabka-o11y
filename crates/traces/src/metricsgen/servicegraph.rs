@@ -38,13 +38,11 @@ mod tests {
         // tolerance because a bare `==` on a float is refused, not because any
         // of these is expected to drift.
         let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
-        let key = |client: &str, server: &str| {
-            (
-                client.to_string(),
-                server.to_string(),
-                super::ConnectionType::Unset,
-                Vec::new(),
-            )
+        let key = |client: &str, server: &str| super::LabelKey {
+            client: client.to_string(),
+            server: server.to_string(),
+            connection_type: super::ConnectionType::Unset,
+            dimensions: Vec::new(),
         };
 
         let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
@@ -89,12 +87,13 @@ mod tests {
         let mut messaging = edge("a", "b", false, Some(1_000_000_000), Some(2_000_000_000));
         messaging.connection_type = super::ConnectionType::MessagingSystem;
         store.complete(&messaging);
-        let agg = &store.aggregates[&(
-            "a".to_string(),
-            "b".to_string(),
-            super::ConnectionType::MessagingSystem,
-            Vec::new(),
-        )];
+        let messaging_key = super::LabelKey {
+            client: "a".to_string(),
+            server: "b".to_string(),
+            connection_type: super::ConnectionType::MessagingSystem,
+            dimensions: Vec::new(),
+        };
+        let agg = &store.aggregates[&messaging_key];
         check!(is(agg.messaging_seconds_count, 0.0), "disabled by default");
 
         // With it enabled, the server latency is preferred over the client's.
@@ -104,12 +103,7 @@ mod tests {
         };
         let mut store = super::EdgeStore::new(&cfg);
         store.complete(&messaging);
-        let agg = &store.aggregates[&(
-            "a".to_string(),
-            "b".to_string(),
-            super::ConnectionType::MessagingSystem,
-            Vec::new(),
-        )];
+        let agg = &store.aggregates[&messaging_key];
         check!(is(agg.messaging_seconds_count, 1.0));
         check!(
             is(agg.messaging_seconds_sum, 2.0),
@@ -133,7 +127,7 @@ mod tests {
             failed: true,
             connection_type: super::ConnectionType::Database,
             first_seen_ns: 1_234_567,
-            labels: vec![("cluster".into(), "prod".into())],
+            labels: vec![krabka_traceql::MetricLabel::new("cluster", "prod")],
             multiplier: 2.0,
         };
         let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&edge))
@@ -327,6 +321,7 @@ mod tests {
 
     use super::*;
     use crate::metricsgen::{
+        SpanAttribute,
         config::MetricsGenConfig,
         contract::{SpanKind, SpanRecord, StatusCode},
         series::{Series, SeriesSample},
@@ -383,7 +378,7 @@ mod tests {
             })
     }
 
-    fn labels_for<'a>(series: &'a [Series], name: &str) -> &'a [(String, String)] {
+    fn labels_for<'a>(series: &'a [Series], name: &str) -> &'a [krabka_traceql::MetricLabel] {
         &series.iter().find(|s| s.name == name).unwrap().labels
     }
 
@@ -414,8 +409,8 @@ mod tests {
             .map_or(0.0, |s| match &s.sample {
                 SeriesSample::ClassicHistogram { buckets, .. } => buckets
                     .iter()
-                    .find(|(bucket_le, _)| (*bucket_le - le).abs() < 1e-9)
-                    .map_or(0.0, |(_, count)| *count),
+                    .find(|bucket| (bucket.upper_bound - le).abs() < 1e-9)
+                    .map_or(0.0, |bucket| bucket.cumulative_count),
                 _ => panic!("{name} not a histogram"),
             })
     }
@@ -525,9 +520,9 @@ mod tests {
         assert2::assert!(
             req.labels
                 == [
-                    ("client".to_string(), "frontend".to_string()),
-                    ("connection_type".to_string(), "unset".to_string()),
-                    ("server".to_string(), "backend".to_string()),
+                    krabka_traceql::MetricLabel::new("client", "frontend".to_string()),
+                    krabka_traceql::MetricLabel::new("connection_type", "unset".to_string()),
+                    krabka_traceql::MetricLabel::new("server", "backend".to_string()),
                 ]
         );
         check!(
@@ -555,8 +550,8 @@ mod tests {
         }
         .record();
         client.attributes = vec![
-            ("http.method".into(), "GET".into()),
-            ("sample.weight".into(), "3".into()),
+            SpanAttribute::new("http.method", "GET"),
+            SpanAttribute::new("sample.weight", "3"),
         ];
         let mut server = EdgeSpan {
             service: "backend",
@@ -569,34 +564,38 @@ mod tests {
         .record();
         server
             .attributes
-            .push(("http.method".into(), "POST".into()));
+            .push(SpanAttribute::new("http.method", "POST"));
 
         check!(store.record_span(&client, 0) == RecordOutcome::Recorded);
         check!(store.record_span(&server, 1) == RecordOutcome::Completed);
         let out = store.drain(1_000);
         check!((counter(&out, "traces_service_graph_request_total") - 3.0).abs() < f64::EPSILON);
         let labels = labels_for(&out, "traces_service_graph_request_total");
-        check!(labels.contains(&("client_http_method".into(), "GET".into())));
-        check!(labels.contains(&("server_http_method".into(), "POST".into())));
+        check!(labels.contains(&krabka_traceql::MetricLabel::new(
+            "client_http_method",
+            "GET"
+        )));
+        check!(labels.contains(&krabka_traceql::MetricLabel::new(
+            "server_http_method",
+            "POST"
+        )));
         check!(
             (histogram_count(&out, "traces_service_graph_request_client_seconds") - 3.0).abs()
                 < f64::EPSILON
         );
     }
 
-    #[test]
-    fn request_latency_histograms_include_configured_buckets() {
+    #[yare::parameterized(
+        client_first = { "traces_service_graph_request_client_seconds", 0.008, 0.0 },
+        client_second = { "traces_service_graph_request_client_seconds", 0.016, 1.0 },
+        server_first = { "traces_service_graph_request_server_seconds", 0.008, 1.0 },
+    )]
+    fn request_latency_histograms_include_configured_buckets(name: &str, le: f64, want: f64) {
         let out = drain_edge(FrontendBackendEdge::default());
-        for (name, le, want) in [
-            ("traces_service_graph_request_client_seconds", 0.008, 0.0),
-            ("traces_service_graph_request_client_seconds", 0.016, 1.0),
-            ("traces_service_graph_request_server_seconds", 0.008, 1.0),
-        ] {
-            check!(
-                (histogram_bucket_value(&out, name, le) - want).abs() < 1e-9,
-                "case {name} le={le}"
-            );
-        }
+        check!(
+            (histogram_bucket_value(&out, name, le) - want).abs() < 1e-9,
+            "case {name} le={le}"
+        );
     }
 
     #[test]
@@ -610,7 +609,7 @@ mod tests {
         assert2::assert!(
             labels
                 .iter()
-                .any(|(k, v)| k == "connection_type" && v == "unset")
+                .any(|label| label.key == "connection_type" && label.value == "unset")
         );
     }
 
@@ -667,9 +666,9 @@ mod tests {
         assert2::assert!(
             labels
                 == [
-                    ("client".to_string(), "frontend".to_string()),
-                    ("connection_type".to_string(), "unset".to_string()),
-                    ("server".to_string(), String::new()),
+                    krabka_traceql::MetricLabel::new("client", "frontend".to_string()),
+                    krabka_traceql::MetricLabel::new("connection_type", "unset".to_string()),
+                    krabka_traceql::MetricLabel::new("server", String::new()),
                 ]
         );
     }
@@ -750,7 +749,8 @@ mod tests {
             ..EdgeSpan::default()
         }
         .record();
-        b.attributes.push(("db.system".into(), "postgresql".into()));
+        b.attributes
+            .push(SpanAttribute::new("db.system", "postgresql"));
 
         assert2::assert!(store.record_span(&a, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.record_span(&b, 1) == RecordOutcome::Dropped);
@@ -760,9 +760,9 @@ mod tests {
         assert2::assert!(
             labels
                 == [
-                    ("client".to_string(), "database".to_string()),
-                    ("connection_type".to_string(), "database".to_string()),
-                    ("server".to_string(), String::new()),
+                    krabka_traceql::MetricLabel::new("client", "database".to_string()),
+                    krabka_traceql::MetricLabel::new("connection_type", "database".to_string()),
+                    krabka_traceql::MetricLabel::new("server", String::new()),
                 ]
         );
     }
@@ -791,7 +791,7 @@ mod tests {
         .record();
         client
             .attributes
-            .push(("db.system".into(), "postgresql".into()));
+            .push(SpanAttribute::new("db.system", "postgresql"));
 
         assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.expire(20_000_000_000) == 1);
@@ -805,7 +805,7 @@ mod tests {
             unpaired
                 .labels
                 .iter()
-                .any(|(k, v)| k == "connection_type" && v == "database")
+                .any(|label| label.key == "connection_type" && label.value == "database")
         );
     }
 
@@ -820,7 +820,7 @@ mod tests {
         .record();
         client
             .attributes
-            .push(("peer.service".into(), "db-proxy".into()));
+            .push(SpanAttribute::new("peer.service", "db-proxy"));
 
         assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.expire(20_000_000_000) == 1);
@@ -830,9 +830,9 @@ mod tests {
         assert2::assert!(
             labels
                 == [
-                    ("client".to_string(), "frontend".to_string()),
-                    ("connection_type".to_string(), "virtual_node".to_string()),
-                    ("server".to_string(), "db-proxy".to_string()),
+                    krabka_traceql::MetricLabel::new("client", "frontend".to_string()),
+                    krabka_traceql::MetricLabel::new("connection_type", "virtual_node".to_string()),
+                    krabka_traceql::MetricLabel::new("server", "db-proxy".to_string()),
                 ]
         );
     }
@@ -860,7 +860,7 @@ mod tests {
         .record();
         client
             .attributes
-            .push(("peer.service".into(), "db-proxy".into()));
+            .push(SpanAttribute::new("peer.service", "db-proxy"));
 
         // Server arrives first and creates the edge with no virtual-node signal.
         assert2::assert!(store.record_span(&server, 0) == RecordOutcome::Recorded);
@@ -874,9 +874,9 @@ mod tests {
         assert2::assert!(
             labels
                 == [
-                    ("client".to_string(), "frontend".to_string()),
-                    ("connection_type".to_string(), "virtual_node".to_string()),
-                    ("server".to_string(), "db-proxy".to_string()),
+                    krabka_traceql::MetricLabel::new("client", "frontend".to_string()),
+                    krabka_traceql::MetricLabel::new("connection_type", "virtual_node".to_string()),
+                    krabka_traceql::MetricLabel::new("server", "db-proxy".to_string()),
                 ]
         );
     }
@@ -898,7 +898,7 @@ mod tests {
         .record();
         producer
             .attributes
-            .push(("messaging.system".into(), "kafka".into()));
+            .push(SpanAttribute::new("messaging.system", "kafka"));
         let mut consumer = EdgeSpan {
             service: "worker",
             span_id: [0xB; 8],
@@ -910,7 +910,7 @@ mod tests {
         .record();
         consumer
             .attributes
-            .push(("messaging.system".into(), "kafka".into()));
+            .push(SpanAttribute::new("messaging.system", "kafka"));
 
         assert2::assert!(store.record_span(&producer, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.record_span(&consumer, 1) == RecordOutcome::Completed);
@@ -920,12 +920,9 @@ mod tests {
         assert2::assert!(
             labels
                 == [
-                    ("client".to_string(), "publisher".to_string()),
-                    (
-                        "connection_type".to_string(),
-                        "messaging_system".to_string(),
-                    ),
-                    ("server".to_string(), "worker".to_string()),
+                    krabka_traceql::MetricLabel::new("client", "publisher".to_string()),
+                    krabka_traceql::MetricLabel::new("connection_type", "messaging_system"),
+                    krabka_traceql::MetricLabel::new("server", "worker".to_string()),
                 ]
         );
         check!(

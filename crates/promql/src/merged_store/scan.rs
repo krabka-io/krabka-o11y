@@ -13,4 +13,4 @@ mod merge_scan_table;
 
 pub(super) use float_table::FLOAT_TABLE;
 pub(super) use histogram_table::HISTOGRAM_TABLE;
-pub(super) use merge_scan_table::merge_scan_table;
+pub(super) use merge_scan_table::{ScanTableInput, merge_scan_table};

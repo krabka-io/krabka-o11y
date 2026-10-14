@@ -34,19 +34,20 @@ mod tests {
     /// Span kind and status names come off the wire as strings and have to
     /// land on the numbers the stored spans use. Every name is checked, since
     /// a table is exactly where an off-by-one goes unnoticed.
+    #[yare::parameterized(
+        unspecified = { "unspecified", 0 },
+        internal = { "internal", 1 },
+        server = { "server", 2 },
+        client = { "client", 3 },
+        producer = { "producer", 4 },
+        consumer = { "consumer", 5 },
+    )]
+    fn span_kind_names_map_to_their_stored_numbers(name: &str, value: i32) {
+        assert2::check!(kind_enum_value(name) == Some(value), "kind {name}");
+    }
+
     #[test]
-    fn span_kind_and_status_names_map_to_their_stored_numbers() {
-        let kinds = [
-            ("unspecified", 0),
-            ("internal", 1),
-            ("server", 2),
-            ("client", 3),
-            ("producer", 4),
-            ("consumer", 5),
-        ];
-        for (name, value) in kinds {
-            check!(kind_enum_value(name) == Some(value), "kind {name}");
-        }
+    fn unknown_span_kind_names_are_rejected() {
         check!(
             kind_enum_value("Server") == None,
             "the match is case-sensitive"
@@ -56,10 +57,19 @@ mod tests {
             kind_enum_value("gateway") == None,
             "an unknown kind is not a number"
         );
+    }
 
-        for (name, value) in [("unset", 0), ("ok", 1), ("error", 2)] {
-            check!(status_enum_value(name) == Some(value), "status {name}");
-        }
+    #[yare::parameterized(
+        unset = { "unset", 0 },
+        ok = { "ok", 1 },
+        error = { "error", 2 },
+    )]
+    fn span_status_names_map_to_their_stored_numbers(name: &str, value: i32) {
+        assert2::check!(status_enum_value(name) == Some(value), "status {name}");
+    }
+
+    #[test]
+    fn unknown_span_status_names_are_rejected() {
         check!(
             status_enum_value("OK") == None,
             "the match is case-sensitive"

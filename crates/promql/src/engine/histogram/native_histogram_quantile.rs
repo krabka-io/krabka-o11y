@@ -6,6 +6,11 @@ use super::{
     native_histogram_quantile_nan_skew_info, zero_bucket_bounds,
 };
 
+struct NativeHistogramBucketWalkEntry {
+    position: usize,
+    bucket: NativeQuantileBucket,
+}
+
 /// Estimates `quantile` from one native histogram.
 ///
 /// This walks the buckets accumulating a rank until it passes `quantile *
@@ -47,8 +52,9 @@ pub(crate) fn native_histogram_quantile(
         upper: 0.0,
         count: 0.0,
     };
-    for (position, candidate) in bucket_walk(&buckets, forwards) {
-        walked = position;
+    for entry in bucket_walk(&buckets, forwards) {
+        walked = entry.position;
+        let candidate = entry.bucket;
         if candidate.count == 0.0 {
             continue;
         }
@@ -89,12 +95,7 @@ pub(crate) fn native_histogram_quantile(
     };
 
     if hist.sum.is_nan() {
-        let observed: f64 = count
-            + buckets
-                .iter()
-                .skip(walked + 1)
-                .map(|bucket| bucket.count)
-                .sum::<f64>();
+        let observed = super::observed_histogram_count(count, &buckets, walked);
         if observed < hist.count {
             emit_info(native_histogram_quantile_nan_skew_info(metric));
         }
@@ -103,14 +104,18 @@ pub(crate) fn native_histogram_quantile(
     native_histogram_bucket_quantile(hist, bucket, rank / bucket.count)
 }
 
-/// The buckets to walk, paired with their index, in the direction the quantile
-/// asks for.
+/// The buckets to walk in the direction the quantile asks for.
 fn bucket_walk(
     buckets: &[NativeQuantileBucket],
     forwards: bool,
-) -> Box<dyn Iterator<Item = (usize, NativeQuantileBucket)> + '_> {
+) -> Box<dyn Iterator<Item = NativeHistogramBucketWalkEntry> + '_> {
+    let entries = (0..buckets.len()).map(|position| NativeHistogramBucketWalkEntry {
+        position,
+        bucket: buckets[position],
+    });
     if forwards {
-        return Box::new(buckets.iter().copied().enumerate());
+        Box::new(entries)
+    } else {
+        Box::new(entries.rev())
     }
-    Box::new(buckets.iter().copied().enumerate().rev())
 }

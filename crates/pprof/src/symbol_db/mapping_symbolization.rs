@@ -3,6 +3,15 @@ use super::{Deserialize, Serialize};
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MappingSymbolization(pub(crate) u8);
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct MappingSymbolizationParts {
+    pub functions: bool,
+    pub filenames: bool,
+    pub line_numbers: bool,
+    pub inline_frames: bool,
+}
+
 impl MappingSymbolization {
     pub(crate) const FUNCTIONS: u8 = 1;
     pub(crate) const FILENAMES: u8 = 1 << 1;
@@ -10,19 +19,18 @@ impl MappingSymbolization {
     pub(crate) const INLINE_FRAMES: u8 = 1 << 3;
 
     #[must_use]
-    pub fn from_parts(parts: (bool, bool, bool, bool)) -> Self {
-        let (has_functions, has_filenames, has_line_numbers, has_inline_frames) = parts;
+    pub fn from_parts(parts: MappingSymbolizationParts) -> Self {
         let mut flags = 0;
-        if has_functions {
+        if parts.functions {
             flags |= Self::FUNCTIONS;
         }
-        if has_filenames {
+        if parts.filenames {
             flags |= Self::FILENAMES;
         }
-        if has_line_numbers {
+        if parts.line_numbers {
             flags |= Self::LINE_NUMBERS;
         }
-        if has_inline_frames {
+        if parts.inline_frames {
             flags |= Self::INLINE_FRAMES;
         }
         Self(flags)

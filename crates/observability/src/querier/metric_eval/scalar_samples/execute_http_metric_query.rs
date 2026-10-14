@@ -9,6 +9,7 @@ use super::{
     plan_stream_query, validate_query_bytes_limit, validate_query_series_limit,
 };
 use crate::{
+    ActiveLogDeleteFilter, StreamPlan,
     http::params_format::aggregation_formatting::apply_approx_metric_selection,
     loki_vector_response_from_matrix,
 };
@@ -66,20 +67,16 @@ pub(crate) async fn execute_http_metric_query(
             &delete_filters,
         )
         .await?;
-        if state.hot_tail.is_some() {
-            let (records, frontier) = hot_tail_snapshot(&state, plan.time_range);
-            return Ok(add_loki_query_stats_for_metric_plan_with_hot_tail(
-                response,
-                &plan,
-                &query,
-                &records,
-                &frontier,
-                (time_range, step_ns),
-                &delete_filters,
-            ));
-        }
-        return Ok(add_loki_query_stats_for_metric_plan(
-            response, &plan, &query,
+        return Ok(metric_response_with_stats(
+            &state,
+            response,
+            &plan,
+            &query,
+            crate::MetricEvaluationWindow {
+                range: time_range,
+                step_ns,
+            },
+            &delete_filters,
         ));
     }
     let eval_range = TimeRange::new(time_range.end_ns, time_range.end_ns)
@@ -95,21 +92,40 @@ pub(crate) async fn execute_http_metric_query(
     if let Some(limit) = approximate_limit {
         apply_approx_metric_selection(&mut response, limit, state.max_count_min_sketch_heap_size);
     }
-    if state.hot_tail.is_some() {
-        let (records, frontier) = hot_tail_snapshot(&state, plan.time_range);
-        return Ok(add_loki_query_stats_for_metric_plan_with_hot_tail(
-            response,
-            &plan,
-            &query,
-            &records,
-            &frontier,
-            (eval_range, 1),
-            &delete_filters,
-        ));
-    }
-    Ok(add_loki_query_stats_for_metric_plan(
-        response, &plan, &query,
+    Ok(metric_response_with_stats(
+        &state,
+        response,
+        &plan,
+        &query,
+        crate::MetricEvaluationWindow {
+            range: eval_range,
+            step_ns: 1,
+        },
+        &delete_filters,
     ))
+}
+
+fn metric_response_with_stats(
+    state: &QuerierState,
+    response: Value,
+    plan: &StreamPlan,
+    query: &MetricQuery,
+    evaluation: crate::MetricEvaluationWindow,
+    delete_filters: &[ActiveLogDeleteFilter],
+) -> Value {
+    if state.hot_tail.is_some() {
+        let snapshot = hot_tail_snapshot(state, plan.time_range);
+        return add_loki_query_stats_for_metric_plan_with_hot_tail(
+            response,
+            plan,
+            query,
+            &snapshot.records,
+            &snapshot.frontier,
+            evaluation,
+            delete_filters,
+        );
+    }
+    add_loki_query_stats_for_metric_plan(response, plan, query)
 }
 
 fn take_approximate_limit(
@@ -118,17 +134,7 @@ fn take_approximate_limit(
     query: &mut MetricQuery,
 ) -> Result<Option<usize>, HttpQueryError> {
     let limit = if metric_query_uses_approx_topk(query) {
-        if !state
-            .limits
-            .shard_aggregations
-            .iter()
-            .any(|name| name == "approx_topk")
-        {
-            return Err(HttpQueryError::ApproxTopKDisabled);
-        }
-        if matches!(kind, QueryKind::Range) {
-            return Err(HttpQueryError::ApproxTopKRangeQuery);
-        }
+        super::validate_approximate_topk(state, kind)?;
         match query
             .vector_aggregation
             .take()

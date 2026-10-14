@@ -1,6 +1,6 @@
 use super::{
-    Arc, IntoResponse, MetricStore, PrometheusApiState, RawQuery, RequestCaller, Response, State,
-    limited_metadata, success_data_response, target_metadata_json,
+    Arc, MetadataRepresentation, MetricStore, PrometheusApiState, RawQuery, RequestCaller,
+    Response, State, metadata_response_for_representation,
 };
 
 pub(crate) async fn target_metadata<S: MetricStore>(
@@ -8,8 +8,6 @@ pub(crate) async fn target_metadata<S: MetricStore>(
     caller: RequestCaller,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
-    match limited_metadata(&state, caller.auth(), raw_query.as_deref()).await {
-        Ok((_, metadata)) => success_data_response(target_metadata_json(metadata)),
-        Err(rejection) => rejection.into_response(),
-    }
+    metadata_response_for_representation(state, caller, raw_query, MetadataRepresentation::Targets)
+        .await
 }

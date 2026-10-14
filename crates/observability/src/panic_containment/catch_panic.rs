@@ -3,7 +3,7 @@ use std::panic::AssertUnwindSafe;
 use axum::{extract::Request, middleware::Next};
 use futures_util::FutureExt as _;
 
-use super::{IntoResponse, Response, StatusCode, panic_message};
+use super::{Response, StatusCode, panic_message};
 
 /// Runs the rest of the stack and answers 500 if it panics.
 ///
@@ -25,7 +25,10 @@ pub(crate) async fn catch_panic(request: Request, next: Next) -> Response {
                 panic = panic_message(payload.as_ref()),
                 "request handler panicked; answering 500"
             );
-            (StatusCode::INTERNAL_SERVER_ERROR, "internal server error\n").into_response()
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("internal server error\n".into())
+                .expect("internal server error response status is valid")
         }
     }
 }

@@ -1,5 +1,12 @@
 use crate::http::params_format::QuotedTextScanner;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TopLevelQuerySplit<'a> {
+    pub(crate) left: &'a str,
+    pub(crate) operator: &'static str,
+    pub(crate) right: &'a str,
+}
+
 /// Splits `query` at the first operator that sits outside every quote,
 /// parenthesis, bracket and brace, and returns the left side, the operator,
 /// and the right side with its leading whitespace trimmed.
@@ -9,12 +16,14 @@ use crate::http::params_format::QuotedTextScanner;
 pub(crate) fn split_top_level_query(
     query: &str,
     operator_at: impl Fn(usize, char) -> Option<&'static str>,
-) -> Option<(&str, &'static str, &str)> {
+) -> Option<TopLevelQuerySplit<'_>> {
     let mut parens = 0_i32;
     let mut brackets = 0_i32;
     let mut braces = 0_i32;
     let mut quotes = QuotedTextScanner::default();
-    for (index, ch) in query.char_indices() {
+    for character in query.char_indices() {
+        let index = character.0;
+        let ch = character.1;
         if quotes.in_quotes(ch) {
             continue;
         }
@@ -27,11 +36,11 @@ pub(crate) fn split_top_level_query(
             '}' => braces -= 1,
             _ if parens == 0 && brackets == 0 && braces == 0 => {
                 if let Some(operator) = operator_at(index, ch) {
-                    return Some((
-                        &query[..index],
+                    return Some(TopLevelQuerySplit {
+                        left: &query[..index],
                         operator,
-                        query[index + operator.len()..].trim_start(),
-                    ));
+                        right: query[index + operator.len()..].trim_start(),
+                    });
                 }
             }
             _ => {}

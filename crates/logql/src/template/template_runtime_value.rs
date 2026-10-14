@@ -62,12 +62,13 @@ impl TemplateRuntimeValue {
                     .collect::<Vec<_>>()
                     .into(),
             ),
-            Self::Sample(value) => Self::Sample(std::sync::Arc::new(
-                value
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone_for_query_execution()))
-                    .collect(),
-            )),
+            Self::Sample(value) => {
+                let mut cloned = std::collections::BTreeMap::new();
+                for entry in value.iter() {
+                    cloned.insert(entry.0.clone(), entry.1.clone_for_query_execution());
+                }
+                Self::Sample(std::sync::Arc::new(cloned))
+            }
             Self::FloatHistogram(value) => Self::FloatHistogram(value.copy()),
             value => value.clone(),
         }
@@ -156,16 +157,14 @@ impl TemplateRuntimeValue {
                 output.push(b']');
                 output
             }
-            Self::Object(values) => render_map(
-                values
-                    .iter()
-                    .map(|(key, value)| (key.as_str(), value.rendered_bytes())),
-            ),
-            Self::ByteLabels(values) => render_map(
-                values
-                    .iter()
-                    .map(|(key, value)| (key.as_str(), value.clone())),
-            ),
+            Self::Object(values) => render_map(values.iter().map(|entry| RenderedMapEntry {
+                key: entry.0.as_str(),
+                value: entry.1.rendered_bytes(),
+            })),
+            Self::ByteLabels(values) => render_map(values.iter().map(|entry| RenderedMapEntry {
+                key: entry.0.as_str(),
+                value: entry.1.clone(),
+            })),
         }
     }
 
@@ -260,15 +259,20 @@ fn float_to_integer(value: f64) -> String {
     }
 }
 
-fn render_map<'a>(entries: impl Iterator<Item = (&'a str, Vec<u8>)>) -> Vec<u8> {
+struct RenderedMapEntry<'a> {
+    key: &'a str,
+    value: Vec<u8>,
+}
+
+fn render_map<'a>(entries: impl Iterator<Item = RenderedMapEntry<'a>>) -> Vec<u8> {
     let mut output = b"map[".to_vec();
-    for (index, (key, value)) in entries.enumerate() {
+    for (index, entry) in entries.enumerate() {
         if index > 0 {
             output.push(b' ');
         }
-        output.extend_from_slice(key.as_bytes());
+        output.extend_from_slice(entry.key.as_bytes());
         output.push(b':');
-        output.extend(value);
+        output.extend(entry.value);
     }
     output.push(b']');
     output

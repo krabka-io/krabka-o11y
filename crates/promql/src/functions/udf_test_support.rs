@@ -2,10 +2,37 @@
 
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, Float64Array, Int64Array};
+use arrow::{
+    array::{Array, ArrayRef, Float64Array, Int64Array},
+    datatypes::Field,
+};
 use datafusion::logical_expr::ColumnarValue;
 
 use crate::range_array::RangeArray;
+
+pub(crate) fn range_argument_fields(
+    eval_col: &ArrayRef,
+    ts_dict: &ArrayRef,
+    val_dict: &ArrayRef,
+) -> Vec<Arc<Field>> {
+    vec![
+        Arc::new(Field::new(
+            "eval_timestamp",
+            eval_col.data_type().clone(),
+            false,
+        )),
+        Arc::new(Field::new(
+            "timestamp_range",
+            ts_dict.data_type().clone(),
+            false,
+        )),
+        Arc::new(Field::new(
+            "value_range",
+            val_dict.data_type().clone(),
+            false,
+        )),
+    ]
+}
 
 /// One evaluation step of a range UDF: its eval timestamp and its window's
 /// samples.
@@ -30,16 +57,18 @@ pub(crate) fn window_columns(steps: &[WindowStep<'_>]) -> [ArrayRef; 3] {
         let len = u32::try_from(step.timestamps.len()).unwrap();
         all_ts.extend_from_slice(step.timestamps);
         all_val.extend_from_slice(step.sample_values);
-        ranges.push((offset, len));
+        ranges.push(crate::RangeWindow::new(offset, len));
         offset += len;
         eval.push(step.eval_ts_ms);
     }
-    let (value_ra, ts_ra) = RangeArray::from_paired_ranges(
+    let paired = RangeArray::from_paired_ranges(
         Float64Array::from(all_val),
         Int64Array::from(all_ts),
         ranges,
     )
     .unwrap();
+    let value_ra = paired.values;
+    let ts_ra = paired.timestamps;
     [
         Arc::new(Int64Array::from(eval)),
         Arc::new(ts_ra.into_dict_array().unwrap()),

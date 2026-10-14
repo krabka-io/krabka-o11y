@@ -48,10 +48,60 @@ mod parse_metric_vector_comparison_expression;
 mod parse_metric_vector_set_expression;
 #[cfg(test)]
 mod parse_sort_vector_expression;
+
+#[cfg(test)]
+struct ParsedBoolModifier<'a> {
+    bool_modifier: bool,
+    remaining: &'a str,
+}
+
+#[cfg(test)]
+fn parse_leading_bool_modifier(query: &str) -> ParsedBoolModifier<'_> {
+    let query = query.trim_start();
+    if let Some(rest) = query.strip_prefix("bool") {
+        ParsedBoolModifier {
+            bool_modifier: true,
+            remaining: rest.trim_start(),
+        }
+    } else {
+        ParsedBoolModifier {
+            bool_modifier: false,
+            remaining: query,
+        }
+    }
+}
 mod scalar_vector_expression_result;
 #[cfg(test)]
 mod sort_vector_expression;
 mod strip_outer_parenthesized_expression;
+
+#[cfg(test)]
+struct OrderedMetricVectors<'a> {
+    left: &'a str,
+    right: &'a str,
+    scalar_on_left: bool,
+}
+
+#[cfg(test)]
+fn metric_vector_order<'a>(left: &'a str, right: &'a str) -> Option<OrderedMetricVectors<'a>> {
+    let left_is_vector = scalar_vector_query_is_vector(left);
+    let right_is_vector = scalar_vector_query_is_vector(right);
+    if !left_is_vector && right_is_vector {
+        Some(OrderedMetricVectors {
+            left,
+            right,
+            scalar_on_left: false,
+        })
+    } else if left_is_vector && !right_is_vector {
+        Some(OrderedMetricVectors {
+            left: right,
+            right: left,
+            scalar_on_left: true,
+        })
+    } else {
+        None
+    }
+}
 
 #[cfg(test)]
 pub(crate) use label_replace_expression::LabelReplaceExpression;

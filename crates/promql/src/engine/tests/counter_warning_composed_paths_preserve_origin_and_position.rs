@@ -6,24 +6,61 @@ use super::{
 };
 use crate::{Annotations, DurationExprContext, parse_promql_with_duration_context};
 
+struct CounterMetricFixture {
+    metric: &'static str,
+    env: &'static str,
+    scale: f64,
+    metric_type: Option<&'static str>,
+}
+
+struct CounterQueryCase {
+    query: &'static str,
+    intercept: f64,
+    slope: f64,
+    annotation_column: Option<usize>,
+}
+
+struct NameRetentionCase {
+    query: &'static str,
+    metric_name: Option<&'static str>,
+}
+
 #[tokio::test]
 async fn counter_warning_composed_paths_preserve_origin_and_position() {
     let mut store = InMemoryMetricStore::new();
     for seconds in (0..=140).step_by(10) {
-        for (metric, env, scale, metric_type) in [
-            ("metric_total", "1", 1.0, None),
-            ("metric_total", "2", 2.0, None),
-            ("typed_total", "typed", 1.0, Some("counter")),
+        for fixture in [
+            CounterMetricFixture {
+                metric: "metric_total",
+                env: "1",
+                scale: 1.0,
+                metric_type: None,
+            },
+            CounterMetricFixture {
+                metric: "metric_total",
+                env: "2",
+                scale: 2.0,
+                metric_type: None,
+            },
+            CounterMetricFixture {
+                metric: "typed_total",
+                env: "typed",
+                scale: 1.0,
+                metric_type: Some("counter"),
+            },
         ] {
-            let mut labels = labels(&[("__name__", metric), ("env", env)]);
-            if let Some(metric_type) = metric_type {
+            let mut labels = labels(&[
+                crate::test_support::TestLabelPair::new("__name__", fixture.metric),
+                crate::test_support::TestLabelPair::new("env", fixture.env),
+            ]);
+            if let Some(metric_type) = fixture.metric_type {
                 labels.insert("__type__", metric_type);
             }
             store.push_float(
                 "t",
                 labels,
                 seconds * 1_000,
-                f64::from(i32::try_from(seconds).unwrap()) * scale,
+                f64::from(i32::try_from(seconds).unwrap()) * fixture.scale,
             );
         }
     }
@@ -31,60 +68,80 @@ async fn counter_warning_composed_paths_preserve_origin_and_position() {
     // Independent input ledger: metric_total/env1 rises by 10 per ten seconds,
     // env2 by 20. A three-point rolling sum rises by 30 per ten seconds.
     let cases = [
-        ("rate({env=\"1\"}[1m])", 1.0, 0.0, Some(6)),
-        ("increase({env=\"1\"}[1m])", 60.0, 0.0, Some(10)),
-        ("sum(rate({env=\"1\"}[1m])) by (env)", 1.0, 0.0, Some(10)),
-        (
-            "label_join(rate({env=\"1\"}[1m]),\"name\",\"_\",\"__name__\")",
-            1.0,
-            0.0,
-            Some(17),
-        ),
-        (
-            "label_replace(rate({env=\"1\"}[1m]),\"name\",\"$1\",\"__name__\",\"(.+)\")",
-            1.0,
-            0.0,
-            Some(20),
-        ),
-        (
-            "sum by (__name__) (rate(metric_total{env=\"1\"}[1m]) or metric_total{env=\"2\"})",
-            1.0,
-            2.0,
-            Some(25),
-        ),
-        (
-            "rate(sum_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
-            3.0,
-            0.0,
-            Some(1),
-        ),
-        (
-            "increase(sum_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
-            150.0,
-            0.0,
-            Some(1),
-        ),
-        (
-            "rate(last_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
-            1.0,
-            0.0,
-            Some(1),
-        ),
-        ("rate(typed_total[1m])", 1.0, 0.0, None),
+        CounterQueryCase {
+            query: "rate({env=\"1\"}[1m])",
+            intercept: 1.0,
+            slope: 0.0,
+            annotation_column: Some(6),
+        },
+        CounterQueryCase {
+            query: "increase({env=\"1\"}[1m])",
+            intercept: 60.0,
+            slope: 0.0,
+            annotation_column: Some(10),
+        },
+        CounterQueryCase {
+            query: "sum(rate({env=\"1\"}[1m])) by (env)",
+            intercept: 1.0,
+            slope: 0.0,
+            annotation_column: Some(10),
+        },
+        CounterQueryCase {
+            query: "label_join(rate({env=\"1\"}[1m]),\"name\",\"_\",\"__name__\")",
+            intercept: 1.0,
+            slope: 0.0,
+            annotation_column: Some(17),
+        },
+        CounterQueryCase {
+            query: "label_replace(rate({env=\"1\"}[1m]),\"name\",\"$1\",\"__name__\",\"(.+)\")",
+            intercept: 1.0,
+            slope: 0.0,
+            annotation_column: Some(20),
+        },
+        CounterQueryCase {
+            query: "sum by (__name__) (rate(metric_total{env=\"1\"}[1m]) or metric_total{env=\"2\"})",
+            intercept: 1.0,
+            slope: 2.0,
+            annotation_column: Some(25),
+        },
+        CounterQueryCase {
+            query: "rate(sum_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
+            intercept: 3.0,
+            slope: 0.0,
+            annotation_column: Some(1),
+        },
+        CounterQueryCase {
+            query: "increase(sum_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
+            intercept: 150.0,
+            slope: 0.0,
+            annotation_column: Some(1),
+        },
+        CounterQueryCase {
+            query: "rate(last_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
+            intercept: 1.0,
+            slope: 0.0,
+            annotation_column: Some(1),
+        },
+        CounterQueryCase {
+            query: "rate(typed_total[1m])",
+            intercept: 1.0,
+            slope: 0.0,
+            annotation_column: None,
+        },
         // Vector/vector arithmetic changes metric schema eagerly; scalar
         // arithmetic retains its origin until delayed name removal.
-        (
-            "rate(sum_over_time((metric_total{env=\"1\"}+metric_total{env=\"1\"})[30s:10s])[50s:10s])",
-            6.0,
-            0.0,
-            None,
-        ),
-        (
-            "rate(sum_over_time((metric_total{env=\"1\"}*2)[30s:10s])[50s:10s])",
-            6.0,
-            0.0,
-            Some(1),
-        ),
+        CounterQueryCase {
+            query: "rate(sum_over_time((metric_total{env=\"1\"}+metric_total{env=\"1\"})[30s:10s])[50s:10s])",
+            intercept: 6.0,
+            slope: 0.0,
+            annotation_column: None,
+        },
+        CounterQueryCase {
+            query: "rate(sum_over_time((metric_total{env=\"1\"}*2)[30s:10s])[50s:10s])",
+            intercept: 6.0,
+            slope: 0.0,
+            annotation_column: Some(1),
+        },
     ];
     for enabled in [false, true] {
         let engine = PromqlEngine::new(
@@ -94,21 +151,24 @@ async fn counter_warning_composed_paths_preserve_origin_and_position() {
                 ..EngineOpts::default()
             },
         );
-        for (query, intercept, slope, column) in cases {
+        for case in &cases {
+            let query = case.query;
             let expected_infos = if enabled {
-                column.map(|column| format!(
+                case.annotation_column.map(|column| format!(
                     "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\" (1:{column})"
                 )).into_iter().collect::<Vec<_>>()
             } else {
                 Vec::new()
             };
-            let (instant, annotations) = engine
+            let annotated = engine
                 .query_instant_with_annotations(&tenant_id("t"), query, 120_000)
                 .await
                 .unwrap();
+            let annotations = annotated.annotations;
+            let instant = annotated.result;
             assert2::assert!(annotations.infos == expected_infos);
             assert2::assert!(annotations.warnings.is_empty());
-            check_instant_ledger(&instant, intercept + slope * 120.0);
+            check_instant_ledger(&instant, case.intercept + case.slope * 120.0);
             if query.starts_with("label_") {
                 let QueryResult::InstantVector(samples) = &instant else {
                     panic!("instant vector")
@@ -120,7 +180,7 @@ async fn counter_warning_composed_paths_preserve_origin_and_position() {
                 parse_promql_with_duration_context(query, DurationExprContext::instant(120_000))
                     .unwrap();
             for planner in [false, true] {
-                let (mut result, annotations) = ANNOTATION_SOURCE
+                let mut annotated = ANNOTATION_SOURCE
                     .scope(
                         query.to_owned(),
                         ANNOTATIONS.scope(RefCell::new(Annotations::new()), async {
@@ -137,38 +197,44 @@ async fn counter_warning_composed_paths_preserve_origin_and_position() {
                             } else {
                                 engine.eval_instant_expr("t", &expr, 120_000).await.unwrap()
                             };
-                            (result, ANNOTATIONS.with(|sink| sink.borrow().clone()))
+                            crate::AnnotatedQueryResult {
+                                result,
+                                annotations: ANNOTATIONS.with(|sink| sink.borrow().clone()),
+                            }
                         }),
                     )
                     .await;
-                super::super::result_utils::finalize_metric_names(&mut result).unwrap();
-                check_instant_ledger(&result, intercept + slope * 120.0);
-                assert2::assert!(annotations.infos == expected_infos);
-                assert2::assert!(annotations.warnings.is_empty());
+                super::super::result_utils::finalize_metric_names(&mut annotated.result).unwrap();
+                check_instant_ledger(&annotated.result, case.intercept + case.slope * 120.0);
+                assert2::assert!(annotated.annotations.infos == expected_infos);
+                assert2::assert!(annotated.annotations.warnings.is_empty());
             }
-            let (result, annotations) = engine
+            let annotated = engine
                 .query_range_with_annotations(&tenant_id("t"), query, 120_000, 140_000, secs(10))
                 .await
                 .unwrap();
-            assert2::assert!(annotations.infos == expected_infos);
-            assert2::assert!(annotations.warnings.is_empty());
-            let QueryResult::RangeMatrix(series) = result else {
+            assert2::assert!(annotated.annotations.infos == expected_infos);
+            assert2::assert!(annotated.annotations.warnings.is_empty());
+            let QueryResult::RangeMatrix(series) = annotated.result else {
                 panic!("range matrix")
             };
             assert2::assert!(series.len() == 1);
             assert2::assert!(series[0].labels.get("__name__").is_none());
             assert2::assert!(!series[0].drop_name);
             assert2::assert!(series[0].samples.len() == 3);
-            for (index, (timestamp, value)) in series[0].samples.iter().enumerate() {
+            for index in 0..series[0].samples.len() {
+                let sample = &series[0].samples[index];
+                let timestamp = sample.timestamp_ms;
+                let value = &sample.value;
                 let expected_timestamp = 120_000 + i64::try_from(index).unwrap() * 10_000;
                 let SampleValue::Float(value) = value else {
                     panic!("float ledger")
                 };
-                assert2::assert!(*timestamp == expected_timestamp);
+                assert2::assert!(timestamp == expected_timestamp);
                 assert2::assert!(
                     (*value
-                        - (intercept
-                            + slope * f64::from(i32::try_from(expected_timestamp).unwrap())
+                        - (case.intercept
+                            + case.slope * f64::from(i32::try_from(expected_timestamp).unwrap())
                                 / 1_000.0))
                         .abs()
                         < 1e-12
@@ -177,25 +243,25 @@ async fn counter_warning_composed_paths_preserve_origin_and_position() {
         }
         // Name-preserving outer folds must still respect the inner fold's
         // pending removal; a genuine last_over_time input keeps its name.
-        for (query, name) in [
-            (
-                "last_over_time(sum_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
-                None,
-            ),
-            (
-                "last_over_time(metric_total{env=\"1\"}[50s:10s])",
-                Some("metric_total"),
-            ),
+        for case in [
+            NameRetentionCase {
+                query: "last_over_time(sum_over_time(metric_total{env=\"1\"}[30s:10s])[50s:10s])",
+                metric_name: None,
+            },
+            NameRetentionCase {
+                query: "last_over_time(metric_total{env=\"1\"}[50s:10s])",
+                metric_name: Some("metric_total"),
+            },
         ] {
             let QueryResult::InstantVector(samples) = engine
-                .query_instant(&tenant_id("t"), query, 120_000)
+                .query_instant(&tenant_id("t"), case.query, 120_000)
                 .await
                 .unwrap()
             else {
                 panic!("instant vector")
             };
             assert2::assert!(samples.len() == 1);
-            assert2::assert!(samples[0].labels.get("__name__") == name);
+            assert2::assert!(samples[0].labels.get("__name__") == case.metric_name);
         }
     }
 }
@@ -216,9 +282,30 @@ fn check_instant_ledger(result: &QueryResult, expected: f64) {
 #[tokio::test]
 async fn delayed_name_removal_merges_disjoint_range_points_and_rejects_collisions() {
     let mut store = InMemoryMetricStore::new();
-    store.push_float("t", labels(&[("__name__", "metric_a")]), 0, 1.0);
-    store.push_float("t", labels(&[("__name__", "metric_b")]), 0, 3.0);
-    store.push_float("t", labels(&[("__name__", "metric_b")]), 600_000, 4.0);
+    store.push_float(
+        "t",
+        labels(&[crate::test_support::TestLabelPair::new(
+            "__name__", "metric_a",
+        )]),
+        0,
+        1.0,
+    );
+    store.push_float(
+        "t",
+        labels(&[crate::test_support::TestLabelPair::new(
+            "__name__", "metric_b",
+        )]),
+        0,
+        3.0,
+    );
+    store.push_float(
+        "t",
+        labels(&[crate::test_support::TestLabelPair::new(
+            "__name__", "metric_b",
+        )]),
+        600_000,
+        4.0,
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_range(
@@ -239,8 +326,8 @@ async fn delayed_name_removal_merges_disjoint_range_points_and_rejects_collision
     assert2::assert!(
         series[0].samples
             == vec![
-                (0, SampleValue::Float(-1.0)),
-                (600_000, SampleValue::Float(-4.0))
+                crate::RangeSeriesSample::new(0, SampleValue::Float(-1.0)),
+                crate::RangeSeriesSample::new(600_000, SampleValue::Float(-4.0))
             ]
     );
     let collision = "-{__name__=~\"metric_[ab]\"}";

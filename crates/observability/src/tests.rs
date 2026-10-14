@@ -134,14 +134,25 @@ pub(crate) mod prelude {
                 aggregation_formatting::*, metric_formatting::*, request_formatting::*,
                 stream_formatting::*,
             },
-            response::{loki_responses::*, parquet_responses::*, query_stats::*},
+            response::{
+                loki_responses::*,
+                parquet_responses::{MetricEvaluationWindow, *},
+                query_stats::*,
+            },
             router::*,
         },
         limits::*,
         metrics::ServiceMetrics,
         querier::{
-            aggregate::{metric_values::*, record_matching::*, sample_windows::*},
-            analytics::{detected_fields::*, index_patterns::*},
+            aggregate::{
+                metric_values::{TimestampedMetricValue, *},
+                record_matching::*,
+                sample_windows::*,
+            },
+            analytics::{
+                detected_fields::{DetectedDurationUnit, ParsedLogfmtPair, *},
+                index_patterns::*,
+            },
             metadata::*,
             metric_eval::{
                 binary_arithmetic::*, binary_sets::*, expression_parser::*, expressions::*,
@@ -161,8 +172,26 @@ pub(crate) mod prelude {
         server_security::{AuthMethod, Principal, SecurityEventSink, TenantGrant},
         service::*,
         service_runtime::*,
-        wal::{hot_tail::*, pollers_and_records::*, traits_and_kafka::*},
+        wal::{
+            hot_tail::*,
+            pollers_and_records::*,
+            traits_and_kafka::{CachedFailure, CachedSnapshot, *},
+        },
     };
+
+    pub(crate) fn loki_streams_with_counts(counts: &[usize], app: &str) -> Vec<Value> {
+        counts
+            .iter()
+            .map(|count| {
+                json!({
+                    "stream": {"app": app},
+                    "values": (0..*count)
+                        .map(|index| json!([index.to_string(), "line"]))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect()
+    }
 }
 
 mod acl_quota_and_buffers;

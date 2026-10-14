@@ -4,7 +4,9 @@ pub(crate) fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
     contents
         .split("\n---")
         .enumerate()
-        .filter_map(|(idx, block)| {
+        .filter_map(|entry| {
+            let idx = entry.0;
+            let block = entry.1;
             let mut case = Case {
                 name: format!("{file}#{}", idx + 1),
                 kind: "search".into(),
@@ -14,10 +16,11 @@ pub(crate) fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
                 if line.starts_with('#') {
                     continue;
                 }
-                let Some((key, value)) = line.split_once(':') else {
+                let Some(parts) = line.split_once(':') else {
                     continue;
                 };
-                let value = value.trim();
+                let key = parts.0;
+                let value = parts.1.trim();
                 match key.trim() {
                     "name" => case.name = format!("{file}:{value}"),
                     "kind" => case.kind = value.to_string(),

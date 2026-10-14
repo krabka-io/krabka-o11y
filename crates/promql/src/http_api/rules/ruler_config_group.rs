@@ -1,18 +1,23 @@
 use super::{
     ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Path, Principal,
-    PrometheusApiState, Response, State, StatusCode, authorized_tenant_from_headers, yaml_response,
+    PrometheusApiState, Response, RuleGroupPath, State, StatusCode, response_with_status,
+    yaml_response,
 };
 
 pub(crate) async fn ruler_config_group<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     Extension(principal): Extension<Principal>,
     headers: HeaderMap,
-    Path((namespace, group_name)): Path<(String, String)>,
+    Path(RuleGroupPath {
+        namespace,
+        group_name,
+    }): Path<RuleGroupPath>,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
+    let tenant = super::authorized_ruler_group_tenant_or_return!(
+        &headers,
+        &principal,
+        super::authorized_ruler_group_tenant
+    );
     let group = match state.ruler_rules.read() {
         Ok(rules) => rules
             .get(&tenant)
@@ -23,6 +28,6 @@ pub(crate) async fn ruler_config_group<S: MetricStore>(
     };
     match group {
         Some(group) => yaml_response(StatusCode::OK, &group),
-        None => (StatusCode::NOT_FOUND, "group does not exist\n").into_response(),
+        None => response_with_status(StatusCode::NOT_FOUND, "group does not exist\n"),
     }
 }

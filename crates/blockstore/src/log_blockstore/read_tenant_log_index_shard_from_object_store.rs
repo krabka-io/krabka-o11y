@@ -1,8 +1,14 @@
 use super::{
-    BlockIndex, BlockStoreError, LabelIndex, LogIndexManifest, ObjectPath, ObjectStore,
-    ObjectStoreExt, TimeRange, instrument, log_tenant_index_shard_manifest_object_path,
+    BlockStoreError, LogIndexManifest, LogIndexes, ObjectPath, ObjectStore, ObjectStoreExt,
+    TimeRange, instrument, log_tenant_index_shard_manifest_object_path,
 };
 use crate::index_snapshot::{list_index_snapshot_objects, snapshot_generation_from_path};
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct LogIndexShardSnapshot {
+    pub generation: u64,
+    pub indexes: LogIndexes,
+}
 
 #[instrument(
     level = "debug",
@@ -20,11 +26,11 @@ pub async fn read_tenant_log_index_shard_from_object_store(
     prefix: &ObjectPath,
     tenant: &str,
     shard_range: TimeRange,
-) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
+) -> Result<LogIndexes, BlockStoreError> {
     let key = log_tenant_index_shard_manifest_object_path(prefix, tenant, shard_range);
     read_log_index_shard_snapshot_base(store, &key, tenant)
         .await?
-        .map(|(_, labels, blocks)| (labels, blocks))
+        .map(|snapshot| snapshot.indexes)
         .ok_or_else(|| {
             object_store::Error::NotFound {
                 path: key.to_string(),
@@ -38,7 +44,7 @@ pub(super) async fn read_log_index_shard_snapshot_base(
     store: &dyn ObjectStore,
     key: &ObjectPath,
     tenant: &str,
-) -> Result<Option<(u64, LabelIndex, BlockIndex)>, BlockStoreError> {
+) -> Result<Option<LogIndexShardSnapshot>, BlockStoreError> {
     for _ in 0..64 {
         let Some(meta) = list_index_snapshot_objects(store, key.as_ref())
             .await
@@ -52,8 +58,11 @@ pub(super) async fn read_log_index_shard_snapshot_base(
         match store.get(&meta.location).await {
             Ok(object) => {
                 let manifest: LogIndexManifest = serde_json::from_slice(&object.bytes().await?)?;
-                let (labels, blocks) = manifest.into_indexes_for_tenant(tenant)?;
-                return Ok(Some((generation, labels, blocks)));
+                let indexes = manifest.into_indexes_for_tenant(tenant)?;
+                return Ok(Some(LogIndexShardSnapshot {
+                    generation,
+                    indexes,
+                }));
             }
             // The latest generation in this listing may have been pruned by a
             // publisher. Select again instead of treating the shard as empty.

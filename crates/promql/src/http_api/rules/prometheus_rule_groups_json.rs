@@ -6,6 +6,12 @@ use super::{
     zero_evaluation_time,
 };
 
+pub(crate) struct PrometheusRuleGroupJson {
+    pub(crate) namespace: String,
+    pub(crate) stored_group_name: String,
+    pub(crate) value: Value,
+}
+
 pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
     state: &PrometheusApiState<S>,
     tenant: &TenantId,
@@ -14,13 +20,17 @@ pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
     rule_names: &BTreeSet<String>,
     rule_groups: &BTreeSet<String>,
     files: &BTreeSet<String>,
-) -> Result<Vec<(String, String, Value)>, PromqlError> {
+) -> Result<Vec<PrometheusRuleGroupJson>, PromqlError> {
     let mut groups = Vec::new();
-    for (namespace, namespace_groups) in rules {
+    for namespace_entry in rules {
+        let namespace = namespace_entry.0;
+        let namespace_groups = namespace_entry.1;
         if !files.is_empty() && !files.contains(&namespace) {
             continue;
         }
-        for (stored_group_name, group) in namespace_groups {
+        for group_entry in namespace_groups {
+            let stored_group_name = group_entry.0;
+            let group = group_entry.1;
             if !rule_groups.is_empty() && !rule_groups.contains(&stored_group_name) {
                 continue;
             }
@@ -51,7 +61,11 @@ pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
                 "sourceTenants": [],
                 "rules": rules,
             });
-            groups.push((namespace.clone(), stored_group_name, value));
+            groups.push(PrometheusRuleGroupJson {
+                namespace: namespace.clone(),
+                stored_group_name,
+                value,
+            });
         }
     }
     Ok(groups)

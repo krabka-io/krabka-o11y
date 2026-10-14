@@ -21,6 +21,24 @@ use promql_parser::{
 
 use crate::{PromqlError, PromqlLabels as Labels, error::Result};
 
+struct QueryScan {
+    chars: Vec<char>,
+    output: String,
+    index: usize,
+    quoted: QuotedCopy,
+}
+
+impl QueryScan {
+    fn new(query: &str) -> Self {
+        Self {
+            chars: query.chars().collect(),
+            output: String::with_capacity(query.len()),
+            index: 0,
+            quoted: QuotedCopy::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -210,7 +228,7 @@ use is_ident_char::is_ident_char;
 use is_ident_start::is_ident_start;
 use is_zero::is_zero;
 #[cfg(test)]
-use job_values::job_values;
+pub(crate) use job_values::{JobValue, job_values};
 pub use labeled_series::LabeledSeries;
 use matching_delimiter::matching_delimiter;
 use ms_to_seconds::ms_to_seconds;

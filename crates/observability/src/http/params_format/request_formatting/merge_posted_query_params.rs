@@ -22,12 +22,16 @@ pub(crate) fn merge_posted_query_params(
     order: PostedQueryParamsOrder,
 ) -> Result<String, HttpQueryError> {
     let body_query = form_body_query(body)?;
-    match (raw_query, body_query.is_empty()) {
-        (Some(raw_query), true) if !raw_query.is_empty() => Ok(raw_query.to_owned()),
-        (Some(raw_query), false) if !raw_query.is_empty() => Ok(match order {
-            PostedQueryParamsOrder::UrlFirst => format!("{raw_query}&{body_query}"),
-            PostedQueryParamsOrder::BodyFirst => format!("{body_query}&{raw_query}"),
-        }),
-        _ => Ok(body_query),
+    if let Some(raw_query) = raw_query.filter(|query| !query.is_empty()) {
+        if body_query.is_empty() {
+            Ok(raw_query.to_owned())
+        } else {
+            Ok(match order {
+                PostedQueryParamsOrder::UrlFirst => format!("{raw_query}&{body_query}"),
+                PostedQueryParamsOrder::BodyFirst => format!("{body_query}&{raw_query}"),
+            })
+        }
+    } else {
+        Ok(body_query)
     }
 }

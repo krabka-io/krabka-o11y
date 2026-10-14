@@ -5,10 +5,22 @@ pub(crate) fn format_matching(
     matching: Option<&MetricVectorMatching>,
 ) -> fmt::Result {
     let Some(m) = matching else { return Ok(()) };
-    let (labels, group, name) = match m {
-        MetricVectorMatching::On { labels, group } => (labels, group, "on"),
-        MetricVectorMatching::Ignoring { labels, group } => (labels, group, "ignoring"),
-    };
+    match m {
+        MetricVectorMatching::On { labels, group } => {
+            format_matching_parts(f, labels, group.as_ref(), "on")
+        }
+        MetricVectorMatching::Ignoring { labels, group } => {
+            format_matching_parts(f, labels, group.as_ref(), "ignoring")
+        }
+    }
+}
+
+fn format_matching_parts(
+    f: &mut fmt::Formatter<'_>,
+    labels: &[String],
+    group: Option<&MetricVectorGroupModifier>,
+    name: &str,
+) -> fmt::Result {
     write!(f, " {name}({})", labels.join(", "))?;
     if let Some(group) = group {
         match group {

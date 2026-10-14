@@ -9,7 +9,7 @@ use std::{
 use axum::{
     Extension, Json, Router,
     extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -53,6 +53,36 @@ mod response;
 mod rules;
 mod search;
 mod status;
+
+pub(crate) fn parse_query_pairs(
+    raw_query: Option<&str>,
+    mut apply: impl FnMut(String, String) -> Result<(), ApiError>,
+) -> Result<(), ApiError> {
+    let Some(raw_query) = raw_query else {
+        return Ok(());
+    };
+    for (name, value) in url::form_urlencoded::parse(raw_query.as_bytes()) {
+        apply(name.into_owned(), value.into_owned())?;
+    }
+    Ok(())
+}
+
+fn request_content_type(headers: &HeaderMap) -> &str {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+}
+
+pub(crate) fn response_with_status(status: StatusCode, body: impl IntoResponse) -> Response {
+    let mut response = body.into_response();
+    *response.status_mut() = status;
+    response
+}
 
 #[cfg(test)]
 pub(crate) use alert_templates::expand_alert_template;

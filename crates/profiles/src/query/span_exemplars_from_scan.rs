@@ -5,12 +5,18 @@ use super::{
     step_bucket_ms, types_label_pairs,
 };
 
-type SpanKey = (i64, u64, u64, Option<Vec<u8>>);
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SpanKey {
+    timestamp: i64,
+    fingerprint: u64,
+    span_id: u64,
+    trace_id: Option<Vec<u8>>,
+}
 
 pub(crate) async fn span_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,
     step: Time,
-    labels: &[(String, String)],
+    labels: &[krabka_pprof::ProfileLabel],
     call_sites: &[String],
 ) -> Result<BTreeMap<i64, Vec<pb::types::v1::Exemplar>>, ProfileError> {
     if call_sites.is_empty() {
@@ -51,26 +57,28 @@ pub(crate) async fn span_exemplars_from_scan(
             let frames = scan.symbols.resolve(partition, stacktrace_id);
             if frames_match_call_sites(&frames, call_sites) {
                 *per_span
-                    .entry((
-                        timestamps.value(row),
-                        fingerprints.value(row),
-                        span_ids.value(row),
-                        (!trace_ids.is_null(row)).then(|| trace_ids.value(row).to_vec()),
-                    ))
+                    .entry(SpanKey {
+                        timestamp: timestamps.value(row),
+                        fingerprint: fingerprints.value(row),
+                        span_id: span_ids.value(row),
+                        trace_id: (!trace_ids.is_null(row)).then(|| trace_ids.value(row).to_vec()),
+                    })
                     .or_default() += values.value(row);
             }
         }
     }
     let label_pairs = types_label_pairs(labels.to_vec());
     let mut out: BTreeMap<i64, Vec<pb::types::v1::Exemplar>> = BTreeMap::new();
-    for ((timestamp, _fingerprint, span_id, trace_id), value) in per_span {
-        out.entry(step_bucket_ms(timestamp, step))
+    for span_entry in per_span {
+        let span_key = span_entry.0;
+        let value = span_entry.1;
+        out.entry(step_bucket_ms(span_key.timestamp, step))
             .or_default()
             .push(pb::types::v1::Exemplar {
-                timestamp,
+                timestamp: span_key.timestamp,
                 profile_id: String::new(),
-                span_id: span_id_hex_from_u64(span_id),
-                trace_id: trace_id.map(hex::encode).unwrap_or_default(),
+                span_id: span_id_hex_from_u64(span_key.span_id),
+                trace_id: span_key.trace_id.map_or_else(Default::default, hex::encode),
                 value,
                 labels: label_pairs.clone(),
             });

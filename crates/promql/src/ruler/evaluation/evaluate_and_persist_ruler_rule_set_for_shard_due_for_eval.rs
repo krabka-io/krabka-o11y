@@ -1,7 +1,7 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerEvaluationReport, RulerGroupState, RulerGroupStateRecord, RulerShard,
-    RulerStateSink, TenantId, evaluate_and_persist_ruler_rule_set_with_report,
+    RulerAlertState, RulerEvaluationReport, RulerEvaluationSchedule, RulerGroupStateRecord,
+    RulerSinks, RulerStateSink, TenantId, evaluate_and_persist_ruler_rule_set_with_report,
     filter_ruler_rule_set_for_shard_due_for_eval,
 };
 
@@ -14,11 +14,11 @@ use super::{
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
 pub async fn evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report<S, W, A, R>(
     engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
+    sinks: RulerSinks<'_, W, A, R>,
     alert_state: &mut RulerAlertState,
     tenant: &TenantId,
     rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
-    schedule: (&mut RulerGroupState, RulerShard, i64),
+    schedule: RulerEvaluationSchedule<'_>,
 ) -> Result<RulerEvaluationReport, PromqlError>
 where
     S: MetricStore,
@@ -26,8 +26,9 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let (wal_sink, alert_sink, state_sink) = sinks;
-    let (group_state, shard, eval_time_ms) = schedule;
+    let group_state = schedule.group_state;
+    let shard = schedule.shard;
+    let eval_time_ms = schedule.eval_time_ms;
     let scheduled = filter_ruler_rule_set_for_shard_due_for_eval(
         tenant.as_str(),
         rules,
@@ -35,16 +36,19 @@ where
         shard,
         eval_time_ms,
     );
-    let evaluation = evaluate_and_persist_ruler_rule_set_with_report(
-        engine,
-        (wal_sink, alert_sink, state_sink),
-        alert_state,
-        tenant,
-        &scheduled,
-        eval_time_ms,
-    )
-    .await?;
-    for (namespace, namespace_groups) in &scheduled {
+    let evaluation =
+        evaluate_and_persist_ruler_rule_set_with_report(super::RulerRuleSetEvaluationRequest::new(
+            engine,
+            sinks,
+            alert_state,
+            tenant,
+            &scheduled,
+            eval_time_ms,
+        ))
+        .await?;
+    for namespace_entry in &scheduled {
+        let namespace = namespace_entry.0;
+        let namespace_groups = namespace_entry.1;
         for group_name in namespace_groups.keys() {
             group_state.apply_record(RulerGroupStateRecord {
                 tenant: tenant.to_string(),

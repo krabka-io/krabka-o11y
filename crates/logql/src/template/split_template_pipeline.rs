@@ -5,8 +5,14 @@ pub(crate) fn split_template_pipeline(expression: &str) -> Result<Vec<&str>, Par
     let mut start = 0;
     let mut quotes = TemplateQuoteScanner::default();
     let mut depth = 0usize;
-    for (index, ch) in expression.char_indices() {
+    let mut index = 0;
+    while index < expression.len() {
+        let ch = expression[index..]
+            .chars()
+            .next()
+            .expect("index is within expression");
         if quotes.consume_quoted(ch) {
+            index += ch.len_utf8();
             continue;
         }
         if ch == '(' {
@@ -23,6 +29,7 @@ pub(crate) fn split_template_pipeline(expression: &str) -> Result<Vec<&str>, Par
             commands.push(command);
             start = index + ch.len_utf8();
         }
+        index += ch.len_utf8();
     }
     if quotes.is_inside_quote() {
         return Err(template_parse_error("unterminated template string"));

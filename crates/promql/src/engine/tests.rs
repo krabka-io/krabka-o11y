@@ -9,9 +9,141 @@ use super::{
     MAX_RESOLUTION_POINTS, MatrixSelectorAt, check_resolution_points, match_rate_range_call,
 };
 use crate::{
-    EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue,
-    test_support::tenant_id,
+    AnnotatedQueryResult, EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
+    QueryResult, SampleValue,
+    test_support::{labels, tenant_id},
 };
+
+fn http_requests_counter_labels() -> Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ])
+}
+
+fn push_float_counter_series(
+    store: &mut InMemoryMetricStore,
+    labels: Labels,
+    factor: f64,
+    last_step: i32,
+) {
+    for step in 0..=last_step {
+        store.push_float(
+            "t",
+            labels.clone(),
+            i64::from(step) * 60_000,
+            f64::from(step) * factor,
+        );
+    }
+}
+
+struct QueryAt {
+    query: &'static str,
+    time_ms: i64,
+}
+
+#[derive(Clone, Copy, bon::Builder)]
+struct FloatSampleInput {
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct LabeledFloatSeries {
+    labels: Labels,
+    samples: Vec<FloatSampleInput>,
+}
+
+trait FloatSampleSeed {
+    fn push_into(self, store: &mut InMemoryMetricStore);
+}
+
+fn push_float_samples<S: FloatSampleSeed>(
+    store: &mut InMemoryMetricStore,
+    samples: impl IntoIterator<Item = S>,
+) {
+    for sample in samples {
+        sample.push_into(store);
+    }
+}
+
+fn push_float_series(
+    store: &mut InMemoryMetricStore,
+    series: impl IntoIterator<Item = LabeledFloatSeries>,
+) {
+    for series in series {
+        for sample in series.samples {
+            store.push_float(
+                "t",
+                series.labels.clone(),
+                sample.timestamp_ms,
+                sample.value,
+            );
+        }
+    }
+}
+
+async fn query_range_matrix<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    step_ms: i64,
+) -> Vec<crate::RangeSeries> {
+    let result = engine
+        .query_range(
+            &tenant_id("tenant-a"),
+            query,
+            60_000,
+            180_000,
+            millis(u32::try_from(step_ms).expect("step duration fits u32 milliseconds")),
+        )
+        .await
+        .unwrap();
+    let QueryResult::RangeMatrix(series) = result else {
+        panic!("expected matrix");
+    };
+    series
+}
+
+async fn query_instant_vector<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    tenant: &str,
+    query: &str,
+    time_ms: i64,
+) -> Vec<crate::InstantSample> {
+    let result = engine
+        .query_instant(&tenant_id(tenant), query, time_ms)
+        .await
+        .unwrap();
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    samples
+}
+
+async fn assert_call_planner_matches_interpreter<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    queries: &[QueryAt],
+) {
+    for query_at in queries {
+        let parity = planned_and_interpreted(engine, query_at.query, query_at.time_ms).await;
+        let via_operators = parity.via_operators;
+        let via_interpreter = parity.via_interpreter;
+        let via_operators = sort_instant_result(via_operators);
+        let via_interpreter = sort_instant_result(via_interpreter);
+        assert2::assert!(query_results_match(&via_interpreter, &via_operators));
+    }
+}
+
+async fn assert_annotated_call_planner_matches_interpreter<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    time_ms: i64,
+) {
+    let parity = annotated_planned_and_interpreted(engine, query, time_ms).await;
+    let via_interpreter = fingerprint_sorted(parity.via_interpreter.result, query);
+    let via_operators = fingerprint_sorted(parity.via_operators.result, query);
+    assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
+    assert2::assert!(parity.via_operators.annotations == parity.via_interpreter.annotations);
+}
 
 mod a_classic_histogram_answers_beside_a_native_sibling;
 mod a_comparison_keeps_the_metric_name_that_arithmetic_drops;
@@ -99,12 +231,12 @@ mod instant_count_values_counts_native_histogram_sample_values;
 mod instant_count_values_formats_infinity_as_prometheus;
 mod instant_delta_is_gauge_delta_without_reset_correction;
 mod instant_deriv_returns_gauge_slope_per_second;
-mod instant_double_exponential_smoothing_requires_experimental_feature;
 mod instant_double_exponential_smoothing_smooths_gauge_series;
 mod instant_double_exponential_smoothing_validates_factors;
 mod instant_double_exponential_smoothing_weights_each_factor_distinctly;
 mod instant_duration_expression_helpers_require_experimental_feature;
 mod instant_duration_expression_helpers_return_zero;
+mod instant_experimental_functions_require_feature;
 mod instant_first_and_last_over_time_return_native_histograms;
 mod instant_group_returns_one_for_each_group;
 mod instant_histogram_avg_returns_native_histogram_average;
@@ -123,10 +255,8 @@ mod instant_irate_uses_last_two_samples_per_second;
 mod instant_label_join_combines_source_labels;
 mod instant_label_replace_uses_regex_capture_groups;
 mod instant_limit_ratio_negative_selects_complement_subset;
-mod instant_limit_ratio_requires_experimental_feature;
 mod instant_limit_ratio_selects_deterministic_hash_subset;
 mod instant_limitk_by_selects_deterministic_hash_subset_per_group;
-mod instant_limitk_requires_experimental_feature;
 mod instant_limitk_selects_deterministic_hash_subset;
 mod instant_min_max_and_std_aggregations_ignore_histograms;
 mod instant_over_time_accepts_subquery_range_argument;
@@ -171,14 +301,12 @@ mod instant_unary_numeric_functions_transform_vector_values;
 mod instant_vector;
 mod kahan_sum_inc_recovers_lost_bits_on_both_branches;
 mod label_ops_planner_path_matches_interpreter;
-mod labels;
 mod last_over_time_aggregate;
 mod limit_ratio_over_bound_emits_capping_warning;
 mod lone_matrix_series;
 mod matching_on_a_metadata_label_keeps_it_out_of_the_result;
 mod memory_bytes_engine;
 mod mixed_histogram_store;
-mod nan_equal_samples;
 mod native_histogram;
 mod native_histogram_bucket_bounds_follow_the_schema;
 mod native_histogram_planner_path_matches_interpreter;
@@ -266,27 +394,133 @@ use assert_single_float_sample::{assert_single_float_sample, lone_unnamed_sample
 use assert_single_on_x_float_sample::{OnXHistogramStats, assert_on_x_histogram_stats};
 use assert_sparse_aggregate_excludes_no_value::assert_sparse_aggregate_excludes_no_value;
 use case_values::{
-    CaseQuery, CaseValue, assert_case_values, assert_signed_temperature_cases, push_cases,
+    CaseQuery, CaseValue, InstanceValueCase, QueryValueCase, assert_case_values,
+    assert_signed_temperature_cases, push_cases,
 };
 use classic_bucket_store::classic_bucket_store;
 use float_store::{FloatStore, default_engine, lookback_engine};
 use float_value::float_value;
-use instant_samples_match::instant_samples_match;
+use instant_samples_match::{instant_samples_match, nan_equal_samples};
 use instant_vector::{
     LoneValueQuery, assert_lone_unlabeled_value_at, assert_lone_value, assert_lone_value_at,
     instant_vector,
 };
-use labels::labels;
 use lone_matrix_series::{ExpectedPoint, check_series_points, lone_matrix_series};
 use memory_bytes_engine::{
     JobInstanceSample, has_job_memory_bytes_sample, job_memory_bytes_engine, memory_bytes_engine,
 };
-use mixed_histogram_store::{mixed_api_group_store, mixed_histogram_store};
-use nan_equal_samples::nan_equal_samples;
+use mixed_histogram_store::{
+    MixedMetricFloatSample, mixed_api_group_store, mixed_histogram_store, mixed_metric_store,
+};
 use native_histogram::native_histogram;
+
+pub(crate) fn two_positive_bucket_histogram(count: f64, sum: f64) -> NativeHistogram {
+    let mut histogram = native_histogram(count, sum);
+    histogram.positive_spans = vec![BucketSpan {
+        offset: 0,
+        length: 2,
+    }];
+    histogram.positive_counts = vec![1.0, 3.0];
+    histogram
+}
+
+pub(crate) fn single_bucket_native_histogram(
+    count: f64,
+    sum: f64,
+    zero_count: f64,
+    bucket_count: f64,
+) -> NativeHistogram {
+    let mut histogram = native_histogram(count, sum);
+    histogram.zero_count = zero_count;
+    histogram.positive_spans = vec![BucketSpan {
+        offset: 0,
+        length: 1,
+    }];
+    histogram.positive_counts = vec![bucket_count];
+    histogram
+}
+
+pub(crate) fn push_named_job_instance_sample(
+    store: &mut InMemoryMetricStore,
+    metric: &str,
+    job: &str,
+    instance: &str,
+    value: f64,
+) {
+    push_metric_sample(store, metric, Some(job), instance, value);
+}
+
+pub(crate) fn comparison_test_engine() -> PromqlEngine<InMemoryMetricStore> {
+    FloatStore::default()
+        .named_sample(
+            "a",
+            &[crate::test_support::TestLabelPair::new("x", "1")],
+            10.0,
+        )
+        .engine()
+}
+
+pub(crate) fn push_metric_instance_sample(
+    store: &mut InMemoryMetricStore,
+    metric: &str,
+    instance: &str,
+    value: f64,
+) {
+    push_metric_sample(store, metric, None, instance, value);
+}
+
+fn push_metric_sample(
+    store: &mut InMemoryMetricStore,
+    metric: &str,
+    job: Option<&str>,
+    instance: &str,
+    value: f64,
+) {
+    let mut pairs = vec![
+        crate::test_support::TestLabelPair::new("__name__", metric),
+        crate::test_support::TestLabelPair::new("instance", instance),
+    ];
+    if let Some(job) = job {
+        pairs.push(crate::test_support::TestLabelPair::new("job", job));
+    }
+    store.push_float("tenant-a", labels(&pairs), 10_000, value);
+}
+
+pub(crate) fn push_metric_job_samples(
+    store: &mut InMemoryMetricStore,
+    samples: impl IntoIterator<Item = (&'static str, &'static str, f64)>,
+) {
+    for (metric, job, value) in samples {
+        store.push_float(
+            "tenant-a",
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", metric),
+                crate::test_support::TestLabelPair::new("job", job),
+            ]),
+            10_000,
+            value,
+        );
+    }
+}
+
+pub(crate) fn push_metadata_sample(store: &mut InMemoryMetricStore, instance: &str, value: f64) {
+    store.push_float(
+        "tenant-a",
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "requests_total"),
+            crate::test_support::TestLabelPair::new("__type__", "counter"),
+            crate::test_support::TestLabelPair::new("__unit__", "requests"),
+            crate::test_support::TestLabelPair::new("instance", instance),
+        ]),
+        10_000,
+        value,
+    );
+}
+
 use native_histogram_store::{
     InstanceHistograms, assert_histogram_series_reduction, instance_histogram_store,
-    native_histogram_store, signed_bucket_histogram_engine, two_bucket_histogram_store,
+    native_histogram_store, signed_bucket_histogram_engine,
+    store_with_request_duration_histogram_at, two_bucket_histogram_store,
 };
 use planned_and_interpreted::{
     SortedParity, annotated_planned_and_interpreted, fingerprint_sorted, planned_and_interpreted,
@@ -299,10 +533,68 @@ use range_query_routes_through_planner::range_query_routes_through_planner;
 use region_info_engine::{InstanceRequests, region_info_engine};
 #[cfg(feature = "experimental-functions")]
 use sample_instances::{sample_instances, selected_memory_instances};
-use series_store::SeriesFixture;
+use series_store::{SeriesFixture, queue_depth_store, up_series_store};
+
+fn three_point_gauge_store(metric: &str) -> InMemoryMetricStore {
+    SeriesFixture::new(labels(&[
+        crate::test_support::TestLabelPair::new("__name__", metric),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]))
+    .at(0_i64, 1.0)
+    .at(60_000, 3.0)
+    .at(120_000, 5.0)
+    .store()
+}
+
+fn sample_with_label<'a>(
+    samples: &'a [crate::InstantSample],
+    name: &str,
+    value: &str,
+) -> &'a crate::InstantSample {
+    samples
+        .iter()
+        .find(|sample| sample.labels.get(name) == Some(value))
+        .expect("the sample has the requested label")
+}
 use set_op_store::set_op_store;
 use short_lookback_up_engine::short_lookback_up_engine;
 use sort_instant_result::sort_instant_result;
 use stale_nan::stale_nan;
 use target_info_engine::{info_metrics_engine, target_info_engine};
-use zoned_queue_depth_engine::{ZonedQueueDepth, zoned_queue_depth_engine};
+use zoned_queue_depth_engine::{
+    ZonedQueueDepth, standard_zoned_queue_depth_series, zoned_queue_depth_engine,
+};
+
+struct TopKProjection<'a> {
+    metric_name: Option<&'a str>,
+    instance: Option<&'a str>,
+    value: f64,
+}
+
+fn topk_projection(samples: &[crate::InstantSample]) -> Vec<TopKProjection<'_>> {
+    let mut projection = samples
+        .iter()
+        .map(|sample| TopKProjection {
+            metric_name: sample.labels.get("__name__"),
+            instance: sample.labels.get("instance"),
+            value: float_value(&sample.value),
+        })
+        .collect::<Vec<_>>();
+    projection.sort_by_key(|sample| sample.instance);
+    projection
+}
+
+async fn assert_label_transform<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    result_label: &str,
+    expected_result: &str,
+    preserved_label: &str,
+    expected_preserved: &str,
+) {
+    let samples = query_instant_vector(&engine, "tenant-a", query, 10_000).await;
+    assert2::assert!(samples.len() == 1);
+    assert2::assert!(samples[0].labels.get(result_label) == Some(expected_result));
+    assert2::assert!(samples[0].labels.get(preserved_label) == Some(expected_preserved));
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 1.0));
+}

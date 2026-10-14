@@ -21,11 +21,12 @@ pub(crate) fn counts(float_counts: &[f64], deltas: &[i64]) -> Result<Vec<f64>, W
     deltas
         .iter()
         .enumerate()
-        .map(|(bucket, delta)| {
-            let next = total.checked_add(*delta).ok_or_else(|| {
+        .map(|entry| {
+            let next = total.checked_add(*entry.1).ok_or_else(|| {
                 WireError::Invalid(format!(
-                    "histogram bucket delta run overflows i64 at bucket {bucket}: \
-                     count {total} plus delta {delta}"
+                    "histogram bucket delta run overflows i64 at bucket {}: \
+                     count {total} plus delta {}",
+                    entry.0, entry.1
                 ))
             })?;
             total = next;

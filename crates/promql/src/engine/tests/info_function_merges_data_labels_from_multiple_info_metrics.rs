@@ -3,18 +3,8 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn info_function_merges_data_labels_from_multiple_info_metrics() {
     let engine = info_metrics_engine(vec![
-        labels(&[
-            ("__name__", "target_info"),
-            ("job", "api"),
-            ("instance", "a"),
-            ("cluster", "prod"),
-        ]),
-        labels(&[
-            ("__name__", "build_info"),
-            ("job", "api"),
-            ("instance", "a"),
-            ("version", "1.2.3"),
-        ]),
+        super::target_info_engine::info_series_labels("target_info", &[("cluster", "prod")]),
+        super::target_info_engine::info_series_labels("build_info", &[("version", "1.2.3")]),
     ]);
     let samples = instant_vector(
         &engine,

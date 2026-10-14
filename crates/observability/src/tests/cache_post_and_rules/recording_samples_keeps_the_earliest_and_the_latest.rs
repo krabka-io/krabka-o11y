@@ -21,11 +21,19 @@ pub(crate) fn recording_samples_keeps_the_earliest_and_the_latest() {
 
     check!(state.summary.count == 4);
     check!(
-        state.first == Some((5, value(2))),
+        state.first
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 5,
+                value: value(2)
+            }),
         "the earliest timestamp, from the first record that reached it"
     );
     check!(
-        state.last == Some((10, value(1))),
+        state.last
+            == Some(super::super::prelude::TimestampedMetricValue {
+                timestamp_ns: 10,
+                value: value(1)
+            }),
         "the latest timestamp, from the first record that reached it"
     );
 }

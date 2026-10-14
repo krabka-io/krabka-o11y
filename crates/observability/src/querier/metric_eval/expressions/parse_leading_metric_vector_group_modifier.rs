@@ -1,15 +1,21 @@
 use super::{MetricVectorGroupModifier, parse_leading_label_list};
 
+pub(crate) struct ParsedMetricVectorGroupModifier<'a> {
+    pub(crate) group: Option<MetricVectorGroupModifier>,
+    pub(crate) remaining: &'a str,
+}
+
 pub(crate) fn parse_leading_metric_vector_group_modifier(
     query: &str,
-) -> Option<(Option<MetricVectorGroupModifier>, &str)> {
+) -> Option<ParsedMetricVectorGroupModifier<'_>> {
     for modifier in ["group_left", "group_right"] {
         let Some(rest) = query.strip_prefix(modifier) else {
             continue;
         };
         let rest = rest.trim_start();
-        let (labels, rest) = if rest.starts_with('(') {
-            parse_leading_label_list(rest)?
+        let (labels, remaining) = if rest.starts_with('(') {
+            let parsed = parse_leading_label_list(rest)?;
+            (parsed.labels, parsed.remaining)
         } else {
             (Vec::new(), rest)
         };
@@ -18,8 +24,14 @@ pub(crate) fn parse_leading_metric_vector_group_modifier(
             "group_right" => MetricVectorGroupModifier::Right(labels),
             _ => unreachable!("modifier loop only produces known group modifiers"),
         };
-        return Some((Some(group), rest));
+        return Some(ParsedMetricVectorGroupModifier {
+            group: Some(group),
+            remaining,
+        });
     }
 
-    Some((None, query))
+    Some(ParsedMetricVectorGroupModifier {
+        group: None,
+        remaining: query,
+    })
 }

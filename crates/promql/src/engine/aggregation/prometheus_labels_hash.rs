@@ -11,13 +11,13 @@ use super::Labels;
 pub(crate) fn prometheus_labels_hash(labels: &Labels) -> u64 {
     let capacity = labels
         .iter()
-        .map(|(name, value)| name.len() + value.len() + 2)
+        .map(|pair| pair.name.len() + pair.value.len() + 2)
         .sum();
     let mut bytes = Vec::with_capacity(capacity);
-    for (name, value) in labels.iter() {
-        bytes.extend_from_slice(name.as_bytes());
+    for pair in labels.iter() {
+        bytes.extend_from_slice(pair.name.as_bytes());
         bytes.push(0xff);
-        bytes.extend_from_slice(value.as_bytes());
+        bytes.extend_from_slice(pair.value.as_bytes());
         bytes.push(0xff);
     }
     xxhash_rust::xxh64::xxh64(&bytes, 0)

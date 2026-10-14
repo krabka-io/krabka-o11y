@@ -1,12 +1,14 @@
-use super::{Line, NativeHistogram, Result, parse_error, parse_histogram_literal};
+use super::{HistogramRepetition, Line, Result, parse_error, parse_histogram_literal};
 
 pub(crate) fn parse_histogram_repetition(
     token: &str,
     line: Line<'_>,
-) -> Result<Option<(NativeHistogram, u32)>> {
-    let Some((literal, count)) = token.rsplit_once('x') else {
+) -> Result<Option<HistogramRepetition>> {
+    let Some(separator) = token.rfind('x') else {
         return Ok(None);
     };
+    let literal = &token[..separator];
+    let count = &token[separator + 1..];
     if !literal.starts_with("{{") || !literal.ends_with("}}") {
         return Ok(None);
     }
@@ -16,5 +18,8 @@ pub(crate) fn parse_histogram_repetition(
             format!("invalid expanding-point count `{count}`: {err}"),
         )
     })?;
-    Ok(Some((parse_histogram_literal(literal, line)?, count)))
+    Ok(Some(HistogramRepetition {
+        histogram: parse_histogram_literal(literal, line)?,
+        count,
+    }))
 }

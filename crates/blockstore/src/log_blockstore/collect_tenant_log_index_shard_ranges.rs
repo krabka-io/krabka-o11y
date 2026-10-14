@@ -16,7 +16,11 @@ pub(crate) async fn collect_tenant_log_index_shard_ranges(
         }
     }
 
-    ranges.sort_by_key(|range| (range.start_ns, range.end_ns));
+    ranges.sort_by(|left, right| {
+        left.start_ns
+            .cmp(&right.start_ns)
+            .then_with(|| left.end_ns.cmp(&right.end_ns))
+    });
     ranges.dedup();
     Ok(ranges)
 }

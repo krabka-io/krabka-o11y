@@ -49,13 +49,12 @@ impl BlockCatalog for TraceIndexCatalog {
         Ok(self
             .by_tenant
             .get(tenant)
-            .map(|blocks| {
+            .map_or_else(Default::default, |blocks| {
                 blocks
                     .iter()
                     .filter(|b| b.end_ns >= start_ns && b.start_ns <= end_ns)
                     .cloned()
                     .collect()
-            })
-            .unwrap_or_default())
+            }))
     }
 }

@@ -14,7 +14,9 @@ pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<Wa
                 labels: exemplar
                     .labels
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|label| {
+                        crate::MetricLabelPair::new(label.name.to_owned(), label.value.to_owned())
+                    })
                     .collect(),
                 value: exemplar.value,
                 timestamp_ms: exemplar.timestamp_ms,
@@ -31,20 +33,15 @@ pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<Wa
             },
             exemplars: Vec::new(),
         }));
-        out.extend(
-            series
-                .histograms
-                .iter()
-                .map(|(timestamp_ms, hist)| WalRecord {
-                    tenant: tenant.to_string(),
-                    labels: labels.clone(),
-                    payload: SamplePayload::Hist {
-                        timestamp_ms: *timestamp_ms,
-                        hist: hist.clone(),
-                    },
-                    exemplars: Vec::new(),
-                }),
-        );
+        out.extend(series.histograms.iter().map(|sample| WalRecord {
+            tenant: tenant.to_string(),
+            labels: labels.clone(),
+            payload: SamplePayload::Hist {
+                timestamp_ms: sample.timestamp_ms,
+                hist: sample.histogram.clone(),
+            },
+            exemplars: Vec::new(),
+        }));
         if let Some(metadata) = &series.metadata {
             // Classic histogram and summary samples carry suffixed names;
             // metadata is indexed by the unsuffixed metric family.
@@ -54,7 +51,7 @@ pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<Wa
                 tenant: tenant.to_string(),
                 labels: metadata_labels
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone().into()))
+                    .map(|pair| crate::MetricLabelPair::new(pair.name, pair.value.into()))
                     .collect(),
                 payload: SamplePayload::Metadata {
                     metric_family_name: metadata.metric_family_name.clone(),

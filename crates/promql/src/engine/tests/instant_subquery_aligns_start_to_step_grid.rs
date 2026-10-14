@@ -3,17 +3,18 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_subquery_aligns_start_to_step_grid() {
     let mut store = InMemoryMetricStore::new();
-    for (index, value) in [
+    let values = [
         1.0, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0, 55.0, 89.0, 144.0,
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    ];
+    for index in 0..values.len() {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "metric_total")]),
+            labels(&[crate::test_support::TestLabelPair::new(
+                "__name__",
+                "metric_total",
+            )]),
             i64::try_from(index).unwrap() * 7_000,
-            value,
+            values[index],
         );
     }
 

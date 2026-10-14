@@ -1,7 +1,7 @@
 use super::{
-    BTreeMap, ChunkEncoding, ChunkSamples, ChunkSegments, DecodedTsdbBlock, FloatRow, IndexSeries,
-    IndexToc, Labels, NativeHistogram, NativeHistogramRow, STALE_NAN_BITS, TenantCompactionRows,
-    Tombstones, TsdbBlockFiles, TsdbBlockMeta, TsdbImportError, TsdbImportLimits, TsdbImportStats,
+    ChunkEncoding, ChunkSamples, ChunkSegments, DecodedTsdbBlock, FloatRow, IndexSeries, IndexToc,
+    Labels, NativeHistogram, NativeHistogramRow, STALE_NAN_BITS, TenantCompactionRows, Tombstones,
+    TsdbBlockFiles, TsdbBlockMeta, TsdbImportError, TsdbImportLimits, TsdbImportStats,
     decode_float_histogram_chunk, decode_histogram_chunk, decode_xor_chunk, format_labels,
     read_series, read_symbols, validate_postings, validate_spans_and_counts,
 };
@@ -65,15 +65,7 @@ pub fn decode_tsdb_block(
         limits,
         chunks: &chunks,
         tombstones: &tombstones,
-        rows: TenantCompactionRows {
-            tenant: tenant.to_owned(),
-            series_labels: BTreeMap::new(),
-            float_rows: Vec::new(),
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
-        },
+        rows: TenantCompactionRows::empty(tenant),
         stats: TsdbImportStats::default(),
         decoded_samples: 0,
     };
@@ -151,7 +143,7 @@ struct Converter<'a> {
 
 impl Converter<'_> {
     fn convert_series(&mut self, entry: &IndexSeries) -> Result<(), TsdbImportError> {
-        let labels = entry.labels.iter().cloned().collect::<Labels>();
+        let labels = Labels::from_pairs(entry.labels.iter().cloned());
         let fingerprint = labels.fingerprint();
         let display = format_labels(&entry.labels);
         if self.rows.series_labels.contains_key(&fingerprint) {
@@ -168,10 +160,10 @@ impl Converter<'_> {
             let timestamps = match &samples {
                 ChunkSamples::Floats(samples) => samples
                     .iter()
-                    .map(|(timestamp, _)| *timestamp)
+                    .map(|sample| sample.timestamp_ms)
                     .collect::<Vec<_>>(),
                 ChunkSamples::Histograms(samples) => {
-                    samples.iter().map(|(timestamp, _)| *timestamp).collect()
+                    samples.iter().map(|sample| sample.timestamp_ms).collect()
                 }
             };
             if timestamps.is_empty() {
@@ -228,7 +220,9 @@ impl Converter<'_> {
         display: &str,
         reference: u64,
     ) -> Result<ChunkSamples, TsdbImportError> {
-        let (encoding, data) = self.chunks.chunk(reference)?;
+        let chunk_data = self.chunks.chunk(reference)?;
+        let encoding = chunk_data.encoding;
+        let data = chunk_data.data;
         let declared = data.get(..2).map_or(0, |header| {
             u64::from(u16::from_be_bytes([header[0], header[1]]))
         });
@@ -269,17 +263,20 @@ impl Converter<'_> {
         let mut kept = 0;
         match samples {
             ChunkSamples::Floats(samples) => {
-                for (timestamp_ms, value) in samples {
+                for sample in samples {
+                    let timestamp_ms = sample.timestamp_ms;
                     if self.tombstones.deletes(series, timestamp_ms) {
                         self.stats.deleted_samples += 1;
                         continue;
                     }
-                    self.push_float(fingerprint, timestamp_ms, value);
+                    self.push_float(fingerprint, timestamp_ms, sample.value);
                     kept += 1;
                 }
             }
             ChunkSamples::Histograms(samples) => {
-                for (timestamp_ms, hist) in samples {
+                for sample in samples {
+                    let timestamp_ms = sample.timestamp_ms;
+                    let hist = sample.histogram;
                     if self.tombstones.deletes(series, timestamp_ms) {
                         self.stats.deleted_samples += 1;
                         continue;

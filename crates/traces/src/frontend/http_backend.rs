@@ -46,6 +46,20 @@ use crate::frontend::{
     wire::{SearchResponseJson, TraceByIdResponseJson},
 };
 
+struct QueryParam {
+    key: String,
+    value: String,
+}
+
+impl QueryParam {
+    fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+}
+
 // --- Tag body parsing (the querier's v2 tag shapes) -------------------------
 
 #[cfg(test)]
@@ -79,16 +93,14 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn ns_to_seconds_round_trips_whole_and_fractional() {
-        for (ns, want) in [
-            (0, "0"),
-            (1_000_000_000, "1"),
-            (1_400_000_000, "1.4"),
-            (-500_000_000, "-0.5"),
-        ] {
-            check!(ns_to_seconds(ns) == want);
-        }
+    #[yare::parameterized(
+        zero = { 0, "0" },
+        one_second = { 1_000_000_000, "1" },
+        fractional = { 1_400_000_000, "1.4" },
+        negative_fractional = { -500_000_000, "-0.5" },
+    )]
+    fn ns_to_seconds_round_trips_whole_and_fractional(ns: i64, expected: &str) {
+        check!(ns_to_seconds(ns) == expected);
     }
 
     #[test]

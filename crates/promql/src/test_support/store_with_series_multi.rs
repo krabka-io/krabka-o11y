@@ -1,9 +1,15 @@
 use super::*;
 
-pub(crate) fn store_with_series_multi(series: &[(&str, f64)]) -> InMemoryMetricStore {
+#[derive(bon::Builder)]
+pub(crate) struct TestSeriesValue {
+    selector: &'static str,
+    value: f64,
+}
+
+pub(crate) fn store_with_series_multi(series: &[TestSeriesValue]) -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
-    for (selector, value) in series {
-        store.push_float(TENANT, metric_to_labels(selector), 0, *value);
+    for sample in series {
+        store.push_float(TENANT, metric_to_labels(sample.selector), 0, sample.value);
     }
     store
 }

@@ -15,20 +15,19 @@ pub fn decode_zipkin(body: &[u8]) -> Result<Vec<Span>, WireError> {
         let resource_attrs = span
             .local_endpoint
             .and_then(|endpoint| endpoint.service_name)
-            .map(|service| {
+            .map_or_else(Default::default, |service| {
                 vec![KeyValue {
                     key: "service.name".into(),
                     value: AttrValue::Str(service),
                 }]
-            })
-            .unwrap_or_default();
-        let (status, status_message) = zipkin_status(&span.tags);
+            });
+        let status = zipkin_status(&span.tags);
         let mut span_attrs = span
             .tags
             .into_iter()
-            .map(|(key, value)| KeyValue {
-                key,
-                value: AttrValue::Str(value),
+            .map(|entry| KeyValue {
+                key: entry.0,
+                value: AttrValue::Str(entry.1),
             })
             .collect::<Vec<_>>();
         if let Some(service) = span
@@ -58,8 +57,8 @@ pub fn decode_zipkin(body: &[u8]) -> Result<Vec<Span>, WireError> {
             kind: zipkin_kind(span.kind.as_deref()),
             start_ns: span.timestamp.saturating_mul(1_000),
             duration_ns: span.duration.saturating_mul(1_000),
-            status,
-            status_message,
+            status: status.code,
+            status_message: status.message,
             resource_attrs,
             span_attrs,
             events,

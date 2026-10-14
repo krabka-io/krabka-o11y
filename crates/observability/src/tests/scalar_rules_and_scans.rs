@@ -4,7 +4,7 @@ use super::prelude::{
     StringArray, TimeRange, append_matching_log_row, check, json, line_filter_sql_predicates,
     loki_streams_response, parse_query,
 };
-use crate::SeriesFingerprint;
+use crate::{LokiStreamEntry, SeriesFingerprint};
 
 mod a_label_format_stage_parses_a_label_whatever_it_overwrote;
 mod a_log_row_is_appended_only_when_the_plan_asked_for_it;
@@ -25,9 +25,13 @@ struct ApiSeriesPlan {
 
 impl ApiSeriesPlan {
     fn new(query: &str) -> Self {
-        let mut label_index = LabelIndex::default();
         let mut labels = Labels::default();
         labels.insert("app".to_string(), "api".to_string());
+        Self::with_labels(query, labels)
+    }
+
+    fn with_labels(query: &str, labels: Labels) -> Self {
+        let mut label_index = LabelIndex::default();
         let api = label_index.insert_series("tenant", labels);
         let plan = StreamPlan {
             tenant: "tenant".to_string(),
@@ -42,4 +46,14 @@ impl ApiSeriesPlan {
             plan,
         }
     }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn assert_stream_response_encodings(
+    streams: BTreeMap<Labels, Vec<LokiStreamEntry>>,
+    folded: crate::Value,
+    categorized: crate::Value,
+) {
+    check!(loki_streams_response(streams.clone(), LokiStreamEncoding::Folded) == folded);
+    check!(loki_streams_response(streams, LokiStreamEncoding::CategorizeLabels) == categorized);
 }

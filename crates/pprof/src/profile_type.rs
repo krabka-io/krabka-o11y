@@ -58,19 +58,21 @@ mod tests {
 
     use super::*;
 
+    fn process_cpu(delta: bool) -> ProfileType {
+        ProfileType {
+            name: "process_cpu".to_string(),
+            sample_type: "cpu".to_string(),
+            sample_unit: "nanoseconds".to_string(),
+            period_type: "cpu".to_string(),
+            period_unit: "nanoseconds".to_string(),
+            delta,
+        }
+    }
+
     #[test]
     fn parses_go_cpu() {
         let pt = ProfileType::parse("process_cpu:cpu:nanoseconds:cpu:nanoseconds").unwrap();
-        assert!(
-            pt == ProfileType {
-                name: "process_cpu".to_string(),
-                sample_type: "cpu".to_string(),
-                sample_unit: "nanoseconds".to_string(),
-                period_type: "cpu".to_string(),
-                period_unit: "nanoseconds".to_string(),
-                delta: false,
-            }
-        );
+        assert!(pt == process_cpu(false));
     }
 
     #[test]
@@ -90,16 +92,7 @@ mod tests {
         let input = "process_cpu:cpu:nanoseconds:cpu:nanoseconds:delta";
         let pt = ProfileType::parse(input).unwrap();
 
-        assert!(
-            pt == ProfileType {
-                name: "process_cpu".to_string(),
-                sample_type: "cpu".to_string(),
-                sample_unit: "nanoseconds".to_string(),
-                period_type: "cpu".to_string(),
-                period_unit: "nanoseconds".to_string(),
-                delta: true,
-            }
-        );
+        assert!(pt == process_cpu(true));
         assert!(format!("{pt}") == input);
     }
 

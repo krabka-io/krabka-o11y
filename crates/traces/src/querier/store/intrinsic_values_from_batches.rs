@@ -12,6 +12,6 @@ pub(crate) fn intrinsic_values_from_batches(
     }
     Ok(values
         .into_iter()
-        .map(|(type_, value)| TypedValue { type_, value })
+        .map(|value| TypedValue::new(value.type_, value.value))
         .collect())
 }

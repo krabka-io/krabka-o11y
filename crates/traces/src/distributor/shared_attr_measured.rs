@@ -1,4 +1,4 @@
-use super::{AttrValue, KeyValue};
+use super::{AttrValue, KeyValue, MeasuredAttribute};
 
 /// Pair an attribute key with the TRUE encoded byte length of its value.
 ///
@@ -6,7 +6,7 @@ use super::{AttrValue, KeyValue};
 /// The `Limits::max_attribute` cap therefore sees the true size of `Bytes`,
 /// `Int` and `Double` values. A `String` conversion would mis-report them: a
 /// large byte blob would read as length 0 and would bypass the limit.
-pub(crate) fn shared_attr_measured(attr: &KeyValue) -> (String, u64) {
+pub(crate) fn shared_attr_measured(attr: &KeyValue) -> MeasuredAttribute {
     let value_bytes = match &attr.value {
         AttrValue::Str(value) => value.len(),
         AttrValue::Bytes(value) => value.len(),
@@ -17,5 +17,8 @@ pub(crate) fn shared_attr_measured(attr: &KeyValue) -> (String, u64) {
             prost::Message::encoded_len(&value.otlp_value())
         }
     };
-    (attr.key.clone(), value_bytes as u64)
+    MeasuredAttribute {
+        key: attr.key.clone(),
+        value_bytes: value_bytes as u64,
+    }
 }

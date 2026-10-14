@@ -1,6 +1,13 @@
-use krabka_observability::server_security::{ServerListener, ServerSecurity, serve_router};
+use krabka_observability::server_security::{
+    RouterServer, ServerSecurity, spawn_router_server_joinable,
+};
 
-use super::{JoinHandle, Router, SocketAddr, TcpListener};
+use super::{JoinHandle, Router, SocketAddr};
+
+pub struct JoinableRouterServer {
+    pub addr: SocketAddr,
+    pub server: JoinHandle<()>,
+}
 
 /// Like [`crate::serve_prometheus_router`], but returns the spawned server task to the
 /// caller.
@@ -30,17 +37,17 @@ pub async fn serve_prometheus_router_joinable(
     router: Router,
     security: &ServerSecurity,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-) -> std::io::Result<(SocketAddr, JoinHandle<()>)> {
-    let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
-        .map_err(std::io::Error::other)?;
-    let bound = listener.local_addr();
-    let serving = serve_router(listener, router, security)
-        .with_graceful_shutdown(shutdown)
-        .into_future();
-    let server = tokio::spawn(async move {
-        if let Err(error) = serving.await {
-            tracing::warn!(%error, "metrics prometheus server stopped with error");
-        }
-    });
-    Ok((bound, server))
+) -> std::io::Result<JoinableRouterServer> {
+    let server = spawn_router_server_joinable(RouterServer {
+        addr,
+        router,
+        security,
+        shutdown,
+        server_name: "metrics prometheus",
+    })
+    .await?;
+    Ok(JoinableRouterServer {
+        addr: server.address,
+        server: server.task,
+    })
 }

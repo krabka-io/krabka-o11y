@@ -1,4 +1,4 @@
-use super::{MatchCmp, MatchValue, present_value_matches};
+use super::{MatchCmp, MatchValue, matches_ordering, present_value_matches};
 
 /// Whether `value` satisfies `op` against an integer `expected`.
 #[must_use]
@@ -10,13 +10,5 @@ pub fn int_matches(value: i64, op: MatchCmp, expected: &MatchValue) -> bool {
         MatchValue::Int(value) => *value,
         _ => return false,
     };
-    match op {
-        MatchCmp::Eq => value == expected,
-        MatchCmp::Neq => value != expected,
-        MatchCmp::Lt => value < expected,
-        MatchCmp::Lte => value <= expected,
-        MatchCmp::Gt => value > expected,
-        MatchCmp::Gte => value >= expected,
-        MatchCmp::Re | MatchCmp::Nre => false,
-    }
+    matches_ordering(Some(value.cmp(&expected)), op)
 }

@@ -98,22 +98,28 @@ mod tests {
         let mut id = [0_u8; 16];
         id[7] = 1; // low byte of the high half
         id[15] = 2; // low byte of the low half
-        let (high, low) = trace_id_parts(&id).expect("sixteen bytes");
-        check!(high == 1, "the first eight bytes");
-        check!(low == 2, "and the second eight, not the same eight twice");
+        let parts = trace_id_parts(&id).expect("sixteen bytes");
+        check!(parts.high == 1, "the first eight bytes");
+        check!(
+            parts.low == 2,
+            "and the second eight, not the same eight twice"
+        );
 
         // Big-endian: the first byte is the most significant.
         let mut id = [0_u8; 16];
         id[0] = 1;
-        let (high, low) = trace_id_parts(&id).expect("sixteen bytes");
-        check!(high == 1 << 56, "byte zero is the top of the high half");
-        check!(low == 0);
+        let parts = trace_id_parts(&id).expect("sixteen bytes");
+        check!(
+            parts.high == 1 << 56,
+            "byte zero is the top of the high half"
+        );
+        check!(parts.low == 0);
 
         // The top bit makes the half negative, which is what signing means.
         let mut id = [0_u8; 16];
         id[0] = 0xff;
-        let (high, _) = trace_id_parts(&id).expect("sixteen bytes");
-        check!(high < 0, "the high half is signed");
+        let parts = trace_id_parts(&id).expect("sixteen bytes");
+        check!(parts.high < 0, "the high half is signed");
 
         // Any length but sixteen is refused, on both sides.
         check!(trace_id_parts(&[0; 15]).is_err(), "one short");

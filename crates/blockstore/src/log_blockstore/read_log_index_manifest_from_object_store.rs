@@ -1,6 +1,6 @@
 use super::{
-    BlockIndex, BlockStoreError, LabelIndex, LogIndexManifest, ObjectPath, ObjectStore,
-    ObjectStoreExt, instrument, log_index_manifest_object_path,
+    BlockStoreError, LogIndexManifest, LogIndexes, ObjectPath, ObjectStore, ObjectStoreExt,
+    instrument, log_index_manifest_object_path,
 };
 
 #[instrument(level = "debug", skip_all, err)]
@@ -9,7 +9,7 @@ use super::{
 pub async fn read_log_index_manifest_from_object_store(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
-) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
+) -> Result<LogIndexes, BlockStoreError> {
     let bytes = store
         .get(&log_index_manifest_object_path(prefix))
         .await?

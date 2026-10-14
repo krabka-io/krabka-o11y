@@ -18,9 +18,9 @@ pub(crate) fn append_exemplar_label_map(
         .ok_or_else(|| {
             PromqlError::Store("exemplar label map value column has wrong type".into())
         })?;
-    for (key, value) in keys.iter().zip(values.iter()) {
-        if let (Some(key), Some(value)) = (key, value) {
-            labels.insert(key, value);
+    for index in 0..keys.len() {
+        if !keys.is_null(index) && !values.is_null(index) {
+            labels.insert(keys.value(index), values.value(index));
         }
     }
     Ok(())

@@ -49,6 +49,7 @@ num-traits = { workspace = true }
 xxhash-rust = { workspace = true }
 
 [dev-dependencies]
+bon = { workspace = true }
 object_store = { workspace = true, features = ["integration"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }

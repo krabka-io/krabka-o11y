@@ -1,5 +1,5 @@
 /// One metric metadata row ready for indexing.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MetadataRow {
     pub fingerprint: u64,
     pub metric_family_name: String,

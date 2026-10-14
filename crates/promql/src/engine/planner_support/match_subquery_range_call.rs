@@ -1,5 +1,15 @@
 use super::{Call, Expr, SubqueryExpr, SubqueryOuterFn, no_param_outer_range_fn};
 
+pub(crate) struct SubqueryRangeCall<'a> {
+    pub subquery: &'a SubqueryExpr,
+    pub outer: SubqueryOuterFn<'a>,
+}
+
+struct SubqueryRangeArguments<'a> {
+    range: &'a Expr,
+    outer: SubqueryOuterFn<'a>,
+}
+
 /// Recognizes a `f(inner[range:resolution] ...)` call over a subquery.
 ///
 /// The range argument is a subquery, and the outer `f` is a planner-supported
@@ -11,48 +21,58 @@ use super::{Call, Expr, SubqueryExpr, SubqueryOuterFn, no_param_outer_range_fn};
 /// non-fold function return `None` and stay on the interpreter. A
 /// matrix-selector range argument also returns `None`, and
 /// [`match_rate_range_call`] and [`match_over_time_range_call`] match it instead.
-pub(crate) fn match_subquery_range_call(
-    call: &Call,
-) -> Option<(&SubqueryExpr, SubqueryOuterFn<'_>)> {
+pub(crate) fn match_subquery_range_call(call: &Call) -> Option<SubqueryRangeCall<'_>> {
     // Resolve the range-vector argument's position and the parameter args by the
     // function's arity, exactly as the corresponding `eval_*_call` does.
-    let (range_arg, spec) = match call.func.name {
+    let arguments = match call.func.name {
         "quantile_over_time" => {
             let [phi, range] = call.args.args.as_slice() else {
                 return None;
             };
-            (range.as_ref(), SubqueryOuterFn::QuantileOverTime { phi })
+            SubqueryRangeArguments {
+                range: range.as_ref(),
+                outer: SubqueryOuterFn::QuantileOverTime { phi },
+            }
         }
         "predict_linear" => {
             let [range, duration] = call.args.args.as_slice() else {
                 return None;
             };
-            (range.as_ref(), SubqueryOuterFn::PredictLinear { duration })
+            SubqueryRangeArguments {
+                range: range.as_ref(),
+                outer: SubqueryOuterFn::PredictLinear { duration },
+            }
         }
         #[cfg(feature = "experimental-functions")]
         "double_exponential_smoothing" => {
             let [range, smoothing, trend] = call.args.args.as_slice() else {
                 return None;
             };
-            (
-                range.as_ref(),
-                SubqueryOuterFn::DoubleExponentialSmoothing { smoothing, trend },
-            )
+            SubqueryRangeArguments {
+                range: range.as_ref(),
+                outer: SubqueryOuterFn::DoubleExponentialSmoothing { smoothing, trend },
+            }
         }
         name => {
             let outer = no_param_outer_range_fn(name)?;
             let [range] = call.args.args.as_slice() else {
                 return None;
             };
-            (range.as_ref(), SubqueryOuterFn::NoParam(outer))
+            SubqueryRangeArguments {
+                range: range.as_ref(),
+                outer: SubqueryOuterFn::NoParam(outer),
+            }
         }
     };
-    let mut arg = range_arg;
+    let mut arg = arguments.range;
     while let Expr::Paren(paren) = arg {
         arg = paren.expr.as_ref();
     }
     let Expr::Subquery(subquery) = arg else {
         return None;
     };
-    Some((subquery, spec))
+    Some(SubqueryRangeCall {
+        subquery,
+        outer: arguments.outer,
+    })
 }

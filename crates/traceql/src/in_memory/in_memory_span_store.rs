@@ -45,39 +45,39 @@ impl InMemorySpanStore {
     pub(crate) fn attr_columns(
         traces: &[&StoredTrace],
         projection_matchers: &[SpanMatcher],
-    ) -> Vec<(String, DataType)> {
+    ) -> Vec<AttributeColumn> {
         let mut cols = BTreeMap::new();
         for trace in traces {
             for span in &trace.spans {
-                for (key, value) in &span.attrs {
-                    cols.entry(key.clone())
-                        .or_insert_with(|| value.arrow_data_type());
+                for attribute in &span.attrs {
+                    cols.entry(attribute.key.clone())
+                        .or_insert_with(|| attribute.value.arrow_data_type());
                 }
                 for matcher in projection_matchers {
                     match matcher.scope {
                         MatchScope::Event => {
-                            let Some((_, value)) = span
+                            let Some(attribute) = span
                                 .events
                                 .iter()
                                 .flat_map(|event| event.attributes.iter())
-                                .find(|(key, _)| key == &matcher.key)
+                                .find(|attribute| attribute.key == matcher.key)
                             else {
                                 continue;
                             };
                             cols.entry(format!("{EVENT_ATTR_PREFIX}{}", matcher.key))
-                                .or_insert_with(|| value.arrow_data_type());
+                                .or_insert_with(|| attribute.value.arrow_data_type());
                         }
                         MatchScope::Link => {
-                            let Some((_, value)) = span
+                            let Some(attribute) = span
                                 .links
                                 .iter()
                                 .flat_map(|link| link.attributes.iter())
-                                .find(|(key, _)| key == &matcher.key)
+                                .find(|attribute| attribute.key == matcher.key)
                             else {
                                 continue;
                             };
                             cols.entry(format!("{LINK_ATTR_PREFIX}{}", matcher.key))
-                                .or_insert_with(|| value.arrow_data_type());
+                                .or_insert_with(|| attribute.value.arrow_data_type());
                         }
                         MatchScope::Both
                         | MatchScope::Span
@@ -111,7 +111,12 @@ impl InMemorySpanStore {
                 MatchValue::Str(_) | MatchValue::Nil => DataType::Utf8,
             });
         }
-        cols.into_iter().collect()
+        cols.into_iter()
+            .map(|entry| AttributeColumn {
+                key: entry.0,
+                data_type: entry.1,
+            })
+            .collect()
     }
 }
 
@@ -132,13 +137,18 @@ impl InMemorySpanStore {
 
         let mut raw_rows = Vec::new();
         let mut builders = ScanBuilders::new(row_count);
-        let mut attr_builders: Vec<(String, AttrBuilder)> = attr_cols
+        let mut attr_builders: Vec<AttrBuilderEntry> = attr_cols
             .iter()
-            .map(|(key, dt)| (key.clone(), AttrBuilder::new(dt)))
+            .map(|column| AttrBuilderEntry {
+                key: column.key.clone(),
+                builder: AttrBuilder::new(&column.data_type),
+            })
             .collect();
 
         for trace in &in_range {
-            for (i, span) in trace.spans.iter().enumerate() {
+            for entry in trace.spans.iter().enumerate() {
+                let i = entry.0;
+                let span = entry.1;
                 if !span_matches(trace, span, &trace.nested, i, matchers) {
                     continue;
                 }
@@ -149,7 +159,11 @@ impl InMemorySpanStore {
                     for link in &link_rows {
                         builders.append(trace, span, i, event, *link, &mut attr_builders)?;
                         if include_raw_attributes {
-                            raw_rows.push((span, event, *link));
+                            raw_rows.push(super::raw_attribute_columns::SpanEventLink {
+                                span,
+                                event,
+                                link: *link,
+                            });
                         }
                     }
                 }
@@ -157,24 +171,28 @@ impl InMemorySpanStore {
         }
 
         let mut columns = builders.finish();
-        columns.extend(attr_builders.into_iter().map(|(_, b)| b.finish()));
+        columns.extend(
+            attr_builders
+                .into_iter()
+                .map(|entry| entry.builder.finish()),
+        );
 
         let schema = if include_raw_attributes {
             let raw = super::raw_attribute_columns::raw_attribute_columns(
                 &raw_rows,
-                (
-                    !matchers.iter().any(super::is_event_matcher),
-                    !matchers.iter().any(super::is_link_matcher),
-                ),
+                super::raw_attribute_columns::RawAttributeSelection {
+                    all_events: !matchers.iter().any(super::is_event_matcher),
+                    all_links: !matchers.iter().any(super::is_link_matcher),
+                },
             );
             let mut fields = schema.fields().to_vec();
-            for (name, array) in raw {
+            for column in raw {
                 fields.push(Arc::new(arrow::datatypes::Field::new(
-                    name,
-                    array.data_type().clone(),
+                    column.name,
+                    column.array.data_type().clone(),
                     false,
                 )));
-                columns.push(array);
+                columns.push(column.array);
             }
             Arc::new(arrow::datatypes::Schema::new(fields))
         } else {
@@ -239,7 +257,7 @@ impl SpanStore for InMemorySpanStore {
             resource_attributes: if trace.root_service_name.is_empty() {
                 Vec::new()
             } else {
-                vec![(
+                vec![Attribute::new(
                     "service.name".to_string(),
                     AttrValue::Str(trace.root_service_name.clone()),
                 )]
@@ -248,7 +266,7 @@ impl SpanStore for InMemorySpanStore {
                 .spans
                 .iter()
                 .zip(&trace.nested)
-                .map(|(span, nested)| span_ref(span, nested))
+                .map(|entry| span_ref(entry.0, entry.1))
                 .collect(),
         }))
     }
@@ -263,84 +281,57 @@ impl TagCatalog for InMemorySpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<Vec<ScopedTag>> {
-        let mut resource = BTreeSet::new();
-        let mut span = BTreeSet::new();
-        let mut event = BTreeSet::new();
-        let mut link = BTreeSet::new();
-        let mut instrumentation = BTreeSet::new();
+        let mut tags = TagNameSets::default();
         let traces = self.traces_in_range(tenant, start_ns, end_ns);
         for trace in &traces {
-            resource.insert("service.name".to_string());
+            tags.resource.insert("service.name".to_string());
             for input in &trace.spans {
-                for (key, _) in &input.attrs {
-                    if let Some(key) = key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {
-                        instrumentation.insert(key.to_string());
+                for attribute in &input.attrs {
+                    if let Some(key) = attribute.key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {
+                        tags.instrumentation.insert(key.to_string());
                     } else {
-                        span.insert(key.clone());
+                        tags.span.insert(attribute.key.clone());
                     }
                 }
                 if !input.events.is_empty() {
-                    event.extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.event
+                        .extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
                 }
                 if !input.links.is_empty() {
-                    link.extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.link
+                        .extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
                 }
                 for event_ref in &input.events {
-                    event.extend(event_ref.attributes.iter().map(|(key, _)| key.clone()));
+                    tags.event.extend(
+                        event_ref
+                            .attributes
+                            .iter()
+                            .map(|attribute| attribute.key.clone()),
+                    );
                 }
                 for link_ref in &input.links {
-                    link.extend(link_ref.attributes.iter().map(|(key, _)| key.clone()));
+                    tags.link.extend(
+                        link_ref
+                            .attributes
+                            .iter()
+                            .map(|attribute| attribute.key.clone()),
+                    );
                 }
-                if !input.instrumentation_name.is_empty() {
-                    instrumentation.insert("instrumentation:name".to_string());
-                }
-                if !input.instrumentation_version.is_empty() {
-                    instrumentation.insert("instrumentation:version".to_string());
-                }
+                tags.add_instrumentation(
+                    &input.instrumentation_name,
+                    &input.instrumentation_version,
+                );
             }
         }
 
-        let mut out = Vec::new();
-        if matches!(scope, None | Some(TagScope::Resource)) && !resource.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Resource,
-                tags: resource.into_iter().collect(),
-            });
+        Ok(TagNameGroups {
+            resource: tags.resource,
+            span: tags.span,
+            event: tags.event,
+            link: tags.link,
+            instrumentation: tags.instrumentation,
         }
-        if matches!(scope, None | Some(TagScope::Span)) && !span.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Span,
-                tags: span.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Intrinsic)) && !traces.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Intrinsic,
-                tags: INTRINSIC_TAGS
-                    .iter()
-                    .map(|tag| (*tag).to_string())
-                    .collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Event)) && !event.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Event,
-                tags: event.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Link)) && !link.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Link,
-                tags: link.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(TagScope::Instrumentation)) && !instrumentation.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Instrumentation,
-                tags: instrumentation.into_iter().collect(),
-            });
-        }
-        Ok(out)
+        .into_scoped_tags(scope, !traces.is_empty(), INTRINSIC_TAGS))
     }
 
     async fn tag_values(
@@ -350,15 +341,22 @@ impl TagCatalog for InMemorySpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<Vec<TypedValue>> {
-        let tag = tag.strip_prefix('.').unwrap_or(tag);
-        let (attr_tag, attr_scope) = scoped_attribute_tag(tag);
+        let parsed_tag = TagScope::parse_attribute_tag(tag);
+        let tag = parsed_tag.tag;
+        let attr_tag = parsed_tag.attribute.tag;
+        let attr_scope = parsed_tag.attribute.scope;
         let mut values = BTreeSet::new();
         for trace in self.traces_in_range(tenant, start_ns, end_ns) {
             collect_trace_intrinsic_values(trace, tag, &mut values);
             if matches!(attr_scope, None | Some(TagScope::Resource)) && attr_tag == "service.name" {
-                values.insert(("string".to_string(), trace.root_service_name.clone()));
+                values.insert(TypedValue {
+                    type_: "string".to_string(),
+                    value: trace.root_service_name.clone(),
+                });
             }
-            for (idx, input) in trace.spans.iter().enumerate() {
+            for entry in trace.spans.iter().enumerate() {
+                let idx = entry.0;
+                let input = entry.1;
                 collect_span_intrinsic_values(input, &trace.nested, idx, tag, &mut values);
                 collect_event_values(&input.events, tag, &mut values);
                 collect_link_values(&input.links, tag, &mut values);
@@ -370,22 +368,20 @@ impl TagCatalog for InMemorySpanStore {
                         input
                             .attrs
                             .iter()
-                            .filter(|(key, _)| {
-                                key == attr_tag
+                            .filter(|attribute| {
+                                attribute.key == attr_tag
                                     || (attr_scope == Some(TagScope::Instrumentation)
-                                        && key
+                                        && attribute
+                                            .key
                                             .strip_prefix(INSTRUMENTATION_ATTR_PREFIX)
                                             .is_some_and(|key| key == attr_tag))
                             })
-                            .flat_map(|(_, value)| typed_value_parts(value)),
+                            .flat_map(|attribute| typed_value_parts(&attribute.value)),
                     );
                 }
             }
         }
-        Ok(values
-            .into_iter()
-            .map(|(type_, value)| TypedValue { type_, value })
-            .collect())
+        Ok(values.into_iter().collect())
     }
 }
 

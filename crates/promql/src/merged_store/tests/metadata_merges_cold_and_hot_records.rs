@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(Debug, PartialEq)]
+struct MetadataFields<'a> {
+    family_name: &'a str,
+    metric_type: &'a str,
+    help: &'a str,
+    unit: &'a str,
+}
+
 #[tokio::test]
 pub(crate) async fn metadata_merges_cold_and_hot_records() {
     let mut cold = InMemoryMetricStore::new();
@@ -31,22 +39,35 @@ pub(crate) async fn metadata_merges_cold_and_hot_records() {
     let metadata = store.metadata("tenant-a", None).await.unwrap().metadata;
     let fields = metadata
         .iter()
-        .map(|record| {
-            (
-                record.metric_family_name.as_str(),
-                record.metric_type.as_str(),
-                record.help.as_str(),
-                record.unit.as_str(),
-            )
+        .map(|record| MetadataFields {
+            family_name: record.metric_family_name.as_str(),
+            metric_type: record.metric_type.as_str(),
+            help: record.help.as_str(),
+            unit: record.unit.as_str(),
         })
         .collect::<Vec<_>>();
 
     assert2::assert!(
         fields
             == vec![
-                ("latency_seconds", "histogram", "latency", "seconds"),
-                ("requests_total", "counter", "requests", "requests"),
-                ("up", "gauge", "availability", ""),
+                MetadataFields {
+                    family_name: "latency_seconds",
+                    metric_type: "histogram",
+                    help: "latency",
+                    unit: "seconds",
+                },
+                MetadataFields {
+                    family_name: "requests_total",
+                    metric_type: "counter",
+                    help: "requests",
+                    unit: "requests",
+                },
+                MetadataFields {
+                    family_name: "up",
+                    metric_type: "gauge",
+                    help: "availability",
+                    unit: "",
+                },
             ]
     );
 }

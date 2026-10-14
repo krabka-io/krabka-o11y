@@ -1,25 +1,27 @@
-use std::collections::BTreeMap;
-
 use super::{SpanMetricsConfig, SpanRecord, red_dimension_pairs};
 use crate::metricsgen::config::{FilterPolicy, MatchType};
 
-pub(crate) type DimKey = Vec<(String, String)>;
+pub(crate) type DimKey = Vec<krabka_traceql::MetricLabel>;
 
 pub(crate) fn dim_key(
     span: &SpanRecord,
     include_status_message: bool,
     config: &SpanMetricsConfig,
 ) -> DimKey {
-    let mut labels = BTreeMap::from(red_dimension_pairs(span));
+    let mut labels = red_dimension_pairs(span).into_iter().collect::<Vec<_>>();
     if include_status_message {
-        labels.insert("status_message".to_string(), span.status_message.clone());
+        labels.push(krabka_traceql::MetricLabel::new(
+            "status_message",
+            span.status_message.clone(),
+        ));
     }
     for name in &config.dimensions {
         let label = prometheus_label_name(name);
         if !label.is_empty()
             && let Some(value) = span_attr(span, name)
+            && !labels.iter().any(|existing| existing.key == label)
         {
-            labels.entry(label).or_insert_with(|| value.to_string());
+            labels.push(krabka_traceql::MetricLabel::new(label, value));
         }
     }
     for mapping in &config.dimension_mappings {
@@ -29,13 +31,18 @@ pub(crate) fn dim_key(
             .filter_map(|name| span_attr(span, name))
             .collect::<Vec<_>>();
         let name = prometheus_label_name(&mapping.name);
-        if !name.is_empty() && !values.is_empty() {
-            labels
-                .entry(name)
-                .or_insert_with(|| values.join(&mapping.join));
+        if !name.is_empty()
+            && !values.is_empty()
+            && !labels.iter().any(|existing| existing.key == name)
+        {
+            labels.push(krabka_traceql::MetricLabel::new(
+                name,
+                values.join(&mapping.join),
+            ));
         }
     }
-    labels.into_iter().collect()
+    labels.sort();
+    labels
 }
 
 pub(crate) fn span_allowed(span: &SpanRecord, config: &SpanMetricsConfig) -> bool {
@@ -71,8 +78,8 @@ pub(crate) fn span_attr<'a>(span: &'a SpanRecord, key: &str) -> Option<&'a str> 
             .attributes
             .iter()
             .chain(&span.resource_attributes)
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.as_str()),
+            .find(|attribute| attribute.key == key)
+            .map(|attribute| attribute.value.as_str()),
     }
 }
 

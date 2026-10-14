@@ -47,7 +47,10 @@ pub fn replay_ruler_state_records<S: MetricStore>(
         replayed_records,
         committed_offsets: committed_offsets
             .into_iter()
-            .map(|(partition, offset)| WalHeadPartitionOffset { partition, offset })
+            .map(|entry| WalHeadPartitionOffset {
+                partition: entry.0,
+                offset: entry.1,
+            })
             .collect(),
     })
 }

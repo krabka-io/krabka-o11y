@@ -1,10 +1,10 @@
 use std::borrow::Borrow;
 
 use super::{
-    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, FsPath, LabelIndex, Labels,
-    LokiStreamEncoding, LokiStreamEntry, QueryError, SessionContext, StreamPlan, Value,
+    super::registered_local_log_session, ActiveLogDeleteFilter, BTreeMap, CompactionFrontier,
+    FsPath, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry, QueryError, StreamPlan, Value,
     WalLogRecord, append_matching_hot_log_record, append_matching_log_batches,
-    apply_distinct_to_streams, loki_streams_response, register_log_blocks, sort_loki_stream_values,
+    apply_distinct_to_streams, loki_streams_response, sort_loki_stream_values,
     stream_plan_scan_sql,
 };
 
@@ -22,8 +22,7 @@ pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes<
     let mut streams: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
 
     if !plan.blocks.is_empty() && !plan.fingerprints.is_empty() {
-        let ctx = SessionContext::new();
-        register_log_blocks(&ctx, "logs", root, &plan.blocks)?;
+        let ctx = registered_local_log_session(root, &plan.blocks)?;
         let sql = stream_plan_scan_sql(plan);
         let batches = ctx.sql(&sql).await?.collect().await?;
         append_matching_log_batches(&mut streams, plan, label_index, &batches, delete_filters)?;

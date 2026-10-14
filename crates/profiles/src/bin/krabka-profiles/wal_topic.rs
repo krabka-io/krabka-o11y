@@ -5,9 +5,12 @@
 
 use std::collections::BTreeMap;
 
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
+use krabka_broker::BrokerHandle;
 use krabka_client_admin::{AdminClient, CreateTopicSpec, TopicMutationOptions};
 use krabka_profiles::PROFILES_WAL_TOPIC;
+
+#[path = "../../../../integration/tests/support/test_broker.rs"]
+mod test_broker;
 
 /// An in-process broker, in a directory of its own, with the profiles WAL
 /// topic already created.
@@ -20,15 +23,12 @@ pub struct WalTopicBroker {
 
 impl WalTopicBroker {
     pub async fn start() -> Self {
-        let tempdir = tempfile::TempDir::new().expect("tempdir");
-        let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let started_broker = test_broker::start_broker().await;
+        let bootstrap = started_broker.bootstrap;
         create_wal_topic(&bootstrap).await;
         Self {
-            _broker: broker,
-            _tempdir: tempdir,
+            _broker: started_broker.broker,
+            _tempdir: started_broker.tempdir,
             bootstrap,
         }
     }

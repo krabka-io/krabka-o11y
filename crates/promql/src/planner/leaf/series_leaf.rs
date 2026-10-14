@@ -26,8 +26,8 @@ pub(crate) fn series_leaf(
     let mut label_names: BTreeSet<String> = BTreeSet::new();
     let mut labels_by_fp = std::collections::BTreeMap::new();
     for one in series {
-        for (name, _) in one.labels.iter() {
-            label_names.insert(name.clone());
+        for pair in one.labels.iter() {
+            label_names.insert(pair.name.clone());
         }
         labels_by_fp
             .entry(one.fp)

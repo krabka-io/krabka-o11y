@@ -1,7 +1,6 @@
 use super::{
-    ScalarVectorExpressionResult, format_vector_arithmetic_expression,
-    format_vector_comparison_expression, format_vector_label_replace_function,
-    format_vector_set_expression, parse_scalar_sample, scalar_vector_expression_result,
+    ScalarVectorExpressionResult, format_vector_binary_expression,
+    format_vector_label_replace_function, parse_scalar_sample, scalar_vector_expression_result,
 };
 
 pub(crate) fn format_scalar_vector_expression(query: &str) -> Option<String> {
@@ -24,13 +23,7 @@ pub(crate) fn format_scalar_vector_expression(query: &str) -> Option<String> {
             return Some(format!("vector({})", sample.format_fixed_six()));
         }
     }
-    if let Some(formatted) = format_vector_set_expression(&query) {
-        return Some(formatted);
-    }
-    if let Some(formatted) = format_vector_arithmetic_expression(&query) {
-        return Some(formatted);
-    }
-    if let Some(formatted) = format_vector_comparison_expression(&query) {
+    if let Some(formatted) = format_vector_binary_expression(&query) {
         return Some(formatted);
     }
     match scalar_vector_expression_result(&query)? {

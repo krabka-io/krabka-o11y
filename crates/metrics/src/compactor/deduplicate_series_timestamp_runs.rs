@@ -2,6 +2,7 @@ use super::{
     BooleanArray, COL_FINGERPRINT, COL_TIMESTAMP, Int64Array, MetricCompactionError, RecordBatch,
     UInt64Array, filter_record_batch, typed_column,
 };
+use crate::arrow_codec::SampleIdentity;
 
 /// Drops the rows of `batch` that repeat the `(fingerprint, timestamp)` of the
 /// row before them.
@@ -31,13 +32,16 @@ use super::{
 /// built.
 pub(crate) fn deduplicate_series_timestamp_runs(
     batch: &RecordBatch,
-    carried: &mut Option<(u64, i64)>,
+    carried: &mut Option<SampleIdentity>,
 ) -> Result<RecordBatch, MetricCompactionError> {
     let fingerprints = typed_column::<UInt64Array>(batch, COL_FINGERPRINT)?;
     let timestamps = typed_column::<Int64Array>(batch, COL_TIMESTAMP)?;
     let mut keep = Vec::with_capacity(batch.num_rows());
     for row in 0..batch.num_rows() {
-        let key = (fingerprints.value(row), timestamps.value(row));
+        let key = SampleIdentity {
+            fingerprint: fingerprints.value(row),
+            timestamp_ms: timestamps.value(row),
+        };
         keep.push(*carried != Some(key));
         *carried = Some(key);
     }

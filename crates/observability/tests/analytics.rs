@@ -23,7 +23,12 @@ use support::{
 /// A querier over one tenant-a block at offsets 10-19 that holds `entries`
 /// of the series `series_labels`. Returns the router and the block's size in
 /// bytes.
-fn one_block_app(series_labels: LogLabels, entries: &[LogEntry<'_>]) -> (Router, u64) {
+struct AnalyticsApp {
+    router: Router,
+    block_bytes: u64,
+}
+
+fn one_block_app(series_labels: LogLabels, entries: &[LogEntry<'_>]) -> AnalyticsApp {
     block_app(
         series_labels,
         BlockSpan {
@@ -36,7 +41,7 @@ fn one_block_app(series_labels: LogLabels, entries: &[LogEntry<'_>]) -> (Router,
 
 /// A querier over one tenant-a block at `span` that holds `entries` of the
 /// series `series_labels`. Returns the router and the block's size in bytes.
-fn block_app(series_labels: LogLabels, span: BlockSpan, entries: &[LogEntry<'_>]) -> (Router, u64) {
+fn block_app(series_labels: LogLabels, span: BlockSpan, entries: &[LogEntry<'_>]) -> AnalyticsApp {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let series = label_index.insert_series("tenant-a", series_labels);
@@ -58,18 +63,39 @@ fn block_app(series_labels: LogLabels, span: BlockSpan, entries: &[LogEntry<'_>]
     let bytes = block.size.bytes_u64();
     let mut block_index = BlockIndex::default();
     block_index.insert(block);
-    (
-        loki_router(QuerierState::new(dir, label_index, block_index)),
-        bytes,
-    )
+    AnalyticsApp {
+        router: loki_router(QuerierState::new(dir, label_index, block_index)),
+        block_bytes: bytes,
+    }
 }
 
-fn api_and_worker_series() -> (LabelIndex, u64, u64) {
+struct ApiAndWorkerSeries {
+    labels: LabelIndex,
+    api_fingerprint: u64,
+    worker_fingerprint: u64,
+}
+
+fn api_and_worker_series() -> ApiAndWorkerSeries {
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    (label_index, api, worker)
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    let worker = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    ApiAndWorkerSeries {
+        labels: label_index,
+        api_fingerprint: api,
+        worker_fingerprint: worker,
+    }
 }
 
 /// The `api` rows the detected-fields tests scan: a JSON line that carries a
@@ -107,10 +133,15 @@ fn block_rows_app(label_index: LabelIndex, rows: Vec<LogRow>) -> Router {
 
 #[tokio::test]
 async fn index_stats_endpoint_returns_stream_chunk_entry_and_byte_counts() {
-    let (app, expected_block_bytes) = one_block_app(
-        labels([("app", "api"), ("env", "prod")]),
+    let fixture = one_block_app(
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         &[log_entry(10, "api ok"), log_entry(19, "api error")],
     );
+    let app = fixture.router;
+    let expected_block_bytes = fixture.block_bytes;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019").await;
 
@@ -128,7 +159,12 @@ async fn index_stats_endpoint_returns_stream_chunk_entry_and_byte_counts() {
 
 #[tokio::test]
 async fn index_shards_endpoint_returns_loki_compatible_bounds_and_stats() {
-    let (app, bytes) = one_block_app(labels([("app", "api")]), &[log_entry(10, "api ok")]);
+    let fixture = one_block_app(
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+        &[log_entry(10, "api ok")],
+    );
+    let app = fixture.router;
+    let bytes = fixture.block_bytes;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/shards?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019&targetBytesPerShard=1").await;
 
@@ -148,10 +184,15 @@ async fn index_shards_endpoint_returns_loki_compatible_bounds_and_stats() {
 
 #[tokio::test]
 async fn index_stats_endpoint_accepts_form_encoded_post_body() {
-    let (app, expected_block_bytes) = one_block_app(
-        labels([("app", "api"), ("env", "prod")]),
+    let fixture = one_block_app(
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         &[log_entry(10, "api ok"), log_entry(19, "api error")],
     );
+    let app = fixture.router;
+    let expected_block_bytes = fixture.block_bytes;
 
     let response = post_form(
         &app,
@@ -175,7 +216,10 @@ async fn index_stats_endpoint_accepts_form_encoded_post_body() {
 #[tokio::test]
 async fn index_volume_endpoint_returns_series_vector_bytes() {
     let dir = tempfile::tempdir().unwrap().keep();
-    let (label_index, api, worker) = api_and_worker_series();
+    let fixture = api_and_worker_series();
+    let label_index = fixture.labels;
+    let api = fixture.api_fingerprint;
+    let worker = fixture.worker_fingerprint;
     let api_block = write_log_block(
         &dir,
         &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
@@ -225,10 +269,15 @@ async fn index_volume_endpoint_returns_series_vector_bytes() {
 
 #[tokio::test]
 async fn index_volume_range_endpoint_returns_matrix_with_target_labels() {
-    let (app, expected_block_bytes) = one_block_app(
-        labels([("app", "api"), ("env", "prod")]),
+    let fixture = one_block_app(
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         &[log_entry(19, "api error")],
     );
+    let app = fixture.router;
+    let expected_block_bytes = fixture.block_bytes;
 
     let response = post_form(
         &app,
@@ -264,10 +313,12 @@ async fn index_volume_range_endpoint_returns_matrix_with_target_labels() {
 
 #[tokio::test]
 async fn index_volume_range_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let (app, expected_block_bytes) = one_block_app(
-        labels([("app", "api&edge")]),
+    let fixture = one_block_app(
+        labels([krabka_blockstore::LabelPair::new("app", "api&edge")]),
         &[log_entry(19, "api edge error")],
     );
+    let app = fixture.router;
+    let expected_block_bytes = fixture.block_bytes;
 
     let response = post_form(
         &app,
@@ -303,10 +354,15 @@ async fn index_volume_range_endpoint_accepts_form_post_query_with_raw_ampersand(
 
 #[tokio::test]
 async fn index_volume_range_endpoint_returns_matrix_without_target_labels() {
-    let (app, expected_block_bytes) = one_block_app(
-        labels([("app", "api"), ("env", "prod")]),
+    let fixture = one_block_app(
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         &[log_entry(19, "api error")],
     );
+    let app = fixture.router;
+    let expected_block_bytes = fixture.block_bytes;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns").await;
 
@@ -482,10 +538,15 @@ async fn index_endpoints_return_loki_error_for_invalid_logql() {
 
 #[tokio::test]
 async fn index_volume_endpoint_supports_label_aggregation_and_limit() {
-    let (app, expected_block_bytes) = one_block_app(
-        labels([("app", "api"), ("env", "prod")]),
+    let fixture = one_block_app(
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         &[log_entry(19, "api error")],
     );
+    let app = fixture.router;
+    let expected_block_bytes = fixture.block_bytes;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019&aggregateBy=labels&targetLabels=app,env&limit=1").await;
 
@@ -518,8 +579,14 @@ async fn index_volume_endpoint_supports_label_aggregation_and_limit() {
 async fn patterns_endpoint_groups_matching_logs_by_detected_pattern() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let worker = label_index.insert_series("tenant-a", labels([("app", "worker")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
+    let worker = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "worker")]),
+    );
     let api_block = write_log_block(
         &dir,
         &BlockKey::new(
@@ -588,7 +655,10 @@ async fn patterns_endpoint_collapses_json_logs_differing_only_by_timestamp() {
     // `<_>`-templated pattern rather than one row per line (the bug this guards).
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let broker = label_index.insert_series("tenant-a", labels([("service_name", "broker")]));
+    let broker = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("service_name", "broker")]),
+    );
     let rows = (0i64..5)
         .map(|i| {
             let ts = 100_000_000 + i * 100_000_000;
@@ -636,8 +706,8 @@ async fn patterns_endpoint_collapses_json_logs_differing_only_by_timestamp() {
 
 #[tokio::test]
 async fn patterns_endpoint_excludes_entries_at_end_bound() {
-    let (app, _) = block_app(
-        labels([("app", "api")]),
+    let fixture = block_app(
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
         BlockSpan {
             first: 1_000_000_000,
             last: 2_000_000_000,
@@ -647,6 +717,7 @@ async fn patterns_endpoint_excludes_entries_at_end_bound() {
             log_entry(2_000_000_000, "status=200 user=200 route=/checkout"),
         ],
     );
+    let app = fixture.router;
 
     let response = Tenant("tenant-a")
         .get(
@@ -674,7 +745,7 @@ async fn patterns_endpoint_excludes_entries_at_end_bound() {
 
 #[tokio::test]
 async fn patterns_endpoint_accepts_form_encoded_post_body() {
-    let app = two_checkout_lines_app(labels([("app", "api")]));
+    let app = two_checkout_lines_app(labels([krabka_blockstore::LabelPair::new("app", "api")]));
 
     let response = post_form(
         &app,
@@ -688,7 +759,9 @@ async fn patterns_endpoint_accepts_form_encoded_post_body() {
 
 #[tokio::test]
 async fn patterns_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let app = two_checkout_lines_app(labels([("app", "api&edge")]));
+    let app = two_checkout_lines_app(labels([krabka_blockstore::LabelPair::new(
+        "app", "api&edge",
+    )]));
 
     let response = post_form(
         &app,
@@ -721,7 +794,13 @@ async fn patterns_endpoint_returns_loki_error_for_invalid_logql() {
 #[tokio::test]
 async fn detected_fields_stops_scanning_at_the_line_limit() {
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let app = block_rows_app(label_index, detected_field_rows(api));
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10&line_limit=1").await;
@@ -769,7 +848,10 @@ async fn detected_fields_stops_scanning_at_the_line_limit() {
 
 #[tokio::test]
 async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata() {
-    let (label_index, api, worker) = api_and_worker_series();
+    let fixture = api_and_worker_series();
+    let label_index = fixture.labels;
+    let api = fixture.api_fingerprint;
+    let worker = fixture.worker_fingerprint;
     let mut rows = detected_field_rows(api);
     rows.push(LogRow::new(
         worker,
@@ -841,11 +923,27 @@ async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata(
 #[tokio::test]
 async fn detected_labels_endpoint_reports_stream_label_cardinality() {
     let mut label_index = LabelIndex::default();
-    let api_prod = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_stage =
-        label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "stage")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    let api_prod = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    let api_stage = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "stage"),
+        ]),
+    );
+    let worker = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let app = block_rows_app(
         label_index,
         vec![
@@ -865,14 +963,18 @@ async fn detected_labels_endpoint_reports_stream_label_cardinality() {
 
 #[tokio::test]
 async fn detected_labels_endpoint_returns_empty_object_without_matches() {
-    let (app, _) = block_app(
-        labels([("app", "api"), ("env", "prod")]),
+    let fixture = block_app(
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         BlockSpan {
             first: 10,
             last: 20,
         },
         &[log_entry(10, "api prod")],
     );
+    let app = fixture.router;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_labels?query=%7Bapp%3D%22missing%22%7D&start=0.000000010&end=0.000000020").await;
 
@@ -883,9 +985,20 @@ async fn detected_labels_endpoint_returns_empty_object_without_matches() {
 #[tokio::test]
 async fn detected_labels_endpoint_defaults_missing_query_to_all_streams() {
     let mut label_index = LabelIndex::default();
-    let api_prod = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    let api_prod = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    let worker = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let app = block_rows_app(
         label_index,
         vec![
@@ -910,9 +1023,20 @@ async fn detected_labels_endpoint_defaults_missing_query_to_all_streams() {
 #[tokio::test]
 async fn detected_labels_endpoint_ignores_malformed_step_and_limit_like_loki() {
     let mut label_index = LabelIndex::default();
-    let api_prod = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_stage =
-        label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "stage")]));
+    let api_prod = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    let api_stage = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "stage"),
+        ]),
+    );
     let app = block_rows_app(
         label_index,
         vec![
@@ -931,8 +1055,8 @@ async fn detected_labels_endpoint_ignores_malformed_step_and_limit_like_loki() {
 
 #[tokio::test]
 async fn detected_field_values_endpoint_accepts_form_post_body() {
-    let (app, _) = block_app(
-        labels([("app", "api")]),
+    let fixture = block_app(
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
         BlockSpan {
             first: 10,
             last: 20,
@@ -942,6 +1066,7 @@ async fn detected_field_values_endpoint_accepts_form_post_body() {
             log_entry(11, "status=503"),
         ],
     );
+    let app = fixture.router;
 
     let response = post_form(
         &app,
@@ -962,8 +1087,8 @@ async fn detected_field_values_endpoint_accepts_form_post_body() {
 
 #[tokio::test]
 async fn detected_field_values_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let (app, _) = block_app(
-        labels([("app", "api&edge")]),
+    let fixture = block_app(
+        labels([krabka_blockstore::LabelPair::new("app", "api&edge")]),
         BlockSpan {
             first: 10,
             last: 20,
@@ -973,6 +1098,7 @@ async fn detected_field_values_endpoint_accepts_form_post_query_with_raw_ampersa
             log_entry(11, "status=503"),
         ],
     );
+    let app = fixture.router;
 
     let response = post_form(
         &app,
@@ -993,8 +1119,8 @@ async fn detected_field_values_endpoint_accepts_form_post_query_with_raw_ampersa
 
 #[tokio::test]
 async fn detected_fields_endpoint_derives_start_from_since_when_start_is_omitted() {
-    let (app, _) = block_app(
-        labels([("app", "api")]),
+    let fixture = block_app(
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
         BlockSpan {
             first: 10,
             last: 20,
@@ -1004,6 +1130,7 @@ async fn detected_fields_endpoint_derives_start_from_since_when_start_is_omitted
             log_entry(20, r#"{"new_field":"kept"}"#),
         ],
     );
+    let app = fixture.router;
 
     let response = Tenant("tenant-a")
         .get(
@@ -1033,14 +1160,15 @@ async fn detected_fields_endpoint_derives_start_from_since_when_start_is_omitted
 
 #[tokio::test]
 async fn detected_field_values_endpoint_accepts_step_duration_parameter() {
-    let (app, _) = block_app(
-        labels([("app", "api")]),
+    let fixture = block_app(
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
         BlockSpan {
             first: 10,
             last: 20,
         },
         &[log_entry(20, r#"{"status":"200"}"#)],
     );
+    let app = fixture.router;
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&end=0.000000020&since=1m&step=30s").await;
 
@@ -1154,19 +1282,38 @@ async fn detected_field_values_endpoint_rejects_loki_query_ranges_over_limit() {
 /// answers for the matching entries from its ingesters, so the detected-field
 /// and volume endpoints read the querier's hot tail as well as its blocks.
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
     let hot_tail = InMemoryWalSink::default();
-    for (timestamp_ns, line, level) in [
-        (20, r#"{"status":500}"#, "error"),
-        (21, r#"{"status":200}"#, "info"),
+    struct HotTailEntry {
+        timestamp_ns: i64,
+        line: &'static str,
+        level: &'static str,
+    }
+    for entry in [
+        HotTailEntry {
+            timestamp_ns: 20,
+            line: r#"{"status":500}"#,
+            level: "error",
+        },
+        HotTailEntry {
+            timestamp_ns: 21,
+            line: r#"{"status":200}"#,
+            level: "info",
+        },
     ] {
+        let mut structured_metadata = BTreeMap::new();
+        structured_metadata.insert("pod".to_string(), "api-1".to_string());
         hot_tail
             .append(WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([("app", "api"), ("detected_level", level)]),
-                timestamp_ns,
-                line: line.to_string(),
-                structured_metadata: BTreeMap::from([("pod".to_string(), "api-1".to_string())]),
+                labels: labels([
+                    krabka_blockstore::LabelPair::new("app", "api"),
+                    krabka_blockstore::LabelPair::new("detected_level", entry.level),
+                ]),
+                timestamp_ns: entry.timestamp_ns,
+                line: entry.line.to_string(),
+                structured_metadata,
                 position: None,
             })
             .await
@@ -1180,10 +1327,14 @@ async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
     .with_hot_tail(hot_tail, i64::MIN);
     let app = loki_router(state);
 
+    struct AnalyticsEndpointCase {
+        uri: &'static str,
+        expected: serde_json::Value,
+    }
     let cases = [
-        (
-            "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&limit=10",
-            json!({
+        AnalyticsEndpointCase {
+            uri: "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&limit=10",
+            expected: json!({
                 "fields": [
 
                     {"label": "pod", "type": "string", "cardinality": 1, "parsers": null},
@@ -1197,34 +1348,34 @@ async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
                 ],
                 "limit": 10
             }),
-        ),
-        (
-            "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030",
-            json!({"values": ["200", "500"], "limit": 1000}),
-        ),
-        (
-            "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&targetLabels=app",
-            LokiSuccess {
+        },
+        AnalyticsEndpointCase {
+            uri: "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030",
+            expected: json!({"values": ["200", "500"], "limit": 1000}),
+        },
+        AnalyticsEndpointCase {
+            uri: "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&targetLabels=app",
+            expected: LokiSuccess {
                 result_type: "vector",
                 data_result: json!([{"metric": {"app": "api"}, "value": [0.000_000_03, "28"]}]),
                 stats: expected_loki_stats(),
             }
             .json(),
-        ),
-        (
-            "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns&targetLabels=app",
-            LokiSuccess {
+        },
+        AnalyticsEndpointCase {
+            uri: "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns&targetLabels=app",
+            expected: LokiSuccess {
                 result_type: "matrix",
                 data_result: json!([{"metric": {"app": "api"}, "values": [[0.000_000_02, "28"]]}]),
                 stats: expected_loki_stats(),
             }
             .json(),
-        ),
+        },
     ];
-    for (uri, expected) in cases {
-        let response = Tenant("tenant-a").get(&app, uri).await;
-        check!(response.status() == StatusCode::OK, "{uri}");
-        check!(json_body(response).await == expected, "{uri}");
+    for case in cases {
+        let response = Tenant("tenant-a").get(&app, case.uri).await;
+        check!(response.status() == StatusCode::OK, "{}", case.uri);
+        check!(json_body(response).await == case.expected, "{}", case.uri);
     }
 }
 
@@ -1251,7 +1402,7 @@ fn two_checkout_lines_app(stream: LogLabels) -> Router {
             log_entry(1_100_000_000, "status=200 user=200 route=/checkout"),
         ],
     )
-    .0
+    .router
 }
 
 /// Checks that a `patterns` response over [`two_checkout_lines_app`] finds

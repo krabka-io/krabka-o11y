@@ -43,7 +43,7 @@ impl OtlpAttribute for ProtoKeyValue {
 pub(crate) fn otlp_resource_labels<A: OtlpAttribute>(
     attributes: &[A],
     limits: &Limits,
-) -> Result<(Labels, Labels), DistributorError> {
+) -> Result<super::OtlpLabelGroups, DistributorError> {
     let action = |name: &str| {
         limits
             .otlp_config
@@ -81,7 +81,10 @@ pub(crate) fn otlp_resource_labels<A: OtlpAttribute>(
             OtlpAttributeAction::Drop => {}
         }
     }
-    Ok((resource_labels, resource_metadata))
+    Ok(super::OtlpLabelGroups {
+        labels: resource_labels,
+        structured_metadata: resource_metadata,
+    })
 }
 
 /// One OTLP instrumentation scope. A record with no scope has an empty one.
@@ -110,9 +113,7 @@ impl<'a> OtlpScope<'a, ProtoKeyValue> {
         scope: Option<&'a opentelemetry_proto::tonic::common::v1::InstrumentationScope>,
     ) -> Self {
         Self {
-            attributes: scope
-                .map(|scope| scope.attributes.as_slice())
-                .unwrap_or_default(),
+            attributes: scope.map_or_else(Default::default, |scope| scope.attributes.as_slice()),
             name: scope.map_or("", |scope| scope.name.as_str()),
             version: scope.map_or("", |scope| scope.version.as_str()),
         }
@@ -134,8 +135,7 @@ pub(crate) fn otlp_scope_metadata<A: OtlpAttribute>(
             .scope_attributes
             .iter()
             .find(|rule| rule.matches(attribute.key()))
-            .map(|rule| rule.action)
-            .unwrap_or_default();
+            .map_or_else(Default::default, |rule| rule.action);
         if action != OtlpAttributeAction::Drop {
             inherited_metadata.extend(attribute.labels()?);
         }
@@ -166,6 +166,20 @@ pub(crate) fn otlp_stream_labels(
     }
     validate_loki_label_limits(&labels, limits)?;
     Ok(labels)
+}
+
+pub(crate) fn otlp_scope_context<A: OtlpAttribute>(
+    resource_labels: &Labels,
+    resource_metadata: &Labels,
+    scope: &OtlpScope<'_, A>,
+    limits: &Limits,
+) -> Result<super::OtlpLabelGroups, DistributorError> {
+    let inherited_metadata = otlp_scope_metadata(resource_metadata, scope, limits)?;
+    let labels = otlp_stream_labels(resource_labels, limits)?;
+    Ok(super::OtlpLabelGroups {
+        labels,
+        structured_metadata: inherited_metadata,
+    })
 }
 
 /// One OTLP log line, at `timestamp_ns`, validated against the tenant's limits

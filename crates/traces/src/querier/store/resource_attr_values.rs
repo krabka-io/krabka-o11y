@@ -1,18 +1,20 @@
 use super::{
-    AttrValue, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs, TraceqlError,
+    Attribute, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs, TraceqlError,
     attr_values_with_resource,
 };
 
 pub(crate) fn resource_attr_values(
     batch: &RecordBatch,
     row: usize,
-) -> Result<Vec<(String, AttrValue)>, TraceqlError> {
+) -> Result<Vec<Attribute>, TraceqlError> {
     Ok(
         attr_values_with_resource(batch, row, ResourceAttrs::Include)?
             .into_iter()
-            .filter_map(|(key, value)| {
-                key.strip_prefix(RESOURCE_ATTR_PREFIX)
-                    .map(|key| (key.to_string(), value))
+            .filter_map(|attribute| {
+                attribute
+                    .key
+                    .strip_prefix(RESOURCE_ATTR_PREFIX)
+                    .map(|key| Attribute::new(key, attribute.value))
             })
             .collect(),
     )

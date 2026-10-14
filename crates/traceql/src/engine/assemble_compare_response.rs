@@ -1,6 +1,6 @@
 use super::{
-    CompareSpec, HashSet, MetricsRange, RecordBatch, Result, TraceMetricsResponse, TraceqlError,
-    accumulate_compare_counts, build_compare_series,
+    CompareSpec, HashSet, MetricsRange, RecordBatch, Result, SpanIdentity, TraceMetricsResponse,
+    TraceqlError, accumulate_compare_counts, build_compare_series,
 };
 
 pub(crate) fn assemble_compare_response(
@@ -8,7 +8,7 @@ pub(crate) fn assemble_compare_response(
     compare: &CompareSpec,
     range: MetricsRange,
     max_values_per_attr: usize,
-    selected_spans: Option<&HashSet<([u8; 16], [u8; 8])>>,
+    selected_spans: Option<&HashSet<SpanIdentity>>,
 ) -> Result<TraceMetricsResponse> {
     if range.step.0 <= 0 {
         return Err(TraceqlError::Plan("metrics step must be positive".into()));
@@ -23,7 +23,7 @@ pub(crate) fn assemble_compare_response(
             .map_err(|e| TraceqlError::Plan(e.to_string()))?
     };
 
-    let (counts, totals) = accumulate_compare_counts(
+    let accumulation = accumulate_compare_counts(
         batches,
         compare,
         range,
@@ -31,6 +31,12 @@ pub(crate) fn assemble_compare_response(
         max_values_per_attr,
         selected_spans,
     )?;
-    let series = build_compare_series(counts, &totals, compare.top_n, range, bucket_count);
+    let series = build_compare_series(
+        accumulation.counts,
+        &accumulation.totals,
+        compare.top_n,
+        range,
+        bucket_count,
+    );
     Ok(TraceMetricsResponse { series })
 }

@@ -1,5 +1,27 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct SamplePoint {
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct JobSamples {
+    job: &'static str,
+    samples: Vec<SamplePoint>,
+}
+
+struct RangeQueryBounds {
+    start: i64,
+    end: i64,
+    step: krabka_units::prelude::Time,
+}
+
+struct QueryExpectation {
+    query: &'static str,
+    expect_series: bool,
+}
+
 /// Differential parity for a bare top-level selector with `@ start()` or `@ end()`.
 ///
 /// The query is a range query. The per-step planner range driver scopes the
@@ -14,32 +36,84 @@ pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
     use crate::DurationExprContext;
 
     let mut store = InMemoryMetricStore::new();
-    for (job, samples) in [
-        ("a", vec![(0_i64, 1.0_f64), (120_000, 2.0), (300_000, 3.0)]),
-        ("b", vec![(0, 10.0), (180_000, 20.0), (300_000, 30.0)]),
-    ] {
-        for (ts, value) in samples {
-            store.push_float("t", labels(&[("__name__", "m"), ("job", job)]), ts, value);
+    let jobs = [
+        JobSamples {
+            job: "a",
+            samples: vec![
+                SamplePoint::builder().timestamp_ms(0).value(1.0).build(),
+                SamplePoint::builder()
+                    .timestamp_ms(120_000)
+                    .value(2.0)
+                    .build(),
+                SamplePoint::builder()
+                    .timestamp_ms(300_000)
+                    .value(3.0)
+                    .build(),
+            ],
+        },
+        JobSamples {
+            job: "b",
+            samples: vec![
+                SamplePoint::builder().timestamp_ms(0).value(10.0).build(),
+                SamplePoint::builder()
+                    .timestamp_ms(180_000)
+                    .value(20.0)
+                    .build(),
+                SamplePoint::builder()
+                    .timestamp_ms(300_000)
+                    .value(30.0)
+                    .build(),
+            ],
+        },
+    ];
+    for job_index in 0..jobs.len() {
+        let job = &jobs[job_index];
+        for sample_index in 0..job.samples.len() {
+            let sample = &job.samples[sample_index];
+            store.push_float(
+                "t",
+                labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "m"),
+                    crate::test_support::TestLabelPair::new("job", job.job),
+                ]),
+                sample.timestamp_ms,
+                sample.value,
+            );
         }
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    let (start, end, step) = (0_i64, 300_000_i64, millis(60_000));
+    let bounds = RangeQueryBounds {
+        start: 0,
+        end: 300_000,
+        step: millis(60_000),
+    };
 
     // `m @ start()` pins eval to t=0 and `m @ end()` to t=300000: both have
     // an in-window sample, so they yield series. `m @ start() offset 1m`
     // shifts the pinned eval back 60s to t=-60000, whose 5m window
     // (-360000, -60000] holds NO sample (the earliest is at t=0), so it
     // yields an EMPTY matrix — the Prometheus-correct result.
-    for (query, expect_series) in [
-        ("m @ start()", true),
-        ("m @ end()", true),
-        ("m @ start() offset 1m", false),
-    ] {
+    let queries = [
+        QueryExpectation {
+            query: "m @ start()",
+            expect_series: true,
+        },
+        QueryExpectation {
+            query: "m @ end()",
+            expect_series: true,
+        },
+        QueryExpectation {
+            query: "m @ start() offset 1m",
+            expect_series: false,
+        },
+    ];
+    for query_index in 0..queries.len() {
+        let query = &queries[query_index];
         // (1) the gate routes the `@ start()/end()` selector through the planner.
         assert2::assert!(range_query_routes_through_planner(
-            query,
-            DurationExprContext::range(start, end, step)
+            query.query,
+            DurationExprContext::range(bounds.start, bounds.end, bounds.step)
         ));
 
         // (2) the planner resolves `@ start()`/`@ end()` to a FIXED eval
@@ -47,20 +121,26 @@ pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
         // carries the SAME value at every one of the 6 steps (the value it
         // had at the pinned eval instant), matching Prometheus.
         let QueryResult::RangeMatrix(series) = engine
-            .query_range(&tenant_id("t"), query, start, end, step)
+            .query_range(
+                &tenant_id("t"),
+                query.query,
+                bounds.start,
+                bounds.end,
+                bounds.step,
+            )
             .await
-            .unwrap_or_else(|error| panic!("planner `{query}`: {error}"))
+            .unwrap_or_else(|error| panic!("planner `{}`: {error}", query.query))
         else {
-            panic!("expected matrix for `{query}`");
+            panic!("expected matrix for `{}`", query.query);
         };
-        assert2::assert!(!series.is_empty() == expect_series);
+        assert2::assert!(!series.is_empty() == query.expect_series);
         for s in &series {
-            let times: Vec<i64> = s.samples.iter().map(|(t, _)| *t).collect();
+            let times: Vec<i64> = s.samples.iter().map(|sample| sample.timestamp_ms).collect();
             assert2::assert!(times == vec![0, 60_000, 120_000, 180_000, 240_000, 300_000]);
             let values: Vec<u64> = s
                 .samples
                 .iter()
-                .map(|(_, v)| float_value(v).to_bits())
+                .map(|sample| float_value(&sample.value).to_bits())
                 .collect();
             assert2::assert!(values.windows(2).all(|w| w[0] == w[1]));
         }

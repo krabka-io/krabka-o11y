@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    http::{StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 
@@ -17,11 +17,6 @@ pub struct AdminDenied {
 
 impl IntoResponse for AdminDenied {
     fn into_response(self) -> Response {
-        (
-            StatusCode::FORBIDDEN,
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            format!("{self}\n"),
-        )
-            .into_response()
+        crate::text_response(StatusCode::FORBIDDEN, &format!("{self}\n"))
     }
 }

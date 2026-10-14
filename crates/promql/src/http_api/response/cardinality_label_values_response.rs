@@ -1,5 +1,17 @@
 use super::{BTreeMap, BTreeSet, Labels, SeriesFingerprint, Value, apply_limit, json};
 
+struct LabelValueCardinality {
+    label_value: crate::PromqlString,
+    series_count: usize,
+}
+
+struct LabelCardinalitySummary {
+    label_name: String,
+    label_values_count: usize,
+    series_count: usize,
+    value_cardinality: Vec<LabelValueCardinality>,
+}
+
 /// Builds the Grafana Mimir `/cardinality/label_values` response from a series set.
 ///
 /// Shape: `{ "series_count_total": N, "labels": [{ "label_name": ..,
@@ -22,72 +34,69 @@ pub(crate) fn cardinality_label_values_response(
     for labels in series {
         let fp = labels.fingerprint();
         total_series.insert(fp);
-        for (name, value) in labels.iter() {
-            if !label_names.is_empty() && !label_names.iter().any(|wanted| wanted == name) {
+        for pair in labels.iter() {
+            if !label_names.is_empty() && !label_names.iter().any(|wanted| wanted == pair.name) {
                 continue;
             }
             series_by_value
-                .entry(name.clone())
+                .entry(pair.name.clone())
                 .or_default()
-                .entry(value.clone())
+                .entry(pair.value.clone())
                 .or_default()
                 .insert(fp);
         }
     }
 
-    let mut labels_out = series_by_value
-        .into_iter()
-        .map(|(label_name, values)| {
-            let label_values_count = values.len();
-            let series_count: usize = values.values().flatten().collect::<BTreeSet<_>>().len();
-            let mut value_cardinality = values
-                .into_iter()
-                .map(|(label_value, fingerprints)| (label_value, fingerprints.len()))
-                .collect::<Vec<_>>();
-            value_cardinality.sort_by(|(left_value, left_count), (right_value, right_count)| {
-                right_count
-                    .cmp(left_count)
-                    .then_with(|| left_value.cmp(right_value))
+    let mut labels_out = Vec::with_capacity(series_by_value.len());
+    for entry in series_by_value {
+        let label_name = entry.0;
+        let values = entry.1;
+        let label_values_count = values.len();
+        let series_count: usize = values.values().flatten().collect::<BTreeSet<_>>().len();
+        let mut value_cardinality = Vec::with_capacity(values.len());
+        for value_entry in values {
+            value_cardinality.push(LabelValueCardinality {
+                label_value: value_entry.0,
+                series_count: value_entry.1.len(),
             });
-            apply_limit(&mut value_cardinality, limit);
-            (
-                label_name,
-                label_values_count,
-                series_count,
-                value_cardinality,
-            )
-        })
-        .collect::<Vec<_>>();
-    labels_out.sort_by(
-        |(left_name, _, left_series, _), (right_name, _, right_series, _)| {
-            right_series
-                .cmp(left_series)
-                .then_with(|| left_name.cmp(right_name))
-        },
-    );
+        }
+        value_cardinality.sort_by(|left, right| {
+            right
+                .series_count
+                .cmp(&left.series_count)
+                .then_with(|| left.label_value.cmp(&right.label_value))
+        });
+        apply_limit(&mut value_cardinality, limit);
+        labels_out.push(LabelCardinalitySummary {
+            label_name,
+            label_values_count,
+            series_count,
+            value_cardinality,
+        });
+    }
+    labels_out.sort_by(|left, right| {
+        right
+            .series_count
+            .cmp(&left.series_count)
+            .then_with(|| left.label_name.cmp(&right.label_name))
+    });
 
-    let labels_json = labels_out
-        .into_iter()
-        .map(
-            |(label_name, label_values_count, series_count, value_cardinality)| {
-                let cardinality = value_cardinality
-                    .into_iter()
-                    .map(|(label_value, count)| {
-                        json!({
-                            "label_value": label_value.as_str(),
-                            "series_count": count,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                json!({
-                    "label_name": label_name,
-                    "label_values_count": label_values_count,
-                    "series_count": series_count,
-                    "cardinality": cardinality,
-                })
-            },
-        )
-        .collect::<Vec<_>>();
+    let mut labels_json = Vec::with_capacity(labels_out.len());
+    for summary in labels_out {
+        let mut cardinality = Vec::with_capacity(summary.value_cardinality.len());
+        for item in summary.value_cardinality {
+            cardinality.push(json!({
+                "label_value": item.label_value.as_str(),
+                "series_count": item.series_count,
+            }));
+        }
+        labels_json.push(json!({
+            "label_name": summary.label_name,
+            "label_values_count": summary.label_values_count,
+            "series_count": summary.series_count,
+            "cardinality": cardinality,
+        }));
+    }
 
     json!({
         "series_count_total": total_series.len(),

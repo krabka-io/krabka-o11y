@@ -1,4 +1,13 @@
-use super::*;
+use super::{
+    Labels, MetricQuery, MetricValue, PipelineStage, QueryError, UNWRAP_SAMPLE_VALUE_LABEL,
+    parse_metric_sample_value,
+};
+
+pub(crate) struct MatchingMetricSample {
+    pub(crate) labels: Labels,
+    pub(crate) line: String,
+    pub(crate) unwrap_sample: Option<MetricValue>,
+}
 
 pub(crate) fn matching_loki_metric_sample(
     query: &MetricQuery,
@@ -6,7 +15,7 @@ pub(crate) fn matching_loki_metric_sample(
     line: &str,
     structured_metadata: &Labels,
     timestamp_ns: i64,
-) -> Result<Option<(Labels, String, Option<MetricValue>)>, QueryError> {
+) -> Result<Option<MatchingMetricSample>, QueryError> {
     let evaluation =
         query
             .stream
@@ -33,5 +42,9 @@ pub(crate) fn matching_loki_metric_sample(
             metric_labels.remove(unwrap.label());
         }
     }
-    Ok(Some((metric_labels, evaluation.line, unwrap_sample)))
+    Ok(Some(MatchingMetricSample {
+        labels: metric_labels,
+        line: evaluation.line,
+        unwrap_sample,
+    }))
 }

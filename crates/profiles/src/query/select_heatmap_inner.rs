@@ -1,24 +1,18 @@
 use super::{
-    Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
-    HeatmapExemplarRequest, HeatmapSlotsMillis, Principal, ProfileStore, QuerierState,
-    SpanHeatmapRequest, StartMs, TimeExt, authorize_tenant, connect_error, heatmap_from_points,
-    heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
-    tenant_denied_connect_error, tenant_from_headers,
+    BTreeMap, ConnectError, ConnectQueryRequest, ConnectResponse, EndMs, HeatmapExemplarRequest,
+    HeatmapSlotsMillis, ProfileStore, SpanHeatmapRequest, StartMs, TimeExt, connect_error,
+    heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs,
 };
 
 pub(crate) async fn select_heatmap_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::SelectHeatmapRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::SelectHeatmapRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SelectHeatmapResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
-    let req = req.0;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
+    let req = request.request.0;
     state
         .validate_query_range(&tenant, req.start, req.end)
         .map_err(connect_error)?;
@@ -90,7 +84,7 @@ where
             .await
     }
     .map_err(connect_error)?;
-    if heatmaps.iter().all(|(_, points)| points.is_empty()) {
+    if heatmaps.iter().all(|group| group.points.is_empty()) {
         return Ok(ConnectResponse::new(
             pb::querier::v1::SelectHeatmapResponse::default(),
         ));
@@ -129,7 +123,10 @@ where
             let labels = series
                 .labels
                 .iter()
-                .map(|label| (label.name.clone(), label.value.clone()))
+                .map(|label| krabka_pprof::ProfileLabel {
+                    name: label.name.clone(),
+                    value: label.value.clone(),
+                })
                 .collect::<Vec<_>>();
             let exemplar_slots = span_exemplars.get(&labels);
             if let Some(exemplar_slots) = exemplar_slots {

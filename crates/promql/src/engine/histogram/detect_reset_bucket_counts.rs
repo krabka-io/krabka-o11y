@@ -26,7 +26,9 @@ pub(crate) fn detect_reset_bucket_counts(
         .unwrap_or_default()
         .min(i32::BITS - 1);
     let mut out = BTreeMap::<i32, f64>::new();
-    for (index, count) in spanned_histogram_counts(spans, counts) {
+    for entry in spanned_histogram_counts(spans, counts) {
+        let index = entry.0;
+        let count = entry.1;
         // `targetIdx`: the bucket of the coarser schema that `index` falls in.
         let target_index = (index.saturating_sub(1) >> shift).saturating_add(1);
         *out.entry(target_index).or_insert(0.0) += count;

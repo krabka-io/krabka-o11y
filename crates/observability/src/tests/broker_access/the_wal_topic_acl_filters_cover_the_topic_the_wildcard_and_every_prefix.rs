@@ -5,18 +5,13 @@ use super::*;
 /// filters are topic filters only, and never the whole cluster's ACL set.
 #[test]
 pub(crate) fn the_wal_topic_acl_filters_cover_the_topic_the_wildcard_and_every_prefix() {
-    let topic = |pattern_type, resource_name: Option<&str>| AclEntryFilter {
-        resource_type: Some(ResourceType::Topic),
-        resource_name: resource_name.map(str::to_owned),
-        pattern_type: Some(pattern_type),
-        ..AclEntryFilter::default()
-    };
-    check!(
-        wal_topic_acl_filters("logs-wal")
-            == [
-                topic(PatternType::Literal, Some("logs-wal")),
-                topic(PatternType::Literal, Some("*")),
-                topic(PatternType::Prefixed, None),
-            ]
-    );
+    let filters = wal_topic_acl_filters("logs-wal");
+    check!(filters.len() == 3);
+    check!(filters[0].resource_type == Some(ResourceType::Topic));
+    check!(filters[0].resource_name.as_deref() == Some("logs-wal"));
+    check!(filters[0].pattern_type == Some(PatternType::Literal));
+    check!(filters[1].resource_name.as_deref() == Some("*"));
+    check!(filters[1].pattern_type == Some(PatternType::Literal));
+    check!(filters[2].resource_name.is_none());
+    check!(filters[2].pattern_type == Some(PatternType::Prefixed));
 }

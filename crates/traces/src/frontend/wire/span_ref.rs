@@ -17,11 +17,7 @@ impl From<&SpanJson> for SpanRef {
             instrumentation_name: String::new(),
             instrumentation_version: String::new(),
             resource_attributes: Vec::new(),
-            attributes: s
-                .attributes
-                .iter()
-                .map(|kv| (kv.key.clone(), AttrValue::from(&kv.value)))
-                .collect(),
+            attributes: super::attributes_from_json(&s.attributes),
             events: Vec::new(),
             links: Vec::new(),
         }

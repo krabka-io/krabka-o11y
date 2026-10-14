@@ -5,7 +5,7 @@ use krabka_units::{Time, convert::TimeExt as _};
 use super::{
     BlockWriter, CompactionIndexSink, CompactionLoopResult, CompactionOffsetCommitter,
     CompactionPartitionOffset, CompactionPollError, CompactionWalRecord, ServiceMetrics,
-    process_compaction_record_batch,
+    process_compaction_record_batch, record_compaction_batch::record_compaction_batch,
 };
 
 /// Writes one block from the buffered records, commits their offsets, and folds
@@ -40,11 +40,5 @@ where
     metrics
         .compaction
         .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
-    let batch = outcome?;
-    metrics.record_blocks_compacted(batch.writes.len() as u64);
-    summary.writes += batch.writes.len();
-    summary
-        .committed_offsets
-        .extend(batch.committed_offsets.iter().cloned());
-    Ok(batch.committed_offsets)
+    Ok(record_compaction_batch(outcome?, summary, metrics))
 }

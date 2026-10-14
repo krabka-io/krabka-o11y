@@ -6,14 +6,10 @@ fn ruler_tenants_lists_each_configured_tenant() {
         Arc::new(InMemoryMetricStore::new()),
         crate::EngineOpts::default(),
     );
-    state
-        .ruler_rules
-        .write()
-        .expect("ruler rules lock")
-        .extend([
-            (TenantId::new("tenant-b").unwrap(), BTreeMap::new()),
-            (TenantId::new("tenant-a").unwrap(), BTreeMap::new()),
-        ]);
+    let mut rules = state.ruler_rules.write().expect("ruler rules lock");
+    rules.insert(TenantId::new("tenant-b").unwrap(), BTreeMap::new());
+    rules.insert(TenantId::new("tenant-a").unwrap(), BTreeMap::new());
+    drop(rules);
 
     assert2::assert!(
         state

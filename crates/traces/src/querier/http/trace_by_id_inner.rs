@@ -1,7 +1,7 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode,
-    TenantRequest, TraceSpans, Uri, decode_trace_id, header, optional_time_bounds,
-    tenant_and_bounds, trace_json,
+    TenantRequest, TraceSpans, Uri, decode_trace_id, optional_time_bounds, status_bytes_response,
+    status_text_response, tenant_and_bounds, trace_json,
 };
 
 /// How a trace-by-id endpoint encodes a found trace as protobuf.
@@ -40,9 +40,9 @@ where
         encoding,
     } = request;
     let Ok(trace_id) = decode_trace_id(&trace_id) else {
-        return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
+        return status_text_response(StatusCode::BAD_REQUEST, "trace id must be 32 hex chars");
     };
-    let (tenant, start_ns, end_ns) = match tenant_and_bounds(
+    let bounds = match tenant_and_bounds(
         TenantRequest {
             headers: &headers,
             principal,
@@ -57,21 +57,26 @@ where
 
     match state
         .engine
-        .trace_by_id_within(tenant.as_str(), &trace_id, start_ns, end_ns)
+        .trace_by_id_within(
+            bounds.tenant.as_str(),
+            &trace_id,
+            bounds.start_ns,
+            bounds.end_ns,
+        )
         .await
     {
         Ok(Some(trace)) => match encoding {
             TraceEncoding::Protobuf(encode) => match encode(&trace, state.cfg.max_trace_spans) {
-                Ok(bytes) => {
-                    ([(header::CONTENT_TYPE, "application/protobuf")], bytes).into_response()
+                Ok(bytes) => status_bytes_response(StatusCode::OK, "application/protobuf", bytes),
+                Err(err) => {
+                    status_text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
                 }
-                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
             },
             TraceEncoding::Json => {
                 Json(trace_json(&trace, state.cfg.max_trace_spans)).into_response()
             }
         },
-        Ok(None) => (StatusCode::NOT_FOUND, "trace not found").into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+        Ok(None) => status_text_response(StatusCode::NOT_FOUND, "trace not found"),
+        Err(err) => status_text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }

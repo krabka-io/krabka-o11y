@@ -3,18 +3,9 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_sum_by_groups_by_exact_labels_and_drops_metric_name() {
     let engine = FloatStore::default()
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-            1.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
-            2.0,
-        )
-        .sample(
-            labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
-            4.0,
-        )
+        .up_sample("api", "a", 1.0)
+        .up_sample("api", "b", 2.0)
+        .up_sample("web", "c", 4.0)
         .engine();
     let samples = instant_vector(&engine, "sum by (job) (up)", 10_000).await;
     assert2::assert!(samples.len() == 2);

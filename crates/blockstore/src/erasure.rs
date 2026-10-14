@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{LabelMatcher, Result, escape_object_path_segment};
 
 mod byte_label_matcher;
-pub use byte_label_matcher::ByteLabelMatcher;
+pub use byte_label_matcher::{ByteLabelMatcher, map_byte_matcher_sets};
 
 /// One persisted request to remove selected rows in a closed time range.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -35,7 +35,7 @@ impl ErasureRequest {
     /// Creates a request and derives its stable object ID from its contents.
     ///
     /// # Panics
-    /// Panics if the string-and-matcher identity tuple cannot be serialized.
+    /// Panics if the string-and-matcher identity cannot be serialized.
     #[must_use]
     pub fn new(
         tenant: impl Into<String>,
@@ -47,14 +47,14 @@ impl ErasureRequest {
     ) -> Self {
         let tenant = tenant.into();
         let selector = selector.into();
-        let identity = serde_json::to_vec(&(
+        let identity = serde_json::to_vec(&serde_json::json!([
             &tenant,
             &selector,
             &matcher_sets,
             start_ns,
             end_ns,
             created_at_ns,
-        ))
+        ]))
         .expect("erasure request identity serialises");
         let id = format!("delete-{:016x}", xxhash_rust::xxh3::xxh3_64(&identity));
         Self {
@@ -72,11 +72,11 @@ impl ErasureRequest {
     /// Attaches authoritative metric byte matchers and binds them into the ID.
     ///
     /// # Panics
-    /// Panics if the string-and-byte identity tuple cannot be serialized.
+    /// Panics if the string-and-byte identity cannot be serialized.
     #[must_use]
     pub fn with_byte_matchers(mut self, matcher_sets: Vec<Vec<ByteLabelMatcher>>) -> Self {
         self.byte_matcher_sets = matcher_sets;
-        let identity = serde_json::to_vec(&(
+        let identity = serde_json::to_vec(&serde_json::json!([
             &self.tenant,
             &self.selector,
             &self.matcher_sets,
@@ -84,7 +84,7 @@ impl ErasureRequest {
             self.start_ns,
             self.end_ns,
             self.created_at_ns,
-        ))
+        ]))
         .expect("metric byte erasure identity serialises");
         self.id = format!("delete-{:016x}", xxhash_rust::xxh3::xxh3_64(&identity));
         self

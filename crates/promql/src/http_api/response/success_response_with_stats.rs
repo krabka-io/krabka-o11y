@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use krabka_units::prelude::*;
-use serde::Serialize;
+use serde::{Serialize, ser::SerializeTuple};
 
 use super::{Annotations, QueryResult, Response, annotated_success_response, result_json};
 use crate::engine::QuerySampleStats;
@@ -27,9 +27,27 @@ struct QueryTimings {
 #[serde(rename_all = "camelCase")]
 struct QuerySamples {
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    total_queryable_samples_per_step: Vec<(f64, u64)>,
+    total_queryable_samples_per_step: Vec<QueryableSamplesAtStep>,
     total_queryable_samples: u64,
     peak_samples: usize,
+}
+
+#[derive(Debug)]
+struct QueryableSamplesAtStep {
+    timestamp_seconds: f64,
+    count: u64,
+}
+
+impl Serialize for QueryableSamplesAtStep {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.timestamp_seconds)?;
+        tuple.serialize_element(&self.count)?;
+        tuple.end()
+    }
 }
 
 /// How long each phase of one query took, as its `stats` timings report it.
@@ -73,8 +91,9 @@ impl QueryResponseStats {
                 total_queryable_samples_per_step: samples
                     .per_step
                     .into_iter()
-                    .map(|(timestamp_ms, count)| {
-                        (Time::from_millis(timestamp_ms).secs_f64(), count)
+                    .map(|entry| QueryableSamplesAtStep {
+                        timestamp_seconds: Time::from_millis(entry.0).secs_f64(),
+                        count: entry.1,
                     })
                     .collect(),
                 total_queryable_samples: samples.total_queryable_samples,

@@ -1,6 +1,6 @@
-use krabka_observability::persisted_format::{PERSISTED_FORMAT_HEADER, PERSISTED_FORMAT_VERSION};
+use krabka_observability::persisted_format::keyed_persisted_record;
 
-use super::{Bytes, ProducerHeader, ProducerRecord};
+use super::{Bytes, ProducerRecord};
 
 #[must_use]
 /// Builds a keyed producer record for a compacted topic.
@@ -9,15 +9,5 @@ use super::{Bytes, ProducerHeader, ProducerRecord};
 /// broker. The partition is deliberately absent: the producer keys on `key`,
 /// which is what keeps a compacted topic's records for one entity together.
 pub(crate) fn keyed_producer_record(topic: String, key: Bytes, value: Vec<u8>) -> ProducerRecord {
-    ProducerRecord {
-        topic,
-        partition: None,
-        key: Some(key),
-        value: Some(Bytes::from(value)),
-        headers: vec![ProducerHeader {
-            key: PERSISTED_FORMAT_HEADER.to_string(),
-            value: Some(Bytes::from_static(PERSISTED_FORMAT_VERSION)),
-        }],
-        ..Default::default()
-    }
+    keyed_persisted_record(topic, key, value)
 }

@@ -25,7 +25,7 @@ where
 {
     evaluate_alerting_rule_with_state_and_sink(
         engine,
-        (&NoopRecordingRuleWalSink, sink, state_sink),
+        super::super::RulerSinks::new(&NoopRecordingRuleWalSink, sink, state_sink),
         state,
         tenant,
         rule,

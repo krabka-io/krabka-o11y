@@ -4,18 +4,21 @@ use super::*;
 pub(crate) async fn exemplars_merges_cold_and_hot_records() {
     let mut cold = InMemoryMetricStore::new();
     let mut hot = InMemoryMetricStore::new();
-    let series = labels(&[("__name__", "request_latency"), ("job", "api")]);
+    let series = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "request_latency"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     cold.push_exemplar(
         "tenant-a",
         series.clone(),
-        labels(&[("trace_id", "cold")]),
+        labels(&[crate::test_support::TestLabelPair::new("trace_id", "cold")]),
         10_000,
         1.0,
     );
     hot.push_exemplar(
         "tenant-a",
         series.clone(),
-        labels(&[("trace_id", "hot")]),
+        labels(&[crate::test_support::TestLabelPair::new("trace_id", "hot")]),
         20_000,
         2.0,
     );
@@ -32,13 +35,13 @@ pub(crate) async fn exemplars_merges_cold_and_hot_records() {
             == vec![
                 ExemplarRecord {
                     series_labels: series.clone(),
-                    labels: labels(&[("trace_id", "cold")]),
+                    labels: labels(&[crate::test_support::TestLabelPair::new("trace_id", "cold")]),
                     ts_ms: 10_000,
                     value: 1.0,
                 },
                 ExemplarRecord {
                     series_labels: series,
-                    labels: labels(&[("trace_id", "hot")]),
+                    labels: labels(&[crate::test_support::TestLabelPair::new("trace_id", "hot")]),
                     ts_ms: 20_000,
                     value: 2.0,
                 },

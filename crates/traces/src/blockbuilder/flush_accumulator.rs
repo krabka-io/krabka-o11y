@@ -58,8 +58,10 @@ impl FlushAccumulator {
             self.windows
                 .entry(partition)
                 .and_modify(|buffered| {
-                    buffered.offset_range.0 = buffered.offset_range.0.min(incoming.offset_range.0);
-                    buffered.offset_range.1 = buffered.offset_range.1.max(incoming.offset_range.1);
+                    buffered.offset_range.min =
+                        buffered.offset_range.min.min(incoming.offset_range.min);
+                    buffered.offset_range.max =
+                        buffered.offset_range.max.max(incoming.offset_range.max);
                     buffered.records.extend(incoming.records.iter().cloned());
                 })
                 .or_insert(incoming);

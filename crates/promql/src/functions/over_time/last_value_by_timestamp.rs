@@ -11,7 +11,9 @@ pub(crate) fn last_value_by_timestamp(timestamps: &[i64], values: &[f64]) -> Opt
     // timestamps and values disagree in length (defensive; should not happen).
     if timestamps.len() == values.len() {
         let mut best_idx = 0;
-        for (idx, ts) in timestamps.iter().enumerate() {
+        for entry in timestamps.iter().enumerate() {
+            let idx = entry.0;
+            let ts = entry.1;
             // `max_by_key` keeps the *last* maximum on ties.
             if *ts >= timestamps[best_idx] {
                 best_idx = idx;

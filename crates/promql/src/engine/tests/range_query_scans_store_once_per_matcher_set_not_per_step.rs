@@ -89,7 +89,10 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
     for i in 0..20 {
         inner.push_float(
             "t",
-            labels(&[("__name__", "up"), ("job", "broker")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "broker"),
+            ]),
             i * 15_000,
             1.0,
         );

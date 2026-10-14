@@ -1,17 +1,22 @@
+use derive_more::Display;
+
 /// What one call to the consumer's poll returned.
 ///
 /// The three outcomes are the three states an operator has to tell apart, and
 /// two of them look identical without this counter: a consumer that is caught
 /// up and a consumer whose task has stopped both have a
 /// `last_consumed_offset` that does not move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash)]
 pub enum WalPollOutcome {
     /// The poll returned at least one record.
+    #[display("records")]
     Records,
     /// The poll returned nothing before its timeout. The consumer is caught
     /// up, and it is still running.
+    #[display("empty")]
     Empty,
     /// The poll failed.
+    #[display("error")]
     Error,
 }
 
@@ -24,11 +29,5 @@ impl WalPollOutcome {
             Self::Empty => "empty",
             Self::Error => "error",
         }
-    }
-}
-
-impl std::fmt::Display for WalPollOutcome {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.as_str())
     }
 }

@@ -6,6 +6,23 @@
 // DataFusion plan/optimizer types; the test target's Send auto-trait evaluation
 // then overflows the default depth, so raise it.
 #![recursion_limit = "512"]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_possible_wrap,
+        clippy::explicit_auto_deref,
+        clippy::float_cmp,
+        clippy::items_after_statements,
+        clippy::iter_cloned_collect,
+        clippy::needless_borrow,
+        clippy::needless_pass_by_value,
+        clippy::needless_range_loop,
+        clippy::struct_field_names,
+        clippy::too_many_lines,
+        clippy::useless_conversion,
+        clippy::useless_vec,
+    )
+)]
 
 mod block_store;
 mod conformance;
@@ -28,6 +45,14 @@ mod series_stats;
 mod store;
 #[cfg(test)]
 mod test_support;
+mod wal_record;
+
+pub(crate) fn yaml_optional_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_string)
+}
 
 pub use block_store::MetricBlockStore;
 pub use conformance::{
@@ -56,7 +81,7 @@ pub use http_api::{
 };
 pub use ids::{Offset, PartitionIndex};
 pub use in_memory::{
-    DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead,
+    DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead, WalRecordAt,
 };
 pub use merged_store::MergedMetricStore;
 pub use planner::{
@@ -70,16 +95,17 @@ pub use query_frontend::{
     QueryFrontendOptions, QueryShard, RangeQueryCache, RangeQueryExecutor,
     execute_range_query_frontend, merge_range_query_results, plan_range_query,
 };
-pub use range_array::RangeArray;
+pub use range_array::{PairedRangeArrays, RangeArray, RangeWindow};
 pub use result::{
-    AnnotatedQueryResult, Annotations, HistogramQuantileRepair, InstantSample, QueryResult,
-    RangeSeries, SampleValue,
+    AnnotatedQueryResult, Annotations, FloatSample, HistogramQuantileRepair, InstantSample,
+    QueryResult, RangeSeries, RangeSeriesSample, SampleValue,
 };
 pub use ruler::{
     AlertmanagerAlert, AlertmanagerSink, RecordingRuleWalSink, RulerAlertState,
-    RulerAlertStateRecord, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupEvaluationStatus,
-    RulerGroupState, RulerGroupStateRecord, RulerRuleEvaluationStatus, RulerShard, RulerStateSink,
-    RulerWalError, evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
+    RulerAlertStateRecord, RulerEvaluationReport, RulerEvaluationSchedule, RulerEvaluationState,
+    RulerGroupEvaluation, RulerGroupEvaluationStatus, RulerGroupState, RulerGroupStateRecord,
+    RulerRuleEvaluationStatus, RulerShard, RulerSinks, RulerStateSink, RulerWalError,
+    evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
     evaluate_and_dispatch_alerting_rule, evaluate_and_dispatch_alerting_rule_group,
     evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,
     evaluate_and_persist_alerting_rule_with_state, evaluate_and_persist_ruler_rule_group,

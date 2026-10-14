@@ -14,14 +14,14 @@ pub(crate) fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {
                 .map(otlp_value_to_json)
                 .collect(),
         ),
-        OtlpAnyValue::Kvlist(value) => Value::Object(
-            value
-                .values
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .map(|attribute| (attribute.key.clone(), otlp_value_to_json(&attribute.value)))
-                .collect(),
-        ),
+        OtlpAnyValue::Kvlist(value) => {
+            Value::Object(value.values.as_deref().unwrap_or_default().iter().fold(
+                serde_json::Map::new(),
+                |mut values, attribute| {
+                    values.insert(attribute.key.clone(), otlp_value_to_json(&attribute.value));
+                    values
+                },
+            ))
+        }
     }
 }

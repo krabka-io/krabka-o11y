@@ -10,7 +10,7 @@ mod shard_range;
 mod sharding;
 
 pub use compaction::compaction_run_ends;
-pub use overlap::overlap_window;
+pub use overlap::{OverlapWindow, overlap_window};
 pub use retention::retention_cutoff;
-pub use shard_range::shard_range;
+pub use shard_range::{ShardTimeRange, shard_range};
 pub use sharding::bounded_shard_slots;

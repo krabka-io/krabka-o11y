@@ -1,6 +1,6 @@
-use super::{BTreeMap, StatusCode};
+use super::{BTreeMap, StatusCode, WireSpanStatus};
 
-pub(crate) fn zipkin_status(tags: &BTreeMap<String, String>) -> (StatusCode, String) {
+pub(crate) fn zipkin_status(tags: &BTreeMap<String, String>) -> WireSpanStatus {
     match tags.get("error") {
         Some(value) => {
             let message = if value == "true" || value == "false" {
@@ -8,8 +8,14 @@ pub(crate) fn zipkin_status(tags: &BTreeMap<String, String>) -> (StatusCode, Str
             } else {
                 value.clone()
             };
-            (StatusCode::Error, message)
+            WireSpanStatus {
+                code: StatusCode::Error,
+                message,
+            }
         }
-        None => (StatusCode::Unset, String::new()),
+        None => WireSpanStatus {
+            code: StatusCode::Unset,
+            message: String::new(),
+        },
     }
 }

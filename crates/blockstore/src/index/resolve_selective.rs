@@ -3,6 +3,11 @@ use super::{
     anchored_regex, parse_query_shard_selector,
 };
 
+struct SelectiveSeed<'a> {
+    position: usize,
+    posting: Option<&'a BTreeSet<SeriesFingerprint>>,
+}
+
 impl TenantIndex {
     /// Seeds from the smallest exact posting, or a broad regex when the exact
     /// posting covers the whole tenant. `None` asks for sequential resolution.
@@ -12,26 +17,32 @@ impl TenantIndex {
         &self,
         matchers: &[LabelMatcher],
     ) -> Option<BTreeSet<SeriesFingerprint>> {
-        let (seed_position, seed) = matchers
-            .iter()
-            .enumerate()
-            .filter(|(_, matcher)| {
-                matcher.op == MatchOp::Eq
-                    && !matcher.value.is_empty()
-                    && matcher.name != QUERY_SHARD_LABEL
-            })
-            .map(|(position, matcher)| {
-                let posting = self
-                    .postings
-                    .get(&matcher.name)
-                    .and_then(|values| values.get(&matcher.value));
-                (position, posting)
-            })
-            .min_by_key(|(_, posting)| posting.map_or(0, BTreeSet::len))?;
+        let mut seed = None;
+        for (position, matcher) in matchers.iter().enumerate() {
+            if matcher.op != MatchOp::Eq
+                || matcher.value.is_empty()
+                || matcher.name == QUERY_SHARD_LABEL
+            {
+                continue;
+            }
+            let posting = self
+                .postings
+                .get(&matcher.name)
+                .and_then(|values| values.get(&matcher.value));
+            let candidate = SelectiveSeed { position, posting };
+            if seed.as_ref().is_none_or(|best: &SelectiveSeed<'_>| {
+                candidate.posting.map_or(0, BTreeSet::len) < best.posting.map_or(0, BTreeSet::len)
+            }) {
+                seed = Some(candidate);
+            }
+        }
+        let seed = seed?;
+        let seed_position = seed.position;
+        let seed_posting = seed.posting;
 
         // Broad regex selectors benefit from evaluating each distinct value
         // once through postings instead of looking up each candidate's labels.
-        let seed_len = seed.map_or(0, BTreeSet::len);
+        let seed_len = seed_posting.map_or(0, BTreeSet::len);
         if matchers.iter().any(|matcher| {
             matches!(matcher.op, MatchOp::Re | MatchOp::Nre)
                 && self
@@ -45,7 +56,7 @@ impl TenantIndex {
             return self.resolve_tenantwide_regex(matchers, seed_position);
         }
 
-        let mut candidates = seed.cloned().unwrap_or_default();
+        let mut candidates = seed_posting.cloned().unwrap_or_default();
         for (position, matcher) in matchers.iter().enumerate() {
             if position != seed_position {
                 self.retain_matching(&mut candidates, matcher)?;
@@ -61,18 +72,26 @@ impl TenantIndex {
         matchers: &[LabelMatcher],
         seed_position: usize,
     ) -> Option<BTreeSet<SeriesFingerprint>> {
-        let mut broad_regexes = matchers.iter().enumerate().filter(|(_, matcher)| {
-            matcher.name != QUERY_SHARD_LABEL
+        let mut regex_position = None;
+        for (position, matcher) in matchers.iter().enumerate() {
+            if matcher.name != QUERY_SHARD_LABEL
                 && matches!(matcher.op, MatchOp::Re | MatchOp::Nre)
                 && self
                     .postings
                     .get(&matcher.name)
                     .is_some_and(|values| self.series.len() > values.len())
-        });
-        let (regex_position, matcher) = broad_regexes.next()?;
-        if broad_regexes.next().is_some() {
+            {
+                if regex_position.is_some() {
+                    return None;
+                }
+                regex_position = Some(position);
+            }
+        }
+        let regex_position = regex_position?;
+        if regex_position == seed_position {
             return None;
         }
+        let matcher = &matchers[regex_position];
         // A tenant-wide exact posting cannot remove any regex matches.
         let mut candidates = self.resolve_regex(matcher).ok()?;
         for (position, matcher) in matchers.iter().enumerate() {

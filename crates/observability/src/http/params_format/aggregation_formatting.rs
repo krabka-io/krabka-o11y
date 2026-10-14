@@ -35,6 +35,53 @@ mod parse_vector_group_modifier;
 mod parse_vector_matching_modifier;
 mod split_logql_function_arguments;
 
+pub(crate) struct ParsedVectorBinaryRight {
+    pub(crate) modifiers: Option<FormattedVectorBinaryModifiers>,
+    pub(crate) right: String,
+}
+
+fn format_vector_binary_expression(query: &str) -> Option<String> {
+    format_vector_set_expression(query)
+        .or_else(|| format_vector_arithmetic_expression(query))
+        .or_else(|| format_vector_comparison_expression(query))
+}
+
+fn format_vector_binary_operands(
+    query: &str,
+    left: &str,
+    operator: &str,
+    right_position: usize,
+) -> Option<String> {
+    let parsed_right = parse_vector_binary_right(query, right_position)?;
+    Some(match parsed_right.modifiers {
+        Some(modifiers) => format!(
+            "({left} {operator} {}{}{right})",
+            modifiers.text,
+            modifiers.right_separator,
+            right = parsed_right.right
+        ),
+        None => format!("({left} {operator} {})", parsed_right.right),
+    })
+}
+
+fn parse_vector_binary_right(
+    query: &str,
+    mut right_position: usize,
+) -> Option<ParsedVectorBinaryRight> {
+    let modifiers =
+        if let Some(parsed_modifiers) = parse_vector_binary_modifiers(query, right_position) {
+            right_position = parsed_modifiers.position;
+            Some(parsed_modifiers.value)
+        } else {
+            None
+        };
+    let right = parse_formatted_vector_function(query, right_position)?;
+    (right.position == query.len()).then_some(ParsedVectorBinaryRight {
+        modifiers,
+        right: right.value,
+    })
+}
+
 pub(crate) use format_label_replace_arguments::format_label_replace_arguments;
 pub(crate) use format_loki_decimal_unit::format_loki_decimal_unit;
 pub(crate) use format_loki_duration_ns::format_loki_duration_ns;

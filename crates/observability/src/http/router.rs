@@ -12,7 +12,7 @@ use crate::{
         OPERATION_INGESTER_PREPARE_SHUTDOWN_UNSET, OPERATION_INGESTER_SHUTDOWN,
         OPERATION_LOG_LEVEL_SET, RESOURCE_LOG_LEVEL, resource,
     },
-    cancel_delete_request, create_delete_request, decode_form_component, detected_field_values,
+    cancel_delete_request, create_delete_request, decode_query_pair, detected_field_values,
     detected_field_values_post, detected_fields, detected_fields_post, detected_labels,
     detected_labels_post, form_body_query, format_query, format_query_post, get, index_shards,
     index_stats, index_stats_post, index_volume, index_volume_post, index_volume_range,
@@ -54,6 +54,19 @@ mod shutdown_ingester;
 mod status_config;
 mod status_services;
 mod unset_prepare_shutdown;
+
+fn prepare_ingester_shutdown(
+    state: &DistributorState,
+    security: &RequestSecurity,
+    operation: &'static str,
+) -> Response {
+    if let Err(denied) = security.authorize_admin() {
+        return denied.into_response();
+    }
+    state.prepare_shutdown.mark_unready();
+    security.admin_operation(operation, vec![security.ingester()], AuditOutcome::Success);
+    StatusCode::NO_CONTENT.into_response()
+}
 
 pub(crate) use compactor_router_with_delete_requests::compactor_router_with_delete_requests;
 pub(crate) use delete_request_routes::delete_request_routes;

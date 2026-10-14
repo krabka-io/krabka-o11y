@@ -73,8 +73,7 @@ pub(super) fn pending_gates(body: &str) -> String {
     let named = body
         .trim()
         .strip_prefix("not ready:")
-        .map(str::trim)
-        .unwrap_or_default();
+        .map_or_else(Default::default, str::trim);
     if named.is_empty() {
         "unnamed gate".to_string()
     } else {

@@ -19,13 +19,7 @@ mod tests {
 
     #[test]
     fn parse_query_shard_selector_rejects_zero_and_out_of_range_bounds() {
-        for (_name, value) in [
-            ("zero index", "0_of_1"),
-            ("zero total", "1_of_0"),
-            ("index exceeds total", "2_of_1"),
-            ("larger index exceeds total", "3_of_2"),
-            ("malformed selector", "not-a-shard"),
-        ] {
+        for value in ["0_of_1", "1_of_0", "2_of_1", "3_of_2", "not-a-shard"] {
             assert2::assert!(parse_query_shard_selector(value).is_err());
         }
     }

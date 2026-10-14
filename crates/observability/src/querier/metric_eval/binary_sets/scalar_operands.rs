@@ -33,12 +33,24 @@ pub(crate) struct ScalarOperands {
     pub(crate) scalar_side: ScalarSide,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MetricOperandPair {
+    pub(crate) left: MetricValue,
+    pub(crate) right: MetricValue,
+}
+
 impl ScalarOperands {
     /// The left and the right operand.
-    pub(crate) fn left_and_right(self) -> (MetricValue, MetricValue) {
+    pub(crate) fn left_and_right(self) -> MetricOperandPair {
         match self.scalar_side {
-            ScalarSide::Left => (self.scalar, self.sample),
-            ScalarSide::Right => (self.sample, self.scalar),
+            ScalarSide::Left => MetricOperandPair {
+                left: self.scalar,
+                right: self.sample,
+            },
+            ScalarSide::Right => MetricOperandPair {
+                left: self.sample,
+                right: self.scalar,
+            },
         }
     }
 }

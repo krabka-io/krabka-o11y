@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BrokerLookups {
+    pub(crate) acl: usize,
+    pub(crate) quota: usize,
+}
+
 /// A broker that answers from what the test sets, and counts every lookup.
 pub(crate) struct CountingBrokerAccess {
     pub(crate) acls: Mutex<Result<AclSet, String>>,
@@ -18,11 +24,11 @@ impl CountingBrokerAccess {
         }
     }
 
-    pub(crate) fn lookups(&self) -> (usize, usize) {
-        (
-            self.acl_lookups.load(AtomicOrdering::SeqCst),
-            self.quota_lookups.load(AtomicOrdering::SeqCst),
-        )
+    pub(crate) fn lookups(&self) -> BrokerLookups {
+        BrokerLookups {
+            acl: self.acl_lookups.load(AtomicOrdering::SeqCst),
+            quota: self.quota_lookups.load(AtomicOrdering::SeqCst),
+        }
     }
 }
 

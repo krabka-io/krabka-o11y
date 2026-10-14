@@ -55,3 +55,10 @@ use tsdb_status_json::tsdb_status_json;
 use tsdb_status_params::TsdbStatusParams;
 use unix_time_string::unix_time_string;
 pub(super) use wal_replay_status::wal_replay_status;
+
+fn storage_retention<S: MetricStore>(state: &PrometheusApiState<S>) -> String {
+    state.storage_retention.map_or_else(
+        || "unknown (metric store does not expose retention)".to_string(),
+        |retention| retention.human().to_string(),
+    )
+}

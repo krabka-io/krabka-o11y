@@ -55,19 +55,11 @@ impl IngestEnforcer {
     /// map is already at capacity. `max_rate_buckets` bounds the linear scan,
     /// and the scan never runs on the steady-state hot path.
     pub(crate) fn evict_if_over_cap(&self) {
-        while self.sample_rate_buckets.len() > self.max_rate_buckets {
-            let oldest = self
-                .sample_rate_buckets
-                .iter()
-                .min_by_key(|entry| entry.value().last_touch.load(Ordering::Relaxed))
-                .map(|entry| entry.key().clone());
-            match oldest {
-                Some(key) => {
-                    self.sample_rate_buckets.remove(&key);
-                }
-                None => break,
-            }
-        }
+        crate::least_recently_touched::evict_until_within_cap(
+            &self.sample_rate_buckets,
+            self.max_rate_buckets,
+            |bucket| bucket.last_touch.load(Ordering::Relaxed),
+        );
     }
 
     /// # Errors
@@ -154,7 +146,9 @@ impl IngestEnforcer {
     /// # Errors
     /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
     pub fn check_labels(limits: &Limits, labels: &Labels) -> Result<(), LimitError> {
-        for (name, value) in labels.iter() {
+        for pair in labels {
+            let name = pair.name;
+            let value = pair.value;
             let name_len = ByteSize::from_bytes(u64::try_from(name.len()).unwrap_or(u64::MAX));
             if name_len > limits.max_label_name_length {
                 return Err(LimitError::LabelNameTooLong {

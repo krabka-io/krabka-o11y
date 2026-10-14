@@ -13,11 +13,11 @@ pub(crate) fn parse_selected_logfmt_fields(
     loop {
         let previous_pos = parser.pos;
         match parser.next_pair_with_options(true, config.strict()) {
-            Ok(Some((key, value))) => {
+            Ok(Some(field)) => {
                 if parser.pos <= previous_pos {
                     break;
                 }
-                parsed.entry(key).or_insert(value);
+                parsed.entry(field.key).or_insert(field.value);
             }
             Ok(None) => break,
             Err(details) => {

@@ -1,6 +1,6 @@
 use super::{
-    HeaderMap, IntoResponse, Principal, Response, StatusCode, TenantId, TenantPolicy, Uri,
-    metrics_query_param, request_tenant,
+    HeaderMap, Principal, Response, StatusCode, TenantId, TenantPolicy, Uri, metrics_query_param,
+    request_tenant, status_text_response,
 };
 
 /// The parts of a read request that name and authorize its tenant, and the
@@ -15,14 +15,18 @@ pub(crate) struct TenantRequest<'a> {
 
 /// The tenant and the `TraceQL` metrics query a metrics request names, or the
 /// response that rejects it.
-pub(crate) fn metrics_request(
-    request: TenantRequest<'_>,
-) -> Result<(TenantId, String), Box<Response>> {
+pub(crate) struct MetricsRequest {
+    pub(crate) tenant: TenantId,
+    pub(crate) query: String,
+}
+
+pub(crate) fn metrics_request(request: TenantRequest<'_>) -> Result<MetricsRequest, Box<Response>> {
     let tenant = request_tenant(request.headers, request.principal, request.policy)?;
     let Some(query) = metrics_query_param(request.uri) else {
-        return Err(Box::new(
-            (StatusCode::BAD_REQUEST, "missing query parameter q").into_response(),
-        ));
+        return Err(Box::new(status_text_response(
+            StatusCode::BAD_REQUEST,
+            "missing query parameter q",
+        )));
     };
-    Ok((tenant, query))
+    Ok(MetricsRequest { tenant, query })
 }

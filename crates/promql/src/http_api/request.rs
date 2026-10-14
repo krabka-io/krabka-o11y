@@ -6,13 +6,11 @@ use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use promql_parser::parser::Expr;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use url::form_urlencoded;
 
 use super::{ApiError, PrometheusApiState};
 use crate::{
     MetricStore, PromqlError, PromqlMatcher as LabelMatcher, QueryResult,
-    engine::{MAX_RESOLUTION_POINTS, label_matcher_sets},
-    parse_promql,
+    engine::label_matcher_sets, parse_promql,
 };
 
 mod apply_limit;

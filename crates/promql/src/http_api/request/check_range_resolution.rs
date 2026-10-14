@@ -1,4 +1,5 @@
-use super::{ApiError, MAX_RESOLUTION_POINTS, Time, TimeExt};
+use super::{ApiError, Time, TimeExt};
+use crate::engine::range_resolution_exceeds_limit;
 
 /// Rejects a range query whose resolution exceeds the per-timeseries point cap.
 ///
@@ -15,11 +16,7 @@ pub(crate) fn check_range_resolution(
     step: Time,
 ) -> Result<(), ApiError> {
     let step_ms = step.millis_i64();
-    if step_ms <= 0 {
-        return Ok(());
-    }
-    let intervals = end_ms.saturating_sub(start_ms) / step_ms;
-    if intervals > i64::try_from(MAX_RESOLUTION_POINTS).unwrap_or(i64::MAX) {
+    if range_resolution_exceeds_limit(start_ms, end_ms, step_ms) {
         return Err(ApiError::bad_data(
             "exceeded maximum resolution of 11,000 points per timeseries. \
              Try decreasing the query resolution (?step=XX)",

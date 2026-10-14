@@ -1,9 +1,4 @@
 use super::*;
-
-pub(crate) fn labels(pairs: &[(&str, &str)]) -> Labels {
-    let mut labels = Labels::new();
-    for (name, value) in pairs {
-        labels.insert(*name, *value);
-    }
-    labels
+pub(crate) fn labels(pairs: &[crate::test_support::TestLabelPair<'_>]) -> Labels {
+    crate::test_support::labels::labels(pairs).into()
 }

@@ -14,24 +14,29 @@ struct Fixture {
     engine: FlameEngine<InMemoryProfileStore>,
 }
 
+struct StackIds {
+    alloc: u32,
+    other: u32,
+}
+
 fn fixture() -> Fixture {
     let mut store = InMemoryProfileStore::new();
-    let (alloc_stack, other_stack) = {
+    let stacks = {
         let db = store.symbols_mut();
         let main = intern_location(db, "main", &["main"]);
         let work = intern_location(db, "work", &["work"]);
         let alloc_inline = intern_location(db, "alloc_inline", &["alloc", "inline_helper"]);
         let other = intern_location(db, "other", &["other"]);
-        (
-            db.intern_stacktrace(0, &[alloc_inline, work, main]),
-            db.intern_stacktrace(0, &[other, main]),
-        )
+        StackIds {
+            alloc: db.intern_stacktrace(0, &[alloc_inline, work, main]),
+            other: db.intern_stacktrace(0, &[other, main]),
+        }
     };
 
-    push(&mut store, CPU_PROFILE, "api", alloc_stack, 10, 100);
-    push(&mut store, CPU_PROFILE, "api", alloc_stack, 7, 110);
-    push(&mut store, CPU_PROFILE, "worker", other_stack, 4, 120);
-    push(&mut store, MEMORY_PROFILE, "api", alloc_stack, 99, 130);
+    push(&mut store, CPU_PROFILE, "api", stacks.alloc, 10, 100);
+    push(&mut store, CPU_PROFILE, "api", stacks.alloc, 7, 110);
+    push(&mut store, CPU_PROFILE, "worker", stacks.other, 4, 120);
+    push(&mut store, MEMORY_PROFILE, "api", stacks.alloc, 99, 130);
 
     Fixture {
         engine: FlameEngine::new(Arc::new(store), EngineOpts::default()),
@@ -39,24 +44,21 @@ fn fixture() -> Fixture {
 }
 
 fn intern_location(db: &mut krabka_pprof::SymbolDb, file: &str, function_names: &[&str]) -> u32 {
-    let lines = function_names
-        .iter()
-        .enumerate()
-        .map(|(idx, name)| {
-            let name_ref = db.intern_string(name);
-            let filename_ref = db.intern_string(&format!("{file}.go"));
-            let function_id = db.intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: filename_ref,
-                start_line: i64::try_from(idx + 1).expect("test index fits i64"),
-            });
-            LineRec {
-                function_id,
-                line: i32::try_from(idx + 1).expect("test index fits i32"),
-            }
-        })
-        .collect();
+    let mut lines = Vec::with_capacity(function_names.len());
+    for (idx, name) in function_names.iter().enumerate() {
+        let name_ref = db.intern_string(name);
+        let filename_ref = db.intern_string(&format!("{file}.go"));
+        let function_id = db.intern_function(FunctionRec {
+            name: name_ref,
+            system_name: name_ref,
+            filename: filename_ref,
+            start_line: i64::try_from(idx + 1).expect("test index fits i64"),
+        });
+        lines.push(LineRec {
+            function_id,
+            line: i32::try_from(idx + 1).expect("test index fits i32"),
+        });
+    }
     db.intern_location(LocationRec {
         address: 0,
         mapping_id: 0,
@@ -73,9 +75,9 @@ fn push(
     timestamp_ms: i64,
 ) {
     store.push_sample(
-        (TENANT, profile_type),
-        vec![("service".to_string(), service.to_string())],
-        (0, stacktrace_id),
+        krabka_pprof::ProfileIdentity::new(TENANT, profile_type),
+        vec![krabka_pprof::ProfileLabel::new("service", service)],
+        krabka_pprof::StacktraceIdentity::new(0, stacktrace_id),
         value,
         timestamp_ms,
     );

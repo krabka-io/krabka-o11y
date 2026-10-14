@@ -1,5 +1,15 @@
 use super::{Line, Result, parse_duration_ms, parse_error};
 
+struct RepeatedOffset<'a> {
+    base: &'a str,
+    count: usize,
+}
+
+struct StartOffsetParts<'a> {
+    start: &'a str,
+    step: Option<&'a str>,
+}
+
 pub(crate) fn parse_start_offset_token(token: &str, line: Line<'_>) -> Result<Vec<Option<i64>>> {
     if token == "_" {
         return Ok(vec![None]);
@@ -13,30 +23,44 @@ pub(crate) fn parse_start_offset_token(token: &str, line: Line<'_>) -> Result<Ve
         }
         return Ok(vec![None; count]);
     }
-    let (base, count) = if let Some((base, count)) = token.rsplit_once('x') {
-        let count = count
+    let repeated = if let Some(parts) = token.rsplit_once('x') {
+        let count = parts
+            .1
             .parse::<usize>()
             .map_err(|_| parse_error(line, "invalid @st repeat count"))?;
-        (base, count)
+        RepeatedOffset {
+            base: parts.0,
+            count,
+        }
     } else {
-        (token, 0)
+        RepeatedOffset {
+            base: token,
+            count: 0,
+        }
     };
-    let split = base
+    let split = repeated
+        .base
         .char_indices()
-        .skip(usize::from(base.starts_with(['+', '-'])))
-        .find_map(|(index, ch)| matches!(ch, '+' | '-').then_some(index));
-    let (start, step) = match split {
-        Some(index) => (&base[..index], Some(&base[index..])),
-        None => (base, None),
+        .skip(usize::from(repeated.base.starts_with(['+', '-'])))
+        .find_map(|entry| matches!(entry.1, '+' | '-').then_some(entry.0));
+    let parts = match split {
+        Some(index) => StartOffsetParts {
+            start: &repeated.base[..index],
+            step: Some(&repeated.base[index..]),
+        },
+        None => StartOffsetParts {
+            start: repeated.base,
+            step: None,
+        },
     };
     let duration = |text: &str| -> Result<i64> {
         let unsigned = text.trim_start_matches(['+', '-']);
         let value = parse_duration_ms(unsigned, line)?;
         Ok(if text.starts_with('-') { -value } else { value })
     };
-    let start = duration(start)?;
-    let step = step.map(duration).transpose()?.unwrap_or(0);
-    (0..=count)
+    let start = duration(parts.start)?;
+    let step = parts.step.map(duration).transpose()?.unwrap_or(0);
+    (0..=repeated.count)
         .map(|index| {
             let offset = i64::try_from(index)
                 .ok()

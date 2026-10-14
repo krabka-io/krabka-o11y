@@ -31,6 +31,27 @@ const END: i64 = START + 3_000_000_000;
 const TIMEOUT: Duration = Duration::from_secs(45);
 const SELECTOR: &str = r#"{service_name="fixture"}"#;
 
+struct QueryParameter<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+fn append_query_parameters<'a>(
+    url: &mut url::Url,
+    parameters: impl IntoIterator<Item = QueryParameter<'a>>,
+) {
+    let mut query = url.query_pairs_mut();
+    for parameter in parameters {
+        query.append_pair(parameter.name, parameter.value);
+    }
+}
+
+struct EncodedPushPayload {
+    content_type: &'static str,
+    content_encoding: &'static str,
+    body: Vec<u8>,
+}
+
 impl Deployment {
     async fn start() -> TestResult<Self> {
         Self::with_overrides(None).await
@@ -137,15 +158,40 @@ impl Deployment {
     ) -> TestResult<reqwest::RequestBuilder> {
         let mut url = url::Url::parse(&format!("{}{path}", base_url(container, PORT).await?))?;
         if path != "/loki/api/v1/delete" {
-            url.query_pairs_mut().extend_pairs([
-                ("query", query),
-                ("start", &START.to_string()),
-                ("end", &END.to_string()),
-            ]);
+            let start = START.to_string();
+            let end = END.to_string();
+            append_query_parameters(
+                &mut url,
+                [
+                    QueryParameter {
+                        name: "query",
+                        value: query,
+                    },
+                    QueryParameter {
+                        name: "start",
+                        value: &start,
+                    },
+                    QueryParameter {
+                        name: "end",
+                        value: &end,
+                    },
+                ],
+            );
         }
         if matches!(path, "/loki/api/v1/query_range" | "/loki/api/v1/tail") {
-            url.query_pairs_mut()
-                .extend_pairs([("direction", "forward"), ("limit", "1000")]);
+            append_query_parameters(
+                &mut url,
+                [
+                    QueryParameter {
+                        name: "direction",
+                        value: "forward",
+                    },
+                    QueryParameter {
+                        name: "limit",
+                        value: "1000",
+                    },
+                ],
+            );
         }
         Ok(self
             .infrastructure
@@ -327,14 +373,22 @@ async fn roundtrip(encoding: Encoding) -> TestResult {
         [(START + 1_000_000_000).to_string(), "second"]
     ]);
     let json_body = serde_json::to_vec(&json!({"streams":streams(values.clone())}))?;
-    let (content_type, content_encoding, body) = match encoding {
-        Encoding::Json => ("application/json", "identity", json_body),
+    let payload = match encoding {
+        Encoding::Json => EncodedPushPayload {
+            content_type: "application/json",
+            content_encoding: "identity",
+            body: json_body,
+        },
         Encoding::Gzip => {
             use std::io::Write as _;
             let mut encoder =
                 flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
             encoder.write_all(&json_body)?;
-            ("application/json", "gzip", encoder.finish()?)
+            EncodedPushPayload {
+                content_type: "application/json",
+                content_encoding: "gzip",
+                body: encoder.finish()?,
+            }
         }
         Encoding::Snappy => {
             let request = LokiProtoPushRequest {
@@ -344,24 +398,24 @@ async fn roundtrip(encoding: Encoding) -> TestResult {
                     entries: ["first", "second"]
                         .into_iter()
                         .enumerate()
-                        .map(|(index, line)| LokiProtoEntry {
+                        .map(|entry| LokiProtoEntry {
                             timestamp: Some(LokiProtoTimestamp {
                                 seconds: START / 1_000_000_000
-                                    + i64::try_from(index).expect("two entries"),
+                                    + i64::try_from(entry.0).expect("two entries"),
                                 nanos: 0,
                             }),
-                            line: line.into(),
+                            line: entry.1.into(),
                             structured_metadata: vec![],
                             parsed: vec![],
                         })
                         .collect(),
                 }],
             };
-            (
-                "application/x-protobuf",
-                "snappy",
-                snap::raw::Encoder::new().compress_vec(&request.encode_to_vec())?,
-            )
+            EncodedPushPayload {
+                content_type: "application/x-protobuf",
+                content_encoding: "snappy",
+                body: snap::raw::Encoder::new().compress_vec(&request.encode_to_vec())?,
+            }
         }
     };
     let mut request = deployment
@@ -372,10 +426,10 @@ async fn roundtrip(encoding: Encoding) -> TestResult {
             base_url(&deployment.distributor, PORT).await?
         ))
         .header("X-Scope-OrgID", "tenant-a")
-        .header("Content-Type", content_type)
-        .body(body);
-    if content_encoding != "identity" {
-        request = request.header("Content-Encoding", content_encoding);
+        .header("Content-Type", payload.content_type)
+        .body(payload.body);
+    if payload.content_encoding != "identity" {
+        request = request.header("Content-Encoding", payload.content_encoding);
     }
     accepted(request.send().await?).await?;
     let expected = expected(values);
@@ -549,12 +603,29 @@ async fn tenant_query_limits_apply_before_and_after_storage() -> TestResult {
             .url()
             .clone();
         url.set_query(None);
-        url.query_pairs_mut().extend_pairs([
-            ("query", SELECTOR),
-            ("start", &START.to_string()),
-            ("end", &(START + 1_000_000_000).to_string()),
-            ("direction", "forward"),
-        ]);
+        let start = START.to_string();
+        let end = (START + 1_000_000_000).to_string();
+        append_query_parameters(
+            &mut url,
+            [
+                QueryParameter {
+                    name: "query",
+                    value: SELECTOR,
+                },
+                QueryParameter {
+                    name: "start",
+                    value: &start,
+                },
+                QueryParameter {
+                    name: "end",
+                    value: &end,
+                },
+                QueryParameter {
+                    name: "direction",
+                    value: "forward",
+                },
+            ],
+        );
         let response: Value = deployment
             .infrastructure
             .client
@@ -605,6 +676,7 @@ async fn explore_detected_fields_and_label_index_survive_storage() -> TestResult
     check_explore(&deployment, &cold).await
 }
 
+#[allow(clippy::items_after_statements)]
 async fn check_explore(
     deployment: &Deployment,
     container: &ContainerAsync<GenericImage>,
@@ -618,15 +690,28 @@ async fn check_explore(
             false,
         )
         .await?;
-    for (name, cardinality) in [("color", 2), ("foo", 1)] {
+    struct FieldCardinalityCase {
+        name: &'static str,
+        cardinality: usize,
+    }
+    for case in [
+        FieldCardinalityCase {
+            name: "color",
+            cardinality: 2,
+        },
+        FieldCardinalityCase {
+            name: "foo",
+            cardinality: 1,
+        },
+    ] {
         let field = fields["fields"]
             .as_array()
             .ok_or("detected fields array")?
             .iter()
-            .find(|field| field["label"] == name)
+            .find(|field| field["label"] == case.name)
             .ok_or("missing field")?;
         assert!(
-            field["type"] == "string" && field["cardinality"] == cardinality,
+            field["type"] == "string" && field["cardinality"] == case.cardinality,
             "{fields}"
         );
     }
@@ -791,7 +876,9 @@ async fn tail_reads_backlog_then_live_wal_without_cross_tenant_entries() -> Test
     request
         .headers_mut()
         .insert("X-Scope-OrgID", "tenant-a".parse()?);
-    let (mut socket, response) = connect_async(request).await?;
+    let connected = connect_async(request).await?;
+    let mut socket = connected.0;
+    let response = connected.1;
     assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
     let history = frame(&mut socket).await?;
     assert!(
@@ -945,11 +1032,25 @@ async fn create_delete(
         "{}/loki/api/v1/delete",
         base_url(builder, PORT).await?
     ))?;
-    url.query_pairs_mut().extend_pairs([
-        ("query", query),
-        ("start", &(START / 1_000_000_000).to_string()),
-        ("end", &(END / 1_000_000_000).to_string()),
-    ]);
+    let start = (START / 1_000_000_000).to_string();
+    let end = (END / 1_000_000_000).to_string();
+    append_query_parameters(
+        &mut url,
+        [
+            QueryParameter {
+                name: "query",
+                value: query,
+            },
+            QueryParameter {
+                name: "start",
+                value: &start,
+            },
+            QueryParameter {
+                name: "end",
+                value: &end,
+            },
+        ],
+    );
     accepted(
         deployment
             .infrastructure

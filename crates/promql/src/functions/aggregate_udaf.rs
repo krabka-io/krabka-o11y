@@ -64,31 +64,24 @@ mod tests {
         value.to_bits() == expected.to_bits()
     }
 
-    #[test]
-    fn ignores_nan_in_mixed_group() {
-        // min/max are taken over the non-NaN values; NaN appearing first then
-        // non-NaN still yields the non-NaN extremum.
-        for (extremum, samples, want) in [
-            (Extremum::Min, &[f64::NAN, 3.0, 1.0, f64::NAN][..], 1.0),
-            (Extremum::Max, &[f64::NAN, 3.0, 1.0, f64::NAN][..], 3.0),
-            (Extremum::Min, &[f64::NAN, 5.0][..], 5.0),
-            (Extremum::Max, &[f64::NAN, 5.0][..], 5.0),
-        ] {
-            assert2::assert!(bits_eq(float(run(extremum, samples)), want));
-        }
+    #[yare::parameterized(
+        min_mixed = { Extremum::Min, &[f64::NAN, 3.0, 1.0, f64::NAN], 1.0 },
+        max_mixed = { Extremum::Max, &[f64::NAN, 3.0, 1.0, f64::NAN], 3.0 },
+        min_after_nan = { Extremum::Min, &[f64::NAN, 5.0], 5.0 },
+        max_after_nan = { Extremum::Max, &[f64::NAN, 5.0], 5.0 },
+    )]
+    fn ignores_nan_in_mixed_group(extremum: Extremum, samples: &[f64], want: f64) {
+        assert2::assert!(bits_eq(float(run(extremum, samples)), want));
     }
 
-    #[test]
-    fn all_nan_group_yields_nan() {
-        // A single NaN sample is still NaN (seen, never displaced).
-        for (extremum, samples) in [
-            (Extremum::Min, &[f64::NAN, f64::NAN][..]),
-            (Extremum::Max, &[f64::NAN, f64::NAN][..]),
-            (Extremum::Min, &[f64::NAN][..]),
-            (Extremum::Max, &[f64::NAN][..]),
-        ] {
-            assert2::assert!(float(run(extremum, samples)).is_nan());
-        }
+    #[yare::parameterized(
+        min_two_nan = { Extremum::Min, &[f64::NAN, f64::NAN] },
+        max_two_nan = { Extremum::Max, &[f64::NAN, f64::NAN] },
+        min_one_nan = { Extremum::Min, &[f64::NAN] },
+        max_one_nan = { Extremum::Max, &[f64::NAN] },
+    )]
+    fn all_nan_group_yields_nan(extremum: Extremum, samples: &[f64]) {
+        assert2::assert!(float(run(extremum, samples)).is_nan());
     }
 
     #[test]
@@ -96,35 +89,28 @@ mod tests {
         assert2::assert!(
             float(run(Extremum::Min, &[f64::INFINITY, 1.0, f64::NEG_INFINITY])).is_infinite()
         );
-        for (extremum, samples, want) in [
-            (
-                Extremum::Min,
-                &[1.0, f64::NEG_INFINITY][..],
-                f64::NEG_INFINITY,
-            ),
-            (Extremum::Max, &[1.0, f64::INFINITY][..], f64::INFINITY),
-            (
-                Extremum::Max,
-                &[f64::NEG_INFINITY, f64::NAN][..],
-                f64::NEG_INFINITY,
-            ),
-        ] {
-            assert2::assert!(bits_eq(float(run(extremum, samples)), want));
-        }
+        assert2::assert!(bits_eq(
+            float(run(Extremum::Min, &[1.0, f64::NEG_INFINITY])),
+            f64::NEG_INFINITY
+        ));
+        assert2::assert!(bits_eq(
+            float(run(Extremum::Max, &[1.0, f64::INFINITY])),
+            f64::INFINITY
+        ));
+        assert2::assert!(bits_eq(
+            float(run(Extremum::Max, &[f64::NEG_INFINITY, f64::NAN])),
+            f64::NEG_INFINITY
+        ));
     }
 
     #[test]
     fn signed_zero_keeps_first_seen() {
         // `0.0 {>,<} -0.0` is false, so the first-observed zero is retained,
         // matching Prometheus and the interpreter.
-        for (extremum, samples, want) in [
-            (Extremum::Min, [0.0, -0.0], 0.0),
-            (Extremum::Min, [-0.0, 0.0], -0.0),
-            (Extremum::Max, [0.0, -0.0], 0.0),
-            (Extremum::Max, [-0.0, 0.0], -0.0),
-        ] {
-            assert2::assert!(bits_eq(float(run(extremum, &samples)), want));
-        }
+        assert2::assert!(bits_eq(float(run(Extremum::Min, &[0.0, -0.0]),), 0.0));
+        assert2::assert!(bits_eq(float(run(Extremum::Min, &[-0.0, 0.0])), -0.0));
+        assert2::assert!(bits_eq(float(run(Extremum::Max, &[0.0, -0.0])), 0.0));
+        assert2::assert!(bits_eq(float(run(Extremum::Max, &[-0.0, 0.0])), -0.0));
     }
 
     #[test]

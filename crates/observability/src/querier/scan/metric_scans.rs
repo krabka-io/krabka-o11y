@@ -1,15 +1,14 @@
+pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest};
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeMap, BlockDescriptor, ColdBlockScan, CompactionFrontier,
     FsPath, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry, MetricQuery, MetricWindow,
-    ObjectPath, ObjectStore, QueryError, QueryHotTail, RecordBatch, SessionContext, StreamPlan,
-    TimeRange, Value, WalLogRecord, append_matching_hot_log_record,
-    append_matching_hot_metric_record, append_matching_log_row, apply_absent_over_time,
-    checked_eval_times, default_block_fetch_concurrency,
+    ObjectPath, ObjectStore, QueryError, QueryHotTail, RecordBatch, StreamPlan, TimeRange, Value,
+    WalLogRecord, append_matching_hot_log_record, append_matching_hot_metric_record,
+    append_matching_log_row, apply_absent_over_time, default_block_fetch_concurrency,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
-    for_each_query_row, format_metric_samples, json, loki_matrix_response, loki_stream_results,
-    metric_plan_scan_sql, metric_samples_from_batches, register_log_blocks,
-    register_log_blocks_from_object_store, sort_loki_stream_values,
+    for_each_query_row, format_metric_samples, json, loki_stream_results, metric_plan_scan_sql,
+    sort_loki_stream_values,
 };
 
 mod append_matching_log_batches;

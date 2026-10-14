@@ -9,6 +9,23 @@ use krabka_pprof::{
 };
 use object_store::{ObjectStore, path::Path};
 
+fn configured_debuginfod_resolvers(
+    urls: Vec<String>,
+    config: DebuginfodConfig,
+    address_fallback: bool,
+) -> Result<Vec<Arc<dyn NativeResolver>>, crate::ProfilesError> {
+    let mut resolvers: Vec<Arc<dyn NativeResolver>> = vec![Arc::new(FileSystemResolver::default())];
+    if !urls.is_empty() {
+        resolvers.push(Arc::new(
+            DebuginfodResolver::with_config(urls, config).map_err(crate::ProfilesError::Block)?,
+        ));
+    }
+    if address_fallback {
+        resolvers.push(Arc::new(AddressFallbackResolver));
+    }
+    Ok(resolvers)
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -129,15 +146,29 @@ mod tests {
                 .unwrap()
                 == 2
         );
-        for (status, expected) in [("miss", 1), ("hit", 1)] {
+        struct CacheRequestCase {
+            status: &'static str,
+            expected: u64,
+        }
+
+        for case in [
+            CacheRequestCase {
+                status: "miss",
+                expected: 1,
+            },
+            CacheRequestCase {
+                status: "hit",
+                expected: 1,
+            },
+        ] {
             assert!(
                 metrics
                     .symbolizer_cache_requests
                     .get_or_create(&crate::metrics::StatusLabel {
-                        status: status.to_string(),
+                        status: case.status.to_string(),
                     })
                     .get()
-                    == expected
+                    == case.expected
             );
         }
         let updated = store

@@ -19,39 +19,40 @@ use super::*;
 #[test]
 pub(crate) fn a_decimal_sample_literal_parses_to_an_exact_rational() {
     let parse = super::super::prelude::parse_decimal_sample_literal;
+    let is_ratio = |literal: &str, numerator: i128, denominator: u128| {
+        parse(literal)
+            .is_some_and(|ratio| ratio.numerator == numerator && ratio.denominator == denominator)
+    };
 
     // Whole numbers and plain decimals, unreduced.
-    check!(parse("1") == Some((1, 1)));
-    check!(parse("0") == Some((0, 1)));
-    check!(parse("1.5") == Some((15, 10)), "unreduced: not (3, 2)");
-    check!(parse("0.1") == Some((1, 10)), "exact, where a float is not");
-    check!(parse("12.345") == Some((12_345, 1_000)));
+    check!(is_ratio("1", 1, 1));
+    check!(is_ratio("0", 0, 1));
+    check!(is_ratio("1.5", 15, 10), "unreduced: not (3, 2)");
+    check!(is_ratio("0.1", 1, 10), "exact, where a float is not");
+    check!(is_ratio("12.345", 12_345, 1_000));
 
     // Signs, on either spelling.
-    check!(parse("-1.5") == Some((-15, 10)));
-    check!(parse("+1.5") == Some((15, 10)));
-    check!(parse("-0") == Some((0, 1)));
+    check!(is_ratio("-1.5", -15, 10));
+    check!(is_ratio("+1.5", 15, 10));
+    check!(is_ratio("-0", 0, 1));
 
     // A missing side of the point is allowed as long as one side is there.
-    check!(parse(".5") == Some((5, 10)));
-    check!(parse("5.") == Some((5, 1)));
+    check!(is_ratio(".5", 5, 10));
+    check!(is_ratio("5.", 5, 1));
     check!(parse(".").is_none(), "but not both missing");
 
     // A positive exponent cancels decimal places and can go past them,
     // which switches branches: the numerator is scaled instead.
-    check!(parse("1e3") == Some((1_000, 1)));
-    check!(parse("1.5e2") == Some((150, 1)), "past the decimal places");
-    check!(parse("1.5e1") == Some((15, 1)), "exactly cancelling them");
-    check!(
-        parse("1.25e1") == Some((125, 10)),
-        "partially cancelling them"
-    );
+    check!(is_ratio("1e3", 1_000, 1));
+    check!(is_ratio("1.5e2", 150, 1), "past the decimal places");
+    check!(is_ratio("1.5e1", 15, 1), "exactly cancelling them");
+    check!(is_ratio("1.25e1", 125, 10), "partially cancelling them");
 
     // A negative exponent adds places, raising the denominator.
-    check!(parse("1e-3") == Some((1, 1_000)));
-    check!(parse("1.5e-2") == Some((15, 1_000)));
+    check!(is_ratio("1e-3", 1, 1_000));
+    check!(is_ratio("1.5e-2", 15, 1_000));
     check!(
-        parse("15E-1") == Some((15, 10)),
+        is_ratio("15E-1", 15, 10),
         "the exponent marker is either case"
     );
 

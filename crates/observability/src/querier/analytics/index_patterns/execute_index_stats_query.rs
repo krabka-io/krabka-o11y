@@ -19,7 +19,7 @@ pub(crate) async fn execute_index_stats_query(
         .end
         .ok_or(HttpQueryError::MissingQueryParameter("end"))?;
     let time_range = TimeRange::new(start, end)?;
-    let (state, plan, _) = plan_analytics_query(
+    let planned = plan_analytics_query(
         state,
         AnalyticsQuery {
             tenant: &tenant,
@@ -29,6 +29,8 @@ pub(crate) async fn execute_index_stats_query(
         },
     )
     .await?;
+    let state = planned.state;
+    let plan = planned.plan;
     let entries = count_index_stats_entries(&state, &plan).await?;
     let bytes = planned_block_bytes(&plan).bytes_u64();
     let streams = plan

@@ -41,8 +41,6 @@ rules:
     let records = sink.records();
     check!(appended == 2);
     check!(records.len() == 2);
-    check!(
-        records.iter().all(|record| record.labels[0]
-            == ("__name__".to_string(), "job:up:current".to_string().into()))
-    );
+    check!(records.iter().all(|record| record.labels[0]
+        == krabka_metrics::MetricLabelPair::new("__name__", "job:up:current".to_string().into())));
 }

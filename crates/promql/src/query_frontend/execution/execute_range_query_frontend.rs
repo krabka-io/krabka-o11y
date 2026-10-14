@@ -1,6 +1,8 @@
+use promql_parser::parser::LabelModifier;
+
 use super::{
-    AnnotatedQueryResult, FrontendRangeRequest, PromqlError, QueryShardExecution,
-    QueryShardReducer, RangeQueryCache, RangeQueryExecutor, TimeExt,
+    super::rank_reduction::RankReduction, AnnotatedQueryResult, FrontendRangeRequest, PromqlError,
+    QueryShardExecution, QueryShardReducer, RangeQueryCache, RangeQueryExecutor, TimeExt,
     execute_avg_range_query_frontend, execute_moment_range_query_frontend,
     execute_planned_range_queries, merge_range_query_results_with_reducer, plan_range_query,
     query_shard_execution, reduce_rank_range_query_results,
@@ -70,7 +72,11 @@ where
         .await;
     }
     let rank = if let QueryShardExecution::Rank { k, kind, modifier } = &execution {
-        Some((*k, *kind, modifier.clone()))
+        Some(RankExecution {
+            k: *k,
+            kind: *kind,
+            modifier: modifier.clone(),
+        })
     } else {
         None
     };
@@ -82,7 +88,7 @@ where
         request.step,
         request.opts,
     )?;
-    let (results, annotations) = execute_planned_range_queries(
+    let results_with_annotations = execute_planned_range_queries(
         executor,
         cache,
         &request.tenant,
@@ -90,12 +96,19 @@ where
         request.admission_limits,
     )
     .await?;
+    let results = results_with_annotations.results;
+    let annotations = results_with_annotations.annotations;
 
     let QueryShardExecution::Merge(reducer) = execution else {
-        if let Some((k, kind, modifier)) = rank {
+        if let Some(rank) = rank {
             let merged = merge_range_query_results_with_reducer(results, QueryShardReducer::First)?;
             return Ok(AnnotatedQueryResult {
-                result: reduce_rank_range_query_results(merged, k, kind, modifier.as_ref())?,
+                result: reduce_rank_range_query_results(
+                    merged,
+                    rank.k,
+                    rank.kind,
+                    rank.modifier.as_ref(),
+                )?,
                 annotations,
             });
         }
@@ -105,4 +118,10 @@ where
         result: merge_range_query_results_with_reducer(results, reducer)?,
         annotations,
     })
+}
+
+struct RankExecution {
+    k: usize,
+    kind: RankReduction,
+    modifier: Option<LabelModifier>,
 }

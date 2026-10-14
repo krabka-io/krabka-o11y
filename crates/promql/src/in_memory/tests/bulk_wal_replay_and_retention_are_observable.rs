@@ -7,13 +7,19 @@ pub(crate) async fn bulk_wal_replay_and_retention_are_observable() {
     let records = [
         float_record(
             "tenant-a",
-            &lbls(&[("__name__", "up"), ("job", "api")]),
+            &lbls(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]),
             10_000,
             1.0,
         ),
         float_record(
             "tenant-a",
-            &lbls(&[("__name__", "up"), ("job", "worker")]),
+            &lbls(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "worker"),
+            ]),
             20_000,
             2.0,
         ),

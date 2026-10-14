@@ -9,6 +9,48 @@ use crate::{
     parse_metric_sample_value, sort_loki_stream_values,
 };
 
+struct LokiParquetColumns {
+    timestamp_data_type: DataType,
+    timestamp_array: TimestampNanosecondArray,
+    labels_array: datafusion::arrow::array::MapArray,
+}
+
+fn loki_parquet_columns(
+    timestamps: Vec<i64>,
+    label_sets: &[Vec<krabka_blockstore::LabelPair>],
+) -> Result<LokiParquetColumns, HttpQueryError> {
+    let timestamp_data_type = DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()));
+    let timestamp_array =
+        TimestampNanosecondArray::from(timestamps).with_data_type(timestamp_data_type.clone());
+    let labels_array = loki_parquet_label_array(label_sets)?;
+    Ok(LokiParquetColumns {
+        timestamp_data_type,
+        timestamp_array,
+        labels_array,
+    })
+}
+
+fn loki_parquet_value_response(
+    columns: LokiParquetColumns,
+    value_column_name: &str,
+    value_array: ArrayRef,
+) -> Result<Response, HttpQueryError> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("timestamp", columns.timestamp_data_type, false),
+        Field::new("labels", columns.labels_array.data_type().clone(), false),
+        Field::new(value_column_name, value_array.data_type().clone(), false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(columns.timestamp_array) as ArrayRef,
+            Arc::new(columns.labels_array) as ArrayRef,
+            value_array,
+        ],
+    )?;
+    loki_parquet_batch_response(&batch)
+}
+
 mod accept_parameter_is_zero_quality;
 mod accept_part_allows_loki_parquet;
 mod add_loki_encoding_flags;
@@ -77,3 +119,33 @@ pub(crate) use unix_ns_string_to_loki_seconds::unix_ns_string_to_loki_seconds;
 pub(crate) use wants_loki_parquet::wants_loki_parquet;
 
 use self::loki_timestamp::LokiTimestamp;
+
+fn update_loki_stream_values(value: &mut Value, mut update_values: impl FnMut(&mut Vec<Value>)) {
+    let Some(streams) = value
+        .pointer_mut("/data/result")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+
+    for stream in streams.iter_mut() {
+        if let Some(values) = stream.get_mut("values").and_then(Value::as_array_mut) {
+            update_values(values);
+        }
+    }
+
+    streams.retain(|stream| {
+        stream
+            .get("values")
+            .and_then(Value::as_array)
+            .is_some_and(|values| !values.is_empty())
+    });
+}
+
+fn loki_stream_entry_timestamp(entry: &Value) -> Option<i64> {
+    entry
+        .as_array()
+        .and_then(|entry| entry.first())
+        .and_then(Value::as_str)
+        .and_then(|timestamp| timestamp.parse::<i64>().ok())
+}

@@ -12,7 +12,13 @@ pub struct QueryHints {
     /// sampling fractions are stored in `values` and use the periodic estimator.
     pub sample: Option<bool>,
     /// Static hints not represented by the boolean execution switches.
-    pub values: Vec<(String, super::Value)>,
+    pub values: Vec<QueryHintValue>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryHintValue {
+    pub name: String,
+    pub value: super::Value,
 }
 
 impl QueryHints {
@@ -20,13 +26,13 @@ impl QueryHints {
         // GetFloat in pinned Tempo prefers the first float, then the first int.
         self.values
             .iter()
-            .find_map(|(key, value)| match value {
-                super::Value::Float(value) if key == name => Some(*value),
+            .find_map(|hint| match &hint.value {
+                super::Value::Float(value) if hint.name == name => Some(*value),
                 _ => None,
             })
             .or_else(|| {
-                self.values.iter().find_map(|(key, value)| match value {
-                    super::Value::Int(value) if key == name => {
+                self.values.iter().find_map(|hint| match &hint.value {
+                    super::Value::Int(value) if hint.name == name => {
                         Some(value.to_string().parse().expect("signed integer is finite"))
                     }
                     _ => None,

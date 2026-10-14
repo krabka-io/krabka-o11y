@@ -1,7 +1,7 @@
 use super::{
-    DecodedSeries, DistributorState, ExportMetricsServiceRequest, MetricsData, OtlpDecodeOptions,
-    Principal, PushError, TenantId, TonicRequest, TranslationStrategy, append_decoded_series,
-    authorize_tenant, decode_otlp_inner, tenant_from_metadata,
+    DistributorState, ExportMetricsServiceRequest, MetricsData, Principal, PushError, TonicRequest,
+    TranslationStrategy, append_decoded_series, authorize_tenant, decode_otlp_inner,
+    decode_tenant_otlp, tenant_from_metadata,
 };
 
 /// Decodes and appends an OTLP gRPC export. Returns the decoded series count on
@@ -24,7 +24,10 @@ pub(crate) async fn otlp_grpc_export_inner(
     let data = MetricsData {
         resource_metrics: request.into_inner().resource_metrics,
     };
-    let mut series = decode_tenant_otlp(state, &tenant, &data)?;
+    let mut series =
+        decode_tenant_otlp(state, &tenant, TranslationStrategy::default(), |options| {
+            decode_otlp_inner(&data, options)
+        })?;
     let items = series.len() as u64;
     if append_decoded_series(state, &tenant, &mut series).await?
         && let Some(metrics) = &state.metrics
@@ -32,30 +35,4 @@ pub(crate) async fn otlp_grpc_export_inner(
         metrics.record_ingest_series(tenant.as_str(), items);
     }
     Ok(items)
-}
-
-/// Decodes against the tenant's own delta accumulator, and bounds that
-/// accumulator against the tenant's own limits before the lock is released.
-fn decode_tenant_otlp(
-    state: &DistributorState,
-    tenant: &TenantId,
-    data: &MetricsData,
-) -> Result<Vec<DecodedSeries>, PushError> {
-    let limits = state.limits_for_tenant(tenant);
-    let now = state.clock.now();
-    let accumulator = state.otlp_delta_accumulators.for_tenant(tenant);
-    let mut guard = accumulator.lock().expect("otlp delta accumulator poisoned");
-    guard.seen_at(now);
-    let decoded = decode_otlp_inner(
-        data,
-        OtlpDecodeOptions {
-            strategy: TranslationStrategy::default(),
-            accumulator: Some(&mut guard),
-            additional_resource_attributes: &state.otlp_promote_resource_attributes,
-        },
-    );
-    // Bound before the error is propagated, so a rejected body cannot leave the
-    // streams it created behind.
-    guard.bound(limits);
-    Ok(decoded?)
 }

@@ -1,6 +1,6 @@
-use krabka_observability::persisted_format::validate_persisted_format;
+use krabka_observability::persisted_format::{PersistedHeader, validate_persisted_format};
 
-use super::{BTreeMap, ConsumerRecord, PartitionWindow, SpanRecord, TracesError};
+use super::{BTreeMap, ConsumerRecord, OffsetRange, PartitionWindow, SpanRecord, TracesError};
 
 /// Decode Kafka consumer records into per-partition span windows.
 ///
@@ -14,23 +14,21 @@ pub fn decode_consumer_records(
 ) -> Result<BTreeMap<i32, PartitionWindow>, TracesError> {
     let mut windows = BTreeMap::<i32, PartitionWindow>::new();
     for record in records {
-        validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
-        )
+        validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
+            key: header.key.as_str(),
+            value: header.value.as_deref(),
+        }))
         .map_err(|error| TracesError::Wal(error.to_string()))?;
         let Some(value) = &record.value else {
             continue;
         };
         let decoded = SpanRecord::decode(value)?;
         let window = windows.entry(record.partition).or_insert(PartitionWindow {
-            offset_range: (record.offset, record.offset),
+            offset_range: OffsetRange::new(record.offset, record.offset),
             records: Vec::new(),
         });
-        window.offset_range.0 = window.offset_range.0.min(record.offset);
-        window.offset_range.1 = window.offset_range.1.max(record.offset);
+        window.offset_range.min = window.offset_range.min.min(record.offset);
+        window.offset_range.max = window.offset_range.max.max(record.offset);
         window.records.push(decoded);
     }
     Ok(windows)

@@ -28,6 +28,9 @@ use krabka_observability::{InMemoryWalSink, QuerierState, distributor_router, lo
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+#[path = "json_response.rs"]
+mod json_response;
+
 // The trace this log line belongs to, written into the push body as hex.
 use crate::correlated_span::{SPAN_ID, TRACE_ID};
 
@@ -76,6 +79,7 @@ fn live_store() -> krabka_traces::LiveStore {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::items_after_statements)]
 async fn a_trace_id_on_a_log_line_fetches_the_trace() {
     let timestamp_ns = now_ns();
     let sink = InMemoryWalSink::default();
@@ -182,12 +186,19 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
         .as_str()
         .expect("the query returns a trace id");
     check!(hex_id == hex::encode(TRACE_ID));
-    for (tenant, query) in [
-        ("tenant-b", "{app=\"orders\"}".to_string()),
-        (
-            TENANT,
-            r#"{app="orders"} | trace_id = "ffffffffffffffffffffffffffffffff""#.to_string(),
-        ),
+    struct NegativeQueryCase {
+        tenant: &'static str,
+        query: String,
+    }
+    for query_case in [
+        NegativeQueryCase {
+            tenant: "tenant-b",
+            query: "{app=\"orders\"}".to_string(),
+        },
+        NegativeQueryCase {
+            tenant: TENANT,
+            query: r#"{app="orders"} | trace_id = "ffffffffffffffffffffffffffffffff""#.to_string(),
+        },
     ] {
         let response = querier
             .clone()
@@ -195,21 +206,17 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
                 Request::builder()
                     .uri(format!(
                         "/loki/api/v1/query_range?query={}&start={}&end={}",
-                        urlencode(&query),
+                        urlencode(&query_case.query),
                         timestamp_ns - 1_000_000_000,
                         timestamp_ns + 1_000_000_000
                     ))
-                    .header("X-Scope-OrgID", tenant)
+                    .header("X-Scope-OrgID", query_case.tenant)
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert!(response.status() == StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let body: Value = serde_json::from_slice(&body).unwrap();
+        let body = json_response::body(response, "logs query").await;
         check!(collect_lines(&body).is_empty());
     }
 
@@ -237,14 +244,12 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
 fn collect_lines(json: &Value) -> Vec<&str> {
     json["data"]["result"]
         .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .map_or_else(Default::default, Vec::as_slice)
         .iter()
         .flat_map(|stream| {
             stream["values"]
                 .as_array()
-                .map(Vec::as_slice)
-                .unwrap_or_default()
+                .map_or_else(Default::default, Vec::as_slice)
                 .iter()
         })
         .filter_map(|entry| entry.get(1).and_then(Value::as_str))

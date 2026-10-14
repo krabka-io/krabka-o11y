@@ -19,11 +19,11 @@ pub fn ruler_state_compaction_key(record: &RulerStateWalRecord) -> Bytes {
                 return Bytes::from(bytes);
             }
             let mut key = format!("alert\0{}\0{}", record.tenant, record.rule_id);
-            for (name, value) in &record.labels {
+            for label in record.labels.iter() {
                 key.push('\0');
-                key.push_str(name);
+                key.push_str(label.name);
                 key.push('=');
-                key.push_str(value);
+                key.push_str(label.value);
             }
             Bytes::from(key)
         }

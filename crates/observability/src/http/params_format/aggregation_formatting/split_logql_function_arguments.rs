@@ -11,7 +11,9 @@ pub(crate) fn split_logql_function_arguments<'a>(
     let mut start = 0;
     let mut parens = 0_i32;
     let mut quotes = QuotedTextScanner::default();
-    for (index, ch) in rest.char_indices() {
+    for character in rest.char_indices() {
+        let index = character.0;
+        let ch = character.1;
         if quotes.in_quotes(ch) {
             continue;
         }

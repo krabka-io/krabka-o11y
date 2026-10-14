@@ -1,4 +1,5 @@
 use super::{ByteSize, SpanRecord, attr_value_string, service_name, wal};
+use crate::metricsgen::SpanAttribute;
 
 #[must_use]
 pub fn project_wal_record(record: wal::SpanRecord, size: ByteSize) -> SpanRecord {
@@ -7,14 +8,14 @@ pub fn project_wal_record(record: wal::SpanRecord, size: ByteSize) -> SpanRecord
         .span
         .span_attrs
         .iter()
-        .map(|kv| (kv.key.clone(), attr_value_string(&kv.value)))
+        .map(|kv| SpanAttribute::new(kv.key.clone(), attr_value_string(&kv.value)))
         .collect();
     let resource_attributes = record
         .span
         .resource_attrs
         .iter()
         .filter(|kv| kv.key != "service.name")
-        .map(|kv| (kv.key.clone(), attr_value_string(&kv.value)))
+        .map(|kv| SpanAttribute::new(kv.key.clone(), attr_value_string(&kv.value)))
         .collect();
 
     SpanRecord {

@@ -6,7 +6,9 @@ pub(crate) fn bucket_exemplars(
     mut predicate: impl FnMut(&Exemplar) -> bool,
 ) -> Vec<Exemplar> {
     let mut out = Vec::new();
-    for (idx, exemplar) in exemplars.iter().enumerate() {
+    for indexed_exemplar in exemplars.iter().enumerate() {
+        let idx = indexed_exemplar.0;
+        let exemplar = indexed_exemplar.1;
         if !assigned[idx] && predicate(exemplar) {
             assigned[idx] = true;
             out.push(exemplar.clone());

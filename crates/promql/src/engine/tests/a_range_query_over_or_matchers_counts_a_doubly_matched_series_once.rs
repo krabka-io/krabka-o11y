@@ -14,7 +14,11 @@ pub(crate) async fn a_range_query_over_or_matchers_counts_a_doubly_matched_serie
     for ts_ms in [0_i64, 60_000, 120_000] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", "a"),
+            ]),
             ts_ms,
             2.0,
         );
@@ -43,7 +47,7 @@ pub(crate) async fn a_range_query_over_or_matchers_counts_a_doubly_matched_serie
         series[0]
             .samples
             .iter()
-            .map(|(ts_ms, value)| (*ts_ms, float_value(value)))
+            .map(|sample| (sample.timestamp_ms, float_value(&sample.value)))
             .collect::<Vec<_>>()
             == vec![(0, 2.0), (60_000, 2.0), (120_000, 2.0)]
     );

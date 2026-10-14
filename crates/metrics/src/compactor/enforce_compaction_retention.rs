@@ -70,14 +70,7 @@ pub async fn enforce_compaction_retention(
 
     let candidates: Vec<CompactionCandidate> = manifests
         .iter()
-        .map(|manifest| CompactionCandidate {
-            tenant: manifest.tenant.clone(),
-            object_key: manifest.block_key.clone(),
-            min_ts: manifest.min_ts,
-            max_ts: manifest.max_ts,
-            row_count: manifest.row_count,
-            level: manifest.level,
-        })
+        .map(CompactionIndexManifest::compaction_candidate)
         .collect();
     let expired_keys: BTreeSet<String> =
         plan_expired_blocks(&candidates, now_ms, BlockTimestampUnit::Millis, windows)

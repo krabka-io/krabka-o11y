@@ -5,10 +5,7 @@ use super::{Arc, MetricStore, PrometheusApiState, Response, State, json, success
 pub(crate) async fn status_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
 ) -> Response {
-    let retention = state.storage_retention.map_or_else(
-        || "unknown (metric store does not expose retention)".to_string(),
-        |retention| retention.human().to_string(),
-    );
+    let retention = super::storage_retention(&state);
     success_data_response(json!({
         "yaml": format!(
             "krabka:\n  scrape_config: not applicable (Krabka does not scrape)\n  query_lookback_delta: {}\n  query_max_concurrency: {}\n  storage_retention: {retention}\n",

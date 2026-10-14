@@ -9,11 +9,10 @@ pub(crate) async fn the_quota_cache_and_the_rate_buckets_stay_within_the_tenant_
     let source = Arc::new(CountingBrokerAccess::answering(Ok(
         AclSet::SecurityDisabled,
     )));
-    *source.quotas.lock().expect("fake quota lock") = Ok(BTreeMap::from([(
-        "producer_byte_rate".to_string(),
-        1_000_000.0,
-    )]));
-    let (access, _, _) = broker_access_for_test(&source, 3);
+    let mut quotas = BTreeMap::new();
+    quotas.insert("producer_byte_rate".to_string(), 1_000_000.0);
+    *source.quotas.lock().expect("fake quota lock") = Ok(quotas);
+    let access = broker_access_for_test(&source, 3).cache;
     let limiter = BrokerBackedIngestLimiter::with_access(access, secs(1));
 
     for index in 0..50 {
@@ -50,5 +49,5 @@ pub(crate) async fn the_quota_cache_and_the_rate_buckets_stay_within_the_tenant_
             .collect::<Vec<_>>()
             == ["tenant-47", "tenant-48", "tenant-49"]
     );
-    check!(source.lookups() == (1, 50));
+    check!(source.lookups() == BrokerLookups { acl: 1, quota: 50 });
 }

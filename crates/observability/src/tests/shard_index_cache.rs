@@ -12,6 +12,16 @@ use super::prelude::{
     secs, write_log_block_to_object_store,
 };
 
+fn insert_api_series(
+    labels_index: &mut LabelIndex,
+    tenant: &str,
+) -> krabka_blockstore::SeriesFingerprint {
+    labels_index.insert_series(
+        tenant,
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    )
+}
+
 // --- FIX B3 tests ---
 
 mod acl_entry;

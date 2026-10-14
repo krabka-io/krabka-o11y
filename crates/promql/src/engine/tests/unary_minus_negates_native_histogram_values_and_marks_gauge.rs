@@ -2,22 +2,9 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn unary_minus_negates_native_histogram_values_and_marks_gauge() {
-    let mut histogram = native_histogram(4.0, 10.0);
-    histogram.reset_hint = ResetHint::No;
-    histogram.zero_count = 1.0;
-    histogram.positive_spans = vec![BucketSpan {
-        offset: 0,
-        length: 1,
-    }];
-    histogram.positive_counts = vec![3.0];
+    let histogram = single_bucket_native_histogram(4.0, 10.0, 1.0, 3.0);
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_histogram(
-        "tenant-a",
-        labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
-        10_000,
-        histogram,
-    );
+    let store = super::native_histogram_store::store_with_request_duration_histogram(histogram);
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let samples = instant_vector(&engine, "-request_duration_seconds", 10_000).await;

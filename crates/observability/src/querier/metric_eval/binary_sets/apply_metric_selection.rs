@@ -1,5 +1,17 @@
 use super::{SampleOrder, Value};
 
+#[derive(Clone, Copy)]
+struct RankedSample {
+    series_index: usize,
+    value: f64,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SelectedSample {
+    series_index: usize,
+    timestamp: String,
+}
+
 /// Keeps the first `limit` samples of `value` in `order`: per series for a
 /// vector, per timestamp for a matrix.
 pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, order: SampleOrder) {
@@ -25,7 +37,7 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, order: Sam
         return;
     }
 
-    let mut ranked = std::collections::HashMap::<String, Vec<(usize, f64)>>::new();
+    let mut ranked = std::collections::HashMap::<String, Vec<RankedSample>>::new();
     for (series_index, item) in series.iter().enumerate() {
         for sample in item
             .get("values")
@@ -39,17 +51,27 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, order: Sam
             ranked
                 .entry(timestamp.to_string())
                 .or_default()
-                .push((series_index, sample_value(Some(sample))));
+                .push(RankedSample {
+                    series_index,
+                    value: sample_value(Some(sample)),
+                });
         }
     }
     let mut selected = std::collections::HashSet::new();
-    for (timestamp, candidates) in &mut ranked {
-        candidates.sort_by(|left, right| order.orient(left.1.total_cmp(&right.1)));
+    let timestamps = ranked.keys().cloned().collect::<Vec<_>>();
+    for timestamp in timestamps {
+        let Some(candidates) = ranked.get_mut(&timestamp) else {
+            continue;
+        };
+        candidates.sort_by(|left, right| order.orient(left.value.total_cmp(&right.value)));
         selected.extend(
             candidates
                 .iter()
                 .take(limit)
-                .map(|(series_index, _)| (*series_index, timestamp.clone())),
+                .map(|candidate| SelectedSample {
+                    series_index: candidate.series_index,
+                    timestamp: timestamp.clone(),
+                }),
         );
     }
     for (series_index, item) in series.iter_mut().enumerate() {
@@ -59,7 +81,10 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, order: Sam
                     .as_array()
                     .and_then(|parts| parts.first())
                     .is_some_and(|timestamp| {
-                        selected.contains(&(series_index, timestamp.to_string()))
+                        selected.contains(&SelectedSample {
+                            series_index,
+                            timestamp: timestamp.to_string(),
+                        })
                     })
             });
         }

@@ -612,18 +612,47 @@ mod is_v1_float;
 mod is_v2_float;
 mod schema_i8;
 mod span_bucket_total;
-mod v1_count;
 mod v1_histogram_to_native;
 mod v1_reset_hint;
 mod v1_spans;
-mod v1_zero_count;
-mod v2_count;
 mod v2_histogram_to_native;
 mod v2_reset_hint;
 mod v2_spans;
-mod v2_zero_count;
 mod validate_spans_and_counts;
 mod validated_native_histogram;
+
+macro_rules! define_histogram_count {
+    ($function:ident, $version:ident, $field:ident, $kind:ident, $integer:ident, $float:ident) => {
+        pub(crate) fn $function(histogram: &pb::$version::Histogram) -> f64 {
+            use pb::$version::histogram::$kind;
+
+            match histogram.$field {
+                Some($kind::$integer(value)) => value.to_f64().unwrap_or(f64::MAX),
+                Some($kind::$float(value)) => value,
+                None => 0.0,
+            }
+        }
+    };
+}
+
+define_histogram_count!(v1_count, v1, count, Count, CountInt, CountFloat);
+define_histogram_count!(v2_count, v2, count, Count, CountInt, CountFloat);
+define_histogram_count!(
+    v1_zero_count,
+    v1,
+    zero_count,
+    ZeroCount,
+    ZeroCountInt,
+    ZeroCountFloat
+);
+define_histogram_count!(
+    v2_zero_count,
+    v2,
+    zero_count,
+    ZeroCount,
+    ZeroCountInt,
+    ZeroCountFloat
+);
 
 use check_side::check_side;
 use counts::counts;
@@ -631,15 +660,11 @@ use is_v1_float::is_v1_float;
 use is_v2_float::is_v2_float;
 use schema_i8::schema_i8;
 use span_bucket_total::span_bucket_total;
-use v1_count::v1_count;
 pub use v1_histogram_to_native::v1_histogram_to_native;
 use v1_reset_hint::v1_reset_hint;
 use v1_spans::v1_spans;
-use v1_zero_count::v1_zero_count;
-use v2_count::v2_count;
 pub use v2_histogram_to_native::v2_histogram_to_native;
 use v2_reset_hint::v2_reset_hint;
 use v2_spans::v2_spans;
-use v2_zero_count::v2_zero_count;
 pub(crate) use validate_spans_and_counts::validate_spans_and_counts;
 use validated_native_histogram::validated_native_histogram;

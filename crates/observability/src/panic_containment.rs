@@ -28,7 +28,7 @@
 //! publish-on-success discipline behind it converts a loud fault into a silent
 //! one, which is the failure mode this milestone exists to remove.
 
-use crate::{IntoResponse, Response, Router, StatusCode};
+use crate::{Response, Router, StatusCode};
 
 mod catch_panic;
 mod contain_handler_panics;

@@ -4,8 +4,9 @@ use super::*;
 pub(crate) async fn in_memory_without_ttl_never_expires() {
     let clock = Arc::new(ManualClock::new(0));
     let cache = QueryFrontendCache::default().with_clock(clock.clone());
-    let query = up_range_query(0, None);
-    let result = one_sample_matrix(labels(&[("__name__", "up")]));
+    let fixture = up_query_and_result();
+    let query = fixture.query;
+    let result = fixture.result;
 
     cache
         .insert("tenant-a", &query, result.clone())

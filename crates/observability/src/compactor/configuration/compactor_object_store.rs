@@ -3,6 +3,16 @@ use super::{
     effective_object_store_prefix,
 };
 
+pub(crate) struct CompactorObjectStore<'a> {
+    pub(crate) store: &'a dyn ObjectStore,
+    pub(crate) prefix: ObjectPath,
+}
+
+struct ObjectStoreSelection<'a> {
+    store: &'a dyn ObjectStore,
+    configured_prefix: Option<&'a ObjectPath>,
+}
+
 /// Resolves the store a compactor writes to, and the index prefix under it.
 ///
 /// An injected `object_store` wins over the configured one, and then the
@@ -11,22 +21,25 @@ pub(crate) fn compactor_object_store<'a>(
     config: &ServiceConfig,
     object_store: Option<&'a dyn ObjectStore>,
     configured_store: Option<&'a ConfiguredObjectStore>,
-) -> Result<(&'a dyn ObjectStore, ObjectPath), ServiceConfigError> {
-    let (store, object_store_prefix) = if let Some(store) = object_store {
-        (store, None)
+) -> Result<CompactorObjectStore<'a>, ServiceConfigError> {
+    let selection = if let Some(store) = object_store {
+        ObjectStoreSelection {
+            store,
+            configured_prefix: None,
+        }
     } else {
         let configured_store = configured_store.ok_or(ServiceConfigError::MissingObjectStore)?;
-        (
-            configured_store.store.as_ref(),
-            Some(&configured_store.prefix),
-        )
+        ObjectStoreSelection {
+            store: configured_store.store.as_ref(),
+            configured_prefix: Some(&configured_store.prefix),
+        }
     };
     let index_prefix = config
         .index_prefix
         .as_deref()
         .ok_or(ServiceConfigError::MissingCompactorIndexPrefix)?;
-    Ok((
-        store,
-        effective_object_store_prefix(object_store_prefix, index_prefix),
-    ))
+    Ok(CompactorObjectStore {
+        store: selection.store,
+        prefix: effective_object_store_prefix(selection.configured_prefix, index_prefix),
+    })
 }

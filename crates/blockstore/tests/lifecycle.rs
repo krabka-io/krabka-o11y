@@ -10,11 +10,23 @@ use krabka_blockstore::{
     BlockDeletion, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, Index, Labels, ProfileIndex,
     ShardedTraceBloom, TraceBlockStats, TraceIndex, delete_blocks, reconcile_orphans,
 };
+
+struct ProfileBlockCase {
+    object_key: &'static str,
+    min_ts: i64,
+    max_ts: i64,
+}
 use krabka_units::{Time, convert::TimeExt as _, hours};
 use object_store::{
     ObjectStore, ObjectStoreExt as _, PutPayload, local::LocalFileSystem, memory::InMemory,
     path::Path,
 };
+use storage_fixtures::listed_keys;
+
+#[path = "support/sorted_trace_block_keys.rs"]
+mod sorted_trace_block_keys;
+
+mod storage_fixtures;
 
 const CPU_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 
@@ -47,13 +59,12 @@ fn trace_stats(object_key: &str, min_ts: i64, max_ts: i64) -> TraceBlockStats {
 }
 
 fn trace_keys(index: &TraceIndex) -> Vec<String> {
-    let mut keys: Vec<String> = index
-        .trace_blocks("t")
-        .iter()
-        .map(|block| block.object_key.clone())
-        .collect();
-    keys.sort();
-    keys
+    sorted_trace_block_keys::sorted_trace_block_keys(
+        index
+            .trace_blocks("t")
+            .iter()
+            .map(|block| block.object_key.as_str()),
+    )
 }
 
 fn profile_keys(index: &ProfileIndex) -> Vec<String> {
@@ -85,16 +96,6 @@ async fn put_all(store: &dyn ObjectStore, keys: &[&str]) {
             .await
             .unwrap();
     }
-}
-
-async fn listed_keys(store: &dyn ObjectStore) -> Vec<String> {
-    let mut keys = store
-        .list(None)
-        .map(|meta| meta.unwrap().location.to_string())
-        .collect::<Vec<_>>()
-        .await;
-    keys.sort();
-    keys
 }
 
 /// The merge that publishes a trace index is a union, so a removal has to be
@@ -173,18 +174,29 @@ async fn a_removed_profile_block_takes_its_partitions_and_does_not_come_back() {
     let store = store();
     let mut index = ProfileIndex::new();
     let labels = Labels::from_pairs([
-        ("__name__", "process_cpu".to_string()),
-        ("__profile_type__", CPU_TYPE.to_string()),
-        ("service_name", "checkout".to_string()),
+        krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+        krabka_blockstore::LabelPair::new("__profile_type__", CPU_TYPE),
+        krabka_blockstore::LabelPair::new("service_name", "checkout"),
     ]);
     let fingerprint = labels.fingerprint();
     index.add_series("t", fingerprint, &labels).unwrap();
-    for (object_key, min_ts, max_ts) in [("p1.parquet", 0, 100), ("p2.parquet", 200, 300)] {
+    for case in [
+        ProfileBlockCase {
+            object_key: "p1.parquet",
+            min_ts: 0,
+            max_ts: 100,
+        },
+        ProfileBlockCase {
+            object_key: "p2.parquet",
+            min_ts: 200,
+            max_ts: 300,
+        },
+    ] {
         BlockIndex::add_block(
             &mut index,
-            &meta(object_key, min_ts, max_ts, vec![fingerprint]),
+            &meta(case.object_key, case.min_ts, case.max_ts, vec![fingerprint]),
         );
-        index.add_profile_block("t", object_key, vec![7]);
+        index.add_profile_block("t", case.object_key, vec![7]);
     }
     index.save_latest_snapshot(&store, KEY).await.unwrap();
 
@@ -207,7 +219,7 @@ async fn a_removed_profile_block_takes_its_partitions_and_does_not_come_back() {
 async fn a_removed_metrics_block_is_gone_after_the_next_save() {
     const KEY: &str = "index/metrics.json";
     let store = store();
-    let labels = Labels::from_pairs([("app", "api".to_string())]);
+    let labels = Labels::from_pairs([krabka_blockstore::LabelPair::new("app", "api")]);
     let fingerprint = labels.fingerprint();
     let mut index = Index::new();
     index.add_series("t", fingerprint, &labels);

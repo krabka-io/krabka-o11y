@@ -2,12 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_subquery_uses_global_eval_interval_when_step_is_omitted() {
-    let store = SeriesFixture::new(labels(&[("__name__", "queue_depth"), ("job", "api")]))
-        .at(0_i64, 1.0)
-        .at(30_000, 2.0)
-        .at(60_000, 3.0)
-        .at(90_000, 4.0)
-        .store();
+    let store = queue_depth_store(&[(0, 1.0), (30_000, 2.0), (60_000, 3.0), (90_000, 4.0)]);
 
     let engine = PromqlEngine::new(
         Arc::new(store),
@@ -28,7 +23,7 @@ pub(crate) async fn instant_subquery_uses_global_eval_interval_when_step_is_omit
     let timestamps = series[0]
         .samples
         .iter()
-        .map(|(ts_ms, _)| *ts_ms)
+        .map(|sample| sample.timestamp_ms)
         .collect::<Vec<_>>();
     check!(timestamps == [0, 30_000, 60_000, 90_000]);
 }

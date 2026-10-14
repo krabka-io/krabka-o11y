@@ -5,7 +5,8 @@ use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    PeerAddr, ServerStream, handle_accept_error::handle_accept_error, tls_handshake::tls_handshake,
+    handle_accept_error::handle_accept_error, listener_mode::HandshakenConnection,
+    tls_handshake::tls_handshake,
 };
 
 /// Accepts TCP connections and runs one TLS handshake task for each, until `stop` is cancelled.
@@ -23,7 +24,7 @@ pub async fn run_tls_accept_loop(
     acceptor: TlsAcceptor,
     handshake_timeout: Duration,
     verifies_client_certificates: bool,
-    ready: mpsc::Sender<(ServerStream, PeerAddr)>,
+    ready: mpsc::Sender<HandshakenConnection>,
     stop: CancellationToken,
 ) {
     let mut in_progress = JoinSet::new();

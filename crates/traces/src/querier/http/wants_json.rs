@@ -1,16 +1,5 @@
-use super::{HeaderMap, header};
+use super::{HeaderMap, accepts_media_type};
 
 pub(crate) fn wants_json(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|accept| {
-            accept.split(',').any(|part| {
-                part.split(';')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .eq_ignore_ascii_case("application/json")
-            })
-        })
+    accepts_media_type(headers, &["application/json"])
 }

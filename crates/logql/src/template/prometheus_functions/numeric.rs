@@ -29,9 +29,8 @@ fn run(name: &str, arg: &V) -> Result<V, String> {
             .string_bytes()
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .ok_or("parseDuration requires a string")?;
-        let (negative, text) = text
-            .strip_prefix('-')
-            .map_or((false, text), |text| (true, text));
+        let negative = text.starts_with('-');
+        let text = text.strip_prefix('-').unwrap_or(text);
         let value = if text == "0" {
             0
         } else {

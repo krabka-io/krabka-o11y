@@ -6,6 +6,11 @@ use super::{
     tokenize_template_command,
 };
 
+struct SliceCollectionBounds {
+    length: usize,
+    is_string: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TemplateCommand {
     Value(TemplateValue),
@@ -22,9 +27,11 @@ pub(crate) enum TemplateCommand {
 impl TemplateCommand {
     pub(crate) fn parse(command: &str) -> Result<Self, ParseError> {
         let tokens = tokenize_template_command(command)?;
-        let Some((head, tail)) = tokens.split_first() else {
+        let Some(first_and_rest) = tokens.split_first() else {
             return Err(template_parse_error("expected template command"));
         };
+        let head = first_and_rest.0;
+        let tail = first_and_rest.1;
         if tail.is_empty() && !is_template_function_name(head) {
             return Ok(Self::Value(TemplateValue::parse(head)?));
         }
@@ -63,20 +70,14 @@ impl TemplateCommand {
                 value.evaluate_with_args(context, &input.into_iter().collect::<Vec<_>>())
             }
             Self::Call { callee, args } => {
-                let mut values = args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, arg)| {
-                        arg.evaluate_method_argument(
-                            context,
-                            callee.method_name().and_then(|name| {
-                                histogram_method_signature(name, index).or_else(|| {
-                                    super::template_time::methods::signature(name, index)
-                                })
-                            }),
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                let mut values = Vec::with_capacity(args.len() + usize::from(input.is_some()));
+                for (index, arg) in args.iter().enumerate() {
+                    let signature = callee.method_name().and_then(|name| {
+                        histogram_method_signature(name, index)
+                            .or_else(|| super::template_time::methods::signature(name, index))
+                    });
+                    values.push(arg.evaluate_method_argument(context, signature));
+                }
                 values.extend(input);
                 let values = values
                     .iter()
@@ -106,27 +107,37 @@ impl TemplateCommand {
                     }
                     return input.unwrap_or(value);
                 }
-                let mut values = args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, arg)| {
-                        let parameter = template_signature(name)
-                            .and_then(|(parameters, _)| {
-                                parameters.get(index).or_else(|| parameters.last())
-                            })
-                            .copied();
-                        let value = match (parameter, arg) {
-                            (Some("[]float64"), TemplateValue::Unsigned(number)) => {
-                                TemplateRuntimeValue::Float(
-                                    number.to_f64().expect("u64 fits finite f64"),
-                                )
-                            }
-                            (Some("[]float64"), TemplateValue::Complex(real, imaginary))
+                let mut values = Vec::with_capacity(args.len() + usize::from(input.is_some()));
+                for index in 0..args.len() {
+                    let arg = &args[index];
+                    let parameter = template_signature(name)
+                        .and_then(|signature| {
+                            signature
+                                .parameters
+                                .get(index)
+                                .or_else(|| signature.parameters.last())
+                        })
+                        .copied();
+                    let mut value = match parameter {
+                        Some("[]float64") => match arg {
+                            TemplateValue::Unsigned(number) => TemplateRuntimeValue::Float(
+                                number.to_f64().expect("u64 fits finite f64"),
+                            ),
+                            TemplateValue::Integer(number) => TemplateRuntimeValue::Float(
+                                number
+                                    .to_string()
+                                    .parse()
+                                    .expect("integer literal fits float"),
+                            ),
+                            TemplateValue::Complex(real, imaginary)
                                 if f64::from_bits(*imaginary) == 0.0 =>
                             {
                                 TemplateRuntimeValue::Float(f64::from_bits(*real))
                             }
-                            (Some("int"), TemplateValue::Complex(real, imaginary))
+                            _ => arg.evaluate(context),
+                        },
+                        Some("int") => match arg {
+                            TemplateValue::Complex(real, imaginary)
                                 if f64::from_bits(*imaginary) == 0.0
                                     && (-9_223_372_036_854_775_808.0
                                         ..9_223_372_036_854_775_808.0)
@@ -140,29 +151,21 @@ impl TemplateCommand {
                                 )
                             }
                             _ => arg.evaluate(context),
-                        };
-                        match (parameter, arg, &value) {
-                            (Some("[]float64"), TemplateValue::Integer(value), _) => {
-                                TemplateRuntimeValue::Float(
-                                    value
-                                        .to_string()
-                                        .parse()
-                                        .expect("integer literal fits float"),
-                                )
-                            }
-                            (
-                                Some("int"),
-                                TemplateValue::Float(_),
-                                TemplateRuntimeValue::Float(number),
-                            ) if number.is_finite() && number.fract() == 0.0 => {
-                                format!("{number:.0}")
-                                    .parse::<i64>()
-                                    .map_or(value.clone(), TemplateRuntimeValue::Integer)
-                            }
-                            _ => value,
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                        },
+                        _ => arg.evaluate(context),
+                    };
+                    if parameter == Some("int")
+                        && matches!(arg, TemplateValue::Float(_))
+                        && let TemplateRuntimeValue::Float(number) = &value
+                        && number.is_finite()
+                        && number.fract() == 0.0
+                    {
+                        value = format!("{number:.0}")
+                            .parse::<i64>()
+                            .map_or(value, TemplateRuntimeValue::Integer);
+                    }
+                    values.push(value);
+                }
                 if let Some(input) = input {
                     values.push(input);
                 }
@@ -230,6 +233,7 @@ impl TemplateCommand {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Result<(), String> {
     validate_template_arguments(name, values)?;
     let count = values.len();
@@ -332,11 +336,11 @@ fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Re
         return Err("len of unsupported type".to_string());
     }
     if name == "index" {
-        let Some((value, indexes)) = super::template_collection_first_args(values) else {
+        let Some(split) = super::template_collection_first_args(values) else {
             return Err("index of unsupported type".to_string());
         };
-        let mut current = value.clone();
-        for index in indexes {
+        let mut current = split.collection.clone();
+        for index in split.args {
             if matches!(
                 current,
                 TemplateRuntimeValue::Labels(_)
@@ -360,23 +364,46 @@ fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Re
         }
     }
     if name == "slice" {
-        let Some((value, bounds)) = super::template_collection_first_args(values) else {
+        let Some(split) = super::template_collection_first_args(values) else {
             return Err("slice of unsupported type".to_string());
         };
-        let (length, string) = match value {
+        let bounds = match split.collection {
             TemplateRuntimeValue::String(value)
-            | TemplateRuntimeValue::Json(serde_json::Value::String(value)) => (value.len(), true),
-            TemplateRuntimeValue::Json(serde_json::Value::Array(value)) => (value.len(), false),
-            TemplateRuntimeValue::Array(value) => (value.len(), false),
-            TemplateRuntimeValue::ByteSlice(value) => (value.len(), false),
+            | TemplateRuntimeValue::Json(serde_json::Value::String(value)) => {
+                SliceCollectionBounds {
+                    length: value.len(),
+                    is_string: true,
+                }
+            }
+            TemplateRuntimeValue::Json(serde_json::Value::Array(value)) => SliceCollectionBounds {
+                length: value.len(),
+                is_string: false,
+            },
+            TemplateRuntimeValue::Array(value) => SliceCollectionBounds {
+                length: value.len(),
+                is_string: false,
+            },
+            TemplateRuntimeValue::ByteSlice(value) => SliceCollectionBounds {
+                length: value.len(),
+                is_string: false,
+            },
             TemplateRuntimeValue::FloatSlice(value)
-            | TemplateRuntimeValue::HistogramSpans(value) => (value.len(), false),
-            TemplateRuntimeValue::QueryResult(value) => (value.len(), false),
-            TemplateRuntimeValue::Bytes(value) => (value.len(), true),
+            | TemplateRuntimeValue::HistogramSpans(value) => SliceCollectionBounds {
+                length: value.len(),
+                is_string: false,
+            },
+            TemplateRuntimeValue::QueryResult(value) => SliceCollectionBounds {
+                length: value.len(),
+                is_string: false,
+            },
+            TemplateRuntimeValue::Bytes(value) => SliceCollectionBounds {
+                length: value.len(),
+                is_string: true,
+            },
             _ => return Err("slice of unsupported type".to_string()),
         };
-        if (string && bounds.len() > 2)
-            || bounds.iter().any(|bound| {
+        if (bounds.is_string && split.args.len() > 2)
+            || split.args.iter().any(|bound| {
                 !matches!(
                     bound,
                     TemplateRuntimeValue::Integer(_)
@@ -384,7 +411,7 @@ fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Re
                         | TemplateRuntimeValue::Byte(_)
                 )
             })
-            || super::template_slice_bounds(length, bounds).is_none()
+            || super::template_slice_bounds(bounds.length, split.args).is_none()
         {
             return Err("invalid slice bounds".to_string());
         }
@@ -415,33 +442,47 @@ fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Re
 }
 
 // Actual registered signatures of pinned Loki 3.7.7 and its Sprig allowlist.
-fn template_signature(name: &str) -> Option<(&'static [&'static str], bool)> {
+struct TemplateSignature {
+    parameters: &'static [&'static str],
+    variadic: bool,
+}
+
+fn signature(parameters: &'static [&'static str], variadic: bool) -> TemplateSignature {
+    TemplateSignature {
+        parameters,
+        variadic,
+    }
+}
+
+fn template_signature(name: &str) -> Option<TemplateSignature> {
     match name {
-        "Replace" => Some((&["string", "string", "string", "int"], false)),
+        "Replace" => Some(signature(&["string", "string", "string", "int"], false)),
         "ToLower" | "ToUpper" | "TrimSpace" | "b64dec" | "b64enc" | "bytes" | "duration"
         | "duration_seconds" | "fromJson" | "lower" | "title" | "trim" | "unixToTime" | "upper"
-        | "urldecode" | "urlencode" => Some((&["string"], false)),
+        | "urldecode" | "urlencode" => Some(signature(&["string"], false)),
         "Trim" | "TrimLeft" | "TrimPrefix" | "TrimRight" | "TrimSuffix" | "contains" | "count"
         | "hasPrefix" | "hasSuffix" | "toDate" | "trimAll" | "trimPrefix" | "trimSuffix" => {
-            Some((&["string", "string"], false))
+            Some(signature(&["string", "string"], false))
         }
-        "__line__" | "__timestamp__" | "now" => Some((&[], false)),
-        "add" | "addf" => Some((&["[]interface {}"], true)),
+        "__line__" | "__timestamp__" | "now" => Some(signature(&[], false)),
+        "add" | "addf" => Some(signature(&["[]interface {}"], true)),
         "alignLeft" | "alignRight" | "indent" | "nindent" | "repeat" | "trunc" => {
-            Some((&["int", "string"], false))
+            Some(signature(&["int", "string"], false))
         }
-        "ceil" | "float64" | "floor" | "int" => Some((&["interface {}"], false)),
-        "date" => Some((&["string", "interface {}"], false)),
+        "ceil" | "float64" | "floor" | "int" => Some(signature(&["interface {}"], false)),
+        "date" => Some(signature(&["string", "interface {}"], false)),
         "default" | "divf" | "max" | "maxf" | "min" | "minf" | "mul" | "mulf" | "subf" => {
-            Some((&["interface {}", "[]interface {}"], true))
+            Some(signature(&["interface {}", "[]interface {}"], true))
         }
-        "div" | "mod" | "sub" => Some((&["interface {}", "interface {}"], false)),
+        "div" | "mod" | "sub" => Some(signature(&["interface {}", "interface {}"], false)),
         "regexReplaceAll" | "regexReplaceAllLiteral" | "replace" | "toDateInZone" => {
-            Some((&["string", "string", "string"], false))
+            Some(signature(&["string", "string", "string"], false))
         }
-        "round" => Some((&["interface {}", "int", "[]float64"], true)),
-        "substr" => Some((&["int", "int", "string"], false)),
-        "unixEpoch" | "unixEpochMillis" | "unixEpochNanos" => Some((&["time.Time"], false)),
+        "round" => Some(signature(&["interface {}", "int", "[]float64"], true)),
+        "substr" => Some(signature(&["int", "int", "string"], false)),
+        "unixEpoch" | "unixEpochMillis" | "unixEpochNanos" => {
+            Some(signature(&["time.Time"], false))
+        }
         _ => None,
     }
 }
@@ -458,15 +499,19 @@ fn histogram_method_signature(name: &str, index: usize) -> Option<&'static str> 
 
 fn validate_template_arguments(name: &str, values: &[TemplateRuntimeValue]) -> Result<(), String> {
     let count = values.len();
-    if let Some((parameters, variadic)) = template_signature(name) {
-        let minimum = parameters.len().saturating_sub(usize::from(variadic));
-        if count < minimum || (!variadic && count != parameters.len()) {
+    if let Some(signature) = template_signature(name) {
+        let minimum = signature
+            .parameters
+            .len()
+            .saturating_sub(usize::from(signature.variadic));
+        if count < minimum || (!signature.variadic && count != signature.parameters.len()) {
             return Err(format!("wrong number of args for {name}"));
         }
         for (index, value) in values.iter().enumerate() {
-            let parameter = parameters
+            let parameter = signature
+                .parameters
                 .get(index)
-                .or_else(|| parameters.last())
+                .or_else(|| signature.parameters.last())
                 .copied()
                 .unwrap_or("interface {}");
             let valid = match parameter {

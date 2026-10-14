@@ -33,9 +33,9 @@ pub fn cpu_record(record: CpuRecord<'_>) -> ProfileRecord {
     ProfileRecord {
         tenant: tenant.to_string(),
         labels: vec![
-            ("__name__".to_string(), "process_cpu".to_string()),
-            ("__profile_type__".to_string(), CPU_PROFILE_TYPE.to_string()),
-            ("service_name".to_string(), service.to_string()),
+            krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+            krabka_blockstore::LabelPair::new("__profile_type__", CPU_PROFILE_TYPE),
+            krabka_blockstore::LabelPair::new("service_name", service),
         ],
         profile_type: CPU_PROFILE_TYPE.to_string(),
         samples: vec![WalSample {

@@ -12,6 +12,12 @@ use super::*;
 pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
     use krabka_logql::MetricBinarySetOp;
 
+    #[derive(Debug, PartialEq)]
+    struct SetResult {
+        kept: bool,
+        timestamps: Vec<i64>,
+    }
+
     let range = |samples: &[i64]| {
         serde_json::json!({
             "metric": {"app": "api"},
@@ -36,12 +42,33 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
     let apply = |op| {
         let mut left = range(&[1, 2, 3, 4]);
         let kept = super::super::prelude::apply_metric_binary_set_to_series(&mut left, &right, op);
-        (kept, timestamps(&left))
+        SetResult {
+            kept,
+            timestamps: timestamps(&left),
+        }
     };
 
-    check!(apply(MetricBinarySetOp::And) == (true, vec![2, 3]));
-    check!(apply(MetricBinarySetOp::Unless) == (true, vec![1, 4]));
-    check!(apply(MetricBinarySetOp::Or) == (true, vec![1, 2, 3, 4]));
+    check!(
+        apply(MetricBinarySetOp::And)
+            == (SetResult {
+                kept: true,
+                timestamps: vec![2, 3]
+            })
+    );
+    check!(
+        apply(MetricBinarySetOp::Unless)
+            == (SetResult {
+                kept: true,
+                timestamps: vec![1, 4]
+            })
+    );
+    check!(
+        apply(MetricBinarySetOp::Or)
+            == (SetResult {
+                kept: true,
+                timestamps: vec![1, 2, 3, 4]
+            })
+    );
 
     // When the filter empties the series it reports false, so the caller
     // can drop it rather than emitting an empty series.

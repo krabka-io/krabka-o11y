@@ -1,0 +1,1 @@
+{app="a"} |= "level=" |~ "err(0|o)r" |> "level=<_>r"

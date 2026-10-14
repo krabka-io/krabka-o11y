@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct HistogramArithmeticExpectation {
+    query: &'static str,
+    count: f64,
+    sum: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn vector_vector_arithmetic_combines_compatible_native_histograms() {
     let mut left = native_histogram(4.0, 10.0);
@@ -17,27 +24,44 @@ pub(crate) async fn vector_vector_arithmetic_combines_compatible_native_histogra
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "a"), ("job", "api"), ("x", "1")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "a"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("x", "1"),
+        ]),
         10_000,
         left,
     );
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "b"), ("job", "api"), ("x", "1")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "b"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("x", "1"),
+        ]),
         10_000,
         right,
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    for (query, expected_count, expected_sum) in
-        [("a + on (x) b", 6.0, 14.0), ("a - on (x) b", 2.0, 6.0)]
-    {
+    for expectation in [
+        HistogramArithmeticExpectation::builder()
+            .query("a + on (x) b")
+            .count(6.0)
+            .sum(14.0)
+            .build(),
+        HistogramArithmeticExpectation::builder()
+            .query("a - on (x) b")
+            .count(2.0)
+            .sum(6.0)
+            .build(),
+    ] {
         assert_on_x_histogram_stats(
             &engine,
             OnXHistogramStats {
-                query,
-                count: expected_count,
-                sum: expected_sum,
+                query: expectation.query,
+                count: expectation.count,
+                sum: expectation.sum,
             },
         )
         .await;

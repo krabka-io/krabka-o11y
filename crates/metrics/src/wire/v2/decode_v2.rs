@@ -3,13 +3,17 @@ use super::{
     WrittenCounts, labels_from_refs, metadata_from_v2, pb, snappy_block_decode,
     v2_histogram_to_native,
 };
+use crate::wire::DecodedHistogramSample;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodedV2Write {
+    pub series: Vec<DecodedSeries>,
+    pub counts: WrittenCounts,
+}
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn decode_v2(
-    body: &[u8],
-    max_decompressed: ByteSize,
-) -> Result<(Vec<DecodedSeries>, WrittenCounts), WireError> {
+pub fn decode_v2(body: &[u8], max_decompressed: ByteSize) -> Result<DecodedV2Write, WireError> {
     let raw = snappy_block_decode(body, max_decompressed)?;
     let req = pb::v2::Request::decode(raw.as_slice())
         .map_err(|error| WireError::ProtobufDecode(error.to_string()))?;
@@ -41,7 +45,12 @@ pub fn decode_v2(
         let histograms = series
             .histograms
             .iter()
-            .map(|histogram| Ok((histogram.timestamp, v2_histogram_to_native(histogram)?)))
+            .map(|histogram| {
+                Ok(DecodedHistogramSample {
+                    timestamp_ms: histogram.timestamp,
+                    histogram: v2_histogram_to_native(histogram)?,
+                })
+            })
             .collect::<Result<Vec<_>, WireError>>()?;
         counts.histograms += histograms.len() as u64;
 
@@ -67,5 +76,8 @@ pub fn decode_v2(
         });
     }
 
-    Ok((out, counts))
+    Ok(DecodedV2Write {
+        series: out,
+        counts,
+    })
 }

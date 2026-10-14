@@ -29,6 +29,27 @@ async fn manifest_cold_store(
     )
 }
 
+struct ReopenedManifestEngine {
+    object_store: Arc<dyn ObjectStore>,
+    engine: PromqlEngine<MetricBlockStore>,
+}
+
+async fn reopen_manifest_engine(
+    objects: &std::path::Path,
+    base: &url::Url,
+) -> ReopenedManifestEngine {
+    let object_store: Arc<dyn ObjectStore> =
+        Arc::new(LocalFileSystem::new_with_prefix(objects).unwrap());
+    let engine = PromqlEngine::new(
+        Arc::new(manifest_cold_store(&object_store, base).await),
+        EngineOpts::default(),
+    );
+    ReopenedManifestEngine {
+        object_store,
+        engine,
+    }
+}
+
 /// Runs two metric-block compaction passes over `object_store`.
 async fn compact_twice(
     object_store: &Arc<dyn ObjectStore>,
@@ -52,8 +73,11 @@ async fn compact_twice(
 #[tokio::test]
 async fn byte_recording_rules_survive_wal_compaction_and_restart() {
     let directory = tempfile::tempdir().unwrap();
-    let (records, values) = recording_rule_fixture().await;
-    for (index, record) in records.iter().enumerate() {
+    let fixture = recording_rule_fixture().await;
+    let records = fixture.records;
+    let values = fixture.values;
+    for index in 0..records.len() {
+        let record = &records[index];
         std::fs::write(
             directory.path().join(format!("wal-{index}")),
             record.encode().unwrap(),
@@ -113,14 +137,10 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
     drop(object_store);
     // Reopening the filesystem and rebuilding solely from persisted sidecars
     // prevents an in-process label cache from hiding a lossy storage adapter.
-    let reopened: Arc<dyn ObjectStore> =
-        Arc::new(LocalFileSystem::new_with_prefix(&objects).unwrap());
-    let engine = PromqlEngine::new(
-        Arc::new(manifest_cold_store(&reopened, &base).await),
-        EngineOpts::default(),
-    );
-    check_byte_ledger(&engine, &values).await;
-    drop(engine);
+    let reopened_engine = reopen_manifest_engine(&objects, &base).await;
+    check_byte_ledger(&reopened_engine.engine, &values).await;
+    let reopened = reopened_engine.object_store;
+    drop(reopened_engine.engine);
     let raw_matcher = |byte| krabka_blockstore::ByteLabelMatcher {
         name: "raw".to_owned(),
         op: krabka_blockstore::MatchOp::Eq,
@@ -128,20 +148,35 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
     };
     // Both a different tenant and a disjoint closed time window must leave FE
     // intact. The matching request removes only FF across both sample kinds.
-    for (tenant, start, end, byte) in [
-        ("tenant-b", 30_000_000_000, 30_000_000_000, 0xfe),
-        ("tenant-a", 31_000_000_000, 31_000_000_000, 0xfe),
-        ("tenant-a", 30_000_000_000, 30_000_000_000, 0xff),
+    for case in [
+        ErasureCase {
+            tenant: "tenant-b",
+            start: 30_000_000_000,
+            end: 30_000_000_000,
+            byte: 0xfe,
+        },
+        ErasureCase {
+            tenant: "tenant-a",
+            start: 31_000_000_000,
+            end: 31_000_000_000,
+            byte: 0xfe,
+        },
+        ErasureCase {
+            tenant: "tenant-a",
+            start: 30_000_000_000,
+            end: 30_000_000_000,
+            byte: 0xff,
+        },
     ] {
         let request = krabka_blockstore::ErasureRequest::new(
-            tenant,
+            case.tenant,
             "byte ledger",
             Vec::new(),
-            start,
-            end,
+            case.start,
+            case.end,
             40_000_000_000,
         )
-        .with_byte_matchers(vec![vec![raw_matcher(byte)]]);
+        .with_byte_matchers(vec![vec![raw_matcher(case.byte)]]);
         krabka_blockstore::put_erasure_request(
             &reopened,
             krabka_blockstore::ERASURE_REQUEST_PREFIX,
@@ -152,18 +187,20 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
     }
     compact_twice(&reopened, policy, &mut deferred).await;
     drop(reopened);
-    let reopened: Arc<dyn ObjectStore> =
-        Arc::new(LocalFileSystem::new_with_prefix(&objects).unwrap());
-    let engine = PromqlEngine::new(
-        Arc::new(manifest_cold_store(&reopened, &base).await),
-        EngineOpts::default(),
-    );
-    for (query, expected_value) in [
-        ("recorded_float", 2.0),
-        ("histogram_count(recorded_hist)", 5.0),
+    let reopened_engine = reopen_manifest_engine(&objects, &base).await;
+    let engine = reopened_engine.engine;
+    for case in [
+        QueryValueCase {
+            query: "recorded_float",
+            expected: 2.0,
+        },
+        QueryValueCase {
+            query: "histogram_count(recorded_hist)",
+            expected: 5.0,
+        },
     ] {
         let QueryResult::InstantVector(samples) = engine
-            .query_instant(&tenant_id("tenant-a"), query, 30_000)
+            .query_instant(&tenant_id("tenant-a"), case.query, 30_000)
             .await
             .unwrap()
         else {
@@ -171,10 +208,7 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
         };
         assert2::assert!(samples.len() == 3);
         assert2::assert!(
-            samples
-                .iter()
-                .map(|sample| sample.labels.get_value("raw").unwrap().as_bytes().to_vec())
-                .collect::<BTreeSet<_>>()
+            raw_label_values(&samples)
                 == BTreeSet::from([
                     vec![0xfe],
                     "�".as_bytes().to_vec(),
@@ -182,7 +216,7 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
                 ])
         );
         for sample in samples {
-            assert2::assert!(sample.value == SampleValue::Float(expected_value));
+            assert2::assert!(sample.value == SampleValue::Float(case.expected));
         }
     }
     let QueryResult::InstantVector(samples) = engine
@@ -199,17 +233,71 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
     assert2::assert!(samples.is_empty());
 }
 
-async fn recording_rule_fixture() -> (Vec<WalRecord>, [Vec<u8>; 4]) {
+struct RecordingRuleFixture {
+    records: Vec<WalRecord>,
+    values: [Vec<u8>; 4],
+}
+
+struct ErasureCase {
+    tenant: &'static str,
+    start: i64,
+    end: i64,
+    byte: u8,
+}
+
+struct QueryValueCase {
+    query: &'static str,
+    expected: f64,
+}
+
+fn raw_label_values(samples: &[crate::InstantSample]) -> BTreeSet<Vec<u8>> {
+    samples
+        .iter()
+        .map(|sample| sample.labels.get_value("raw").unwrap().as_bytes().to_vec())
+        .collect()
+}
+
+async fn instant_vector<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+) -> Vec<crate::InstantSample> {
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant(&tenant_id("tenant-a"), query, 30_000)
+        .await
+        .unwrap()
+    else {
+        panic!("expected vector");
+    };
+    samples
+}
+
+struct RecordingRuleCase {
+    input: &'static str,
+    output: &'static str,
+}
+
+struct QueryBytesCase {
+    query: &'static str,
+    expected: Vec<Vec<u8>>,
+}
+
+async fn recording_rule_fixture() -> RecordingRuleFixture {
     let mut seed = InMemoryMetricStore::new();
     seed.push_float(
         "tenant-a",
-        labels(&[("__name__", "input_float")]),
+        labels(&[crate::test_support::TestLabelPair::new(
+            "__name__",
+            "input_float",
+        )]),
         30_000,
         2.0,
     );
     seed.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "input_hist")]),
+        labels(&[crate::test_support::TestLabelPair::new(
+            "__name__",
+            "input_hist",
+        )]),
         30_000,
         NativeHistogram {
             schema: 0,
@@ -238,22 +326,31 @@ async fn recording_rule_fixture() -> (Vec<WalRecord>, [Vec<u8>; 4]) {
         b"__krabka_bytes_ff".to_vec(),
     ];
     let mut records = Vec::new();
-    for (input, output) in [
-        ("input_float", "recorded_float"),
-        ("input_hist", "recorded_hist"),
+    for case in [
+        RecordingRuleCase {
+            input: "input_float",
+            output: "recorded_float",
+        },
+        RecordingRuleCase {
+            input: "input_hist",
+            output: "recorded_hist",
+        },
     ] {
         let query = values
             .iter()
             .map(|bytes| {
                 let literal = PromqlString::from(bytes.clone()).quoted();
-                format!("label_replace({input},\"raw\",{literal},\"\",\".*\")")
+                format!(
+                    "label_replace({},\"raw\",{literal},\"\",\".*\")",
+                    case.input
+                )
             })
             .collect::<Vec<_>>()
             .join(" or ");
         let materialized = evaluate_recording_rule(
             &seed_engine,
             &tenant_id("tenant-a"),
-            output,
+            case.output,
             &query,
             &BTreeMap::new(),
             30_000,
@@ -277,9 +374,13 @@ async fn recording_rule_fixture() -> (Vec<WalRecord>, [Vec<u8>; 4]) {
         let error = evaluate_recording_rule(
             &seed_engine,
             &tenant_id("tenant-a"),
-            output,
+            case.output,
             &query,
-            &BTreeMap::from([("raw".to_owned(), "collapsed".to_owned())]),
+            &{
+                let mut labels = BTreeMap::new();
+                labels.insert("raw".to_owned(), "collapsed".to_owned());
+                labels
+            },
             30_000,
         )
         .await
@@ -287,33 +388,35 @@ async fn recording_rule_fixture() -> (Vec<WalRecord>, [Vec<u8>; 4]) {
         assert2::assert!(error.to_string().contains("same labelset"));
         records.extend(materialized);
     }
-    (records, values)
+    RecordingRuleFixture { records, values }
 }
 
 async fn check_byte_ledger<S: MetricStore>(engine: &PromqlEngine<S>, values: &[Vec<u8>; 4]) {
-    for (query, value) in [
-        ("sum by(raw)(recorded_float)", 2.0),
-        ("histogram_count(recorded_hist)", 5.0),
-        ("sum by(raw)(sum_over_time(recorded_float[1m]))", 2.0),
+    for case in [
+        QueryValueCase {
+            query: "sum by(raw)(recorded_float)",
+            expected: 2.0,
+        },
+        QueryValueCase {
+            query: "histogram_count(recorded_hist)",
+            expected: 5.0,
+        },
+        QueryValueCase {
+            query: "sum by(raw)(sum_over_time(recorded_float[1m]))",
+            expected: 2.0,
+        },
     ] {
-        let QueryResult::InstantVector(samples) = engine
-            .query_instant(&tenant_id("tenant-a"), query, 30_000)
-            .await
-            .unwrap()
-        else {
-            panic!("expected vector");
-        };
-        assert2::assert!(samples.len() == 4, "{query}");
+        let samples = instant_vector(&engine, case.query).await;
+        assert2::assert!(samples.len() == 4, "{}", case.query);
         assert2::assert!(
-            samples
-                .iter()
-                .map(|sample| sample.labels.get_value("raw").unwrap().as_bytes().to_vec())
-                .collect::<BTreeSet<_>>()
-                == values.iter().cloned().collect::<BTreeSet<_>>(),
-            "{query}"
+            raw_label_values(&samples) == values.iter().cloned().collect::<BTreeSet<_>>(),
+            "{}",
+            case.query
         );
         for sample in samples {
-            assert2::assert!(sample.ts_ms == 30_000 && sample.value == SampleValue::Float(value));
+            assert2::assert!(
+                sample.ts_ms == 30_000 && sample.value == SampleValue::Float(case.expected)
+            );
         }
     }
     let QueryResult::InstantVector(samples) = engine
@@ -333,31 +436,29 @@ async fn check_byte_ledger<S: MetricStore>(engine: &PromqlEngine<S>, values: &[V
             .iter()
             .all(|sample| sample.labels.get_value("raw").unwrap().as_bytes() != "�".as_bytes())
     );
-    for (query, expected) in [
-        (r#"recorded_float{raw="\xff"}"#, vec![vec![0xff]]),
-        (
-            r#"recorded_float{raw!="\xff",raw!="�"}"#,
-            vec![vec![0xfe], b"__krabka_bytes_ff".to_vec()],
-        ),
-        (
-            r#"sum_over_time(recorded_float{raw="\xfe"}[1m])"#,
-            vec![vec![0xfe]],
-        ),
+    for case in [
+        QueryBytesCase {
+            query: r#"recorded_float{raw="\xff"}"#,
+            expected: vec![vec![0xff]],
+        },
+        QueryBytesCase {
+            query: r#"recorded_float{raw!="\xff",raw!="�"}"#,
+            expected: vec![vec![0xfe], b"__krabka_bytes_ff".to_vec()],
+        },
+        QueryBytesCase {
+            query: r#"sum_over_time(recorded_float{raw="\xfe"}[1m])"#,
+            expected: vec![vec![0xfe]],
+        },
     ] {
-        let QueryResult::InstantVector(samples) = engine
-            .query_instant(&tenant_id("tenant-a"), query, 30_000)
-            .await
-            .unwrap()
-        else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(engine, case.query).await;
         assert2::assert!(
             samples
                 .iter()
                 .map(|sample| sample.labels.get_value("raw").unwrap().as_bytes().to_vec())
                 .collect::<BTreeSet<_>>()
-                == expected.into_iter().collect::<BTreeSet<_>>(),
-            "{query}"
+                == case.expected.into_iter().collect::<BTreeSet<_>>(),
+            "{}",
+            case.query
         );
         for sample in samples {
             assert2::assert!(sample.value == SampleValue::Float(2.0));

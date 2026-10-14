@@ -1,6 +1,6 @@
 use super::{
-    Arc, MetricStore, PrometheusApiState, RangeQueryParams, RequestAuth, Response, TimedQuery,
-    query_range_dispatch, run_timed_query,
+    Arc, MetricStore, PrometheusApiState, QueryDispatchRequest, RangeQueryParams, RequestAuth,
+    Response, TimedQuery, query_range_dispatch, run_timed_query,
 };
 
 pub(crate) async fn query_range_inner<S: MetricStore>(
@@ -16,7 +16,14 @@ pub(crate) async fn query_range_inner<S: MetricStore>(
             timeout: timeout.as_deref(),
         },
         async |timing| {
-            query_range_dispatch(state, auth.headers, auth.principal, params, timing).await
+            query_range_dispatch(QueryDispatchRequest {
+                state,
+                headers: auth.headers,
+                principal: auth.principal,
+                params,
+                timing,
+            })
+            .await
         },
     )
     .await

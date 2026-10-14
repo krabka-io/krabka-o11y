@@ -4,8 +4,8 @@ use super::*;
 pub(crate) async fn replay_wal_records_populates_queryable_head() {
     let mut store = InMemoryMetricStore::new();
     let series_labels = vec![
-        ("__name__".to_string(), "up".to_string().into()),
-        ("job".to_string(), "api".to_string().into()),
+        krabka_metrics::MetricLabelPair::new("__name__", "up".to_string().into()),
+        krabka_metrics::MetricLabelPair::new("job", "api".to_string().into()),
     ];
     store.apply_wal_record(&WalRecord {
         tenant: "tenant-a".to_string(),
@@ -20,11 +20,11 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
     store.apply_wal_record(&WalRecord {
         tenant: "tenant-a".to_string(),
         labels: vec![
-            (
-                "__name__".to_string(),
+            krabka_metrics::MetricLabelPair::new(
+                "__name__",
                 "request_duration_seconds".to_string().into(),
             ),
-            ("job".to_string(), "api".to_string().into()),
+            krabka_metrics::MetricLabelPair::new("job", "api".to_string().into()),
         ],
         payload: SamplePayload::Hist {
             timestamp_ms: 10_000,
@@ -48,21 +48,16 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         labels: series_labels.clone(),
         payload: SamplePayload::Exemplars,
         exemplars: vec![WalExemplar {
-            labels: vec![("trace_id".to_string(), "abc".to_string())],
+            labels: vec![krabka_metrics::MetricLabelPair::new(
+                "trace_id",
+                "abc".to_string(),
+            )],
             value: 1.0,
             timestamp_ms: 10_000,
         }],
     });
 
-    let engine = PromqlEngine::new(std::sync::Arc::new(store.clone()), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "up", 10_000)
-        .await
-        .expect("query");
-    let QueryResult::InstantVector(vector) = result else {
-        panic!("expected vector");
-    };
-    check!(vector[0].value == SampleValue::Float(1.0));
+    assert_up_query_value(store.clone()).await;
     let scan = store.scan("tenant-a", &[], 0, 10_000).await.unwrap();
     let float_table = scan.float_table.as_deref().expect("float table");
     let batches = scan
@@ -91,7 +86,7 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
             .unwrap()
             .exemplars[0]
             .labels
-            == lbls(&[("trace_id", "abc")])
+            == lbls(&[crate::test_support::TestLabelPair::new("trace_id", "abc")])
     );
     check!(
         store

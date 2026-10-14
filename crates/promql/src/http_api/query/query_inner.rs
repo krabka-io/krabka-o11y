@@ -1,6 +1,6 @@
 use super::{
-    Arc, InstantQueryParams, MetricStore, PrometheusApiState, RequestAuth, Response, TimedQuery,
-    query_dispatch, run_timed_query,
+    Arc, InstantQueryParams, MetricStore, PrometheusApiState, QueryDispatchRequest, RequestAuth,
+    Response, TimedQuery, query_dispatch, run_timed_query,
 };
 
 pub(crate) async fn query_inner<S: MetricStore>(
@@ -15,7 +15,16 @@ pub(crate) async fn query_inner<S: MetricStore>(
             route: "query",
             timeout: timeout.as_deref(),
         },
-        async |timing| query_dispatch(state, auth.headers, auth.principal, params, timing).await,
+        async |timing| {
+            query_dispatch(QueryDispatchRequest {
+                state,
+                headers: auth.headers,
+                principal: auth.principal,
+                params,
+                timing,
+            })
+            .await
+        },
     )
     .await
 }

@@ -71,12 +71,16 @@ pub async fn publish_tsdb_import(
 
     let mut written = Vec::new();
     match stage_and_commit(store, &keys, &target, block, &mut written).await {
-        Ok((ImportCommit::Won(record), manifests)) => {
-            publish(store.as_ref(), &keys, record, &manifests)
-                .await
-                .map(TsdbImportOutcome::Imported)
-        }
-        Ok((ImportCommit::Lost(existing), _)) => {
+        Ok(ImportCommitResult {
+            commit: ImportCommit::Won(record),
+            manifests,
+        }) => publish(store.as_ref(), &keys, record, &manifests)
+            .await
+            .map(TsdbImportOutcome::Imported),
+        Ok(ImportCommitResult {
+            commit: ImportCommit::Lost(existing),
+            ..
+        }) => {
             // An import of the same ULID wrote the same keys, which the record
             // names. An import of another ULID wrote keys that no record names.
             if !names_all(&existing, &written) {
@@ -234,9 +238,7 @@ fn checked_record(
     }
     for object in &record.objects {
         let expected = keys.object(&record.ulid, &record.sha256, object.kind);
-        if (object.block_key.as_str(), object.index_key.as_str())
-            != (expected.0.as_str(), expected.1.as_str())
-        {
+        if object.block_key != expected.block_key || object.index_key != expected.index_key {
             return Err(invalid(format!(
                 "the record names object {}, which is not an import key",
                 object.block_key
@@ -257,12 +259,15 @@ async fn stage_and_commit(
     target: &TsdbImportTarget<'_>,
     block: &DecodedTsdbBlock,
     written: &mut Vec<String>,
-) -> Result<(ImportCommit, Vec<CompactionIndexManifest>), TsdbPublishError> {
+) -> Result<ImportCommitResult, TsdbPublishError> {
     let mut manifests = Vec::new();
-    for (kind, batch) in kind_batches(encode_tenant_batches(&block.rows)?) {
-        let (block_key, index_key) = keys.object(target.block_ulid, target.sha256, kind);
+    for entry in kind_batches(encode_tenant_batches(&block.rows)?) {
+        let object_keys = keys.object(target.block_ulid, target.sha256, entry.kind);
+        let block_key = object_keys.block_key;
+        let index_key = object_keys.index_key;
         written.push(block_key.clone());
-        manifests.push(write_block(store, block, kind, batch, block_key, index_key).await?);
+        manifests
+            .push(write_block(store, block, entry.kind, entry.batch, block_key, index_key).await?);
     }
 
     let record = TsdbImportRecord {
@@ -283,7 +288,10 @@ async fn stage_and_commit(
     };
     let record_key = keys.record(target.sha256);
     if create_import_json(store.as_ref(), &record_key, &record).await? {
-        return Ok((ImportCommit::Won(record), manifests));
+        return Ok(ImportCommitResult {
+            commit: ImportCommit::Won(record),
+            manifests,
+        });
     }
     let existing = read_import_json(store.as_ref(), &record_key)
         .await?
@@ -291,7 +299,10 @@ async fn stage_and_commit(
             key: record_key.to_string(),
             reason: "the record was deleted during the import".to_owned(),
         })?;
-    Ok((ImportCommit::Lost(existing), manifests))
+    Ok(ImportCommitResult {
+        commit: ImportCommit::Lost(existing),
+        manifests,
+    })
 }
 
 /// Writes the objects that an unpublished record names and the store lacks,
@@ -323,8 +334,8 @@ async fn missing_manifests(
     for object in missing {
         let batch = batches
             .iter()
-            .find(|(kind, _)| *kind == object.kind)
-            .map(|(_, batch)| batch.clone())
+            .find(|entry| entry.kind == object.kind)
+            .map(|entry| entry.batch.clone())
             .ok_or_else(|| TsdbPublishError::InvalidRecord {
                 key: object.index_key.clone(),
                 reason: format!("the block holds no {:?} rows", object.kind),
@@ -389,14 +400,31 @@ async fn exists(store: &dyn ObjectStore, key: &Path) -> Result<bool, TsdbPublish
     }
 }
 
-fn kind_batches(batches: TenantBatches) -> Vec<(MetricBlockKind, RecordBatch)> {
-    [
-        (MetricBlockKind::Float, batches.float),
-        (MetricBlockKind::NativeHistograms, batches.native_histograms),
-    ]
-    .into_iter()
-    .filter_map(|(kind, batch)| batch.map(|batch| (kind, batch)))
-    .collect()
+struct ImportCommitResult {
+    commit: ImportCommit,
+    manifests: Vec<CompactionIndexManifest>,
+}
+
+struct MetricKindBatch {
+    kind: MetricBlockKind,
+    batch: RecordBatch,
+}
+
+fn kind_batches(batches: TenantBatches) -> Vec<MetricKindBatch> {
+    let mut result = Vec::new();
+    if let Some(batch) = batches.float {
+        result.push(MetricKindBatch {
+            kind: MetricBlockKind::Float,
+            batch,
+        });
+    }
+    if let Some(batch) = batches.native_histograms {
+        result.push(MetricKindBatch {
+            kind: MetricBlockKind::NativeHistograms,
+            batch,
+        });
+    }
+    result
 }
 
 async fn write_block(

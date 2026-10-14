@@ -1,29 +1,24 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, authorize_tenant, connect_error, merge_profile_type_selector,
-    parse_label_selector, parse_render_query, pb, tenant_connect_error,
-    tenant_denied_connect_error, tenant_from_headers,
+    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileStore, connect_error,
+    merge_profile_type_selector, parse_label_selector, parse_render_query,
+    parse_render_query::ParsedRenderQuery, pb,
 };
 
 pub(crate) async fn analyze_query_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::AnalyzeQueryRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::AnalyzeQueryRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::AnalyzeQueryResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
     // The pinned v2 query frontend exposes this diagnostic as an empty stub.
     if state.query_architecture == super::PyroscopeQueryArchitecture::V2 {
         return Ok(ConnectResponse::new(
             pb::querier::v1::AnalyzeQueryResponse::default(),
         ));
     }
-    let req = req.0;
+    let req = request.request.0;
     // The pinned public frontend returns an empty diagnostic before parsing
     // the selector whenever either bound is omitted (frontend_analyze_query.go).
     if req.start == 0 || req.end == 0 {
@@ -34,17 +29,32 @@ where
     state
         .validate_query_range(&tenant, req.start, req.end)
         .map_err(connect_error)?;
-    let (profile_type, selector) =
-        if !state.query_analysis_series_enabled || req.query.trim().is_empty() {
-            (String::new(), "{}".to_string())
-        } else if req.query.trim().starts_with('{') {
-            (String::new(), req.query.clone())
-        } else {
-            let (profile_type, selector) = parse_render_query(&req.query).map_err(connect_error)?;
-            let selector =
-                merge_profile_type_selector(&selector, &profile_type).map_err(connect_error)?;
-            (profile_type, selector)
-        };
+    let parsed = if !state.query_analysis_series_enabled || req.query.trim().is_empty() {
+        ParsedRenderQuery {
+            profile_type: String::new(),
+            selector: "{}".to_string(),
+        }
+    } else if req.query.trim().starts_with('{') {
+        ParsedRenderQuery {
+            profile_type: String::new(),
+            selector: req.query.clone(),
+        }
+    } else {
+        let ParsedRenderQuery {
+            profile_type,
+            selector,
+        } = parse_render_query(&req.query).map_err(connect_error)?;
+        let selector =
+            merge_profile_type_selector(&selector, &profile_type).map_err(connect_error)?;
+        ParsedRenderQuery {
+            profile_type,
+            selector,
+        }
+    };
+    let ParsedRenderQuery {
+        profile_type,
+        selector,
+    } = parsed;
     let matchers = parse_label_selector(&selector).map_err(connect_error)?;
     let query_stats = state
         .store

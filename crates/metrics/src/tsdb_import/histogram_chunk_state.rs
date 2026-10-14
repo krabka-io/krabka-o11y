@@ -1,5 +1,6 @@
 use super::{
-    BitReader, ChunkError, HistogramLayout, NativeHistogram, ResetHint, counter_reset_hint,
+    BitReader, ChunkError, HistogramLayout, NativeHistogram, ResetHint, TimestampedHistogramSample,
+    counter_reset_hint,
 };
 
 /// The per-sample decoding state of one native-histogram chunk encoding.
@@ -27,12 +28,29 @@ pub trait HistogramChunkState: Sized {
     fn timestamp(&self) -> i64;
 }
 
+pub(super) fn read_initial_timestamp(reader: &mut BitReader<'_>) -> Result<i64, ChunkError> {
+    reader.read_varbit_int().ok_or(ChunkError::Truncated)
+}
+
+pub(super) fn read_next_timestamp(
+    reader: &mut BitReader<'_>,
+    timestamp_delta: &mut i64,
+    timestamp: &mut i64,
+) -> Result<(), ChunkError> {
+    let delta_of_delta = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
+    *timestamp_delta = timestamp_delta.wrapping_add(delta_of_delta);
+    *timestamp = timestamp.wrapping_add(*timestamp_delta);
+    Ok(())
+}
+
 /// Decodes the samples of a native-histogram chunk in the encoding `S` reads.
 pub fn decode_histogram_samples<S: HistogramChunkState>(
     chunk: &[u8],
     max_buckets: u64,
-) -> Result<Vec<(i64, NativeHistogram)>, ChunkError> {
-    let (header, body) = chunk.split_at_checked(3).ok_or(ChunkError::Truncated)?;
+) -> Result<Vec<TimestampedHistogramSample>, ChunkError> {
+    let parts = chunk.split_at_checked(3).ok_or(ChunkError::Truncated)?;
+    let header = parts.0;
+    let body = parts.1;
     let total = u16::from_be_bytes([header[0], header[1]]);
     let reset_header = header[2];
     if total == 0 {
@@ -54,7 +72,10 @@ pub fn decode_histogram_samples<S: HistogramChunkState>(
         } else {
             state.histogram(&layout, counter_reset_hint(reset_header, index))?
         };
-        samples.push((state.timestamp(), histogram));
+        samples.push(TimestampedHistogramSample {
+            timestamp_ms: state.timestamp(),
+            histogram,
+        });
     }
     Ok(samples)
 }

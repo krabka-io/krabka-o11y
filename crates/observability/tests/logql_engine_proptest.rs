@@ -43,6 +43,31 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use assert2::assert;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ExpectedEntry {
+    timestamp: String,
+    line: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BlockRange {
+    start_ns: i64,
+    end_ns: i64,
+}
+
+#[derive(Clone, Debug)]
+struct BoundSnap {
+    on_row: bool,
+    row_index: prop::sample::Index,
+    free_timestamp_ns: i64,
+}
+
+#[derive(Clone, Debug)]
+struct BoundPair {
+    first: BoundSnap,
+    second: BoundSnap,
+}
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, write_log_block,
 };
@@ -92,11 +117,36 @@ struct Series {
 impl Series {
     /// The series as the label map the block store indexes it under.
     fn labels(&self) -> BTreeMap<String, String> {
-        BTreeMap::from([
-            ("app".to_string(), self.app.clone()),
-            ("env".to_string(), self.env.clone()),
-        ])
+        let mut labels = BTreeMap::new();
+        labels.insert("app".to_string(), self.app.clone());
+        labels.insert("env".to_string(), self.env.clone());
+        labels
     }
+}
+
+#[derive(Clone, Debug)]
+struct RowSeed {
+    series_index: usize,
+    timestamp_ns: i64,
+    line: String,
+}
+
+#[derive(Clone, Debug)]
+struct FilterSeed {
+    negated: bool,
+    literal: String,
+}
+
+#[derive(Clone, Debug)]
+struct EnvironmentMatcher {
+    value: &'static str,
+    negated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RowIdentity {
+    series: usize,
+    timestamp_ns: i64,
 }
 
 /// One generated log line, tied to a series by index.
@@ -218,9 +268,8 @@ impl Case {
     ///
     /// This is the oracle. It reads the generated data directly and never
     /// calls the engine.
-    fn expected_streams(&self) -> BTreeMap<BTreeMap<String, String>, Vec<(String, String)>> {
-        let mut streams: BTreeMap<BTreeMap<String, String>, Vec<(String, String)>> =
-            BTreeMap::new();
+    fn expected_streams(&self) -> BTreeMap<BTreeMap<String, String>, Vec<ExpectedEntry>> {
+        let mut streams: BTreeMap<BTreeMap<String, String>, Vec<ExpectedEntry>> = BTreeMap::new();
         for row in &self.rows {
             let series = &self.series[row.series];
             if !self.matchers.iter().all(|matcher| matcher.keeps(series)) {
@@ -235,17 +284,20 @@ impl Case {
             streams
                 .entry(series.labels())
                 .or_default()
-                .push((row.timestamp_ns.to_string(), row.line.clone()));
+                .push(ExpectedEntry {
+                    timestamp: row.timestamp_ns.to_string(),
+                    line: row.line.clone(),
+                });
         }
         for entries in streams.values_mut() {
-            entries.sort_by_key(|(timestamp, _)| timestamp.parse::<i64>().unwrap_or(i64::MAX));
+            entries.sort_by_key(|entry| entry.timestamp.parse::<i64>().unwrap_or(i64::MAX));
         }
         streams
     }
 
     /// The time range each generated block covers, cut so the blocks partition
     /// `0..=MAX_TIMESTAMP_NS` into `block_count` contiguous pieces.
-    fn block_ranges(&self) -> Vec<(i64, i64)> {
+    fn block_ranges(&self) -> Vec<BlockRange> {
         let count = i64::try_from(self.block_count).unwrap_or(1).max(1);
         let width = (MAX_TIMESTAMP_NS + 1) / count;
         (0..count)
@@ -256,7 +308,10 @@ impl Case {
                 } else {
                     start + width - 1
                 };
-                (start, end)
+                BlockRange {
+                    start_ns: start,
+                    end_ns: end,
+                }
             })
             .collect()
     }
@@ -272,108 +327,148 @@ fn arb_literal() -> impl Strategy<Value = String> {
         .prop_map(|chars| chars.into_iter().collect())
 }
 
-fn arb_matchers() -> impl Strategy<Value = Vec<Matcher>> {
-    (
-        prop::sample::select(APPS),
-        prop::option::of((prop::sample::select(ENVS), any::<bool>())),
-        any::<bool>(),
-    )
-        .prop_map(|(app, env, app_negated)| {
+prop_compose! {
+    fn arb_bound_snap()
+        (on_row in any::<bool>(), row_index in any::<prop::sample::Index>(), free_timestamp_ns in 0_i64..=MAX_TIMESTAMP_NS)
+        -> BoundSnap {
+            BoundSnap { on_row, row_index, free_timestamp_ns }
+        }
+}
+
+prop_compose! {
+    fn arb_bound_pair()
+        (first in arb_bound_snap(), second in arb_bound_snap())
+        -> BoundPair {
+            BoundPair { first, second }
+        }
+}
+
+prop_compose! {
+    fn arb_environment_matcher()
+        (value in prop::sample::select(ENVS), negated in any::<bool>())
+        -> EnvironmentMatcher {
+            EnvironmentMatcher { value, negated }
+        }
+}
+
+prop_compose! {
+    fn arb_matchers()
+        (app in prop::sample::select(APPS), env in prop::option::of(arb_environment_matcher()), app_negated in any::<bool>())
+        -> Vec<Matcher> {
             // Loki rejects a selector whose every matcher matches the empty
             // string, and `!=` does match it. At least one matcher here is
             // therefore an equality, so the parser accepts what the generator
             // writes and no case is thrown away.
-            let env_negated = env.is_some_and(|(_, negated)| negated);
+            let env_negated = env.as_ref().is_some_and(|matcher| matcher.negated);
             let mut matchers = vec![Matcher {
                 name: "app",
                 negated: app_negated && env.is_some() && !env_negated,
                 value: (*app).to_string(),
             }];
-            if let Some((env, negated)) = env {
+            if let Some(matcher) = env {
                 matchers.push(Matcher {
                     name: "env",
-                    negated,
-                    value: (*env).to_string(),
+                    negated: matcher.negated,
+                    value: (*matcher.value).to_string(),
                 });
             }
             matchers
-        })
+        }
 }
 
-fn arb_case() -> impl Strategy<Value = Case> {
-    let series = prop::collection::btree_set(
-        (prop::sample::select(APPS), prop::sample::select(ENVS)).prop_map(|(app, env)| Series {
-            app: (*app).to_string(),
-            env: (*env).to_string(),
-        }),
-        1..=4,
-    )
-    .prop_map(|set| set.into_iter().collect::<Vec<_>>());
+prop_compose! {
+    fn arb_series()
+        (app in prop::sample::select(APPS), env in prop::sample::select(ENVS))
+        -> Series {
+            Series { app: (*app).to_string(), env: (*env).to_string() }
+        }
+}
 
-    (
-        series,
-        prop::collection::vec((0usize..4, 0i64..=MAX_TIMESTAMP_NS, arb_line()), 1..=12),
-        arb_matchers(),
-        prop::collection::vec((any::<bool>(), arb_literal()), 0..=3),
+prop_compose! {
+    fn arb_row_seed()
+        (series_index in 0usize..4, timestamp_ns in 0_i64..=MAX_TIMESTAMP_NS, line in arb_line())
+        -> RowSeed {
+            RowSeed { series_index, timestamp_ns, line }
+        }
+}
+
+prop_compose! {
+    fn arb_filter_seed()
+        (negated in any::<bool>(), literal in arb_literal())
+        -> FilterSeed {
+            FilterSeed { negated, literal }
+        }
+}
+
+prop_compose! {
+    fn arb_case()
         (
-            (
-                any::<bool>(),
-                any::<prop::sample::Index>(),
-                0i64..=MAX_TIMESTAMP_NS,
-            ),
-            (
-                any::<bool>(),
-                any::<prop::sample::Index>(),
-                0i64..=MAX_TIMESTAMP_NS,
-            ),
-        ),
-        1usize..=3,
-    )
-        .prop_map(
-            |(series, rows, matchers, filters, (first_bound, second_bound), block_count)| {
-                // A row names a series by index, so fold the index into range,
-                // then drop the duplicates that would leave two entries in one
-                // stream sharing a timestamp.
-                let mut seen = BTreeSet::new();
-                let rows: Vec<Row> = rows
-                    .into_iter()
-                    .map(|(series_index, timestamp_ns, line)| Row {
-                        series: series_index % series.len(),
-                        timestamp_ns,
-                        line,
-                    })
-                    .filter(|row| seen.insert((row.series, row.timestamp_ns)))
-                    .collect();
-
-                // Half the window bounds land on a row's own timestamp. Both
-                // ends of a query window are inclusive, so a bound that sits
-                // one nanosecond off a row says nothing about the edge. Drawn
-                // uniformly, a bound would hit a row only about one time in
-                // sixteen.
-                let snap = |(on, index, free): (bool, prop::sample::Index, i64)| {
-                    if on && !rows.is_empty() {
-                        rows[index.index(rows.len())].timestamp_ns
-                    } else {
-                        free
-                    }
-                };
-                let first_bound = snap(first_bound);
-                let second_bound = snap(second_bound);
-
-                Case {
-                    series,
-                    rows,
-                    matchers,
-                    filters: filters
-                        .into_iter()
-                        .map(|(negated, literal)| Filter { negated, literal })
-                        .collect(),
-                    query_start_ns: first_bound.min(second_bound),
-                    query_end_ns: first_bound.max(second_bound),
-                    block_count,
-                }
-            },
+            series in prop::collection::btree_set(arb_series(), 1..=4).prop_map(|set| set.into_iter().collect::<Vec<_>>()),
+            rows in prop::collection::vec(arb_row_seed(), 1..=12),
+            matchers in arb_matchers(),
+            filters in prop::collection::vec(arb_filter_seed(), 0..=3),
+            bounds in arb_bound_pair(),
+            block_count in 1usize..=3,
         )
+        -> Case {
+            build_case(series, rows, matchers, filters, bounds, block_count)
+        }
+}
+
+fn build_case(
+    series: Vec<Series>,
+    rows: Vec<RowSeed>,
+    matchers: Vec<Matcher>,
+    filters: Vec<FilterSeed>,
+    bounds: BoundPair,
+    block_count: usize,
+) -> Case {
+    // A row names a series by index, so fold the index into range, then drop
+    // the duplicates that would leave two entries in one stream sharing a
+    // timestamp.
+    let mut seen = BTreeSet::new();
+    let rows: Vec<Row> = rows
+        .into_iter()
+        .map(|row| Row {
+            series: row.series_index % series.len(),
+            timestamp_ns: row.timestamp_ns,
+            line: row.line,
+        })
+        .filter(|row| {
+            seen.insert(RowIdentity {
+                series: row.series,
+                timestamp_ns: row.timestamp_ns,
+            })
+        })
+        .collect();
+
+    // Bounds can land on a row timestamp, making the inclusive-edge case
+    // common. Otherwise they use a uniformly drawn free timestamp.
+    let snap = |bound: BoundSnap| {
+        if bound.on_row && !rows.is_empty() {
+            rows[bound.row_index.index(rows.len())].timestamp_ns
+        } else {
+            bound.free_timestamp_ns
+        }
+    };
+    let first_bound = snap(bounds.first);
+    let second_bound = snap(bounds.second);
+
+    Case {
+        series,
+        rows,
+        matchers,
+        filters: filters
+            .into_iter()
+            .map(|filter| Filter {
+                negated: filter.negated,
+                literal: filter.literal,
+            })
+            .collect(),
+        query_start_ns: first_bound.min(second_bound),
+        query_end_ns: first_bound.max(second_bound),
+        block_count,
+    }
 }
 
 /// Writes `case` as Parquet blocks, plans `query` over them and runs it,
@@ -389,7 +484,11 @@ fn run_query(case: &Case, query: &str) -> Value {
         .collect::<Vec<_>>();
 
     let mut block_index = BlockIndex::default();
-    for (block_id, (start_ns, end_ns)) in case.block_ranges().into_iter().enumerate() {
+    for block_range in case.block_ranges().into_iter().enumerate() {
+        let block_id = block_range.0;
+        let range = block_range.1;
+        let start_ns = range.start_ns;
+        let end_ns = range.end_ns;
         let rows = case
             .rows
             .iter()
@@ -441,32 +540,26 @@ fn run_query(case: &Case, query: &str) -> Value {
 /// distributor discovery has supplied entry metadata or extra stream labels.
 fn streams_from_response(
     response: &Value,
-) -> BTreeMap<BTreeMap<String, String>, Vec<(String, String)>> {
+) -> BTreeMap<BTreeMap<String, String>, Vec<ExpectedEntry>> {
     let mut streams = BTreeMap::new();
     let results = response["data"]["result"]
         .as_array()
         .expect("a streams result array");
     for result in results {
-        let labels = result["stream"]
-            .as_object()
-            .expect("a stream label map")
-            .iter()
-            .map(|(name, value)| {
-                (
-                    name.clone(),
-                    value.as_str().expect("a string label value").to_string(),
-                )
-            })
-            .collect::<BTreeMap<String, String>>();
+        let mut labels = BTreeMap::new();
+        for member in result["stream"].as_object().expect("a stream label map") {
+            labels.insert(
+                member.0.clone(),
+                member.1.as_str().expect("a string label value").to_string(),
+            );
+        }
         let entries = result["values"]
             .as_array()
             .expect("a values array")
             .iter()
-            .map(|entry| {
-                (
-                    entry[0].as_str().expect("a timestamp").to_string(),
-                    entry[1].as_str().expect("a line").to_string(),
-                )
+            .map(|entry| ExpectedEntry {
+                timestamp: entry[0].as_str().expect("a timestamp").to_string(),
+                line: entry[1].as_str().expect("a line").to_string(),
             })
             .collect::<Vec<_>>();
         streams.insert(labels, entries);

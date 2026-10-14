@@ -27,14 +27,13 @@ use std::{
 
 use arrow::{
     array::{Int64Array, StringArray, UInt64Array},
-    datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
 use bytes::Bytes;
 use futures::{StreamExt as _, TryStreamExt as _, stream::BoxStream};
 use krabka_blockstore::{
-    BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, ObjectStoreMetrics, ObjectStoreOperation,
-    ObjectStoreRetryPolicy, OrphanSweepStats, RetryingObjectStore, read_block, reconcile_orphans,
+    BlockWriter, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy,
+    OrphanSweepStats, RetryingObjectStore, read_block, reconcile_orphans,
     transient_object_store_error,
 };
 use krabka_units::{Time, convert::TimeExt as _};
@@ -47,6 +46,9 @@ use object_store::{
 ///
 /// It matches [`ObjectStoreRetryPolicy::DEFAULT`], without the waiting.
 const ATTEMPTS: u32 = 4;
+
+#[path = "../support/log_schema.rs"]
+mod log_schema;
 
 fn throttled() -> ObjectStoreError {
     ObjectStoreError::Generic {
@@ -80,6 +82,9 @@ fn kind(error: &ObjectStoreError) -> &'static str {
 /// the operations its fault touches.
 macro_rules! delegate_object_store {
     ($wrapper:ident { $($overrides:tt)* }) => {
+        delegate_object_store!($wrapper, [] { $($overrides)* });
+    };
+    ($wrapper:ident, [$($additional_forward:ident),*] { $($overrides:tt)* }) => {
         impl std::fmt::Display for $wrapper {
             fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(formatter, "{}({})", stringify!($wrapper), self.inner)
@@ -88,7 +93,7 @@ macro_rules! delegate_object_store {
 
         krabka_blockstore::delegate_object_store! {
             $wrapper => inner;
-            forward [put_multipart_opts, list_with_delimiter, copy_opts, delete_stream];
+            forward [put_multipart_opts, list_with_delimiter, copy_opts, delete_stream, $($additional_forward),*];
             $($overrides)*
         }
     };
@@ -112,7 +117,7 @@ impl ThrottlingStore {
     }
 }
 
-delegate_object_store!(ThrottlingStore {
+delegate_object_store!(ThrottlingStore, [get_opts] {
     async fn put_opts(
         &self,
         location: &Path,
@@ -122,7 +127,7 @@ delegate_object_store!(ThrottlingStore {
         self.attempts.fetch_add(1, Ordering::SeqCst);
         let refused = self
             .remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             })
             .is_ok();
@@ -130,14 +135,6 @@ delegate_object_store!(ThrottlingStore {
             return Err(throttled());
         }
         self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
     }
 
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
@@ -239,7 +236,7 @@ impl StaleListingStore {
     }
 }
 
-delegate_object_store!(StaleListingStore {
+delegate_object_store!(StaleListingStore, [get_opts] {
     async fn put_opts(
         &self,
         location: &Path,
@@ -252,14 +249,6 @@ delegate_object_store!(StaleListingStore {
             .expect("the hidden set is not poisoned")
             .insert(location.clone(), self.lag);
         Ok(result)
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
     }
 
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
@@ -393,17 +382,9 @@ impl ChecksumOutcome {
     }
 }
 
-fn series_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new(COL_FINGERPRINT, DataType::UInt64, false),
-        Field::new(COL_TIMESTAMP, DataType::Int64, false),
-        Field::new("line", DataType::Utf8, true),
-    ]))
-}
-
 fn series_batch() -> RecordBatch {
     RecordBatch::try_new(
-        series_schema(),
+        log_schema::schema(),
         vec![
             Arc::new(UInt64Array::from(vec![7_u64, 7])),
             Arc::new(Int64Array::from(vec![1_i64, 2])),
@@ -433,7 +414,7 @@ pub async fn checksum_mismatch(base: Arc<dyn ObjectStore>) -> ChecksumOutcome {
 
     let key = "faults/checksum/block.parquet";
     BlockWriter::new(Arc::clone(&base))
-        .write_block("tenant", key, series_schema(), &[series_batch()])
+        .write_block("tenant", key, log_schema::schema(), &[series_batch()])
         .await
         .expect("the intact block writes");
     let metrics = ObjectStoreMetrics::unregistered();

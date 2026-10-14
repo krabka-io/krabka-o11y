@@ -7,6 +7,12 @@ use super::*;
 /// else.
 #[test]
 pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
+    #[derive(Debug, PartialEq)]
+    struct RequestIdentity {
+        tenant: String,
+        request_id: String,
+    }
+
     let request = |tenant: &str, request_id: &str| super::super::prelude::CompactorDeleteRequest {
         tenant: tenant.to_string(),
         request_id: request_id.to_string(),
@@ -47,12 +53,21 @@ pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
         .expect("the delete state lock is held")
         .requests
         .iter()
-        .map(|request| (request.tenant.clone(), request.request_id.clone()))
+        .map(|request| RequestIdentity {
+            tenant: request.tenant.clone(),
+            request_id: request.request_id.clone(),
+        })
         .collect::<Vec<_>>();
     check!(
         left == vec![
-            ("tenant-b".to_string(), "delete-1".to_string()),
-            ("tenant-a".to_string(), "delete-2".to_string()),
+            RequestIdentity {
+                tenant: "tenant-b".to_string(),
+                request_id: "delete-1".to_string()
+            },
+            RequestIdentity {
+                tenant: "tenant-a".to_string(),
+                request_id: "delete-2".to_string()
+            },
         ],
         "got {left:?}"
     );

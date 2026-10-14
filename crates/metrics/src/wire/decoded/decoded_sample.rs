@@ -5,7 +5,6 @@ pub struct DecodedSample {
     pub value: f64,
     pub start_timestamp_ms: Option<i64>,
 }
-
 impl DecodedSample {
     #[must_use]
     pub fn new(timestamp_ms: i64, value: f64) -> Self {
@@ -27,11 +26,5 @@ impl DecodedSample {
             value,
             start_timestamp_ms,
         }
-    }
-}
-
-impl PartialEq<(i64, f64)> for DecodedSample {
-    fn eq(&self, other: &(i64, f64)) -> bool {
-        self.timestamp_ms == other.0 && self.value == other.1 && self.start_timestamp_ms.is_none()
     }
 }

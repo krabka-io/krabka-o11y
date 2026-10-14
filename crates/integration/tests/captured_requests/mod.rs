@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeSet, time::Duration};
 
+use axum::Router;
 use tokio::{sync::Mutex, time::error::Elapsed};
 
 // Waits up to 45 seconds for `seen` to hold exactly `expected`, then checks
@@ -21,4 +22,11 @@ pub async fn expect_seen<T: Ord + std::fmt::Debug>(
     .await?;
     assert2::assert!(*seen.lock().await == *expected);
     Ok(())
+}
+
+pub async fn spawn_capture_server(app: Router) -> std::io::Result<u16> {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
+    let port = listener.local_addr()?.port();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    Ok(port)
 }

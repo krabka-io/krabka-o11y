@@ -2,7 +2,7 @@ use super::{
     KafkaWalRecord, WalLogRecord, WalRecordDecodeError, decode_kafka_wal_record,
     decode_native_kafka_log_record, has_native_kafka_log_headers,
 };
-use crate::persisted_format::{PersistedFormatError, validate_persisted_format};
+use crate::persisted_format::{PersistedFormatError, PersistedHeader, validate_persisted_format};
 
 /// Decodes one record of the logs WAL topic.
 ///
@@ -20,12 +20,10 @@ use crate::persisted_format::{PersistedFormatError, validate_persisted_format};
 pub fn decode_kafka_wal_record_envelope(
     record: KafkaWalRecord,
 ) -> Result<WalLogRecord, WalRecordDecodeError> {
-    match validate_persisted_format(
-        record
-            .headers
-            .iter()
-            .map(|header| (header.key.as_str(), header.value.as_deref())),
-    ) {
+    match validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
+        key: header.key.as_str(),
+        value: header.value.as_deref(),
+    })) {
         Ok(()) => {}
         Err(PersistedFormatError::Missing) if has_native_kafka_log_headers(&record.headers) => {
             return decode_native_kafka_log_record(record);

@@ -1,5 +1,11 @@
 use super::kahan_sum_inc;
 
+#[derive(Default)]
+struct CompensatedSum {
+    sum: f64,
+    compensation: f64,
+}
+
 /// Returns the population variance of `values`.
 ///
 /// The fold uses Welford's online algorithm with Kahan-compensated
@@ -10,18 +16,17 @@ use super::kahan_sum_inc;
 /// Welford stays stable.
 pub(crate) fn over_time_variance(values: impl IntoIterator<Item = f64>) -> f64 {
     let mut count = 0.0_f64;
-    let (mut mean, mut mean_comp) = (0.0_f64, 0.0_f64);
-    let (mut aux, mut aux_comp) = (0.0_f64, 0.0_f64);
+    let mut mean = CompensatedSum::default();
+    let mut aux = CompensatedSum::default();
     for value in values {
         count += 1.0;
-        let delta = value - (mean + mean_comp);
-        let (new_mean, new_mean_comp) = kahan_sum_inc(delta / count, mean, mean_comp);
-        mean = new_mean;
-        mean_comp = new_mean_comp;
-        let (new_aux, new_aux_comp) =
-            kahan_sum_inc(delta * (value - (mean + mean_comp)), aux, aux_comp);
-        aux = new_aux;
-        aux_comp = new_aux_comp;
+        let delta = value - (mean.sum + mean.compensation);
+        kahan_sum_inc(delta / count, &mut mean.sum, &mut mean.compensation);
+        kahan_sum_inc(
+            delta * (value - (mean.sum + mean.compensation)),
+            &mut aux.sum,
+            &mut aux.compensation,
+        );
     }
-    (aux + aux_comp) / count
+    (aux.sum + aux.compensation) / count
 }

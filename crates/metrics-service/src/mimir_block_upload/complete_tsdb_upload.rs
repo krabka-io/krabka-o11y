@@ -72,16 +72,19 @@ pub async fn complete_tsdb_upload(
         .filter(|path| path.starts_with("chunks/"))
         .collect();
     let has_tombstones = paths.contains("tombstones");
-    let (index, chunks, tombstones) =
-        match uploaded_files(state, tenant, block, &chunk_names, has_tombstones).await {
-            Ok(files) => files,
-            Err(ReadError::Missing(name)) => {
-                return failed(format!(
-                    "invalid Prometheus TSDB block: the file {name} was not uploaded"
-                ));
-            }
-            Err(ReadError::Store(message)) => return Err(message),
-        };
+    let UploadedBlockFiles {
+        index,
+        chunks,
+        tombstones,
+    } = match uploaded_files(state, tenant, block, &chunk_names, has_tombstones).await {
+        Ok(files) => files,
+        Err(ReadError::Missing(name)) => {
+            return failed(format!(
+                "invalid Prometheus TSDB block: the file {name} was not uploaded"
+            ));
+        }
+        Err(ReadError::Store(message)) => return Err(message),
+    };
 
     let segments: Vec<&[u8]> = chunks.iter().map(AsRef::as_ref).collect();
     let files = TsdbBlockFiles {
@@ -133,7 +136,7 @@ async fn uploaded_files(
     block: &str,
     chunk_names: &[&str],
     has_tombstones: bool,
-) -> Result<(Bytes, Vec<Bytes>, Option<Bytes>), ReadError> {
+) -> Result<UploadedBlockFiles, ReadError> {
     let index = uploaded_file(state, tenant, block, "index").await?;
     let mut chunks = Vec::with_capacity(chunk_names.len());
     for name in chunk_names {
@@ -144,7 +147,17 @@ async fn uploaded_files(
     } else {
         None
     };
-    Ok((index, chunks, tombstones))
+    Ok(UploadedBlockFiles {
+        index,
+        chunks,
+        tombstones,
+    })
+}
+
+struct UploadedBlockFiles {
+    index: Bytes,
+    chunks: Vec<Bytes>,
+    tombstones: Option<Bytes>,
 }
 
 async fn uploaded_file(

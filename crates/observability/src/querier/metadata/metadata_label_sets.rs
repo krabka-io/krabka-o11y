@@ -19,13 +19,13 @@ pub(crate) async fn metadata_label_sets(
     let selectors = metadata_selectors(params)?;
     let mut label_sets = BTreeSet::new();
 
-    for (fingerprint, labels) in state.label_index.tenant_series(tenant) {
+    for series in state.label_index.tenant_series(tenant) {
         if time_fingerprints
             .as_ref()
-            .is_none_or(|fingerprints| fingerprints.contains(&fingerprint))
-            && metadata_labels_match_selectors(&labels, &selectors)
+            .is_none_or(|fingerprints| fingerprints.contains(&series.fingerprint))
+            && metadata_labels_match_selectors(&series.labels, &selectors)
         {
-            label_sets.insert(metadata_visible_labels(&labels));
+            label_sets.insert(metadata_visible_labels(&series.labels));
         }
     }
 

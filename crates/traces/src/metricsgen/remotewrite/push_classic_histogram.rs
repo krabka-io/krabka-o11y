@@ -1,23 +1,25 @@
-use super::{Series, WireTimeSeries, bucket_exemplars, le_label, with_name};
+use super::{HistogramBucket, Series, WireTimeSeries, bucket_exemplars, le_label, with_name};
 
 pub(crate) fn push_classic_histogram(
     out: &mut Vec<WireTimeSeries>,
     s: &Series,
-    buckets: &[(f64, f64)],
+    buckets: &[HistogramBucket],
     sum: f64,
     count: f64,
 ) {
     let bucket_name = format!("{}_bucket", s.name);
     let mut assigned_exemplars = vec![false; s.exemplars.len()];
 
-    for (le, cumulative) in buckets {
+    for bucket in buckets {
+        let le = bucket.upper_bound;
+        let cumulative = bucket.cumulative_count;
         let mut labels = s.labels.clone();
-        labels.push(("le".to_string(), le_label(*le)));
+        labels.push(krabka_traceql::MetricLabel::new("le", le_label(le)));
         let exemplars =
-            bucket_exemplars(&s.exemplars, &mut assigned_exemplars, |ex| ex.value <= *le);
+            bucket_exemplars(&s.exemplars, &mut assigned_exemplars, |ex| ex.value <= le);
         out.push(WireTimeSeries {
             labels: with_name(&bucket_name, &labels),
-            value: *cumulative,
+            value: cumulative,
             timestamp_ms: s.timestamp_ms,
             exemplars,
             native_histogram: None,
@@ -25,7 +27,7 @@ pub(crate) fn push_classic_histogram(
     }
 
     let mut inf_labels = s.labels.clone();
-    inf_labels.push(("le".to_string(), "+Inf".to_string()));
+    inf_labels.push(krabka_traceql::MetricLabel::new("le", "+Inf"));
     let inf_exemplars = bucket_exemplars(&s.exemplars, &mut assigned_exemplars, |_| true);
     out.push(WireTimeSeries {
         labels: with_name(&bucket_name, &inf_labels),

@@ -6,17 +6,9 @@ pub(crate) fn remote_read_matchers(
     matchers
         .iter()
         .map(|matcher| {
-            let op = match matcher.r#type {
-                0 => MatchOp::Eq,
-                1 => MatchOp::Neq,
-                2 => MatchOp::Re,
-                3 => MatchOp::Nre,
-                other => {
-                    return Err(ApiError::bad_data(format!(
-                        "unknown remote_read matcher type {other}"
-                    )));
-                }
-            };
+            let op = MatchOp::try_from(matcher.r#type).map_err(|other| {
+                ApiError::bad_data(format!("unknown remote_read matcher type {other}"))
+            })?;
             Ok(LabelMatcher::new(
                 &matcher.name,
                 op,

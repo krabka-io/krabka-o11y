@@ -1,4 +1,4 @@
-use super::{IntoResponse, Response, StatusCode};
+use super::{Response, status_html_page};
 
 /// The ring status page, describing the one process that serves this role.
 ///
@@ -9,20 +9,17 @@ use super::{IntoResponse, Response, StatusCode};
 /// checked. `state` comes from the caller's readiness, so a process that is
 /// still starting reads `JOINING` here and 503 at `/ready`.
 pub(crate) fn ring_status_page(instance: &str, state: &str) -> Response {
-    (
-        StatusCode::OK,
-        [("content-type", "text/html; charset=utf-8")],
-        format!(
-            "<!doctype html><html><head><title>Ring Status</title></head>\
-         <body><h1>Ring Status</h1>\
+    status_html_page(
+        "Ring Status",
+        &format!(
+            "\
          <p>Krabka runs no hash ring. This process serves the role by itself, \
          so the row below is the process answering this request and not a \
          membership that was gossiped, tokenised or health-checked. There are \
          no peers to list, and none to have been forgotten.</p>\
          <table><thead><tr><th>Instance</th><th>State</th></tr></thead>\
          <tbody><tr><td>{instance}</td><td>{state}</td></tr></tbody>\
-         </table></body></html>"
+         </table>"
         ),
     )
-        .into_response()
 }

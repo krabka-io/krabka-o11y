@@ -11,8 +11,8 @@ use super::PprofProfile;
 /// becomes `mutex` too, because its sample types are the same as a mutex
 /// profile's.
 pub(crate) fn pprof_metric_name(profile: &PprofProfile) -> Option<String> {
-    let (sample_type, _) = profile.sample_types().into_iter().next()?;
-    let name = match sample_type.as_str() {
+    let sample_type = profile.sample_types().into_iter().next()?;
+    let name = match sample_type.name.as_str() {
         "goroutine" => "goroutines",
         "alloc_objects" | "alloc_space" | "inuse_objects" | "inuse_space" => "memory",
         "contentions" | "delay" => "mutex",

@@ -11,7 +11,9 @@ pub(crate) fn loki_stream_results(
     match encoding {
         LokiStreamEncoding::Folded => streams
             .into_iter()
-            .map(|(stream, values)| {
+            .map(|entry| {
+                let stream = entry.0;
+                let values = entry.1;
                 let mut result = json!({"stream": stream});
                 result["values"] = Value::Array(
                     values

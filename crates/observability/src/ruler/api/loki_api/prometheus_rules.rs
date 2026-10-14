@@ -1,7 +1,6 @@
 use super::{
-    HeaderMap, IntoResponse, PrometheusRulerInputs, PrometheusRulerRequest, QuerierState, RawQuery,
-    RequestSecurity, Response, State, StatusCode, json, json_response,
-    prometheus_rule_groups_response,
+    HeaderMap, IntoResponse, PrometheusRulerRequest, QuerierState, RawQuery, RequestSecurity,
+    Response, State, json, prometheus_rule_groups_response, prometheus_ruler_success,
 };
 
 pub(crate) async fn prometheus_rules(
@@ -15,14 +14,8 @@ pub(crate) async fn prometheus_rules(
         filters,
         evaluation_time,
         namespaces,
-    } = match (PrometheusRulerInputs {
-        state: &state,
-        security: &security,
-        headers: &headers,
-        raw_query: raw_query.as_deref(),
-    })
-    .resolve()
-    .await
+    } = match super::prometheus_ruler_request(&state, &security, &headers, raw_query.as_deref())
+        .await
     {
         Ok(request) => request,
         Err(response) => return *response,
@@ -53,13 +46,5 @@ pub(crate) async fn prometheus_rules(
     if let Some(token) = page.next_token {
         data["groupNextToken"] = json!(token);
     }
-    json_response(
-        StatusCode::OK,
-        &json!({
-            "status": "success",
-            "data": data,
-            "errorType": "",
-            "error": "",
-        }),
-    )
+    prometheus_ruler_success(&data)
 }

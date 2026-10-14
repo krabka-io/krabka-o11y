@@ -3,10 +3,15 @@ use super::{
     parse_metric_sample_value,
 };
 
+pub(crate) struct LokiParquetMetricSample {
+    pub(crate) timestamp_ns: i64,
+    pub(crate) value: f64,
+}
+
 pub(crate) fn loki_parquet_metric_sample(
     sample: &Value,
     kind: LokiMetricParquetKind,
-) -> Result<(i64, f64), HttpQueryError> {
+) -> Result<LokiParquetMetricSample, HttpQueryError> {
     let sample = sample
         .as_array()
         .ok_or(HttpQueryError::LokiParquet("metric sample is not an array"))?;
@@ -22,5 +27,8 @@ pub(crate) fn loki_parquet_metric_sample(
         .and_then(parse_metric_sample_value)
         .and_then(MetricValue::to_f64)
         .ok_or(HttpQueryError::LokiParquet("metric value is not numeric"))?;
-    Ok((timestamp_ns, value))
+    Ok(LokiParquetMetricSample {
+        timestamp_ns,
+        value,
+    })
 }

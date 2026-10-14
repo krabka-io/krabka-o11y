@@ -2,6 +2,11 @@ use super::{
     Labels, LokiStreamEntry, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, label_format_destinations,
 };
 
+pub(crate) struct MatchingStreamEntry {
+    pub(crate) labels: Labels,
+    pub(crate) entry: LokiStreamEntry,
+}
+
 /// Evaluates one record against a stream query, and buckets what comes out.
 ///
 /// The returned labels are the stream's under Loki's default encoding: the
@@ -25,7 +30,7 @@ pub(crate) fn matching_loki_stream_entry(
     structured_metadata: &Labels,
     timestamp_ns: i64,
     preserve_source_labels: bool,
-) -> Option<(Labels, LokiStreamEntry)> {
+) -> Option<MatchingStreamEntry> {
     let evaluation =
         query.evaluate_with_fields_at(labels, line, structured_metadata, timestamp_ns)?;
     let mut stream_labels = evaluation.fields;
@@ -37,12 +42,14 @@ pub(crate) fn matching_loki_stream_entry(
     let formatted = label_format_destinations(query);
     let mut entry_metadata = Labels::new();
     let mut parsed = Labels::new();
-    for (name, value) in &stream_labels {
+    for label in &stream_labels {
+        let name = label.0;
+        let value = label.1;
         if formatted.contains(name.as_str()) {
             parsed.insert(name.clone(), value.clone());
             continue;
         }
-        if !labels.contains_key(name) && structured_metadata.get(name) == Some(value) {
+        if labels.get(name).is_none() && structured_metadata.get(name) == Some(value) {
             entry_metadata.insert(name.clone(), value.clone());
         } else if labels.get(name) != Some(value) {
             // A value the series did not carry and the metadata did not carry
@@ -63,5 +70,8 @@ pub(crate) fn matching_loki_stream_entry(
     {
         entry.source_labels = labels.clone();
     }
-    Some((stream_labels, entry))
+    Some(MatchingStreamEntry {
+        labels: stream_labels,
+        entry,
+    })
 }

@@ -3,8 +3,14 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn series_filters_histograms_by_matcher_and_time() {
     let mut store = InMemoryMetricStore::new();
-    let api = lbls(&[("__name__", "latency_seconds"), ("job", "api")]);
-    let worker = lbls(&[("__name__", "latency_seconds"), ("job", "worker")]);
+    let api = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
+    let worker = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+        crate::test_support::TestLabelPair::new("job", "worker"),
+    ]);
     store.push_histogram("t", api.clone(), 1_000, count_two_sum_three_histogram());
     store.push_histogram("t", api.clone(), 5_000, count_two_sum_three_histogram());
     store.push_histogram("t", worker, 1_000, count_two_sum_three_histogram());

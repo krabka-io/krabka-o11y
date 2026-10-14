@@ -413,13 +413,19 @@ rules:
 }
 
 /// Sends one ruler call and gives back its status and body text.
+#[derive(PartialEq, Eq)]
+struct RulerResponse {
+    status: StatusCode,
+    body: String,
+}
+
 async fn ruler_call_for_test(
     app: &axum::Router,
     method: &str,
     uri: &str,
     tenant: Option<&str>,
     body: &str,
-) -> (StatusCode, String) {
+) -> RulerResponse {
     let mut request = Request::builder()
         .method(method)
         .uri(uri)
@@ -433,7 +439,10 @@ async fn ruler_call_for_test(
         .await
         .unwrap();
     let status = response.status();
-    (status, text_body(response).await)
+    RulerResponse {
+        status,
+        body: text_body(response).await,
+    }
 }
 
 const RULE_GROUP_FOR_TEST: &str = "\
@@ -443,6 +452,17 @@ rules:
     expr: count_over_time({app=\"api\"} |= \"error\" [5m]) > 0
 ";
 
+struct RulerRequestCase<'a> {
+    method: &'a str,
+    uri: &'a str,
+    body: &'a str,
+}
+
+struct RuleGroupFixture {
+    namespace: &'static str,
+    rule_group: &'static str,
+}
+
 /// Loki's ruler, with `auth_enabled: true`, answers a request that names no
 /// tenant with 401. It does not serve the request as tenant `fake`, so a
 /// caller without a tenant can neither read nor write any rule group.
@@ -450,26 +470,46 @@ rules:
 async fn a_ruler_request_without_a_tenant_is_refused_and_not_served_as_tenant_fake() {
     let app = loki_router(fixture());
 
-    for (method, uri, body) in [
-        ("GET", "/loki/api/v1/rules", ""),
-        ("POST", "/loki/api/v1/rules/default", RULE_GROUP_FOR_TEST),
-        ("GET", "/api/prom/rules", ""),
-        ("GET", "/prometheus/api/v1/rules", ""),
+    for case in [
+        RulerRequestCase {
+            method: "GET",
+            uri: "/loki/api/v1/rules",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "POST",
+            uri: "/loki/api/v1/rules/default",
+            body: RULE_GROUP_FOR_TEST,
+        },
+        RulerRequestCase {
+            method: "GET",
+            uri: "/api/prom/rules",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "GET",
+            uri: "/prometheus/api/v1/rules",
+            body: "",
+        },
     ] {
         check!(
-            ruler_call_for_test(&app, method, uri, None, body).await
-                == (StatusCode::UNAUTHORIZED, "no org id\n".to_string()),
-            "{method} {uri}"
+            ruler_call_for_test(&app, case.method, case.uri, None, case.body).await
+                == RulerResponse {
+                    status: StatusCode::UNAUTHORIZED,
+                    body: "no org id\n".to_string(),
+                },
+            "{} {}",
+            case.method,
+            case.uri
         );
     }
 
     check!(
         ruler_call_for_test(&app, "GET", "/loki/api/v1/rules", Some("fake"), "").await
-            == (
-                StatusCode::BAD_REQUEST,
-                "unable to read rule dir /loki/rules/fake: open /loki/rules/fake: no such file or directory\n"
-                    .to_string()
-            )
+            == RulerResponse {
+                status: StatusCode::BAD_REQUEST,
+                body: "unable to read rule dir /loki/rules/fake: open /loki/rules/fake: no such file or directory\n".to_string(),
+            }
     );
 }
 
@@ -483,7 +523,7 @@ async fn a_refused_tenant_can_neither_read_nor_create_nor_delete_its_rule_groups
     let refusing = loki_router(
         state.with_query_authorizer(TenantDenyingQueryAuthorizer { denied: "tenant-a" }),
     );
-    let (status, _) = ruler_call_for_test(
+    let response = ruler_call_for_test(
         &allowed,
         "POST",
         "/loki/api/v1/rules/default",
@@ -491,31 +531,90 @@ async fn a_refused_tenant_can_neither_read_nor_create_nor_delete_its_rule_groups
         RULE_GROUP_FOR_TEST,
     )
     .await;
-    assert!(status == StatusCode::ACCEPTED);
+    assert!(response.status == StatusCode::ACCEPTED);
     let before =
         ruler_call_for_test(&allowed, "GET", "/loki/api/v1/rules", Some("tenant-a"), "").await;
-    assert!(before.0 == StatusCode::OK);
+    assert!(before.status == StatusCode::OK);
 
     let other_group = RULE_GROUP_FOR_TEST.replace("api-errors", "other");
-    for (method, uri, body) in [
-        ("GET", "/loki/api/v1/rules", ""),
-        ("GET", "/loki/api/v1/rules/default", ""),
-        ("GET", "/loki/api/v1/rules/default/api-errors", ""),
-        ("POST", "/loki/api/v1/rules/default", other_group.as_str()),
-        ("POST", "/loki/api/v1/rules/second", other_group.as_str()),
-        ("DELETE", "/loki/api/v1/rules/default/api-errors", ""),
-        ("DELETE", "/loki/api/v1/rules/default", ""),
-        ("GET", "/api/prom/rules", ""),
-        ("POST", "/api/prom/rules/default", other_group.as_str()),
-        ("DELETE", "/api/prom/rules/default", ""),
-        ("GET", "/prometheus/api/v1/rules", ""),
-        ("GET", "/prometheus/api/v1/alerts", ""),
+    for case in [
+        RulerRequestCase {
+            method: "GET",
+            uri: "/loki/api/v1/rules",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "GET",
+            uri: "/loki/api/v1/rules/default",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "GET",
+            uri: "/loki/api/v1/rules/default/api-errors",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "POST",
+            uri: "/loki/api/v1/rules/default",
+            body: other_group.as_str(),
+        },
+        RulerRequestCase {
+            method: "POST",
+            uri: "/loki/api/v1/rules/second",
+            body: other_group.as_str(),
+        },
+        RulerRequestCase {
+            method: "DELETE",
+            uri: "/loki/api/v1/rules/default/api-errors",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "DELETE",
+            uri: "/loki/api/v1/rules/default",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "GET",
+            uri: "/api/prom/rules",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "POST",
+            uri: "/api/prom/rules/default",
+            body: other_group.as_str(),
+        },
+        RulerRequestCase {
+            method: "DELETE",
+            uri: "/api/prom/rules/default",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "GET",
+            uri: "/prometheus/api/v1/rules",
+            body: "",
+        },
+        RulerRequestCase {
+            method: "GET",
+            uri: "/prometheus/api/v1/alerts",
+            body: "",
+        },
     ] {
-        let (status, body) =
-            ruler_call_for_test(&refusing, method, uri, Some("tenant-a"), body).await;
-        check!(status == StatusCode::FORBIDDEN, "{method} {uri}");
+        let response = ruler_call_for_test(
+            &refusing,
+            case.method,
+            case.uri,
+            Some("tenant-a"),
+            case.body,
+        )
+        .await;
+        check!(
+            response.status == StatusCode::FORBIDDEN,
+            "{} {}",
+            case.method,
+            case.uri
+        );
         assert_loki_error(
-            &serde_json::from_str(&body).unwrap(),
+            &serde_json::from_str(&response.body).unwrap(),
             "forbidden",
             "tenant read ACL denied",
         );
@@ -525,7 +624,7 @@ async fn a_refused_tenant_can_neither_read_nor_create_nor_delete_its_rule_groups
         ruler_call_for_test(&allowed, "GET", "/loki/api/v1/rules", Some("tenant-a"), "").await
             == before
     );
-    let (status, _) = ruler_call_for_test(
+    let response = ruler_call_for_test(
         &refusing,
         "POST",
         "/loki/api/v1/rules/default",
@@ -533,7 +632,7 @@ async fn a_refused_tenant_can_neither_read_nor_create_nor_delete_its_rule_groups
         RULE_GROUP_FOR_TEST,
     )
     .await;
-    check!(status == StatusCode::ACCEPTED);
+    check!(response.status == StatusCode::ACCEPTED);
 }
 
 /// Reads tenant-a's `default` rule namespace and checks that Loki's
@@ -584,10 +683,10 @@ async fn prometheus_rules_endpoint_filters_stored_loki_rule_groups() {
     let state = fixture();
     let app = loki_router(state);
 
-    for (namespace, rule_group) in [
-        (
-            "default",
-            "\
+    for case in [
+        RuleGroupFixture {
+            namespace: "default",
+            rule_group: "\
 name: api-errors
 rules:
   - alert: ApiErrors
@@ -595,18 +694,18 @@ rules:
   - record: job:api_errors:rate5m
     expr: sum(rate({app=\"api\"} |= \"error\" [5m]))
 ",
-        ),
-        (
-            "jobs",
-            "\
+        },
+        RuleGroupFixture {
+            namespace: "jobs",
+            rule_group: "\
 name: worker-errors
 rules:
   - alert: WorkerErrors
     expr: count_over_time({app=\"worker\"} |= \"error\" [5m]) > 0
 ",
-        ),
+        },
     ] {
-        post_loki_rule_group_for_test(&app, namespace, rule_group).await;
+        post_loki_rule_group_for_test(&app, case.namespace, case.rule_group).await;
     }
 
     let record_body =
@@ -926,36 +1025,36 @@ async fn prometheus_rules_endpoint_paginates_rule_groups() {
     let state = fixture();
     let app = loki_router(state);
 
-    for (namespace, rule_group) in [
-        (
-            "alpha",
-            "\
+    for case in [
+        RuleGroupFixture {
+            namespace: "alpha",
+            rule_group: "\
 name: api-rules
 rules:
   - alert: ApiErrors
     expr: count_over_time({app=\"api\"} |= \"error\" [30ns]) > 0
 ",
-        ),
-        (
-            "bravo",
-            "\
+        },
+        RuleGroupFixture {
+            namespace: "bravo",
+            rule_group: "\
 name: worker-rules
 rules:
   - alert: WorkerErrors
     expr: count_over_time({app=\"worker\"} |= \"error\" [30ns]) > 0
 ",
-        ),
-        (
-            "charlie",
-            "\
+        },
+        RuleGroupFixture {
+            namespace: "charlie",
+            rule_group: "\
 name: search-rules
 rules:
   - alert: SearchErrors
     expr: count_over_time({app=\"search\"} |= \"error\" [30ns]) > 0
 ",
-        ),
+        },
     ] {
-        post_loki_rule_group_for_test(&app, namespace, rule_group).await;
+        post_loki_rule_group_for_test(&app, case.namespace, case.rule_group).await;
     }
 
     let first_page = prometheus_rules_body_for_test(
@@ -1119,27 +1218,27 @@ async fn ruler_namespace_delete_endpoint_removes_only_that_namespace() {
     let state = fixture();
     let app = loki_router(state);
 
-    for (namespace, rule_group) in [
-        (
-            "default",
-            "\
+    for case in [
+        RuleGroupFixture {
+            namespace: "default",
+            rule_group: "\
 name: api-errors
 rules:
   - alert: ApiErrors
     expr: count_over_time({app=\"api\"} |= \"error\" [5m]) > 0
 ",
-        ),
-        (
-            "jobs",
-            "\
+        },
+        RuleGroupFixture {
+            namespace: "jobs",
+            rule_group: "\
 name: worker-errors
 rules:
   - alert: WorkerErrors
     expr: count_over_time({app=\"worker\"} |= \"error\" [5m]) > 0
 ",
-        ),
+        },
     ] {
-        post_loki_rule_group_for_test(&app, namespace, rule_group).await;
+        post_loki_rule_group_for_test(&app, case.namespace, case.rule_group).await;
     }
 
     let delete_response = Tenant("tenant-a")

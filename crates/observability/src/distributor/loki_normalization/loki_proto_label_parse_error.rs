@@ -3,7 +3,8 @@ use super::is_loki_label_name_char;
 pub(crate) fn loki_proto_label_parse_error(labels: &str) -> Option<String> {
     let labels = labels.trim();
     let mut chars = labels.char_indices();
-    if chars.next()? != (0, '{') {
+    let first = chars.next()?;
+    if first.0 != 0 || first.1 != '{' {
         return None;
     }
 
@@ -12,7 +13,9 @@ pub(crate) fn loki_proto_label_parse_error(labels: &str) -> Option<String> {
     let mut expecting_name = true;
     let mut first_name_char = true;
 
-    for (offset, value) in chars {
+    for character in chars {
+        let offset = character.0;
+        let value = character.1;
         if in_string {
             if escaped {
                 escaped = false;

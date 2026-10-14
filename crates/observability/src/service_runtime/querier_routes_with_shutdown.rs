@@ -1,9 +1,9 @@
 use krabka_blockstore::ObjectStoreAccess;
 
 use super::{
-    Arc, BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore, OverridesProvider, Router,
-    ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceMetrics,
-    SharedLogDeleteRequests, SharedLokiRules, build_configured_object_store,
+    Arc, BackgroundTask, BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore,
+    OverridesProvider, ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceMetrics,
+    ServiceRouter, SharedLogDeleteRequests, SharedLokiRules, build_configured_object_store,
     build_configured_querier_state, build_querier_state_with_overrides,
     load_querier_shared_compaction_frontier, loki_query_routes, querier_object_store_prefix,
     spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
@@ -31,7 +31,7 @@ pub(crate) async fn querier_routes_with_shutdown(
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     overrides: Arc<OverridesProvider>,
-) -> Result<(Router, Vec<(&'static str, JoinHandle<()>)>), ServiceConfigError> {
+) -> Result<ServiceRouter, ServiceConfigError> {
     let mut background_tasks = Vec::new();
     // The querier only reads blocks and the compaction frontier. Its rules and
     // delete requests live under `data_root`, so its credential needs no write
@@ -81,7 +81,7 @@ pub(crate) async fn querier_routes_with_shutdown(
         }
         .start_hot_tail(&mut background_tasks)
         .await?;
-        background_tasks.push((
+        background_tasks.push(BackgroundTask::new(
             "querier WAL hot-tail",
             spawn_log_hot_tail_poller(
                 wal_consumer,
@@ -110,7 +110,7 @@ pub(crate) async fn querier_routes_with_shutdown(
         .await?;
 
         // Spawn the consumer connect + poll loop in a background task.
-        background_tasks.push((
+        background_tasks.push(BackgroundTask::new(
             "querier WAL hot-tail",
             spawn_wal_hot_tail_connect_and_poll(
                 deferred,
@@ -126,8 +126,14 @@ pub(crate) async fn querier_routes_with_shutdown(
         state = started.serve_from(state);
     }
     state = state.with_metrics(metrics);
-    background_tasks.push(("logs ruler", spawn_logs_ruler(state.clone(), token)));
-    Ok((loki_query_routes(state), background_tasks))
+    background_tasks.push(BackgroundTask::new(
+        "logs ruler",
+        spawn_logs_ruler(state.clone(), token),
+    ));
+    Ok(ServiceRouter {
+        router: loki_query_routes(state),
+        background_tasks,
+    })
 }
 
 /// What a querier needs to load the shared compaction frontier its hot tail
@@ -171,7 +177,7 @@ impl FrontierRefresh<'_> {
     /// `background_tasks`.
     async fn start_hot_tail(
         self,
-        background_tasks: &mut Vec<(&'static str, JoinHandle<()>)>,
+        background_tasks: &mut Vec<BackgroundTask>,
     ) -> Result<StartedHotTail, ServiceConfigError> {
         let hot_tail =
             BufferedLogHotTail::with_bucket_width(self.config.querier_hot_tail_bucket_width);
@@ -182,7 +188,8 @@ impl FrontierRefresh<'_> {
         // Named and kept, not dropped: the refresher is the only thing that
         // moves the querier's frontier forward, and a querier answering from
         // a frozen frontier says nothing about it.
-        background_tasks.extend(refresher.map(|task| (FRONTIER_REFRESHER, task)));
+        background_tasks
+            .extend(refresher.map(|task| BackgroundTask::new(FRONTIER_REFRESHER, task)));
         Ok(StartedHotTail { hot_tail, frontier })
     }
 
@@ -192,25 +199,27 @@ impl FrontierRefresh<'_> {
         self,
         hot_tail: &BufferedLogHotTail,
     ) -> Result<LoadedFrontier, ServiceConfigError> {
-        let (frontier, refresh_source) = load_querier_shared_compaction_frontier(
+        let loaded = load_querier_shared_compaction_frontier(
             self.config,
             self.configured_store,
             self.object_store,
         )
         .await?;
-        let refresher = match (frontier.clone(), refresh_source) {
-            (Some(frontier), Some((store, prefix))) => Some(spawn_compaction_frontier_refresher(
-                store,
-                prefix,
-                frontier,
-                hot_tail.clone(),
-                self.token.clone(),
-                self.config.querier_frontier_refresh_interval,
-            )),
-            _ => None,
+        let refresher = match loaded.frontier.clone() {
+            Some(frontier) => loaded.refresh_source.map(|source| {
+                spawn_compaction_frontier_refresher(
+                    source.store,
+                    source.prefix,
+                    frontier,
+                    hot_tail.clone(),
+                    self.token.clone(),
+                    self.config.querier_frontier_refresh_interval,
+                )
+            }),
+            None => None,
         };
         Ok(LoadedFrontier {
-            frontier,
+            frontier: loaded.frontier,
             refresher,
         })
     }

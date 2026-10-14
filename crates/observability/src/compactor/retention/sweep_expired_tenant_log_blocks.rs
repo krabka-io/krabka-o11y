@@ -1,3 +1,5 @@
+use krabka_blockstore::LogIndexes;
+
 use super::{
     BTreeMap, BTreeSet, BlockDeletion, BlockDescriptor, BlockStoreError, BlockTimestampUnit,
     CompactorRunError, ObjectPath, ObjectStore, RetentionWindows, log_block_deletion,
@@ -7,6 +9,11 @@ use super::{
     tenant_log_index_shard_ranges, update_tenant_log_index_shard_to_object_store,
     write_tenant_log_index_manifest_to_object_store,
 };
+
+struct ShardLogIndexes {
+    range: super::TimeRange,
+    indexes: LogIndexes,
+}
 
 /// Drops one tenant's expired blocks from every index that names them, and
 /// names the objects the caller has to delete.
@@ -41,7 +48,10 @@ pub(crate) async fn sweep_expired_tenant_log_blocks(
         let indexes =
             read_tenant_log_index_shard_from_object_store(store, prefix, tenant, shard_range)
                 .await?;
-        shards.push((shard_range, indexes));
+        shards.push(ShardLogIndexes {
+            range: shard_range,
+            indexes,
+        });
     }
 
     // One descriptor per object key, so a block that both the tenant manifest
@@ -49,10 +59,10 @@ pub(crate) async fn sweep_expired_tenant_log_blocks(
     let mut blocks: BTreeMap<String, &BlockDescriptor> = BTreeMap::new();
     let shard_blocks = shards
         .iter()
-        .flat_map(|(_, (_, block_index))| block_index.blocks());
+        .flat_map(|shard| shard.indexes.blocks.blocks());
     for block in manifest
         .iter()
-        .flat_map(|(_, block_index)| block_index.blocks())
+        .flat_map(|indexes| indexes.blocks.blocks())
         .chain(shard_blocks)
     {
         blocks.entry(block.key.object_key()).or_insert(block);
@@ -67,23 +77,25 @@ pub(crate) async fn sweep_expired_tenant_log_blocks(
         return Ok(Vec::new());
     }
 
-    if let Some((label_index, block_index)) = &manifest
-        && let Some((next_label_index, next_block_index)) =
-            retire_blocks_from_index(tenant, label_index, block_index, &expired)?
+    if let Some(indexes) = &manifest
+        && let Some(next_indexes) =
+            retire_blocks_from_index(tenant, &indexes.labels, &indexes.blocks, &expired)?
     {
         write_tenant_log_index_manifest_to_object_store(
             store,
             prefix,
             tenant,
-            &next_label_index,
-            &next_block_index,
+            &next_indexes.label_index,
+            &next_indexes.block_index,
         )
         .await?;
     }
 
-    for (shard_range, (label_index, block_index)) in &shards {
-        let Some((next_label_index, next_block_index)) =
-            retire_blocks_from_index(tenant, label_index, block_index, &expired)?
+    for shard in &shards {
+        let shard_range = shard.range;
+        let indexes = &shard.indexes;
+        let Some(next_indexes) =
+            retire_blocks_from_index(tenant, &indexes.labels, &indexes.blocks, &expired)?
         else {
             continue;
         };
@@ -91,10 +103,10 @@ pub(crate) async fn sweep_expired_tenant_log_blocks(
             store,
             prefix,
             tenant,
-            *shard_range,
-            block_index,
-            &next_label_index,
-            &next_block_index,
+            shard_range,
+            &indexes.blocks,
+            &next_indexes.label_index,
+            &next_indexes.block_index,
         )
         .await?;
     }

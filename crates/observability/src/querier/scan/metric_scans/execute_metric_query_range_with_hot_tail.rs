@@ -1,6 +1,6 @@
 use super::{
-    CompactionFrontier, FsPath, LabelIndex, MetricQuery, QueryError, StreamPlan, TimeRange, Value,
-    WalLogRecord, execute_metric_query_range_with_hot_tail_frontier,
+    CompactionFrontier, FsPath, LabelIndex, MetricEvaluationRange, MetricQuery, QueryError,
+    StreamPlan, Value, WalLogRecord, execute_metric_query_range_with_hot_tail_frontier,
 };
 
 /// # Errors
@@ -10,7 +10,7 @@ pub async fn execute_metric_query_range_with_hot_tail(
     plan: &StreamPlan,
     query: &MetricQuery,
     label_index: &LabelIndex,
-    evaluation: (TimeRange, i64),
+    evaluation: MetricEvaluationRange,
     hot_tail: &[WalLogRecord],
     compacted_through_ns: i64,
 ) -> Result<Value, QueryError> {

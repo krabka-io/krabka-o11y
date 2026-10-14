@@ -39,9 +39,15 @@ use tonic::{
 };
 use tracing::Instrument as _;
 
+/// A bound listener and the task that keeps it serving.
+pub struct RunningServer {
+    pub bound_addr: SocketAddr,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
 use crate::{
     error::{TracesError, tempo_error_response},
-    limits::{IngestEnforcer, LimitError, Limits, OverridesProvider},
+    limits::{IngestEnforcer, LimitError, Limits, MeasuredAttribute, OverridesProvider},
     metrics::ServiceMetrics,
     span::{AttrValue, KeyValue, Span},
     wal::{SpanRecord, TRACES_WAL_TOPIC, partition_key},
@@ -155,11 +161,32 @@ mod tests {
 
     /// A case name, the raw tenant header or none, and the tenant the push is
     /// stored as, or none when the push is rejected.
-    type TenantHeaderCase = (&'static str, Option<&'static [u8]>, Option<&'static str>);
+    struct TenantHeaderCase {
+        name: &'static str,
+        header: Option<&'static [u8]>,
+        stored_tenant: Option<&'static str>,
+    }
 
     #[derive(Default)]
     struct RecordingSink {
         records: Mutex<Vec<SpanRecord>>,
+    }
+
+    struct DistributorTestState {
+        state: Arc<DistributorState>,
+        sink: Arc<RecordingSink>,
+    }
+
+    struct ResponseWithSink {
+        response: Response,
+        sink: Arc<RecordingSink>,
+    }
+
+    struct ThreeTenantResponses {
+        first: Response,
+        second: Response,
+        other_tenant: Response,
+        sink: Arc<RecordingSink>,
     }
 
     #[async_trait::async_trait]
@@ -184,24 +211,32 @@ mod tests {
         }
     }
 
-    fn test_state() -> (Arc<DistributorState>, Arc<RecordingSink>) {
+    #[allow(clippy::needless_pass_by_value)]
+    fn assert_accepted_push(response: Response, sink: &RecordingSink, span_name: &str) {
+        check!(response.status() == StatusCode::ACCEPTED);
+        assert2::assert!(sink.count() == 1);
+        assert2::assert!(sink.span_name(0) == span_name.to_string());
+    }
+
+    fn test_state() -> DistributorTestState {
         test_state_with_limits(crate::limits::Limits::default())
     }
 
-    fn test_state_with_limits(
-        limits: crate::limits::Limits,
-    ) -> (Arc<DistributorState>, Arc<RecordingSink>) {
+    fn test_state_with_limits(limits: crate::limits::Limits) -> DistributorTestState {
         test_state_with_overrides(crate::limits::OverridesProvider::new(limits))
     }
 
     fn test_state_with_overrides(
         overrides: crate::limits::OverridesProvider,
-    ) -> (Arc<DistributorState>, Arc<RecordingSink>) {
+    ) -> DistributorTestState {
         let sink = Arc::new(RecordingSink::default());
         let mut state = DistributorState::new(sink.clone());
         state.overrides = overrides;
         state.max_decompressed = mebibytes(1);
-        (Arc::new(state), sink)
+        DistributorTestState {
+            state: Arc::new(state),
+            sink,
+        }
     }
 
     fn otlp_body() -> Vec<u8> {
@@ -255,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_returns_200_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -275,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_returns_export_response_protobuf() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -303,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_accepts_application_protobuf_content_type() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -322,7 +357,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_accepts_case_insensitive_gzip_encoding() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -341,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_rejects_declared_non_protobuf_content_type() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -360,7 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_grpc_export_appends_and_returns_success() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let service = OtlpGrpcService::new(state);
         let mut req = GrpcRequest::new(ExportTraceServiceRequest {
             resource_spans: TracesData::decode(otlp_body().as_slice())
@@ -380,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn jaeger_grpc_post_spans_appends_and_returns_success() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let service = JaegerGrpcService::new(state);
         let mut req = GrpcRequest::new(checkout_post_spans_request(
             crate::wire::jaeger_grpc::api_v2::Span {
@@ -419,7 +454,7 @@ mod tests {
 
     #[tokio::test]
     async fn tempo_push_uses_anonymous_tenant_when_header_absent() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -436,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn zipkin_push_returns_202_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let body = r#"[{"traceId":"0000000000000001","id":"0000000000000002","name":"x","timestamp":1,"duration":1}]"#;
         let resp = router(state)
             .oneshot(
@@ -456,7 +491,7 @@ mod tests {
 
     #[tokio::test]
     async fn jaeger_push_returns_202_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -470,14 +505,12 @@ mod tests {
             )
             .await
             .unwrap();
-        check!(resp.status() == StatusCode::ACCEPTED);
-        assert2::assert!(sink.count() == 1);
-        assert2::assert!(sink.span_name(0) == "GET /".to_string());
+        assert_accepted_push(resp, &sink, "GET /");
     }
 
     #[tokio::test]
     async fn jaeger_binary_thrift_push_returns_202_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -491,9 +524,7 @@ mod tests {
             .await
             .unwrap();
 
-        check!(resp.status() == StatusCode::ACCEPTED);
-        assert2::assert!(sink.count() == 1);
-        assert2::assert!(sink.span_name(0) == "GET /binary".to_string());
+        assert_accepted_push(resp, &sink, "GET /binary");
     }
 
     /// A datagram names no tenant, so the policy alone decides where its spans
@@ -502,34 +533,48 @@ mod tests {
     #[tokio::test]
     async fn a_jaeger_compact_datagram_takes_the_tenant_its_policy_gives() {
         let datagram = crate::wire::jaeger::test_support::encode_sample_batch();
+        struct DatagramPolicyCase {
+            name: &'static str,
+            policy: TenantPolicy,
+            stored_tenant: Option<&'static str>,
+        }
         let cases = [
-            ("anonymous", TenantPolicy::anonymous(), Some("anonymous")),
-            (
-                "fallback",
-                TenantPolicy::Fallback(TenantId::new("tenant-a").unwrap()),
-                Some("tenant-a"),
-            ),
-            ("required", TenantPolicy::Required, None),
+            DatagramPolicyCase {
+                name: "anonymous",
+                policy: TenantPolicy::anonymous(),
+                stored_tenant: Some("anonymous"),
+            },
+            DatagramPolicyCase {
+                name: "fallback",
+                policy: TenantPolicy::Fallback(TenantId::new("tenant-a").unwrap()),
+                stored_tenant: Some("tenant-a"),
+            },
+            DatagramPolicyCase {
+                name: "required",
+                policy: TenantPolicy::Required,
+                stored_tenant: None,
+            },
         ];
 
-        for (name, policy, stored) in cases {
+        for case in cases {
             let sink = Arc::new(RecordingSink::default());
             let mut state = DistributorState::new(sink.clone());
-            state.tenant_policy = policy;
+            state.tenant_policy = case.policy;
 
             let result = handle_jaeger_compact_datagram(&state, &datagram).await;
 
-            if let Some(tenant) = stored {
-                check!(result.is_ok(), "{name}");
-                check!(sink.count() == 1, "{name}");
-                check!(sink.tenant(0) == tenant, "{name}");
-                check!(sink.span_name(0) == "GET /", "{name}");
+            if let Some(tenant) = case.stored_tenant {
+                check!(result.is_ok(), "{}", case.name);
+                check!(sink.count() == 1, "{}", case.name);
+                check!(sink.tenant(0) == tenant, "{}", case.name);
+                check!(sink.span_name(0) == "GET /", "{}", case.name);
             } else {
                 check!(
                     let Err(TracesError::Tenant(TenantResolveError::Missing)) = result,
-                    "{name}"
+                    "{}",
+                    case.name
                 );
-                check!(sink.count() == 0, "{name}");
+                check!(sink.count() == 0, "{}", case.name);
             }
         }
     }
@@ -541,20 +586,40 @@ mod tests {
     #[tokio::test]
     async fn the_jaeger_thrift_door_resolves_its_tenant_like_every_door() {
         let cases: [TenantHeaderCase; 5] = [
-            ("absent", None, Some("anonymous")),
-            ("empty", Some(b""), Some("anonymous")),
-            ("named", Some(b"tenant-a"), Some("tenant-a")),
-            ("separator", Some(b"a/b"), None),
-            ("not UTF-8", Some(b"\xff"), None),
+            TenantHeaderCase {
+                name: "absent",
+                header: None,
+                stored_tenant: Some("anonymous"),
+            },
+            TenantHeaderCase {
+                name: "empty",
+                header: Some(b""),
+                stored_tenant: Some("anonymous"),
+            },
+            TenantHeaderCase {
+                name: "named",
+                header: Some(b"tenant-a"),
+                stored_tenant: Some("tenant-a"),
+            },
+            TenantHeaderCase {
+                name: "separator",
+                header: Some(b"a/b"),
+                stored_tenant: None,
+            },
+            TenantHeaderCase {
+                name: "not UTF-8",
+                header: Some(b"\xff"),
+                stored_tenant: None,
+            },
         ];
 
-        for (name, value, stored) in cases {
-            let (state, sink) = test_state();
+        for case in cases {
+            let DistributorTestState { state, sink } = test_state();
             let mut request = Request::builder()
                 .method("POST")
                 .uri("/api/traces")
                 .header("content-type", "application/vnd.apache.thrift.binary");
-            if let Some(value) = value {
+            if let Some(value) = case.header {
                 request = request.header(TENANT_HEADER, HeaderValue::from_bytes(value).unwrap());
             }
             let resp = router(state)
@@ -566,18 +631,18 @@ mod tests {
                 .await
                 .unwrap();
 
-            if let Some(tenant) = stored {
-                check!(resp.status() == StatusCode::ACCEPTED, "{name}");
-                check!(sink.count() == 1, "{name}");
-                check!(sink.tenant(0) == tenant, "{name}");
+            if let Some(tenant) = case.stored_tenant {
+                check!(resp.status() == StatusCode::ACCEPTED, "{}", case.name);
+                check!(sink.count() == 1, "{}", case.name);
+                check!(sink.tenant(0) == tenant, "{}", case.name);
             } else {
-                let expected = TenantId::resolve(value, &TenantPolicy::anonymous())
+                let expected = TenantId::resolve(case.header, &TenantPolicy::anonymous())
                     .expect_err("the case is malformed")
                     .to_string();
-                check!(resp.status() == StatusCode::BAD_REQUEST, "{name}");
+                check!(resp.status() == StatusCode::BAD_REQUEST, "{}", case.name);
                 let body = resp.into_body().collect().await.unwrap().to_bytes();
-                check!(body.as_ref() == expected.as_bytes(), "{name}");
-                check!(sink.count() == 0, "{name}");
+                check!(body.as_ref() == expected.as_bytes(), "{}", case.name);
+                check!(sink.count() == 0, "{}", case.name);
             }
         }
     }
@@ -593,12 +658,13 @@ mod tests {
     }
 
     // Push one two-span request, with no tenant header, under `limits`.
-    async fn post_two_spans_with_limits(
-        limits: crate::limits::Limits,
-    ) -> (Response, Arc<RecordingSink>) {
-        let (state, sink) = test_state_with_limits(limits);
-        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
-        (resp, sink)
+    async fn post_two_spans_with_limits(limits: crate::limits::Limits) -> ResponseWithSink {
+        let test_state = test_state_with_limits(limits);
+        let response = post_otlp(router(test_state.state), None, otlp_body_with_spans(2)).await;
+        ResponseWithSink {
+            response,
+            sink: test_state.sink,
+        }
     }
 
     // The response body is Tempo's error JSON, and its message mentions `needle`.
@@ -613,15 +679,25 @@ mod tests {
         );
     }
 
+    async fn expect_two_spans_rejected(limits: crate::limits::Limits, error_message: Option<&str>) {
+        let ResponseWithSink { response, sink } = post_two_spans_with_limits(limits).await;
+        assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
+        if let Some(error_message) = error_message {
+            check_error_body_mentions(response, error_message).await;
+        }
+        assert2::assert!(sink.count() == 0);
+    }
+
     #[tokio::test]
     async fn over_span_limit_is_400() {
-        let limits = crate::limits::Limits {
-            max_spans_per_request: 1,
-            ..crate::limits::Limits::default()
-        };
-        let (resp, sink) = post_two_spans_with_limits(limits).await;
-        assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        assert2::assert!(sink.count() == 0);
+        expect_two_spans_rejected(
+            crate::limits::Limits {
+                max_spans_per_request: 1,
+                ..crate::limits::Limits::default()
+            },
+            None,
+        )
+        .await;
     }
 
     /// A request of exactly the cap is appended. The cap and its refusal differ
@@ -633,7 +709,10 @@ mod tests {
             max_spans_per_request: 2,
             ..crate::limits::Limits::default()
         };
-        let (resp, sink) = post_two_spans_with_limits(limits).await;
+        let ResponseWithSink {
+            response: resp,
+            sink,
+        } = post_two_spans_with_limits(limits).await;
 
         check!(resp.status() == StatusCode::OK);
         check!(sink.count() == 2);
@@ -641,16 +720,14 @@ mod tests {
 
     #[tokio::test]
     async fn shared_trace_span_limit_is_enforced_before_append() {
-        let limits = crate::limits::Limits {
-            max_spans_per_trace: 1,
-            ..crate::limits::Limits::default()
-        };
-
-        let (resp, sink) = post_two_spans_with_limits(limits).await;
-
-        assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        check_error_body_mentions(resp, "max spans per trace").await;
-        check!(sink.count() == 0);
+        expect_two_spans_rejected(
+            crate::limits::Limits {
+                max_spans_per_trace: 1,
+                ..crate::limits::Limits::default()
+            },
+            Some("max spans per trace"),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -663,7 +740,7 @@ overrides:
 ",
         )
         .unwrap();
-        let (state, sink) = test_state_with_overrides(overrides);
+        let DistributorTestState { state, sink } = test_state_with_overrides(overrides);
         let app = router(state);
 
         let tight = post_otlp(app.clone(), Some("tenant-tight"), otlp_body_with_spans(2)).await;
@@ -678,26 +755,36 @@ overrides:
 
     // Push one span for `tenant-a` twice and then once for `tenant-b`, under a
     // one-span-per-second rate limit.
-    async fn push_twice_then_other_tenant() -> ([Response; 3], Arc<RecordingSink>) {
+    async fn push_twice_then_other_tenant() -> ThreeTenantResponses {
         let limits = crate::limits::Limits {
             ingestion_rate: per_sec(1),
             ingestion_burst_spans: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
+        let DistributorTestState { state, sink } = test_state_with_limits(limits);
         let app = router(state);
 
         let first = post_otlp(app.clone(), Some("tenant-a"), otlp_body()).await;
         let second = post_otlp(app.clone(), Some("tenant-a"), otlp_body()).await;
         let other_tenant = post_otlp(app, Some("tenant-b"), otlp_body()).await;
-        ([first, second, other_tenant], sink)
+        ThreeTenantResponses {
+            first,
+            second,
+            other_tenant,
+            sink,
+        }
     }
 
     /// The second push for `tenant-a` is refused with Tempo's rate-limit
     /// error, while `tenant-b` still has its own budget.
     #[tokio::test]
     async fn ingest_rate_limit_is_per_tenant() {
-        let ([first, second, other_tenant], sink) = push_twice_then_other_tenant().await;
+        let ThreeTenantResponses {
+            first,
+            second,
+            other_tenant,
+            sink,
+        } = push_twice_then_other_tenant().await;
 
         assert2::assert!(first.status() == StatusCode::OK);
         assert2::assert!(second.status() == StatusCode::TOO_MANY_REQUESTS);
@@ -714,7 +801,7 @@ overrides:
             max_spans_per_request: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
+        let DistributorTestState { state, sink } = test_state_with_limits(limits);
         let service = OtlpGrpcService::new(state);
         let mut req = GrpcRequest::new(ExportTraceServiceRequest {
             resource_spans: TracesData::decode(otlp_body_with_spans(2).as_slice())
@@ -790,13 +877,7 @@ overrides:
             start_ns: 0,
             duration_ns: 1,
             status: crate::span::StatusCode::Unset,
-            status_message: String::new(),
-            resource_attrs: Vec::new(),
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            ..Span::default()
         };
         let second = Span {
             span_id: [2; 8],
@@ -903,7 +984,7 @@ pub use serve_jaeger_compact_udp::serve_jaeger_compact_udp;
 pub use serve_jaeger_grpc::serve_jaeger_grpc;
 pub use serve_otlp_grpc::serve_otlp_grpc;
 use shared_attr_measured::shared_attr_measured;
-use spawn_server::{bind_listener, spawn_server};
+use spawn_server::bind_and_spawn_server;
 use validate_shared::validate_shared;
 pub use wal_sink::WalSink;
 use zipkin_push::zipkin_push;

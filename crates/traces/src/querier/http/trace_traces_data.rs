@@ -7,12 +7,12 @@ pub(crate) fn trace_traces_data(trace: &TraceSpans, max_trace_spans: usize) -> O
     OtlpTracesData {
         resource_spans: resource_span_groups(trace, trace.spans.len().min(max_trace_spans))
             .into_iter()
-            .map(|(attrs, spans)| OtlpResourceSpans {
+            .map(|group| OtlpResourceSpans {
                 resource: Some(OtlpResource {
-                    attributes: otlp_attrs(&attrs),
+                    attributes: otlp_attrs(&group.attributes),
                     ..OtlpResource::default()
                 }),
-                scope_spans: otlp_scope_spans(trace.trace_id, spans),
+                scope_spans: otlp_scope_spans(trace.trace_id, group.spans),
                 ..OtlpResourceSpans::default()
             })
             .collect(),

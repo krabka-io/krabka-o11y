@@ -34,6 +34,18 @@ pub struct CompactionIndexManifest {
 
 impl CompactionIndexManifest {
     #[must_use]
+    pub fn compaction_candidate(&self) -> krabka_blockstore::CompactionCandidate {
+        krabka_blockstore::CompactionCandidate {
+            tenant: self.tenant.clone(),
+            object_key: self.block_key.clone(),
+            min_ts: self.min_ts,
+            max_ts: self.max_ts,
+            row_count: self.row_count,
+            level: self.level,
+        }
+    }
+
+    #[must_use]
     pub fn from_plan(
         tenant: impl Into<String>,
         kind: MetricBlockKind,

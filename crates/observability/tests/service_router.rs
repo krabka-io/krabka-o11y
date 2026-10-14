@@ -49,7 +49,12 @@ use tokio::{
 };
 use tower::ServiceExt as _;
 
-const API_PROD: [(&str, &str); 2] = [("app", "api"), ("env", "prod")];
+fn api_prod_labels() -> BTreeMap<String, String> {
+    let mut labels = BTreeMap::new();
+    labels.insert("app".to_string(), "api".to_string());
+    labels.insert("env".to_string(), "prod".to_string());
+    labels
+}
 
 #[derive(Clone)]
 struct PendingWalSink;
@@ -108,7 +113,12 @@ async fn router(config: &ServiceConfig, dependencies: ServiceDependencies) -> Ro
 }
 
 /// A distributor, a querier and a block builder, each with no state.
-async fn role_routers() -> [(&'static str, Router); 3] {
+struct RoleRouter {
+    name: &'static str,
+    app: Router,
+}
+
+async fn role_routers() -> [RoleRouter; 3] {
     let distributor = router(
         &minimal_service_config(Role::Distributor),
         ServiceDependencies::default().with_wal_sink(InMemoryWalSink::default()),
@@ -125,23 +135,42 @@ async fn role_routers() -> [(&'static str, Router); 3] {
     )
     .await;
     [
-        ("distributor", distributor),
-        ("querier", querier),
-        ("block-builder", compactor),
+        RoleRouter {
+            name: "distributor",
+            app: distributor,
+        },
+        RoleRouter {
+            name: "querier",
+            app: querier,
+        },
+        RoleRouter {
+            name: "block-builder",
+            app: compactor,
+        },
     ]
 }
 
 #[tokio::test]
 async fn role_operations_routes_match_existing_behavior() {
-    for (name, app) in role_routers().await {
+    for role in role_routers().await {
+        let name = role.name;
+        let app = role.app;
         let response = get_response(app.clone(), "/ready").await;
-        assert!(response.status() == StatusCode::OK, "{name} /ready status");
+        assert!(
+            response.status() == StatusCode::OK,
+            "{} /ready status",
+            name
+        );
         assert_content_type(
             &response,
             "text/plain; charset=utf-8",
             &format!("{name} /ready"),
         );
-        assert!(text_body(response).await == "ready\n", "{name} /ready body");
+        assert!(
+            text_body(response).await == "ready\n",
+            "{} /ready body",
+            name
+        );
 
         let response = get_response(app.clone(), "/config").await;
         assert!(response.status() == StatusCode::OK, "{name} /config status");
@@ -279,22 +308,63 @@ async fn role_operations_routes_match_existing_behavior() {
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn role_ring_alias_routes_remain_available() {
-    let [(_, distributor), (_, querier), (_, compactor)] = role_routers().await;
+    let roles = role_routers().await;
+    let distributor = roles[0].app.clone();
+    let querier = roles[1].app.clone();
+    let compactor = roles[2].app.clone();
 
-    for (app, uri, expected) in [
-        (distributor.clone(), "/ring", "krabka-distributor"),
-        (distributor, "/distributor/ring", "krabka-distributor"),
-        (querier.clone(), "/ring", "krabka-querier"),
-        (querier.clone(), "/scheduler/ring", "krabka-scheduler"),
-        (querier, "/ruler/ring", "Cortex Ruler Status"),
-        (compactor.clone(), "/ring", "krabka-compactor"),
-        (compactor, "/compactor/ring", "krabka-compactor"),
+    struct RingRouteCase {
+        app: Router,
+        uri: &'static str,
+        expected: &'static str,
+    }
+    for case in [
+        RingRouteCase {
+            app: distributor.clone(),
+            uri: "/ring",
+            expected: "krabka-distributor",
+        },
+        RingRouteCase {
+            app: distributor,
+            uri: "/distributor/ring",
+            expected: "krabka-distributor",
+        },
+        RingRouteCase {
+            app: querier.clone(),
+            uri: "/ring",
+            expected: "krabka-querier",
+        },
+        RingRouteCase {
+            app: querier.clone(),
+            uri: "/scheduler/ring",
+            expected: "krabka-scheduler",
+        },
+        RingRouteCase {
+            app: querier,
+            uri: "/ruler/ring",
+            expected: "Cortex Ruler Status",
+        },
+        RingRouteCase {
+            app: compactor.clone(),
+            uri: "/ring",
+            expected: "krabka-compactor",
+        },
+        RingRouteCase {
+            app: compactor,
+            uri: "/compactor/ring",
+            expected: "krabka-compactor",
+        },
     ] {
-        let response = get_response(app, uri).await;
-        assert!(response.status() == StatusCode::OK, "{uri} status");
-        assert_content_type(&response, "text/html; charset=utf-8", uri);
-        assert!(text_body(response).await.contains(expected), "{uri} body");
+        let response = get_response(case.app, case.uri).await;
+        assert!(response.status() == StatusCode::OK, "{} status", case.uri);
+        assert_content_type(&response, "text/html; charset=utf-8", case.uri);
+        assert!(
+            text_body(response).await.contains(case.expected),
+            "{} body",
+            case.uri
+        );
     }
 }
 
@@ -361,7 +431,7 @@ async fn service_router_builds_distributor_role() {
         &minimal_service_config(Role::Distributor),
         |dependencies| dependencies,
         &JsonStream {
-            stream: json!(labels(API_PROD)),
+            stream: json!(api_prod_labels()),
             values: json!([[&now_second(), "api error"]]),
         }
         .payload(),
@@ -378,7 +448,7 @@ async fn service_router_rejects_stale_loki_push_timestamp_without_wal_append() {
         &minimal_service_config(Role::Distributor),
         |dependencies| dependencies,
         &JsonStream {
-            stream: json!(labels([("app", "api")])),
+            stream: json!(labels([krabka_blockstore::LabelPair::new("app", "api")])),
             values: json!([["1000000000", "stale api error"]]),
         }
         .payload(),
@@ -433,7 +503,7 @@ async fn service_router_rejects_future_loki_push_timestamp_without_wal_append() 
         &minimal_service_config(Role::Distributor),
         |dependencies| dependencies,
         &JsonStream {
-            stream: json!(labels([("app", "api")])),
+            stream: json!(labels([krabka_blockstore::LabelPair::new("app", "api")])),
             values: json!([[&fifteen_minutes_ahead(), "future api error"]]),
         }
         .payload(),
@@ -494,7 +564,7 @@ async fn service_router_rejects_loki_push_over_configured_ingest_body_limit_with
         &config,
         |dependencies| dependencies,
         &JsonStream {
-            stream: json!(labels(API_PROD)),
+            stream: json!(api_prod_labels()),
             values: json!([["19", "api error"]]),
         }
         .payload(),
@@ -514,7 +584,7 @@ async fn service_router_rejects_loki_push_over_ingest_quota_without_wal_append()
         &minimal_service_config(Role::Distributor),
         |dependencies| dependencies.with_ingest_limiter(RejectingIngestLimiter),
         &JsonStream {
-            stream: json!(labels(API_PROD)),
+            stream: json!(api_prod_labels()),
             values: json!([[&now_second(), "api error"]]),
         }
         .payload(),
@@ -546,7 +616,7 @@ async fn service_router_times_out_loki_push_when_wal_append_stalls() {
             .header("content-type", "application/json")
             .body(Body::from(
                 JsonStream {
-                    stream: json!(labels(API_PROD)),
+                    stream: json!(api_prod_labels()),
                     values: json!([[&now_second(), "api timeout error"]]),
                 }
                 .payload()
@@ -565,10 +635,15 @@ async fn service_router_times_out_loki_push_when_wal_append_stalls() {
 }
 
 /// Serves a distributor that appends to `sink` on a bound loopback listener.
-async fn spawn_distributor_listener(
-    sink: InMemoryWalSink,
-) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+struct DistributorListener {
+    addr: std::net::SocketAddr,
+    server: tokio::task::JoinHandle<()>,
+}
+
+async fn spawn_distributor_listener(sink: InMemoryWalSink) -> DistributorListener {
+    let listener = TcpListener::bind("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         serve_service_listener(
@@ -580,25 +655,26 @@ async fn spawn_distributor_listener(
         .await
         .unwrap();
     });
-    (addr, server)
+    DistributorListener { addr, server }
 }
 
 #[tokio::test]
 async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
     let sink = InMemoryWalSink::default();
-    let (addr, server) = spawn_distributor_listener(sink.clone()).await;
+    let listener = spawn_distributor_listener(sink.clone()).await;
 
     let payload = JsonStream {
-        stream: json!(labels(API_PROD)),
+        stream: json!(api_prod_labels()),
         values: json!([[&now_second(), "api error"]]),
     }
     .payload()
     .to_string();
-    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut stream = tokio::net::TcpStream::connect(listener.addr).await.unwrap();
     stream
         .write_all(
             format!(
-                "POST /loki/api/v1/push HTTP/1.1\r\nHost: {addr}\r\nX-Scope-OrgID: tenant-a\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                "POST /loki/api/v1/push HTTP/1.1\r\nHost: {}\r\nX-Scope-OrgID: tenant-a\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                listener.addr,
                 payload.len()
             )
             .as_bytes(),
@@ -608,7 +684,7 @@ async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
 
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
-    server.abort();
+    listener.server.abort();
 
     check!(response.starts_with("HTTP/1.1 204 No Content"));
     check_one_tenant_a_api_error(&sink.records());
@@ -617,9 +693,9 @@ async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
 #[tokio::test]
 async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
     let sink = InMemoryWalSink::default();
-    let (addr, server) = spawn_distributor_listener(sink.clone()).await;
+    let listener = spawn_distributor_listener(sink.clone()).await;
 
-    let mut client = LogsServiceClient::connect(format!("http://{addr}"))
+    let mut client = LogsServiceClient::connect(format!("http://{}", listener.addr))
         .await
         .unwrap();
     // Dated to now: the gRPC export path carries the service's limits, so an
@@ -631,7 +707,7 @@ async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
         .insert("x-scope-orgid", "tenant-a".parse().unwrap());
 
     let response = client.export(request).await.unwrap();
-    server.abort();
+    listener.server.abort();
 
     check!(response.get_ref().partial_success.is_none());
     check_one_tenant_a_api_error(&sink.records());
@@ -641,13 +717,16 @@ const ERROR_QUERY_RANGE: &str = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%
 
 #[tokio::test]
 async fn service_router_builds_querier_role_from_object_store_shard_catalog_config() {
-    let (config, store, _dir) =
-        loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
+    let fixture = loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
+    let config = fixture.config;
+    let store = fixture.store;
     let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
         .await
         .unwrap();
 
-    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let response = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(body == expected_loki_forwarded_api_error());
@@ -674,7 +753,9 @@ fn local_querier_config(data_root: std::path::PathBuf) -> ServiceConfig {
 }
 
 async fn assert_query_refused(app: &axum::Router, uri: &str, expected: &ExpectedLokiError<'_>) {
-    let (status, body) = Tenant("tenant-a").get_json(app, uri).await;
+    let response = Tenant("tenant-a").get_json(app, uri).await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == expected.status);
     assert_loki_error(&body, expected.error_type, expected.contains);
@@ -684,7 +765,7 @@ async fn assert_query_refused(app: &axum::Router, uri: &str, expected: &Expected
 async fn service_router_applies_query_authorizer_dependency_to_querier_role() {
     let config = ServiceConfig {
         wal_group_id: "krabka-observability-querier".to_string(),
-        ..local_querier_config(local_manifest_root(vec![labels(API_PROD)]))
+        ..local_querier_config(local_manifest_root(vec![api_prod_labels()]))
     };
 
     assert_query_refused(
@@ -705,7 +786,7 @@ async fn service_router_applies_query_authorizer_dependency_to_querier_role() {
 
 #[tokio::test]
 async fn service_router_builds_querier_role_with_hot_tail_dependency() {
-    let data_root = local_manifest_root(vec![labels(API_PROD)]);
+    let data_root = local_manifest_root(vec![api_prod_labels()]);
 
     let hot_tail = InMemoryWalSink::default();
     hot_tail
@@ -725,7 +806,9 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
     )
     .await;
 
-    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let response = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(
@@ -743,7 +826,7 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
 async fn service_router_applies_configured_query_range_limit() {
     let config = ServiceConfig {
         max_query_range: Some(nanos(20)),
-        ..local_querier_config(local_manifest_root(vec![labels(API_PROD)]))
+        ..local_querier_config(local_manifest_root(vec![api_prod_labels()]))
     };
 
     assert_query_refused(
@@ -762,7 +845,7 @@ async fn service_router_applies_configured_query_range_limit() {
 async fn service_router_applies_configured_query_length_limit() {
     let config = ServiceConfig {
         max_query_string_bytes: Some(bytes(10)),
-        ..local_querier_config(local_manifest_root(vec![labels(API_PROD)]))
+        ..local_querier_config(local_manifest_root(vec![api_prod_labels()]))
     };
 
     assert_query_refused(
@@ -782,8 +865,11 @@ async fn service_router_applies_configured_query_series_limit() {
     let config = ServiceConfig {
         max_query_series: Some(1),
         ..local_querier_config(local_manifest_root(vec![
-            labels(API_PROD),
-            labels([("app", "worker"), ("env", "prod")]),
+            api_prod_labels(),
+            labels([
+                krabka_blockstore::LabelPair::new("app", "worker"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+            ]),
         ]))
     };
 
@@ -803,7 +889,7 @@ async fn service_router_applies_configured_query_series_limit() {
 async fn service_router_applies_configured_query_bytes_limit() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels(API_PROD));
+    let api = label_index.insert_series("tenant-a", api_prod_labels());
     let mut block_index = BlockIndex::default();
     let api_block = write_log_block(
         &dir,
@@ -833,7 +919,7 @@ async fn service_router_applies_configured_query_bytes_limit() {
 fn api_error_at(timestamp_ns: i64) -> WalLogRecord {
     WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: labels(API_PROD),
+        labels: api_prod_labels(),
         timestamp_ns,
         line: "api error".to_string(),
         structured_metadata: BTreeMap::new(),
@@ -843,7 +929,7 @@ fn api_error_at(timestamp_ns: i64) -> WalLogRecord {
 
 #[tokio::test]
 async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() {
-    let data_root = local_manifest_root(vec![labels(API_PROD)]);
+    let data_root = local_manifest_root(vec![api_prod_labels()]);
     let consumer = RecordingWalConsumer::new(vec![vec![kafka_wal_record(
         &api_error_at(19_000_000_000),
         PartitionIndex(0),
@@ -857,7 +943,9 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
 
     let body = timeout(Duration::from_millis(500), async {
         loop {
-            let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+            let response = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+            let status = response.status;
+            let body = response.body;
 
             assert!(status == StatusCode::OK);
             if body
@@ -890,7 +978,9 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
 
 #[tokio::test]
 async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail() {
-    let (config, store, _dir) = tenant_object_store_shard_catalog_service_fixture().await;
+    let fixture = tenant_object_store_shard_catalog_service_fixture().await;
+    let config = fixture.config;
+    let store = fixture.store;
     write_compaction_frontier_to_object_store(
         &store,
         &ObjectPath::from("indexes"),
@@ -923,8 +1013,10 @@ async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail
     // real-time wait (not a progress poll): bare settle after the WAL consumer's first
     // poll, before issuing the query; no cheap synchronous observable to poll on here.
     tokio::time::sleep(Duration::from_millis(10)).await;
-    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030")
+    let response = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030")
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(body == expected_api_error());
@@ -932,12 +1024,15 @@ async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail
 
 #[tokio::test]
 async fn service_router_builds_configured_local_object_store_for_querier_role() {
-    let (mut config, _store, dir) =
-        loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
+    let fixture = loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
+    let mut config = fixture.config;
+    let dir = fixture.dir;
     config.object_store_url = Some(format!("file://{}", dir.display()));
     let app = router(&config, ServiceDependencies::default()).await;
 
-    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let response = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
+    let status = response.status;
+    let body = response.body;
 
     assert!(status == StatusCode::OK);
     assert!(body == expected_loki_forwarded_api_error());

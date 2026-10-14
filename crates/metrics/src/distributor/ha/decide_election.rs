@@ -1,10 +1,12 @@
-use super::{DecodedSeries, HaElection, HaElectionRecord, HashMap, Time, TimeExt};
+use super::{
+    DecodedSeries, HaElection, HaElectionIdentity, HaElectionRecord, HashMap, Time, TimeExt,
+};
 
 /// Pure HA election decision against an elected view that is already locked. A
 /// caller that holds the tracker lock can decide and commit atomically. A
 /// lock-free caller goes through [`ha_election_at_with_timeout`].
 pub(crate) fn decide_election(
-    elected: &HashMap<(String, String), HaElectionRecord>,
+    elected: &HashMap<HaElectionIdentity, HaElectionRecord>,
     tenant: &str,
     series: &[DecodedSeries],
     lease_timestamp_ms: i64,
@@ -18,7 +20,7 @@ pub(crate) fn decide_election(
     };
     let cluster = first.labels.get("cluster").unwrap_or("");
 
-    match elected.get(&(tenant.to_string(), cluster.to_string())) {
+    match elected.get(&HaElectionIdentity::new(tenant, cluster)) {
         Some(elected) if elected.replica == replica => HaElection::Update(HaElectionRecord {
             tenant: tenant.to_string(),
             cluster: cluster.to_string(),

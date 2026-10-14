@@ -47,7 +47,9 @@ pub(crate) fn stream_plan_scan_sql_for_time_range(
         "timestamp_ns >= {} and timestamp_ns <= {}",
         time_range.start_ns, time_range.end_ns
     )];
-    if let (Some(first), Some(last)) = (plan.fingerprints.first(), plan.fingerprints.last()) {
+    if let Some(first) = plan.fingerprints.first()
+        && let Some(last) = plan.fingerprints.last()
+    {
         if plan.fingerprints.len() > MAX_FINGERPRINT_IN_LIST {
             predicates.push(format!("series_fingerprint between {first} and {last}"));
         } else {

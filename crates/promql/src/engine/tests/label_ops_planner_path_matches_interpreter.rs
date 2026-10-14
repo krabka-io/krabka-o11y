@@ -1,5 +1,16 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct LabelOpsFloatSample {
+    labels: Labels,
+    value: f64,
+}
+
+struct LabelOpsQueryCase {
+    query: &'static str,
+    time_ms: i64,
+}
+
 #[tokio::test]
 pub(crate) async fn label_ops_planner_path_matches_interpreter() {
     use crate::{DurationExprContext, parse_promql_with_duration_context};
@@ -9,39 +20,66 @@ pub(crate) async fn label_ops_planner_path_matches_interpreter() {
     // operator path and sort last), and an up-like metric for the nested
     // aggregate case.
     let mut store = InMemoryMetricStore::new();
-    for (lbls, value) in [
-        (
-            labels(&[("__name__", "g"), ("l", "x"), ("src", "a-1")]),
-            3.0,
-        ),
-        (
-            labels(&[("__name__", "g"), ("l", "y"), ("src", "b-2")]),
-            1.0,
-        ),
-        (
-            labels(&[("__name__", "g"), ("l", "z"), ("src", "c-3")]),
-            f64::NAN,
-        ),
+    for sample in [
+        LabelOpsFloatSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "g"),
+                crate::test_support::TestLabelPair::new("l", "x"),
+                crate::test_support::TestLabelPair::new("src", "a-1"),
+            ]))
+            .value(3.0)
+            .build(),
+        LabelOpsFloatSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "g"),
+                crate::test_support::TestLabelPair::new("l", "y"),
+                crate::test_support::TestLabelPair::new("src", "b-2"),
+            ]))
+            .value(1.0)
+            .build(),
+        LabelOpsFloatSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "g"),
+                crate::test_support::TestLabelPair::new("l", "z"),
+                crate::test_support::TestLabelPair::new("src", "c-3"),
+            ]))
+            .value(f64::NAN)
+            .build(),
     ] {
-        store.push_float("t", lbls, 60_000, value);
+        store.push_float("t", sample.labels, 60_000, sample.value);
     }
-    for (job, value) in [("api", 1.0), ("db", 1.0)] {
+    for job in ["api", "db"] {
         store.push_float(
             "t",
-            labels(&[("__name__", "up"), ("job", job)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", job),
+            ]),
             60_000,
-            value,
+            1.0,
         );
     }
     // Two `h` series differing only in label `a`; overwriting `a` to a
     // constant collapses them onto the same labelset (the collision case).
-    for (a, value) in [("1", 10.0), ("2", 20.0)] {
-        store.push_float(
-            "t",
-            labels(&[("__name__", "h"), ("a", a), ("b", "p")]),
-            60_000,
-            value,
-        );
+    for sample in [
+        LabelOpsFloatSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "h"),
+                crate::test_support::TestLabelPair::new("a", "1"),
+                crate::test_support::TestLabelPair::new("b", "p"),
+            ]))
+            .value(10.0)
+            .build(),
+        LabelOpsFloatSample::builder()
+            .labels(labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "h"),
+                crate::test_support::TestLabelPair::new("a", "2"),
+                crate::test_support::TestLabelPair::new("b", "p"),
+            ]))
+            .value(20.0)
+            .build(),
+    ] {
+        store.push_float("t", sample.labels, 60_000, sample.value);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
@@ -52,55 +90,96 @@ pub(crate) async fn label_ops_planner_path_matches_interpreter() {
     // sort/sort_desc (incl. the genuine-NaN row), and a nested aggregate.
     let queries = [
         // Capture group: `src="a-1"` -> `dst="a"`.
-        (
-            r#"label_replace(g, "dst", "$1", "src", "(.*)-.*")"#,
-            60_000_i64,
-        ),
+        LabelOpsQueryCase {
+            query: r#"label_replace(g, "dst", "$1", "src", "(.*)-.*")"#,
+            time_ms: 60_000,
+        },
         // No match (`src` has no digit-only-prefix form here): unchanged.
-        (r#"label_replace(g, "dst", "$1", "src", "(\\d+)")"#, 60_000),
+        LabelOpsQueryCase {
+            query: r#"label_replace(g, "dst", "$1", "src", "(\\d+)")"#,
+            time_ms: 60_000,
+        },
         // Empty replacement writes `dst=""` (the interpreter keeps it).
-        (r#"label_replace(g, "dst", "", "src", ".*")"#, 60_000),
+        LabelOpsQueryCase {
+            query: r#"label_replace(g, "dst", "", "src", ".*")"#,
+            time_ms: 60_000,
+        },
         // Replace the metric name itself (label_replace does not drop it).
-        (
-            r#"label_replace(g, "__name__", "renamed", "l", "(.+)")"#,
-            60_000,
-        ),
+        LabelOpsQueryCase {
+            query: r#"label_replace(g, "__name__", "renamed", "l", "(.+)")"#,
+            time_ms: 60_000,
+        },
         // label_join: multi-source with a separator.
-        (r#"label_join(g, "dst", "/", "l", "src")"#, 60_000),
+        LabelOpsQueryCase {
+            query: r#"label_join(g, "dst", "/", "l", "src")"#,
+            time_ms: 60_000,
+        },
         // label_join with a single source and empty separator.
-        (r#"label_join(g, "dst", "", "l")"#, 60_000),
+        LabelOpsQueryCase {
+            query: r#"label_join(g, "dst", "", "l")"#,
+            time_ms: 60_000,
+        },
         // sort / sort_desc over a bare selector, including the NaN row
         // (which the NaN-preserving inner sourcing must keep and place last).
-        ("sort(g)", 60_000),
-        ("sort_desc(g)", 60_000),
+        LabelOpsQueryCase {
+            query: "sort(g)",
+            time_ms: 60_000,
+        },
+        LabelOpsQueryCase {
+            query: "sort_desc(g)",
+            time_ms: 60_000,
+        },
         // Nested compositional case: sort over an aggregate (NaN-free `up`,
         // so the aggregate operator path matches the interpreter exactly).
-        ("sort(sum by (job) (up))", 60_000),
+        LabelOpsQueryCase {
+            query: "sort(sum by (job) (up))",
+            time_ms: 60_000,
+        },
         // label_replace over a nested aggregate (operator inner).
-        (
-            r#"label_replace(sum by (job) (up), "tag", "$1", "job", "(.+)")"#,
-            60_000,
-        ),
+        LabelOpsQueryCase {
+            query: r#"label_replace(sum by (job) (up), "tag", "$1", "job", "(.+)")"#,
+            time_ms: 60_000,
+        },
         // Binary operands are now planner-supported, so label-ops over a
         // binary inner expression route through operators and must match the
         // interpreter (note: `g + 1` drops `__name__`, so `l`/`src` survive).
-        (r#"label_join(g + 1, "dst", "/", "l")"#, 60_000),
-        ("sort(g + 1)", 60_000),
+        LabelOpsQueryCase {
+            query: r#"label_join(g + 1, "dst", "/", "l")"#,
+            time_ms: 60_000,
+        },
+        LabelOpsQueryCase {
+            query: "sort(g + 1)",
+            time_ms: 60_000,
+        },
         // sort_by_label / sort_by_label_desc over a bare selector: order by the
         // `l` label values, then by remaining labels (the canonical key
         // tiebreak). Order-sensitive (the comparator below treats `sort*`
         // queries as ordered).
-        (r#"sort_by_label(g, "l")"#, 60_000),
-        (r#"sort_by_label_desc(g, "l")"#, 60_000),
+        LabelOpsQueryCase {
+            query: r#"sort_by_label(g, "l")"#,
+            time_ms: 60_000,
+        },
+        LabelOpsQueryCase {
+            query: r#"sort_by_label_desc(g, "l")"#,
+            time_ms: 60_000,
+        },
         // Multi-label sort_by_label: tie on `l` would fall through to `src`.
-        (r#"sort_by_label(g, "l", "src")"#, 60_000),
+        LabelOpsQueryCase {
+            query: r#"sort_by_label(g, "l", "src")"#,
+            time_ms: 60_000,
+        },
         // sort_by_label over a nested aggregate (operator inner).
-        (r#"sort_by_label(sum by (job) (up), "job")"#, 60_000),
+        LabelOpsQueryCase {
+            query: r#"sort_by_label(sum by (job) (up), "job")"#,
+            time_ms: 60_000,
+        },
     ];
 
-    for (query, time_ms) in queries {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, time_ms).await;
+    for case in queries {
+        let query = case.query;
+        let parity = planned_and_interpreted(&engine, query, case.time_ms).await;
+        let via_operators = parity.via_operators;
+        let via_interpreter = parity.via_interpreter;
 
         // `sort`/`sort_desc` assert ordering, so compare order-sensitively for
         // them and fingerprint-normalize the unordered label-rewrites.

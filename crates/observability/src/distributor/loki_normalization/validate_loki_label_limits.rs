@@ -19,17 +19,19 @@ pub(crate) fn validate_loki_label_limits(
             });
         }
     }
-    for (name, value) in labels {
+    for entry in labels {
+        let name = &entry.0;
+        let value = &entry.1;
         if exceeds(name.len(), limits.max_label_name_length) {
             return Err(DistributorError::LabelNameTooLong {
                 stream: loki_stale_sample_label_set(labels),
-                name: name.clone(),
+                name: (*name).clone(),
             });
         }
         if exceeds(value.len(), limits.max_label_value_length) {
             return Err(DistributorError::LabelValueTooLong {
                 stream: loki_stale_sample_label_set(labels),
-                value: value.clone(),
+                value: (*value).clone(),
             });
         }
     }

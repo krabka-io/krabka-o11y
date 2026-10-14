@@ -52,7 +52,7 @@ pub trait ProfileStore: Send + Sync {
         label_names: &[String],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Vec<(String, String)>>, ProfileError>;
+    ) -> Result<Vec<Vec<crate::ProfileLabel>>, ProfileError>;
 
     async fn stats(
         &self,

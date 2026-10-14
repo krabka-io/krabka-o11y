@@ -4,6 +4,7 @@ use super::{
     BTreeMap, BTreeSet, BlockEntry, BlockLevel, BlockListRepr, BlockMeta, Deserialize, Serialize,
     SeriesFingerprint, fingerprint_set_digest,
 };
+use crate::block::BlockTimeBounds;
 
 /// A tenant's blocks, ordered by time, with the block-to-series pairs inverted.
 ///
@@ -45,6 +46,23 @@ pub(crate) struct BlockList {
     /// searchable.
     max_end: Vec<i64>,
     dead: usize,
+}
+
+pub(crate) struct LocalBlockShard<'a> {
+    pub blocks: Vec<&'a BlockEntry>,
+    pub postings: BTreeMap<SeriesFingerprint, Vec<u32>>,
+}
+
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+struct BlockOrderKey<'a> {
+    min_ts: i64,
+    max_ts: i64,
+    object_key: &'a str,
+}
+
+struct LocalOrdinal {
+    original: u32,
+    local: u32,
 }
 
 /// Sentinel for an ordinal that is no longer in `order`.
@@ -157,7 +175,9 @@ impl BlockList {
         min_ts: i64,
         max_ts: i64,
     ) -> Vec<String> {
-        let (lo, hi) = self.window(min_ts, max_ts);
+        let window = self.window(min_ts, max_ts);
+        let lo = window.start;
+        let hi = window.end;
         if lo >= hi || fps.is_empty() {
             return Vec::new();
         }
@@ -195,20 +215,30 @@ impl BlockList {
 
     /// Object keys of the blocks that overlap `[min_ts, max_ts]`, in time order.
     pub(crate) fn blocks_in_range(&self, min_ts: i64, max_ts: i64) -> Vec<String> {
-        let (lo, hi) = self.window(min_ts, max_ts);
+        let window = self.window(min_ts, max_ts);
+        let lo = window.start;
+        let hi = window.end;
         self.keys_in_window(lo, hi, min_ts, max_ts, |_| true)
     }
 
     /// Tightest `(min, max)` across the blocks that overlap `[min_ts, max_ts]`.
-    pub(crate) fn time_bounds(&self, min_ts: i64, max_ts: i64) -> Option<(i64, i64)> {
-        let (lo, hi) = self.window(min_ts, max_ts);
+    pub(crate) fn time_bounds(&self, min_ts: i64, max_ts: i64) -> Option<BlockTimeBounds> {
+        let window = self.window(min_ts, max_ts);
+        let lo = window.start;
+        let hi = window.end;
         self.order[lo..hi]
             .iter()
             .map(|ordinal| &self.entries[*ordinal as usize])
             .filter(|entry| entry.overlaps(min_ts, max_ts))
             .fold(None, |bounds, entry| match bounds {
-                Some((min, max)) => Some((min.min(entry.min_ts), max.max(entry.max_ts))),
-                None => Some((entry.min_ts, entry.max_ts)),
+                Some(bounds) => Some(BlockTimeBounds {
+                    min_ts: bounds.min_ts.min(entry.min_ts),
+                    max_ts: bounds.max_ts.max(entry.max_ts),
+                }),
+                None => Some(BlockTimeBounds {
+                    min_ts: entry.min_ts,
+                    max_ts: entry.max_ts,
+                }),
             })
     }
 
@@ -219,7 +249,8 @@ impl BlockList {
     /// A merge and a full block listing are both such callers.
     pub(crate) fn fingerprints_by_ordinal(&self) -> BTreeMap<u32, Vec<SeriesFingerprint>> {
         let mut by_ordinal: BTreeMap<u32, Vec<SeriesFingerprint>> = BTreeMap::new();
-        for (fingerprint, ordinals) in &self.postings {
+        for fingerprint in self.postings.keys() {
+            let ordinals = &self.postings[fingerprint];
             for ordinal in ordinals {
                 if self.live[*ordinal as usize] {
                     by_ordinal.entry(*ordinal).or_default().push(*fingerprint);
@@ -251,7 +282,9 @@ impl BlockList {
 
     /// The live ordinals whose blocks overlap `[min_ts, max_ts]`, in time order.
     pub(crate) fn ordinals_overlapping(&self, min_ts: i64, max_ts: i64) -> Vec<u32> {
-        let (lo, hi) = self.window(min_ts, max_ts);
+        let window = self.window(min_ts, max_ts);
+        let lo = window.start;
+        let hi = window.end;
         self.order[lo..hi]
             .iter()
             .copied()
@@ -277,7 +310,8 @@ impl BlockList {
         ordinals: &BTreeSet<u32>,
     ) -> BTreeMap<SeriesFingerprint, Vec<u32>> {
         let mut selected: BTreeMap<SeriesFingerprint, Vec<u32>> = BTreeMap::new();
-        for (fingerprint, block_ordinals) in &self.postings {
+        for fingerprint in self.postings.keys() {
+            let block_ordinals = &self.postings[fingerprint];
             let kept = block_ordinals
                 .iter()
                 .copied()
@@ -294,44 +328,45 @@ impl BlockList {
     ///
     /// A shard is a document of its own, so its blocks are renumbered from
     /// zero in `ordinals` order and its postings point at those numbers.
-    pub(crate) fn shard_local(
-        &self,
-        ordinals: &BTreeSet<u32>,
-    ) -> (Vec<&BlockEntry>, BTreeMap<SeriesFingerprint, Vec<u32>>) {
-        let local = ordinals
-            .iter()
-            .enumerate()
-            .map(|(local, ordinal)| {
-                (
-                    *ordinal,
-                    u32::try_from(local).expect("a shard holds fewer blocks than the tenant"),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        let postings = self
-            .postings_for(ordinals)
-            .into_iter()
-            .map(|(fingerprint, ordinals)| {
-                let ordinals = ordinals
-                    .iter()
-                    .filter_map(|ordinal| local.get(ordinal).copied())
-                    .collect::<Vec<_>>();
-                (fingerprint, ordinals)
-            })
-            .collect::<BTreeMap<_, _>>();
+    pub(crate) fn shard_local(&self, ordinals: &BTreeSet<u32>) -> LocalBlockShard<'_> {
+        let mut local = Vec::with_capacity(ordinals.len());
+        for ordinal in ordinals {
+            local.push(LocalOrdinal {
+                original: *ordinal,
+                local: u32::try_from(local.len())
+                    .expect("a shard holds fewer blocks than the tenant"),
+            });
+        }
+        let selected = self.postings_for(ordinals);
+        let mut postings = BTreeMap::new();
+        for fingerprint in selected.keys() {
+            let ordinal_list = &selected[fingerprint];
+            let mut local_ordinals = Vec::with_capacity(ordinal_list.len());
+            for ordinal in ordinal_list {
+                if let Ok(index) = local.binary_search_by_key(ordinal, |entry| entry.original) {
+                    let mapped = &local[index];
+                    local_ordinals.push(mapped.local);
+                }
+            }
+            postings.insert(*fingerprint, local_ordinals);
+        }
         let blocks = ordinals
             .iter()
             .map(|ordinal| self.entry(*ordinal))
             .collect();
-        (blocks, postings)
+        LocalBlockShard { blocks, postings }
     }
 
     /// Every fingerprint the list holds a posting for, live blocks only.
     pub(crate) fn live_fingerprints(&self) -> BTreeSet<SeriesFingerprint> {
         self.postings
-            .iter()
-            .filter(|(_, ordinals)| ordinals.iter().any(|o| self.live[*o as usize]))
-            .map(|(fingerprint, _)| *fingerprint)
+            .keys()
+            .filter(|fingerprint| {
+                self.postings[*fingerprint]
+                    .iter()
+                    .any(|ordinal| self.live[*ordinal as usize])
+            })
+            .copied()
             .collect()
     }
 
@@ -344,7 +379,7 @@ impl BlockList {
     /// window starts, while a block inside the span still has to be tested.
     /// Blocks are cut on time and barely overlap, so in the usual case the
     /// span is the answer and the test rejects nothing.
-    fn window(&self, min_ts: i64, max_ts: i64) -> (usize, usize) {
+    fn window(&self, min_ts: i64, max_ts: i64) -> krabka_o11y_verified::OverlapWindow {
         overlap_window(&self.min_start, &self.max_end, min_ts, max_ts)
     }
 
@@ -383,10 +418,18 @@ impl BlockList {
     fn attach(&mut self, ordinal: u32) {
         let entries = &self.entries;
         let entry = &entries[ordinal as usize];
-        let key = (entry.min_ts, entry.max_ts, entry.object_key.as_str());
+        let key = BlockOrderKey {
+            min_ts: entry.min_ts,
+            max_ts: entry.max_ts,
+            object_key: entry.object_key.as_str(),
+        };
         let position = self.order.partition_point(|other| {
             let other = &entries[*other as usize];
-            (other.min_ts, other.max_ts, other.object_key.as_str()) < key
+            BlockOrderKey {
+                min_ts: other.min_ts,
+                max_ts: other.max_ts,
+                object_key: other.object_key.as_str(),
+            } < key
         });
         self.order.insert(position, ordinal);
         self.refresh_from(position);
@@ -441,7 +484,8 @@ impl BlockList {
         // Ordinal order, not time order: an ordinal is an identity, and
         // renumbering along `order` would make a re-save reshuffle every
         // posting list for no gain.
-        for (ordinal, entry) in self.entries.iter().enumerate() {
+        for ordinal in 0..self.entries.len() {
+            let entry = &self.entries[ordinal];
             if !self.live[ordinal] {
                 continue;
             }
@@ -454,7 +498,8 @@ impl BlockList {
         }
 
         let mut postings: BTreeMap<SeriesFingerprint, Vec<u32>> = BTreeMap::new();
-        for (fingerprint, ordinals) in &self.postings {
+        for fingerprint in self.postings.keys() {
+            let ordinals = &self.postings[fingerprint];
             let kept = ordinals
                 .iter()
                 .filter_map(|ordinal| remap.get(ordinal).copied())
@@ -487,14 +532,16 @@ impl BlockList {
         // resolve the key map first and then take the winners as the live set.
         // Decoded bytes are the only way a duplicate reaches here, and a
         // duplicate left live would put one block in the index twice.
-        for (ordinal, entry) in self.entries.iter().enumerate() {
+        for ordinal in 0..self.entries.len() {
+            let entry = &self.entries[ordinal];
             let ordinal = u32::try_from(ordinal).expect("an entry count fits a u32");
             if self.live[ordinal as usize] {
                 self.by_key.insert(entry.object_key.clone(), ordinal);
             }
         }
         self.dead = 0;
-        for (ordinal, entry) in self.entries.iter().enumerate() {
+        for ordinal in 0..self.entries.len() {
+            let entry = &self.entries[ordinal];
             let ordinal = u32::try_from(ordinal).expect("an entry count fits a u32");
             if self.by_key.get(&entry.object_key) == Some(&ordinal) {
                 self.order.push(ordinal);
@@ -507,11 +554,16 @@ impl BlockList {
         self.order.sort_by(|left, right| {
             let left = &entries[*left as usize];
             let right = &entries[*right as usize];
-            (left.min_ts, left.max_ts, left.object_key.as_str()).cmp(&(
-                right.min_ts,
-                right.max_ts,
-                right.object_key.as_str(),
-            ))
+            BlockOrderKey {
+                min_ts: left.min_ts,
+                max_ts: left.max_ts,
+                object_key: left.object_key.as_str(),
+            }
+            .cmp(&BlockOrderKey {
+                min_ts: right.min_ts,
+                max_ts: right.max_ts,
+                object_key: right.object_key.as_str(),
+            })
         });
         self.position.resize(self.entries.len(), NO_POSITION);
         self.position.fill(NO_POSITION);

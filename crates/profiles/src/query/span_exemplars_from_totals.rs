@@ -6,7 +6,7 @@ use super::{
 pub(crate) async fn span_exemplars_from_totals(
     scan: &krabka_pprof::ProfileScan,
     step: Time,
-    labels: &[(String, String)],
+    labels: &[krabka_pprof::ProfileLabel],
 ) -> Result<BTreeMap<i64, Vec<pb::types::v1::Exemplar>>, ProfileError> {
     let label_pairs = types_label_pairs(labels.to_vec());
     bucket_exemplars(BucketExemplars {

@@ -59,6 +59,23 @@ mod tests {
         reader::DEFAULT_BLOCK_READ_MAX,
     };
 
+    #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+    struct MergeRow {
+        fingerprint: u64,
+        timestamp: i64,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct SourceRow {
+        fingerprint: u64,
+        source: &'static str,
+    }
+
+    struct MergeDrain {
+        rows: Vec<MergeRow>,
+        batch_sizes: Vec<usize>,
+    }
+
     fn series_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![
             Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
@@ -67,9 +84,9 @@ mod tests {
     }
 
     /// A batch of `(fingerprint, timestamp)` pairs, in the order given.
-    fn batch(rows: &[(u64, i64)]) -> RecordBatch {
-        let fingerprints = UInt64Array::from_iter_values(rows.iter().map(|(fp, _)| *fp));
-        let timestamps = Int64Array::from_iter_values(rows.iter().map(|(_, ts)| *ts));
+    fn batch(rows: &[MergeRow]) -> RecordBatch {
+        let fingerprints = UInt64Array::from_iter_values(rows.iter().map(|row| row.fingerprint));
+        let timestamps = Int64Array::from_iter_values(rows.iter().map(|row| row.timestamp));
         RecordBatch::try_new(
             series_schema(),
             vec![Arc::new(fingerprints), Arc::new(timestamps)],
@@ -83,7 +100,7 @@ mod tests {
     }
 
     /// The `(fingerprint, timestamp)` pairs of `batch`, in row order.
-    fn pairs(batch: &RecordBatch) -> Vec<(u64, i64)> {
+    fn pairs(batch: &RecordBatch) -> Vec<MergeRow> {
         let fingerprints = batch
             .column(0)
             .as_any()
@@ -95,20 +112,26 @@ mod tests {
             .downcast_ref::<Int64Array>()
             .expect("an i64 column");
         (0..batch.num_rows())
-            .map(|row| (fingerprints.value(row), timestamps.value(row)))
+            .map(|row| MergeRow {
+                fingerprint: fingerprints.value(row),
+                timestamp: timestamps.value(row),
+            })
             .collect()
     }
 
     /// Every row every run holds, in the order the merge emits them, and the
     /// size of each batch it emitted them in.
-    async fn drain(merge: &mut SortedMerge) -> (Vec<(u64, i64)>, Vec<usize>) {
+    async fn drain(merge: &mut SortedMerge) -> MergeDrain {
         let mut rows = Vec::new();
         let mut sizes = Vec::new();
         while let Some(batch) = merge.next_batch().await.expect("the runs merge") {
             sizes.push(batch.num_rows());
             rows.extend(pairs(&batch));
         }
-        (rows, sizes)
+        MergeDrain {
+            rows,
+            batch_sizes: sizes,
+        }
     }
 
     fn sort_key() -> Vec<String> {
@@ -121,22 +144,66 @@ mod tests {
             series_schema(),
             &sort_key(),
             vec![
-                run(vec![batch(&[(1, 10), (4, 40)]), batch(&[(7, 70)])]),
-                run(vec![batch(&[(2, 20), (5, 50), (8, 80)])]),
-                run(vec![batch(&[(3, 30)]), batch(&[(6, 60), (9, 90)])]),
+                run(vec![
+                    batch(&[
+                        MergeRow {
+                            fingerprint: 1,
+                            timestamp: 10,
+                        },
+                        MergeRow {
+                            fingerprint: 4,
+                            timestamp: 40,
+                        },
+                    ]),
+                    batch(&[MergeRow {
+                        fingerprint: 7,
+                        timestamp: 70,
+                    }]),
+                ]),
+                run(vec![batch(&[
+                    MergeRow {
+                        fingerprint: 2,
+                        timestamp: 20,
+                    },
+                    MergeRow {
+                        fingerprint: 5,
+                        timestamp: 50,
+                    },
+                    MergeRow {
+                        fingerprint: 8,
+                        timestamp: 80,
+                    },
+                ])]),
+                run(vec![
+                    batch(&[MergeRow {
+                        fingerprint: 3,
+                        timestamp: 30,
+                    }]),
+                    batch(&[
+                        MergeRow {
+                            fingerprint: 6,
+                            timestamp: 60,
+                        },
+                        MergeRow {
+                            fingerprint: 9,
+                            timestamp: 90,
+                        },
+                    ]),
+                ]),
             ],
             MERGE_BATCH_ROWS,
         )
         .expect("the runs share the sort key");
 
-        let (rows, _) = drain(&mut merge).await;
+        let drained = drain(&mut merge).await;
+        let rows = drained.rows;
 
         assert!(
             rows == (1..=9_u64)
-                .map(|value| (
-                    value,
-                    i64::try_from(value).expect("a small value fits") * 10
-                ))
+                .map(|value| MergeRow {
+                    fingerprint: value,
+                    timestamp: i64::try_from(value).expect("a small value fits") * 10,
+                })
                 .collect::<Vec<_>>()
         );
     }
@@ -149,16 +216,44 @@ mod tests {
             series_schema(),
             &sort_key(),
             vec![
-                run(vec![batch(&[(1, 5), (1, 5)])]),
-                run(vec![batch(&[(1, 5)])]),
+                run(vec![batch(&[
+                    MergeRow {
+                        fingerprint: 1,
+                        timestamp: 5,
+                    },
+                    MergeRow {
+                        fingerprint: 1,
+                        timestamp: 5,
+                    },
+                ])]),
+                run(vec![batch(&[MergeRow {
+                    fingerprint: 1,
+                    timestamp: 5,
+                }])]),
             ],
             MERGE_BATCH_ROWS,
         )
         .expect("the runs share the sort key");
 
-        let (rows, _) = drain(&mut merge).await;
+        let drained = drain(&mut merge).await;
+        let rows = drained.rows;
 
-        assert!(rows == vec![(1, 5), (1, 5), (1, 5)]);
+        assert!(
+            rows == vec![
+                MergeRow {
+                    fingerprint: 1,
+                    timestamp: 5
+                },
+                MergeRow {
+                    fingerprint: 1,
+                    timestamp: 5
+                },
+                MergeRow {
+                    fingerprint: 1,
+                    timestamp: 5
+                }
+            ]
+        );
     }
 
     #[tokio::test]
@@ -168,13 +263,17 @@ mod tests {
             Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
             Field::new("source", DataType::Utf8, false),
         ]));
-        let batch = |rows: &[(u64, &'static str)]| {
+        let batch = |rows: &[SourceRow]| {
             RecordBatch::try_new(
                 schema.clone(),
                 vec![
-                    Arc::new(UInt64Array::from_iter_values(rows.iter().map(|row| row.0))),
+                    Arc::new(UInt64Array::from_iter_values(
+                        rows.iter().map(|row| row.fingerprint),
+                    )),
                     Arc::new(Int64Array::from_iter_values(rows.iter().map(|_| 1))),
-                    Arc::new(StringArray::from_iter_values(rows.iter().map(|row| row.1))),
+                    Arc::new(StringArray::from_iter_values(
+                        rows.iter().map(|row| row.source),
+                    )),
                 ],
             )
             .expect("the columns match the schema")
@@ -183,8 +282,20 @@ mod tests {
             schema.clone(),
             &sort_key(),
             vec![
-                run(vec![batch(&[(2, "earlier")])]),
-                run(vec![batch(&[(1, "first"), (2, "later")])]),
+                run(vec![batch(&[SourceRow {
+                    fingerprint: 2,
+                    source: "earlier",
+                }])]),
+                run(vec![batch(&[
+                    SourceRow {
+                        fingerprint: 1,
+                        source: "first",
+                    },
+                    SourceRow {
+                        fingerprint: 2,
+                        source: "later",
+                    },
+                ])]),
             ],
             MERGE_BATCH_ROWS,
         )
@@ -209,10 +320,16 @@ mod tests {
     #[tokio::test]
     async fn the_emitted_batches_are_capped_however_large_the_inputs_are() {
         let one = (0..2_000_u64)
-            .map(|row| (row * 2, 1_i64))
+            .map(|row| MergeRow {
+                fingerprint: row * 2,
+                timestamp: 1_i64,
+            })
             .collect::<Vec<_>>();
         let other = (0..1_000_u64)
-            .map(|row| (row * 4 + 1, 1_i64))
+            .map(|row| MergeRow {
+                fingerprint: row * 4 + 1,
+                timestamp: 1_i64,
+            })
             .collect::<Vec<_>>();
         let mut merge = SortedMerge::new(
             series_schema(),
@@ -222,7 +339,9 @@ mod tests {
         )
         .expect("the runs share the sort key");
 
-        let (rows, sizes) = drain(&mut merge).await;
+        let drained = drain(&mut merge).await;
+        let rows = drained.rows;
+        let sizes = drained.batch_sizes;
 
         check!(rows.len() == 3_000);
         check!(sizes == vec![1_000; 3]);
@@ -243,15 +362,37 @@ mod tests {
             vec![
                 run(vec![RecordBatch::new_empty(series_schema())]),
                 run(Vec::new()),
-                run(vec![batch(&[(1, 1), (2, 2)])]),
+                run(vec![batch(&[
+                    MergeRow {
+                        fingerprint: 1,
+                        timestamp: 1,
+                    },
+                    MergeRow {
+                        fingerprint: 2,
+                        timestamp: 2,
+                    },
+                ])]),
             ],
             MERGE_BATCH_ROWS,
         )
         .expect("the runs share the sort key");
 
-        let (rows, sizes) = drain(&mut merge).await;
+        let drained = drain(&mut merge).await;
+        let rows = drained.rows;
+        let sizes = drained.batch_sizes;
 
-        check!(rows == vec![(1, 1), (2, 2)]);
+        check!(
+            rows == vec![
+                MergeRow {
+                    fingerprint: 1,
+                    timestamp: 1
+                },
+                MergeRow {
+                    fingerprint: 2,
+                    timestamp: 2
+                }
+            ]
+        );
         check!(sizes == vec![2]);
     }
 
@@ -269,14 +410,17 @@ mod tests {
     async fn a_block_stream_reads_back_the_block_the_writer_wrote() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rows = (0..2_500_u64)
-            .map(|row| (row, i64::try_from(row).expect("a row index fits an i64")))
+            .map(|row| MergeRow {
+                fingerprint: row,
+                timestamp: i64::try_from(row).expect("a row index fits an i64"),
+            })
             .collect::<Vec<_>>();
         BlockWriter::new(Arc::clone(&store))
             .write_block("t", "b.parquet", series_schema(), &[batch(&rows)])
             .await
             .expect("the block is written");
 
-        let (_, schema, batches) = open_block_stream(
+        let opened = open_block_stream(
             Arc::clone(&store),
             "b.parquet",
             DEFAULT_BLOCK_READ_MAX,
@@ -284,7 +428,9 @@ mod tests {
         )
         .await
         .expect("the block opens");
-        let streamed = batches
+        let schema = opened.schema;
+        let streamed = opened
+            .batches
             .try_collect::<Vec<_>>()
             .await
             .expect("the block reads");
@@ -313,7 +459,15 @@ mod tests {
     async fn a_block_over_the_cap_is_refused_before_it_is_read() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         BlockWriter::new(Arc::clone(&store))
-            .write_block("t", "b.parquet", series_schema(), &[batch(&[(1, 1)])])
+            .write_block(
+                "t",
+                "b.parquet",
+                series_schema(),
+                &[batch(&[MergeRow {
+                    fingerprint: 1,
+                    timestamp: 1,
+                }])],
+            )
             .await
             .expect("the block is written");
 
@@ -343,12 +497,23 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(Arc::clone(&store));
         let inputs = [
-            (0..600_u64).map(|row| (row * 3, 1_i64)).collect::<Vec<_>>(),
             (0..600_u64)
-                .map(|row| (row * 3 + 1, 2_i64))
+                .map(|row| MergeRow {
+                    fingerprint: row * 3,
+                    timestamp: 1_i64,
+                })
                 .collect::<Vec<_>>(),
             (0..600_u64)
-                .map(|row| (row * 3 + 2, 3_i64))
+                .map(|row| MergeRow {
+                    fingerprint: row * 3 + 1,
+                    timestamp: 2_i64,
+                })
+                .collect::<Vec<_>>(),
+            (0..600_u64)
+                .map(|row| MergeRow {
+                    fingerprint: row * 3 + 2,
+                    timestamp: 3_i64,
+                })
                 .collect::<Vec<_>>(),
         ];
         for (index, rows) in inputs.iter().enumerate() {
@@ -365,7 +530,7 @@ mod tests {
 
         let mut runs = Vec::new();
         for index in 0..inputs.len() {
-            let (_, _, batches) = open_block_stream(
+            let opened = open_block_stream(
                 Arc::clone(&store),
                 &format!("in-{index}.parquet"),
                 DEFAULT_BLOCK_READ_MAX,
@@ -373,7 +538,7 @@ mod tests {
             )
             .await
             .expect("the block opens");
-            runs.push(batches);
+            runs.push(opened.batches);
         }
         let mut merge = SortedMerge::new(series_schema(), &sort_key(), runs, 256)
             .expect("the runs share the sort key");
@@ -428,7 +593,7 @@ pub use block_batch_stream::BlockBatchStream;
 use block_object_reader::BlockObjectReader;
 pub use merge_batch_rows::MERGE_BATCH_ROWS;
 pub use merge_read_batch_rows::MERGE_READ_BATCH_ROWS;
-pub use open_block_stream::open_block_stream;
+pub use open_block_stream::{OpenBlockStream, open_block_stream};
 mod versioned_compaction_key;
 use run_cursor::RunCursor;
 pub use sorted_merge::SortedMerge;

@@ -15,6 +15,23 @@ use crate::{
     ingest::{RawProfile, gunzip},
 };
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct LegacyStackFrame {
+    pub(super) name: String,
+    pub(super) line: i32,
+}
+
+fn legacy_stack_frames(stack: &str) -> Vec<LegacyStackFrame> {
+    stack
+        .split(';')
+        .filter(|frame| !frame.is_empty())
+        .map(|frame| LegacyStackFrame {
+            name: frame.to_string(),
+            line: 0,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -22,33 +39,78 @@ mod tests {
 
     use super::*;
 
+    fn sample_type(name: &str, unit: &str) -> krabka_pprof::SampleType {
+        krabka_pprof::SampleType {
+            name: name.to_string(),
+            unit: unit.to_string(),
+        }
+    }
+
     /// `read_tree_varint` decodes a base-128 varint and advances `pos` past
     /// exactly the bytes it consumed. Each case checks the value *and* the
     /// resulting offset, because a decoder that returns the right number but
     /// leaves the cursor in the wrong place corrupts every field after it.
     #[test]
     fn tree_varints_decode_and_advance_the_cursor() {
+        #[derive(Debug, PartialEq, Eq)]
+        struct DecodedVarint {
+            value: u64,
+            next_offset: usize,
+        }
         let read = |bytes: &[u8]| {
             let mut pos = 0_usize;
-            super::read_tree_varint(bytes, &mut pos, "field").map(|v| (v, pos))
+            super::read_tree_varint(bytes, &mut pos, "field").map(|value| DecodedVarint {
+                value,
+                next_offset: pos,
+            })
         };
 
-        check!(read(&[0x00]).unwrap() == (0, 1), "zero is one byte");
         check!(
-            read(&[0x7f]).unwrap() == (127, 1),
+            read(&[0x00]).unwrap()
+                == DecodedVarint {
+                    value: 0,
+                    next_offset: 1
+                },
+            "zero is one byte"
+        );
+        check!(
+            read(&[0x7f]).unwrap()
+                == DecodedVarint {
+                    value: 127,
+                    next_offset: 1
+                },
             "the largest single byte"
         );
         check!(
-            read(&[0x80, 0x01]).unwrap() == (128, 2),
+            read(&[0x80, 0x01]).unwrap()
+                == DecodedVarint {
+                    value: 128,
+                    next_offset: 2
+                },
             "the smallest two-byte value"
         );
         check!(
-            read(&[0xff, 0x01]).unwrap() == (255, 2),
+            read(&[0xff, 0x01]).unwrap()
+                == DecodedVarint {
+                    value: 255,
+                    next_offset: 2
+                },
             "continuation bits are stripped"
         );
-        check!(read(&[0xac, 0x02]).unwrap() == (300, 2), "low group first");
         check!(
-            read(&[0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap() == (u64::from(u32::MAX), 5),
+            read(&[0xac, 0x02]).unwrap()
+                == DecodedVarint {
+                    value: 300,
+                    next_offset: 2
+                },
+            "low group first"
+        );
+        check!(
+            read(&[0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap()
+                == DecodedVarint {
+                    value: u64::from(u32::MAX),
+                    next_offset: 5
+                },
             "a full u32 spans five bytes"
         );
 
@@ -104,11 +166,20 @@ mod tests {
     }
 
     /// Each sample of `profile` as its leaf-first frame names and its values.
-    fn stacks_and_values(profile: &PprofProfile) -> Vec<(Vec<&str>, &[i64])> {
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct StackAndValues<'a> {
+        stack: Vec<&'a str>,
+        values: &'a [i64],
+    }
+
+    fn stacks_and_values(profile: &PprofProfile) -> Vec<StackAndValues<'_>> {
         profile
             .samples()
             .iter()
-            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
+            .map(|sample| StackAndValues {
+                stack: profile.stack_frames(sample),
+                values: sample.value.as_slice(),
+            })
             .collect()
     }
 
@@ -127,15 +198,24 @@ mod tests {
         let profile =
             super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
 
-        check!(profile.sample_types() == vec![("samples".to_string(), "bytes".to_string())]);
+        check!(profile.sample_types() == vec![sample_type("samples", "bytes")]);
 
         let decoded = stacks_and_values(&profile);
         check!(
             decoded
                 == vec![
-                    (vec!["a"], [10].as_slice()),
-                    (vec!["a1", "a"], [5].as_slice()),
-                    (vec!["b"], [7].as_slice()),
+                    StackAndValues {
+                        stack: vec!["a"],
+                        values: [10].as_slice()
+                    },
+                    StackAndValues {
+                        stack: vec!["a1", "a"],
+                        values: [5].as_slice()
+                    },
+                    StackAndValues {
+                        stack: vec!["b"],
+                        values: [7].as_slice()
+                    },
                 ]
         );
     }
@@ -241,10 +321,22 @@ mod tests {
         check!(
             decoded
                 == vec![
-                    (vec!["idle", "main"], [3].as_slice()),
-                    (vec!["work", "main"], [7].as_slice()),
-                    (vec!["inner", "work", "main"], [4].as_slice()),
-                    (vec!["other"], [2].as_slice()),
+                    StackAndValues {
+                        stack: vec!["idle", "main"],
+                        values: [3].as_slice()
+                    },
+                    StackAndValues {
+                        stack: vec!["work", "main"],
+                        values: [7].as_slice()
+                    },
+                    StackAndValues {
+                        stack: vec!["inner", "work", "main"],
+                        values: [4].as_slice()
+                    },
+                    StackAndValues {
+                        stack: vec!["other"],
+                        values: [2].as_slice()
+                    },
                 ]
         );
     }
@@ -307,7 +399,13 @@ mod tests {
 
     /// The (stack, value) pairs a decoded profile carries, root-first and
     /// sorted so a comparison does not depend on map order.
-    fn frames_and_values(profile: &PprofProfile) -> Vec<(String, i64)> {
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct StackValue {
+        stack: String,
+        value: i64,
+    }
+
+    fn frames_and_values(profile: &PprofProfile) -> Vec<StackValue> {
         // `stack_frames` returns leaf-first, the pprof convention; folded
         // input is written root-first.
         let mut out = profile
@@ -320,7 +418,10 @@ mod tests {
                     .map(str::to_string)
                     .collect::<Vec<_>>();
                 frames.reverse();
-                (frames.join(";"), sample.value[0])
+                StackValue {
+                    stack: frames.join(";"),
+                    value: sample.value[0],
+                }
             })
             .collect::<Vec<_>>();
         out.sort();
@@ -338,12 +439,24 @@ mod tests {
 
         // The same stack twice adds up; overwriting would leave 4.
         let profile = parse("main;work 3\nmain;work 4\n").expect("two folded lines");
-        check!(frames_and_values(&profile) == vec![("main;work".to_string(), 7)]);
+        check!(
+            frames_and_values(&profile)
+                == vec![StackValue {
+                    stack: "main;work".to_string(),
+                    value: 7
+                }]
+        );
 
         // A comment and a blank are skipped; the value is the last field, so
         // "my func" survives as one frame; the empty frame is dropped.
         let profile = parse("# a comment\n\nmy func;;other 5\n").expect("one folded line");
-        check!(frames_and_values(&profile) == vec![("my func;other".to_string(), 5)]);
+        check!(
+            frames_and_values(&profile)
+                == vec![StackValue {
+                    stack: "my func;other".to_string(),
+                    value: 5
+                }]
+        );
 
         // The third line of the body is named as line 3, not 2.
         let err = parse("main 1\nmain 2\nnovalue\n").unwrap_err().to_string();
@@ -361,7 +474,13 @@ mod tests {
         // The comment and the blank are skipped, the empty frame is dropped,
         // and both remaining lines fold into one stack counted twice.
         let profile = parse("# comment\n\nmain;;work\nmain;work\n").expect("two counted lines");
-        check!(frames_and_values(&profile) == vec![("main;work".to_string(), 2)]);
+        check!(
+            frames_and_values(&profile)
+                == vec![StackValue {
+                    stack: "main;work".to_string(),
+                    value: 2
+                }]
+        );
 
         // Nothing countable is an error, not a profile with no samples.
         let err = parse("# only a comment\n").unwrap_err().to_string();
@@ -390,10 +509,10 @@ mod tests {
         let parts = parts
             .iter()
             .zip(&dispositions)
-            .map(|(&NamedPart { content, .. }, disposition)| FormPart {
-                disposition,
+            .map(|part_entry| FormPart {
+                disposition: part_entry.1,
                 content_type: "application/octet-stream",
-                content,
+                content: part_entry.0.content,
             })
             .collect::<Vec<_>>();
         multipart_form(&parts)
@@ -482,30 +601,126 @@ mod tests {
         }"#
         .as_slice();
 
-        // (format, part name, payload, whether it should yield a profile)
-        let cases: &[(&str, &str, &[u8], bool)] = &[
-            ("groups", "profile", folded, true),
-            ("groups", "groups", folded, true),
-            ("groups", "folded", folded, true),
-            ("groups", "tree", folded, false),
-            ("lines", "profile", folded, true),
-            ("lines", "folded", folded, true),
-            ("tree", "profile", &nested_nodes, true),
-            ("tree", "tree", &nested_nodes, true),
-            ("tree", "trie", &nested_nodes, false),
-            ("trie", "profile", &shared_prefix, true),
-            ("trie", "trie", &shared_prefix, true),
-            ("trie", "tree", &shared_prefix, false),
-            ("speedscope", "profile", speedscope, true),
-            ("speedscope", "speedscope", speedscope, true),
-            ("speedscope", "tree", speedscope, false),
+        struct PartCase<'a> {
+            format: &'a str,
+            part: &'a str,
+            payload: &'a [u8],
+            expect_ok: bool,
+        }
+        let cases = [
+            PartCase {
+                format: "groups",
+                part: "profile",
+                payload: folded,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "groups",
+                part: "groups",
+                payload: folded,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "groups",
+                part: "folded",
+                payload: folded,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "groups",
+                part: "tree",
+                payload: folded,
+                expect_ok: false,
+            },
+            PartCase {
+                format: "lines",
+                part: "profile",
+                payload: folded,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "lines",
+                part: "folded",
+                payload: folded,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "tree",
+                part: "profile",
+                payload: &nested_nodes,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "tree",
+                part: "tree",
+                payload: &nested_nodes,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "tree",
+                part: "trie",
+                payload: &nested_nodes,
+                expect_ok: false,
+            },
+            PartCase {
+                format: "trie",
+                part: "profile",
+                payload: &shared_prefix,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "trie",
+                part: "trie",
+                payload: &shared_prefix,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "trie",
+                part: "tree",
+                payload: &shared_prefix,
+                expect_ok: false,
+            },
+            PartCase {
+                format: "speedscope",
+                part: "profile",
+                payload: speedscope,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "speedscope",
+                part: "speedscope",
+                payload: speedscope,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "speedscope",
+                part: "tree",
+                payload: speedscope,
+                expect_ok: false,
+            },
             // The jfr reader falls back to folded text for input that is not
             // a binary recording, which keeps this row cheap.
-            ("jfr", "jfr", folded, true),
-            ("jfr", "profile", folded, false),
+            PartCase {
+                format: "jfr",
+                part: "jfr",
+                payload: folded,
+                expect_ok: true,
+            },
+            PartCase {
+                format: "jfr",
+                part: "profile",
+                payload: folded,
+                expect_ok: false,
+            },
         ];
 
-        for (format, part, payload, expect_ok) in cases {
+        for PartCase {
+            format,
+            part,
+            payload,
+            expect_ok,
+        } in cases
+        {
             let query = parse_ingest_query(&format!("name=app&format={format}")).unwrap();
             let result = futures::executor::block_on(super::decode_ingest_multipart_with_limits(
                 &query,
@@ -518,7 +733,7 @@ mod tests {
                 LegacyDecodeLimits::default(),
             ));
             check!(
-                result.is_ok() == *expect_ok,
+                result.is_ok() == expect_ok,
                 "format={format} part={part} gave {result:?}"
             );
         }
@@ -705,7 +920,7 @@ mod tests {
         );
         check!(
             parse(" \n\t{\"env\":\"prod\"}").unwrap().global
-                == vec![("env".to_string(), "prod".to_string())],
+                == vec![krabka_blockstore::LabelPair::new("env", "prod")],
             "leading JSON whitespace is accepted"
         );
 
@@ -718,12 +933,12 @@ mod tests {
         check!(
             labels
                 == vec![
-                    ("text".to_string(), "a".to_string()),
-                    ("int".to_string(), "7".to_string()),
-                    ("float".to_string(), "1.5".to_string()),
-                    ("yes".to_string(), "true".to_string()),
-                    ("no".to_string(), "false".to_string()),
-                    ("nothing".to_string(), String::new()),
+                    krabka_blockstore::LabelPair::new("text", "a"),
+                    krabka_blockstore::LabelPair::new("int", "7"),
+                    krabka_blockstore::LabelPair::new("float", "1.5"),
+                    krabka_blockstore::LabelPair::new("yes", "true"),
+                    krabka_blockstore::LabelPair::new("no", "false"),
+                    krabka_blockstore::LabelPair::new("nothing", String::new()),
                 ]
         );
 
@@ -733,16 +948,20 @@ mod tests {
         check!(err.contains("`nested` must be a scalar"), "got: {err}");
 
         let snapshot = super::LabelsSnapshot {
-            contexts: super::HashMap::from([(
-                7,
-                super::jfr_labels::LabelContext {
-                    labels: super::HashMap::from([(1, 2)]),
+            contexts: maplit::hashmap! {
+                7 => super::jfr_labels::LabelContext {
+                    labels: maplit::hashmap! { 1 => 2 },
                 },
-            )]),
-            strings: super::HashMap::from([(1, "region".into()), (2, "us-east".into())]),
+            },
+            strings: maplit::hashmap! {
+                1 => "region".into(),
+                2 => "us-east".into(),
+            },
         };
         let decoded = super::parse_labels_part(&prost::Message::encode_to_vec(&snapshot)).unwrap();
-        check!(decoded.contexts[&7] == vec![("region".into(), "us-east".into())]);
+        check!(
+            decoded.contexts[&7] == vec![krabka_blockstore::LabelPair::new("region", "us-east")]
+        );
         let err = parse("[1,2]").unwrap_err().to_string();
         check!(err.contains("must be a JSON object"), "got: {err}");
         let err = parse("not json").unwrap_err().to_string();
@@ -756,7 +975,10 @@ mod tests {
                 .unwrap();
 
         check!(q.name == "myapp");
-        check!(q.labels.contains(&("env".to_string(), "prod".to_string())));
+        check!(
+            q.labels
+                .contains(&krabka_blockstore::LabelPair::new("env", "prod"))
+        );
         assert!(matches!(q.format, IngestFormat::Pprof));
         check!(q.sample_rate == 97);
     }
@@ -767,18 +989,20 @@ mod tests {
         check!(query.name == "myapp");
         check!(query.profile_type_suffix.as_deref() == Some("alloc_space"));
 
-        let (profile, metric) = legacy_cpu_profile(
+        let decoded = legacy_cpu_profile(
             stacks_to_pprof(
                 "myapp",
                 "samples",
                 "count",
-                BTreeMap::from([(vec![("main".to_string(), 0)], 7)]),
+                maplit::btreemap! {
+                    vec![super::LegacyStackFrame { name: "main".to_string(), line: 0 }] => 7,
+                },
             ),
             &query,
         );
-        check!(metric == "memory");
-        check!(profile.sample_types() == vec![("alloc_space".into(), "bytes".into())]);
-        check!(profile.period_type_strings() == (String::new(), String::new()));
+        check!(decoded.metric_name == "memory");
+        check!(decoded.profile.sample_types() == vec![sample_type("alloc_space", "bytes")]);
+        check!(decoded.profile.period_type_strings() == sample_type("", ""));
     }
 
     #[test]
@@ -790,7 +1014,9 @@ mod tests {
             "app",
             "samples",
             "count",
-            BTreeMap::from([(vec![("root".to_string(), 0)], 1)]),
+            maplit::btreemap! {
+                vec![super::LegacyStackFrame { name: "root".to_string(), line: 0 }] => 1,
+            },
         );
         let profile = apply_query_sample_rate(profile, 250).into_inner();
         assert!(profile.period == 4_000_000);
@@ -822,7 +1048,7 @@ mod tests {
         check!(raw.labels.get("__name__") == Some("process_cpu"));
         check!(raw.labels.get("service_name") == Some("myapp"));
         check!(raw.labels.get("env") == Some("prod"));
-        check!(raw.profile.sample_types()[0].0 == "cpu");
+        check!(raw.profile.sample_types()[0].name == "cpu");
         check!(raw.profile.inner().period == original_period);
     }
 
@@ -846,10 +1072,8 @@ mod tests {
 
         let raw = decode_multipart(&query, body).await;
 
-        assert!(raw.profile.sample_types()[0] == ("wall".to_string(), "nanoseconds".to_string()));
-        assert!(
-            raw.profile.period_type_strings() == ("wall".to_string(), "nanoseconds".to_string())
-        );
+        assert!(raw.profile.sample_types()[0] == sample_type("wall", "nanoseconds"));
+        assert!(raw.profile.period_type_strings() == sample_type("wall", "nanoseconds"));
         let split = crate::ingest::split_sample_types(&raw).unwrap();
         assert!(split[0].profile_type == "wall:wall:nanoseconds:wall:nanoseconds:delta");
     }
@@ -879,7 +1103,7 @@ mod tests {
         // keeps `?name=` as the service, so the metric name is fixed.
         check!(raw.labels.get("__name__") == Some("process_cpu"));
         check!(raw.labels.get("service_name") == Some("myapp"));
-        check!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
+        check!(raw.profile.sample_types()[0] == sample_type("cpu", "nanoseconds"));
         check!(raw.profile.samples().len() == 2);
     }
 
@@ -900,7 +1124,7 @@ mod tests {
 
         let raw = decode_multipart(&query, body).await;
 
-        assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
+        assert!(raw.profile.sample_types()[0] == sample_type("cpu", "nanoseconds"));
     }
 
     #[tokio::test]
@@ -922,7 +1146,7 @@ mod tests {
 
         // One count at 250 Hz stands for 4ms, and Pyroscope stores that time
         // rather than the count, so the three `main;work` lines are 12ms.
-        assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
+        assert!(raw.profile.sample_types()[0] == sample_type("cpu", "nanoseconds"));
         assert!(raw.profile.inner().period == 4_000_000);
         assert!(values == vec![4_000_000, 12_000_000]);
     }
@@ -961,7 +1185,7 @@ mod tests {
 
         let values = sorted_sample_values(&raw);
 
-        assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
+        assert!(raw.profile.sample_types()[0] == sample_type("cpu", "nanoseconds"));
         assert!(values == vec![40_000_000, 50_000_000]);
     }
 
@@ -970,17 +1194,21 @@ mod tests {
     /// `a;b` (1) and `a;c` (2).
     #[tokio::test]
     async fn decode_plain_tree_and_trie_format_payloads() {
-        let cases: [(&str, &'static [u8]); 2] = [
-            (
-                "tree",
-                b"\x00\x00\x01\x01a\x00\x02\x01b\x01\x00\x01c\x02\x00",
-            ),
-            (
-                "trie",
-                b"\x00\x00\x01\x02a;\x00\x02\x01b\x01\x00\x01c\x02\x00",
-            ),
+        struct BinaryFormatCase {
+            format: &'static str,
+            payload: &'static [u8],
+        }
+        let cases = [
+            BinaryFormatCase {
+                format: "tree",
+                payload: b"\x00\x00\x01\x01a\x00\x02\x01b\x01\x00\x01c\x02\x00",
+            },
+            BinaryFormatCase {
+                format: "trie",
+                payload: b"\x00\x00\x01\x02a;\x00\x02\x01b\x01\x00\x01c\x02\x00",
+            },
         ];
-        for (format, payload) in cases {
+        for BinaryFormatCase { format, payload } in cases {
             let query =
                 parse_ingest_query(&format!("name=myapp&format={format}&units=samples")).unwrap();
             let body = bytes::Bytes::from_static(payload);
@@ -994,7 +1222,7 @@ mod tests {
             let functions = function_names(&raw);
 
             check!(
-                raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()),
+                raw.profile.sample_types()[0] == sample_type("cpu", "nanoseconds"),
                 "{format}"
             );
             check!(values == vec![10_000_000, 20_000_000], "{format}");
@@ -1044,14 +1272,14 @@ mod tests {
         // A `labels` part overrides the service the `?name=` application would
         // otherwise give, and the metric name comes from the decoded sample
         // type rather than from the application.
-        for (name, value) in [
-            ("__name__", "process_cpu"),
-            ("service_name", "payments"),
-            ("region", "us-east"),
+        for label in [
+            krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+            krabka_blockstore::LabelPair::new("service_name", "payments"),
+            krabka_blockstore::LabelPair::new("region", "us-east"),
         ] {
-            check!(raw.labels.get(name) == Some(value));
+            check!(raw.labels.get(&label.name) == Some(label.value.as_str()));
         }
-        check!(raw.profile.sample_types()[0] == ("samples".to_string(), "count".to_string()));
+        check!(raw.profile.sample_types()[0] == sample_type("samples", "count"));
         check!(raw.profile.samples().len() == 2);
     }
 
@@ -1068,8 +1296,8 @@ mod tests {
         let raw = decode_multipart(&query, body).await;
 
         let sample_types = raw.profile.sample_types();
-        assert!(sample_types.contains(&("cpu".to_string(), "nanoseconds".to_string())));
-        assert!(sample_types.contains(&("wall".to_string(), "nanoseconds".to_string())));
+        assert!(sample_types.contains(&sample_type("cpu", "nanoseconds")));
+        assert!(sample_types.contains(&sample_type("wall", "nanoseconds")));
         assert!(!raw.profile.samples().is_empty());
         let functions = function_names(&raw);
         assert!(
@@ -1232,7 +1460,7 @@ mod trie_frame;
 mod trie_to_pprof;
 mod urldecode;
 
-use apply_legacy_profile_suffix::apply_legacy_profile_suffix;
+use apply_legacy_profile_suffix::{LegacyCpuProfile, apply_legacy_profile_suffix};
 #[cfg(test)]
 use apply_query_sample_rate::apply_query_sample_rate;
 use apply_query_time::apply_query_time;

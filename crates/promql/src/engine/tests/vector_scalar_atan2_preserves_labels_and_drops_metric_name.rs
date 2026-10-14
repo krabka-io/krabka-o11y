@@ -5,7 +5,10 @@ pub(crate) async fn vector_scalar_atan2_preserves_labels_and_drops_metric_name()
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[("__name__", "y"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "y"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         10_000,
         1.0,
     );

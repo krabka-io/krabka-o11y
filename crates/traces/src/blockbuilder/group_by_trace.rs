@@ -1,12 +1,22 @@
 use super::{BTreeMap, Span, SpanRecord};
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TraceIdentity {
+    pub tenant: String,
+    pub trace_id: [u8; 16],
+}
+
 /// Group records by tenant and trace id, and sort each trace for stable DFS
 /// input.
 #[must_use]
-pub fn group_by_trace(records: &[SpanRecord]) -> BTreeMap<(String, [u8; 16]), Vec<Span>> {
+pub fn group_by_trace(records: &[SpanRecord]) -> BTreeMap<TraceIdentity, Vec<Span>> {
     let mut grouped = group_by_trace_in_record_order(records);
     for spans in grouped.values_mut() {
-        spans.sort_by_key(|span| (span.start_ns, span.span_id));
+        spans.sort_by(|left, right| {
+            left.start_ns
+                .cmp(&right.start_ns)
+                .then_with(|| left.span_id.cmp(&right.span_id))
+        });
     }
     grouped
 }
@@ -16,11 +26,14 @@ pub fn group_by_trace(records: &[SpanRecord]) -> BTreeMap<(String, [u8; 16]), Ve
 #[must_use]
 pub fn group_by_trace_in_record_order(
     records: &[SpanRecord],
-) -> BTreeMap<(String, [u8; 16]), Vec<Span>> {
-    let mut grouped: BTreeMap<(String, [u8; 16]), Vec<Span>> = BTreeMap::new();
+) -> BTreeMap<TraceIdentity, Vec<Span>> {
+    let mut grouped: BTreeMap<TraceIdentity, Vec<Span>> = BTreeMap::new();
     for record in records {
         grouped
-            .entry((record.tenant.clone(), record.span.trace_id))
+            .entry(TraceIdentity {
+                tenant: record.tenant.clone(),
+                trace_id: record.span.trace_id,
+            })
             .or_default()
             .push(record.span.clone());
     }

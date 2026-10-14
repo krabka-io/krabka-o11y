@@ -1,7 +1,9 @@
 //! Argument decoding shared by the range-vector and scalar-math UDFs.
 
+use std::sync::Arc;
+
 use arrow::{
-    array::{Array, ArrayRef, DictionaryArray, Float64Array, Int64Array},
+    array::{Array, ArrayRef, DictionaryArray, Float64Array, Float64Builder, Int64Array},
     datatypes::Int64Type,
 };
 use datafusion::{
@@ -10,6 +12,11 @@ use datafusion::{
 };
 
 use crate::range_array::RangeArray;
+
+pub(crate) struct WindowValues<'a> {
+    pub timestamps: &'a [i64],
+    pub values: &'a [f64],
+}
 
 /// Decodes a `Dictionary<Int64, List<_>>` range column into a [`RangeArray`].
 pub(crate) fn decode_range_column(array: &ArrayRef, arg: &str, udf: &str) -> DfResult<RangeArray> {
@@ -24,6 +31,21 @@ pub(crate) fn decode_range_column(array: &ArrayRef, arg: &str, udf: &str) -> DfR
         })?;
     RangeArray::try_from_dict_array(dict)
         .map_err(|error| DataFusionError::Execution(format!("{udf}: decoding `{arg}`: {error}")))
+}
+
+/// Appends each window's result, preserving `None` as a null Arrow value.
+pub(crate) fn append_window_values(
+    rows: usize,
+    mut evaluate: impl FnMut(usize) -> DfResult<Option<f64>>,
+) -> DfResult<ColumnarValue> {
+    let mut builder = Float64Builder::with_capacity(rows);
+    for row in 0..rows {
+        match evaluate(row)? {
+            Some(value) => builder.append_value(value),
+            None => builder.append_null(),
+        }
+    }
+    Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
 }
 
 /// Reads a scalar `Float64` argument, or a single-row array as a fallback.
@@ -107,14 +129,14 @@ impl WindowColumns {
     }
 
     /// The timestamps and values of window `row`.
-    pub(crate) fn window(&self, row: usize, udf: &str) -> DfResult<(&[i64], &[f64])> {
+    pub(crate) fn window(&self, row: usize, udf: &str) -> DfResult<WindowValues<'_>> {
         let timestamps = self.timestamp_range.timestamp_slice(row).ok_or_else(|| {
             DataFusionError::Execution(format!("{udf}: `timestamp_range` cell {row} is not Int64"))
         })?;
         let values = self.value_range.value_slice(row).ok_or_else(|| {
             DataFusionError::Execution(format!("{udf}: `value_range` cell {row} is not Float64"))
         })?;
-        Ok((timestamps, values))
+        Ok(WindowValues { timestamps, values })
     }
 }
 
@@ -133,7 +155,11 @@ mod tests {
     fn decode_range_column_round_trips() {
         for udf in ["prom_rate", "prom_sum_over_time"] {
             let values = Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0])) as ArrayRef;
-            let range = RangeArray::from_ranges(values, [(0_u32, 2_u32), (2, 1)]).unwrap();
+            let range = RangeArray::from_ranges(
+                values,
+                [crate::RangeWindow::new(0, 2), crate::RangeWindow::new(2, 1)],
+            )
+            .unwrap();
             let dict: ArrayRef = Arc::new(range.into_dict_array().unwrap());
             let back = decode_range_column(&dict, "value_range", udf).unwrap();
             check!(back.len() == 2);

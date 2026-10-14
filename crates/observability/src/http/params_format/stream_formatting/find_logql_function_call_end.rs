@@ -8,14 +8,16 @@ pub(crate) fn find_logql_function_call_end(
     let rest = &query[position..];
     let rest = rest.strip_prefix(name)?;
     let mut chars = rest.char_indices();
-    let (_, first) = chars.next()?;
-    if first != '(' {
+    let first = chars.next()?;
+    if first.1 != '(' {
         return None;
     }
 
     let mut parens = 1_i32;
     let mut quotes = QuotedTextScanner::default();
-    for (index, ch) in chars {
+    for character in chars {
+        let index = character.0;
+        let ch = character.1;
         if quotes.in_quotes(ch) {
             continue;
         }

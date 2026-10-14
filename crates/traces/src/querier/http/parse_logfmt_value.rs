@@ -1,8 +1,16 @@
-pub(crate) fn parse_logfmt_value(input: &str) -> Option<(String, usize)> {
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ParsedLogfmtValue {
+    pub(crate) value: String,
+    pub(crate) consumed: usize,
+}
+
+pub(crate) fn parse_logfmt_value(input: &str) -> Option<ParsedLogfmtValue> {
     if let Some(input) = input.strip_prefix('"') {
         let mut value = String::new();
         let mut escaped = false;
-        for (idx, ch) in input.char_indices() {
+        for indexed_char in input.char_indices() {
+            let idx = indexed_char.0;
+            let ch = indexed_char.1;
             if escaped {
                 value.push(match ch {
                     'n' => '\n',
@@ -14,7 +22,10 @@ pub(crate) fn parse_logfmt_value(input: &str) -> Option<(String, usize)> {
             } else if ch == '\\' {
                 escaped = true;
             } else if ch == '"' {
-                return Some((value, idx + 2));
+                return Some(ParsedLogfmtValue {
+                    value,
+                    consumed: idx + 2,
+                });
             } else {
                 value.push(ch);
             }
@@ -24,7 +35,10 @@ pub(crate) fn parse_logfmt_value(input: &str) -> Option<(String, usize)> {
 
     let end = input
         .char_indices()
-        .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx))
+        .find_map(|indexed_char| indexed_char.1.is_whitespace().then_some(indexed_char.0))
         .unwrap_or(input.len());
-    Some((input[..end].to_string(), end))
+    Some(ParsedLogfmtValue {
+        value: input[..end].to_string(),
+        consumed: end,
+    })
 }

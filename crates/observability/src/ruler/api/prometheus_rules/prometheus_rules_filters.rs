@@ -10,7 +10,9 @@ impl PrometheusRulesFilters {
         let Some(raw_query) = raw_query else {
             return Ok(filters);
         };
-        for (key, value) in url::form_urlencoded::parse(raw_query.as_bytes()) {
+        for pair in url::form_urlencoded::parse(raw_query.as_bytes()) {
+            let key = pair.0;
+            let value = pair.1;
             match key.as_ref() {
                 "type" if value == "alert" => filters.rule_kind = Some("alerting"),
                 "type" if value == "record" => filters.rule_kind = Some("recording"),
@@ -80,9 +82,9 @@ impl PrometheusRulesFilters {
         if self.label_selectors.is_empty() {
             return true;
         }
-        let labels = loki_yaml_mapping(source_rule)
-            .map(|fields| yaml_string_labels_field(fields, "labels"))
-            .unwrap_or_default();
+        let labels = loki_yaml_mapping(source_rule).map_or_else(Default::default, |fields| {
+            yaml_string_labels_field(fields, "labels")
+        });
         self.label_selectors.iter().any(|selector| {
             selector
                 .matchers

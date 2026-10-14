@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use krabka_metrics::NativeHistogram;
+
+#[cfg(feature = "experimental-functions")]
 use super::{
     BTreeMap, ClassicBucketGroups, InstantSample, Result, SampleValue, classic_histogram_quantile,
     emit_histogram_quantile_forced_monotonicity_info, emit_warning, find_mixed_histogram_keys,
@@ -6,6 +9,13 @@ use super::{
     is_valid_quantile, labels_key, labels_without_metric_name, native_histogram_quantile,
     record_metric_name,
 };
+
+#[cfg(feature = "experimental-functions")]
+struct NativeHistogramSample {
+    labels: super::Labels,
+    timestamp_ms: i64,
+    histogram: NativeHistogram,
+}
 
 /// Applies the experimental `histogram_quantiles(label, v, phi...)` fold.
 ///
@@ -48,7 +58,11 @@ pub(crate) fn apply_histogram_quantiles(
             record_metric_name(&mut metric_names, &labels_key(&labels), &sample.labels);
             native_samples.insert(
                 labels_key(&labels),
-                (labels, sample.ts_ms, histogram.clone()),
+                NativeHistogramSample {
+                    labels,
+                    timestamp_ms: sample.ts_ms,
+                    histogram: histogram.clone(),
+                },
             );
             continue;
         }
@@ -57,42 +71,50 @@ pub(crate) fn apply_histogram_quantiles(
 
     let mixed_histogram_keys = find_mixed_histogram_keys(&native_samples, &groups, &metric_names);
     let mut out = Vec::new();
-    for (key, (labels, ts_ms, histogram)) in native_samples {
+    for entry in native_samples {
+        let key = entry.0;
+        let sample = entry.1;
         if mixed_histogram_keys.contains(&key) {
             continue;
         }
         let metric = metric_names.get(&key).map_or("", String::as_str);
         out.extend(quantiles.iter().map(|quantile| {
-            let mut labels = labels.clone();
+            let mut labels = sample.labels.clone();
             labels.insert(label_name, format_quantile_label(*quantile));
             InstantSample {
                 labels,
-                ts_ms,
-                value: SampleValue::Float(native_histogram_quantile(*quantile, &histogram, metric)),
+                ts_ms: sample.timestamp_ms,
+                value: SampleValue::Float(native_histogram_quantile(
+                    *quantile,
+                    &sample.histogram,
+                    metric,
+                )),
                 drop_name: true,
             }
         }));
     }
-    for (key, (labels, buckets)) in groups {
+    for entry in groups {
+        let key = entry.0;
+        let group = entry.1;
         if mixed_histogram_keys.contains(&key) {
             continue;
         }
         out.extend(quantiles.iter().map(|quantile| {
-            let mut labels = labels.clone();
-            let mut buckets = buckets.clone();
+            let mut labels = group.labels.clone();
+            let mut buckets = group.buckets.clone();
             labels.insert(label_name, format_quantile_label(*quantile));
-            let (value, forced, repairs) = classic_histogram_quantile(*quantile, &mut buckets);
-            if forced {
+            let result = classic_histogram_quantile(*quantile, &mut buckets);
+            if result.forced {
                 emit_histogram_quantile_forced_monotonicity_info(
                     metric_names.get(&key).map_or("", String::as_str),
                     time_ms,
-                    repairs,
+                    result.repairs,
                 );
             }
             InstantSample {
                 labels,
                 ts_ms: time_ms,
-                value: SampleValue::Float(value),
+                value: SampleValue::Float(result.value),
                 drop_name: true,
             }
         }));

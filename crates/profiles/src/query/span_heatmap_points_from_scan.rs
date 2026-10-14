@@ -1,10 +1,10 @@
-use krabka_pprof::timestamp_total_points;
+use krabka_pprof::{TimestampTotalPoint, timestamp_total_points};
 
 use super::{COL_FINGERPRINT, COL_TIMESTAMP, PCOL_SPAN_ID, PCOL_VALUE, ProfileError};
 
 pub(crate) async fn span_heatmap_points_from_scan(
     scan: &krabka_pprof::ProfileScan,
-) -> Result<Vec<(i64, i64)>, ProfileError> {
+) -> Result<Vec<TimestampTotalPoint>, ProfileError> {
     let sql = format!(
         "SELECT {timestamp}, SUM({total}) AS total \
          FROM {table} WHERE {span} IS NOT NULL \

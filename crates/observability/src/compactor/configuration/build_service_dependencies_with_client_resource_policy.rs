@@ -1,7 +1,7 @@
 use super::{
     ClientResourcePolicy, ClientSecurity, Role, ServiceConfig, ServiceDependencies,
-    ServiceRuntimeError, all_in_one_querier_group_id, with_block_builder_dependencies,
-    with_distributor_dependencies, with_querier_dependencies,
+    ServiceRuntimeError, WalDependenciesRequest, all_in_one_querier_group_id,
+    with_block_builder_dependencies, with_distributor_dependencies, with_querier_dependencies,
 };
 use crate::wal_consumer_metrics::WalConsumerMetrics;
 
@@ -39,24 +39,24 @@ pub async fn build_service_dependencies_with_client_resource_policy(
                 .await
         }
         Role::BlockBuilder => {
-            with_block_builder_dependencies(
+            with_block_builder_dependencies(WalDependenciesRequest {
                 dependencies,
                 config,
-                config.wal_group_id.clone(),
+                group_id: config.wal_group_id.clone(),
                 client_resource_policy,
                 security,
                 metrics,
-            )
+            })
             .await
         }
-        Role::Querier => with_querier_dependencies(
+        Role::Querier => with_querier_dependencies(WalDependenciesRequest {
             dependencies,
             config,
-            config.wal_group_id.clone(),
+            group_id: config.wal_group_id.clone(),
             client_resource_policy,
             security,
             metrics,
-        ),
+        }),
         Role::All => {
             let dependencies = with_distributor_dependencies(
                 dependencies,
@@ -65,23 +65,23 @@ pub async fn build_service_dependencies_with_client_resource_policy(
                 security,
             )
             .await?;
-            let dependencies = with_block_builder_dependencies(
+            let dependencies = with_block_builder_dependencies(WalDependenciesRequest {
                 dependencies,
                 config,
-                config.wal_group_id.clone(),
+                group_id: config.wal_group_id.clone(),
                 client_resource_policy,
                 security,
-                metrics.clone(),
-            )
+                metrics: metrics.clone(),
+            })
             .await?;
-            with_querier_dependencies(
+            with_querier_dependencies(WalDependenciesRequest {
                 dependencies,
                 config,
-                all_in_one_querier_group_id(&config.wal_group_id),
+                group_id: all_in_one_querier_group_id(&config.wal_group_id),
                 client_resource_policy,
                 security,
-                metrics.with_fresh_recovery(),
-            )
+                metrics: metrics.with_fresh_recovery(),
+            })
         }
     }
 }

@@ -155,14 +155,12 @@ mod tests {
 
     #[test]
     fn cyclic_parentage_assigns_every_node_a_valid_interval() {
-        for (_name, spans) in [
-            ("two-node cycle", vec![node(1, Some(2)), node(2, Some(1))]),
-            (
-                "three-node cycle",
-                vec![node(1, Some(3)), node(2, Some(1)), node(3, Some(2))],
-            ),
-        ] {
-            let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
+        let cases = [
+            vec![node(1, Some(2)), node(2, Some(1))],
+            vec![node(1, Some(3)), node(2, Some(1)), node(3, Some(2))],
+        ];
+        for spans in &cases {
+            let ns = assign_nested_set(spans, CycleSpans::AssignIntervals);
             let mut lefts: Vec<i32> = ns.iter().map(|n| n.nested_set_left).collect();
             lefts.sort_unstable();
             lefts.dedup();
@@ -174,7 +172,9 @@ mod tests {
 
     #[test]
     fn cyclic_parentage_assignment_completes() {
-        let (tx, rx) = mpsc::channel();
+        let channel = mpsc::channel();
+        let tx = channel.0;
+        let rx = channel.1;
         std::thread::spawn(move || {
             let spans = vec![node(1, None), node(2, Some(3)), node(3, Some(2))];
             let _ = tx.send(assign_nested_set(&spans, CycleSpans::AssignIntervals));

@@ -1,4 +1,4 @@
-use super::{IntoResponse, Response, StatusCode};
+use super::Response;
 
 /// The memberlist page.
 ///
@@ -7,10 +7,9 @@ use super::{IntoResponse, Response, StatusCode};
 /// memberlist KV is not configured. Anything else -- a peer table, a "healthy"
 /// claim -- would be the fabrication this endpoint is supposed to avoid.
 pub(crate) async fn memberlist_status() -> Response {
-    (
-        StatusCode::OK,
-        [("content-type", "text/plain")],
-        "This instance doesn't use memberlist.",
-    )
-        .into_response()
+    Response::builder()
+        .status(crate::StatusCode::OK)
+        .header("content-type", "text/plain")
+        .body("This instance doesn't use memberlist.".into())
+        .expect("memberlist response headers are valid")
 }

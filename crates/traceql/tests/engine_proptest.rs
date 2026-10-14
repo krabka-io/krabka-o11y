@@ -29,7 +29,7 @@
 use std::sync::Arc;
 
 use krabka_traceql::{
-    AttrValue, EngineOpts, InMemorySpanStore, InputSpan, SearchOptions, SearchResponse,
+    AttrValue, Attribute, EngineOpts, InMemorySpanStore, InputSpan, SearchOptions, SearchResponse,
     TraceResult, TraceqlEngine, TraceqlError,
 };
 use krabka_units::{Time, convert::TimeExt as _};
@@ -221,29 +221,27 @@ fn conds() -> impl Strategy<Value = Vec<Cond>> {
 }
 
 fn gen_span() -> impl Strategy<Value = GenSpan> {
-    (
-        0..NAMES.len(),
-        0..DURATION_MILLIS.len(),
-        0..STATUS_NAMES.len(),
-        0..CODES.len(),
-    )
-        .prop_map(|(name, duration, status, code)| GenSpan {
-            name: NAMES[name],
-            duration_millis: DURATION_MILLIS[duration],
-            status_code: i32::try_from(status).unwrap_or(0),
-            code: CODES[code],
+    (0..NAMES.len()).prop_flat_map(|name| {
+        (0..DURATION_MILLIS.len()).prop_flat_map(move |duration| {
+            (0..STATUS_NAMES.len()).prop_flat_map(move |status| {
+                (0..CODES.len()).prop_map(move |code| GenSpan {
+                    name: NAMES[name],
+                    duration_millis: DURATION_MILLIS[duration],
+                    status_code: i32::try_from(status).unwrap_or(0),
+                    code: CODES[code],
+                })
+            })
         })
+    })
 }
 
 fn gen_trace() -> impl Strategy<Value = GenTrace> {
-    (
-        0..SERVICES.len(),
-        prop::collection::vec(gen_span(), 1..=SPANS_PER_TRACE),
-    )
-        .prop_map(|(service, spans)| GenTrace {
+    (0..SERVICES.len()).prop_flat_map(|service| {
+        prop::collection::vec(gen_span(), 1..=SPANS_PER_TRACE).prop_map(move |spans| GenTrace {
             service: SERVICES[service],
             spans,
         })
+    })
 }
 
 fn gen_traces() -> impl Strategy<Value = Vec<GenTrace>> {
@@ -270,27 +268,33 @@ fn span_id(trace_ix: usize, span_ix: usize) -> [u8; 8] {
 /// tree.
 fn engine_over(traces: &[GenTrace]) -> TraceqlEngine<InMemorySpanStore> {
     let mut store = InMemorySpanStore::new();
-    for (t, trace) in traces.iter().enumerate() {
+    for trace_entry in traces.iter().enumerate() {
+        let t = trace_entry.0;
+        let trace = trace_entry.1;
         let base_nano = (i64::try_from(t).unwrap_or(0) + 1) * 1_000_000_000;
         let spans: Vec<InputSpan> = trace
             .spans
             .iter()
             .enumerate()
-            .map(|(s, span)| InputSpan {
-                trace_id: trace_id(t),
-                span_id: span_id(t, s),
-                parent_span_id: if s == 0 { None } else { Some(span_id(t, 0)) },
-                name: span.name.to_owned(),
-                kind: 0,
-                start_unix_nano: base_nano + i64::try_from(s).unwrap_or(0),
-                duration: Time::from_millis(span.duration_millis),
-                status_code: span.status_code,
-                status_message: String::new(),
-                instrumentation_name: String::new(),
-                instrumentation_version: String::new(),
-                attrs: vec![("code".to_owned(), AttrValue::Int(span.code))],
-                events: Vec::new(),
-                links: Vec::new(),
+            .map(|span_entry| {
+                let s = span_entry.0;
+                let span = span_entry.1;
+                InputSpan {
+                    trace_id: trace_id(t),
+                    span_id: span_id(t, s),
+                    parent_span_id: if s == 0 { None } else { Some(span_id(t, 0)) },
+                    name: span.name.to_owned(),
+                    kind: 0,
+                    start_unix_nano: base_nano + i64::try_from(s).unwrap_or(0),
+                    duration: Time::from_millis(span.duration_millis),
+                    status_code: span.status_code,
+                    status_message: String::new(),
+                    instrumentation_name: String::new(),
+                    instrumentation_version: String::new(),
+                    attrs: vec![Attribute::new("code", AttrValue::Int(span.code))],
+                    events: Vec::new(),
+                    links: Vec::new(),
+                }
             })
             .collect();
         store.push_trace(TENANT, trace.service, trace.spans[0].name, spans);
@@ -301,15 +305,25 @@ fn engine_over(traces: &[GenTrace]) -> TraceqlEngine<InMemorySpanStore> {
 /// Every `(trace_id, span_id)` in a response, as the first byte of each,
 /// sorted. The store writes both ids as a repeated byte, so the first byte
 /// names the span.
-fn span_keys(resp: &SearchResponse) -> Vec<(u8, u8)> {
-    let mut keys: Vec<(u8, u8)> = resp
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SpanKey {
+    trace_id: u8,
+    span_id: u8,
+}
+
+fn span_key(trace_id: u8, span_id: u8) -> SpanKey {
+    SpanKey { trace_id, span_id }
+}
+
+fn span_keys(resp: &SearchResponse) -> Vec<SpanKey> {
+    let mut keys: Vec<SpanKey> = resp
         .traces
         .iter()
         .flat_map(|trace| {
             trace.span_sets.iter().flat_map(move |set| {
                 set.spans
                     .iter()
-                    .map(move |span| (trace.trace_id[0], span.span_id[0]))
+                    .map(move |span| span_key(trace.trace_id[0], span.span_id[0]))
             })
         })
         .collect();
@@ -342,18 +356,22 @@ async fn search_unlimited(
 async fn matched_spans(
     engine: &TraceqlEngine<InMemorySpanStore>,
     query: &str,
-) -> Result<Vec<(u8, u8)>, TraceqlError> {
+) -> Result<Vec<SpanKey>, TraceqlError> {
     Ok(span_keys(&search_unlimited(engine, query).await?))
 }
 
 /// The spans that satisfy every condition, computed from the generated
 /// structs alone.
-fn expected_spans(traces: &[GenTrace], conds: &[Cond]) -> Vec<(u8, u8)> {
-    let mut keys: Vec<(u8, u8)> = Vec::new();
-    for (t, trace) in traces.iter().enumerate() {
-        for (s, span) in trace.spans.iter().enumerate() {
+fn expected_spans(traces: &[GenTrace], conds: &[Cond]) -> Vec<SpanKey> {
+    let mut keys: Vec<SpanKey> = Vec::new();
+    for trace_entry in traces.iter().enumerate() {
+        let t = trace_entry.0;
+        let trace = trace_entry.1;
+        for span_entry in trace.spans.iter().enumerate() {
+            let s = span_entry.0;
+            let span = span_entry.1;
             if conds.iter().all(|c| c.holds(trace, span)) {
-                keys.push((trace_id(t)[0], span_id(t, s)[0]));
+                keys.push(span_key(trace_id(t)[0], span_id(t, s)[0]));
             }
         }
     }
@@ -442,12 +460,12 @@ proptest! {
         });
         let (only_a, only_b, both_and, both_or) = or_fail(runs, &query_or)?;
 
-        let intersection: Vec<(u8, u8)> = only_a
+        let intersection: Vec<SpanKey> = only_a
             .iter()
             .filter(|key| only_b.contains(key))
             .copied()
             .collect();
-        let mut union: Vec<(u8, u8)> = only_a.clone();
+        let mut union: Vec<SpanKey> = only_a.clone();
         union.extend(only_b.iter().filter(|key| !only_a.contains(key)).copied());
         union.sort_unstable();
 

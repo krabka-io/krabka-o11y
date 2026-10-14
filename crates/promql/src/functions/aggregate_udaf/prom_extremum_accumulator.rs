@@ -78,7 +78,9 @@ impl Accumulator for PromExtremumAccumulator {
         // matches a single-pass scan exactly (including all-NaN -> NaN).
         let running = states[0].as_primitive::<Float64Type>();
         let seen = states[1].as_boolean();
-        for (running, seen) in running.iter().zip(seen.iter()) {
+        for state in running.iter().zip(seen.iter()) {
+            let running = state.0;
+            let seen = state.1;
             if seen == Some(true) {
                 // A seen partition always carries a (possibly NaN) running value.
                 self.observe(running.unwrap_or(f64::NAN));

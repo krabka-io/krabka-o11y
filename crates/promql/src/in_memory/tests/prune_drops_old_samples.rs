@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn prune_drops_old_samples() {
     let mut store = InMemoryMetricStore::with_retention(secs(1));
-    let series = lbls(&[("__name__", "up"), ("job", "api")]);
+    let series = up_series();
     // ts 100 and 500 are old; ts 9_500 and 9_900 are within the window.
     store.push_float("t", series.clone(), 100, 1.0);
     store.push_float("t", series.clone(), 500, 2.0);

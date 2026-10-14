@@ -9,8 +9,9 @@ pub(crate) fn range_matrix_json(series: Vec<RangeSeries>) -> Vec<Value> {
         .map(|series| {
             let mut values = Vec::new();
             let mut histograms = Vec::new();
-            for (ts_ms, sample) in series.samples {
-                match sample {
+            for sample in series.samples {
+                let ts_ms = sample.timestamp_ms;
+                match sample.value {
                     SampleValue::Float(value) => {
                         values.push(json!([timestamp_seconds(ts_ms), sample_string(value)]));
                     }

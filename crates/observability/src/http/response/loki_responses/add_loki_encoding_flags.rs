@@ -24,7 +24,9 @@ pub(crate) fn add_loki_encoding_flags(value: &mut Value, flags: &[String]) {
         return;
     };
     let mut ordered = serde_json::Map::new();
-    for (name, member) in std::mem::take(data) {
+    for entry in std::mem::take(data) {
+        let name = entry.0;
+        let member = entry.1;
         let is_result_type = name == "resultType";
         ordered.insert(name, member);
         if is_result_type {

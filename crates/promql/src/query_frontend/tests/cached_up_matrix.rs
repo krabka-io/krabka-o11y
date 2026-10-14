@@ -13,16 +13,14 @@ pub(crate) fn up_range_query(end_ms: i64, shard: Option<QueryShard>) -> Frontend
 
 /// A one-series matrix result of `series`, holding the float 1 at 0.
 pub(crate) fn one_sample_matrix(series: Labels) -> AnnotatedQueryResult {
-    unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: series.into(),
-        samples: vec![(0, SampleValue::Float(1.0))],
-    }]))
+    unannotated(QueryResult::RangeMatrix(vec![range_series(
+        series,
+        vec![RangeSeriesSample::new(0, SampleValue::Float(1.0))],
+    )]))
 }
 
 /// One float point of an expected matrix series.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, bon::Builder)]
 pub(crate) struct FloatPoint {
     pub(crate) ts_ms: i64,
     pub(crate) value: f64,
@@ -30,13 +28,24 @@ pub(crate) struct FloatPoint {
 
 /// An unannotated one-series matrix of `up{job="api"}` holding `points`.
 pub(crate) fn up_api_matrix(points: &[FloatPoint]) -> AnnotatedQueryResult {
-    unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-        samples: points
+    unannotated(QueryResult::RangeMatrix(vec![up_api_series(points)]))
+}
+
+/// A `up{job="api"}` range series containing the supplied points.
+pub(crate) fn up_api_series(points: &[FloatPoint]) -> RangeSeries {
+    range_series(
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
+        points
             .iter()
-            .map(|point| (point.ts_ms, SampleValue::Float(point.value)))
+            .map(|point| RangeSeriesSample::new(point.ts_ms, SampleValue::Float(point.value)))
             .collect(),
-    }]))
+    )
+}
+
+/// A one-sample matrix result for `up{job="api"}`.
+pub(crate) fn one_up_api_sample_matrix() -> AnnotatedQueryResult {
+    up_api_matrix(&[FloatPoint::builder().ts_ms(0).value(1.0).build()])
 }

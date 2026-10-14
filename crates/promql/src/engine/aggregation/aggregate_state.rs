@@ -82,7 +82,7 @@ impl AggregateState {
 
     pub(crate) fn push_float(&mut self, value: f64) {
         self.push_observation();
-        (self.sum, self.sum_comp) = kahan_sum_inc(value, self.sum, self.sum_comp);
+        kahan_sum_inc(value, &mut self.sum, &mut self.sum_comp);
 
         // `avg` sums directly and divides once at the end, and only switches to
         // an incremental mean when that sum would saturate to an infinity --
@@ -92,7 +92,9 @@ impl AggregateState {
         if self.count_f64 <= 1.0 {
             self.avg_sum = value;
         } else if !self.avg_incremental {
-            let (sum, comp) = kahan_sum_inc(value, self.avg_sum, self.avg_comp);
+            let mut sum = self.avg_sum;
+            let mut comp = self.avg_comp;
+            kahan_sum_inc(value, &mut sum, &mut comp);
             if sum.is_infinite() {
                 self.avg_incremental = true;
                 self.avg_mean = self.avg_sum / (self.count_f64 - 1.0);
@@ -104,26 +106,27 @@ impl AggregateState {
         }
         if self.avg_incremental {
             let weight = (self.count_f64 - 1.0) / self.count_f64;
-            (self.avg_mean, self.avg_comp) = kahan_sum_inc(
+            self.avg_mean *= weight;
+            self.avg_comp *= weight;
+            kahan_sum_inc(
                 value / self.count_f64,
-                weight * self.avg_mean,
-                weight * self.avg_comp,
+                &mut self.avg_mean,
+                &mut self.avg_comp,
             );
         }
 
         // Welford + Kahan variance accumulation for `stddev`/`stdvar`.
         let delta = value - (self.var_mean + self.var_mean_comp);
-        let (var_mean, var_mean_comp) =
-            kahan_sum_inc(delta / self.count_f64, self.var_mean, self.var_mean_comp);
-        self.var_mean = var_mean;
-        self.var_mean_comp = var_mean_comp;
-        let (var_aux, var_aux_comp) = kahan_sum_inc(
-            delta * (value - (self.var_mean + self.var_mean_comp)),
-            self.var_aux,
-            self.var_aux_comp,
+        kahan_sum_inc(
+            delta / self.count_f64,
+            &mut self.var_mean,
+            &mut self.var_mean_comp,
         );
-        self.var_aux = var_aux;
-        self.var_aux_comp = var_aux_comp;
+        kahan_sum_inc(
+            delta * (value - (self.var_mean + self.var_mean_comp)),
+            &mut self.var_aux,
+            &mut self.var_aux_comp,
+        );
 
         if self.seen_float {
             // Replace the running extremum when the new sample wins under the

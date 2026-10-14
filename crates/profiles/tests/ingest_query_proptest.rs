@@ -17,6 +17,8 @@
 
 #[path = "../../logql/tests/support/seed_splice.rs"]
 mod seed_splice;
+#[path = "../../logql/tests/support/unicode_noise.rs"]
+mod unicode_noise;
 
 use std::fmt::Write as _;
 
@@ -78,27 +80,13 @@ const TOKENS: &[&str] = &[
     "v",
 ];
 
-fn arbitrary_text() -> impl Strategy<Value = String> {
-    prop::collection::vec(
-        prop_oneof![
-            2 => any::<char>(),
-            3 => prop::char::range('\u{0}', '\u{7f}'),
-            1 => Just('%'),
-            1 => Just('é'),
-            1 => Just('\u{1f600}'),
-        ],
-        0..48,
-    )
-    .prop_map(String::from_iter)
-}
-
 fn token_salad() -> impl Strategy<Value = String> {
     prop::collection::vec(prop::sample::select(TOKENS), 1..16).prop_map(|parts| parts.concat())
 }
 
 fn arbitrary_query() -> impl Strategy<Value = String> {
     prop_oneof![
-        2 => arbitrary_text(),
+        2 => unicode_noise::arbitrary_text(),
         3 => token_salad(),
         3 => seed_splice::mutated_seed(SEED_QUERIES),
     ]
@@ -123,46 +111,46 @@ fn arb_format() -> impl Strategy<Value = IngestFormat> {
     ])
 }
 
-/// A whole ingest query.
-///
-/// The time bounds stay above ten billion, where `parse_unix_time_ms` reads
-/// the number as milliseconds and hands it back unchanged. Below that it reads
-/// seconds and multiplies by a thousand, which is a conversion rather than a
-/// round trip, and `tests/pyroscope_differential.rs` covers it by example.
-fn arb_ingest_query() -> impl Strategy<Value = IngestQuery> {
-    (
-        prop::sample::select(NAMES),
-        prop::collection::vec(
-            (prop::sample::select(NAMES), prop::sample::select(NAMES)),
-            0..4,
-        ),
-        arb_format(),
-        1_u32..1_000_000,
-        prop::sample::select(&["count", "bytes", "samples", "nanoseconds"]),
-        prop::option::of(10_000_000_000_i64..2_000_000_000_000),
-        prop::option::of(10_000_000_000_i64..2_000_000_000_000),
-        prop::sample::select(&["unknown", "gospy", "pyspy", "rbspy"]),
-        prop::sample::select(&["wall", "cpu", "alloc"]),
-    )
-        .prop_map(
-            |(name, labels, format, sample_rate, units, from_ms, until_ms, spy_name, jfr_event)| {
-                IngestQuery {
-                    name: name.to_owned(),
-                    profile_type_suffix: None,
-                    labels: labels
-                        .into_iter()
-                        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-                        .collect(),
-                    format,
-                    sample_rate,
-                    units: units.to_owned(),
-                    from_ms,
-                    until_ms,
-                    spy_name: spy_name.to_owned(),
-                    jfr_event: jfr_event.to_owned(),
-                }
-            },
-        )
+prop_compose! {
+    fn arb_label_pair()
+        (key in prop::sample::select(NAMES), value in prop::sample::select(NAMES))
+        -> krabka_blockstore::LabelPair {
+        krabka_blockstore::LabelPair::new(key, value)
+    }
+}
+
+// A whole ingest query.
+//
+// The time bounds stay above ten billion, where `parse_unix_time_ms` reads
+// the number as milliseconds and hands it back unchanged. Below that it reads
+// seconds and multiplies by a thousand, which is a conversion rather than a
+// round trip, and `tests/pyroscope_differential.rs` covers it by example.
+prop_compose! {
+    fn arb_ingest_query()
+        (
+            name in prop::sample::select(NAMES),
+            labels in prop::collection::vec(arb_label_pair(), 0..4),
+            format in arb_format(),
+            sample_rate in 1_u32..1_000_000,
+            units in prop::sample::select(&["count", "bytes", "samples", "nanoseconds"]),
+            from_ms in prop::option::of(10_000_000_000_i64..2_000_000_000_000),
+            until_ms in prop::option::of(10_000_000_000_i64..2_000_000_000_000),
+            spy_name in prop::sample::select(&["unknown", "gospy", "pyspy", "rbspy"]),
+            jfr_event in prop::sample::select(&["wall", "cpu", "alloc"]),
+        ) -> IngestQuery {
+        IngestQuery {
+            name: name.to_owned(),
+            profile_type_suffix: None,
+            labels,
+            format,
+            sample_rate,
+            units: units.to_owned(),
+            from_ms,
+            until_ms,
+            spy_name: spy_name.to_owned(),
+            jfr_event: jfr_event.to_owned(),
+        }
+    }
 }
 
 // -- The renderer --------------------------------------------------------
@@ -201,7 +189,7 @@ fn render_ingest_query(query: &IngestQuery) -> String {
         let pairs: Vec<String> = query
             .labels
             .iter()
-            .map(|(key, value)| format!("{key}={value}"))
+            .map(|label| format!("{}={}", label.name, label.value))
             .collect();
         name.push('{');
         name.push_str(&pairs.join(","));

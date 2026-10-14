@@ -3,8 +3,14 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn prune_removes_emptied_series_from_index() {
     let mut store = InMemoryMetricStore::with_retention(secs(1));
-    let stale = lbls(&[("__name__", "up"), ("job", "old")]);
-    let fresh = lbls(&[("__name__", "up"), ("job", "new")]);
+    let stale = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "old"),
+    ]);
+    let fresh = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "new"),
+    ]);
     store.push_float("t", stale.clone(), 100, 1.0);
     store.push_float("t", fresh.clone(), 9_900, 2.0);
 

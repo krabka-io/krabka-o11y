@@ -11,6 +11,41 @@ use crate::{
     hot_tail_snapshot, json, json_object_to_labels, matching_metric_binary_sample,
     metric_binary_sample_timestamps_match, parse_metric_sample_value,
 };
+
+fn apply_scalar_to_series(
+    series: &mut Value,
+    mut apply_sample: impl FnMut(&mut Value) -> bool,
+) -> bool {
+    if let Some(values) = series.get_mut("values").and_then(Value::as_array_mut) {
+        let mut index = 0;
+        while index < values.len() {
+            if apply_sample(&mut values[index]) {
+                index += 1;
+            } else {
+                values.remove(index);
+            }
+        }
+        return !values.is_empty();
+    }
+
+    series.get_mut("value").is_some_and(&mut apply_sample)
+}
+
+fn scalar_operands_for_sample(
+    sample: &mut Value,
+    scalar: MetricValue,
+    scalar_side: ScalarSide,
+) -> Option<(&mut Value, ScalarOperands)> {
+    let SampleValueSlot { slot, sample_value } = sample_value_slot(sample)?;
+    Some((
+        slot,
+        ScalarOperands {
+            sample: sample_value,
+            scalar,
+            scalar_side,
+        },
+    ))
+}
 #[cfg(test)]
 use crate::{MetricScalarArithmetic, MetricScalarComparison};
 

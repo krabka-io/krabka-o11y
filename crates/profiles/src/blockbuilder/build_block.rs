@@ -1,9 +1,22 @@
 use super::{
     Arc, BlockMeta, BlockWriter, BuiltSample, ObjectStore, ObjectStoreExt, ObjectStoreMetrics,
-    ObjectStoreOperation, ObjectStoreRetryPolicy, Path, ProfileRecord, ProfilesError, PutPayload,
-    STACKTRACE_PARTITION, SummaryColumns, SymbolDb, intern_record, object_key,
+    ObjectStoreOperation, ObjectStoreRetryPolicy, OffsetRange, Path, ProfileRecord, ProfilesError,
+    PutPayload, STACKTRACE_PARTITION, SummaryColumns, SymbolDb, intern_record, object_key,
     profile_samples_decl, profile_timestamp_ms, retry_object_store, samples_batch,
 };
+
+#[derive(Clone, Debug)]
+pub(crate) struct PositionedProfileRecord {
+    pub(crate) position: Option<crate::wal::WalPosition>,
+    pub(crate) record: ProfileRecord,
+}
+
+impl PositionedProfileRecord {
+    #[must_use]
+    pub(crate) fn new(position: Option<crate::wal::WalPosition>, record: ProfileRecord) -> Self {
+        Self { position, record }
+    }
+}
 
 /// Interns one WAL window's records into a symbol DB and writes the samples as
 /// one profile block.
@@ -21,12 +34,15 @@ pub async fn build_block(
     tenant: &str,
     partition: i32,
     records: &[ProfileRecord],
-    offset_range: (i64, i64),
+    offset_range: OffsetRange,
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     let records = records
         .iter()
-        .map(|record| (None, record))
+        .map(|record| PositionedProfileRecord {
+            position: None,
+            record: record.clone(),
+        })
         .collect::<Vec<_>>();
     write_block(store, tenant, partition, &records, offset_range, metrics).await
 }
@@ -35,13 +51,16 @@ pub(crate) async fn build_block_with_positions(
     store: &Arc<dyn ObjectStore>,
     tenant: &str,
     partition: i32,
-    records: &[(crate::wal::WalPosition, ProfileRecord)],
-    offset_range: (i64, i64),
+    records: &[PositionedProfileRecord],
+    offset_range: OffsetRange,
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     let records = records
         .iter()
-        .map(|(position, record)| (Some(*position), record))
+        .map(|record| PositionedProfileRecord {
+            position: record.position,
+            record: record.record.clone(),
+        })
         .collect::<Vec<_>>();
     write_block(store, tenant, partition, &records, offset_range, metrics).await
 }
@@ -50,8 +69,8 @@ async fn write_block(
     store: &Arc<dyn ObjectStore>,
     tenant: &str,
     partition: i32,
-    records: &[(Option<crate::wal::WalPosition>, &ProfileRecord)],
-    offset_range: (i64, i64),
+    records: &[PositionedProfileRecord],
+    offset_range: OffsetRange,
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     if records.is_empty() {
@@ -62,32 +81,29 @@ async fn write_block(
     let mut min_ts = i64::MAX;
     let mut max_ts = i64::MIN;
 
-    for &(position, rec) in records {
+    for positioned_record in records {
+        let position = positioned_record.position;
+        let rec = &positioned_record.record;
         let stack_ids = intern_record(&mut symdb, rec)?;
         let fp = rec.series_fingerprint();
         let total_value = rec.samples.iter().map(|sample| sample.value).sum();
-        for (ordinal, (sample, stack_id)) in rec.samples.iter().zip(stack_ids).enumerate() {
+        for (ordinal, (sample, stack_id)) in rec.samples.iter().zip(&stack_ids).enumerate() {
             let timestamp_ms = profile_timestamp_ms(sample.timestamp_ns);
             min_ts = min_ts.min(timestamp_ms);
             max_ts = max_ts.max(timestamp_ms);
             rows.push(BuiltSample {
-                series_fingerprint: fp,
                 timestamp_ns: timestamp_ms,
-                profile_type: rec.profile_type.clone(),
-                stacktrace_id: u64::from(stack_id),
-                value: sample.value,
-                stacktrace_partition: STACKTRACE_PARTITION,
-                total_value,
-                span_id: sample.span_id,
-                trace_id: sample.trace_id.clone(),
-                wal_sample_ids: position
-                    .map(|position| {
-                        u64::try_from(ordinal).map(|ordinal| position.sample_identity(ordinal))
-                    })
-                    .transpose()
-                    .map_err(|error| ProfilesError::Decode(error.to_string()))?
-                    .into_iter()
-                    .collect(),
+                fields: krabka_blockstore::ProfileSampleFields {
+                    series_fingerprint: fp,
+                    profile_type: rec.profile_type.clone(),
+                    stacktrace_id: u64::from(*stack_id),
+                    value: sample.value,
+                    stacktrace_partition: STACKTRACE_PARTITION,
+                    total_value,
+                    span_id: sample.span_id,
+                    trace_id: sample.trace_id.clone(),
+                    wal_sample_ids: super::wal_sample_ids(position, ordinal)?,
+                },
             });
         }
     }
@@ -97,16 +113,10 @@ async fn write_block(
     // the built rows is cheaper than the Arrow lexsort-and-take the writer
     // would otherwise have to do over every column of the block.
     rows.sort_by(|left, right| {
-        (
-            left.series_fingerprint,
-            &left.profile_type,
-            left.timestamp_ns,
-        )
-            .cmp(&(
-                right.series_fingerprint,
-                &right.profile_type,
-                right.timestamp_ns,
-            ))
+        left.series_fingerprint
+            .cmp(&right.series_fingerprint)
+            .then_with(|| left.profile_type.cmp(&right.profile_type))
+            .then_with(|| left.timestamp_ns.cmp(&right.timestamp_ns))
     });
 
     // The object key carries the window's time bounds, so it is needed before
@@ -114,8 +124,8 @@ async fn write_block(
     let key = object_key(
         tenant,
         partition,
-        offset_range.0,
-        offset_range.1,
+        offset_range.min,
+        offset_range.max,
         min_ts,
         max_ts,
     );

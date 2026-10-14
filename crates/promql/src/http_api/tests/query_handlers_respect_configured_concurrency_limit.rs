@@ -31,7 +31,9 @@ pub(crate) async fn query_handlers_respect_configured_concurrency_limit() {
             .unwrap(),
     );
 
-    let (one, two) = tokio::join!(one, two);
+    let joined = tokio::join!(one, two);
+    let one = joined.0;
+    let two = joined.1;
     assert2::assert!(one.unwrap().status() == StatusCode::OK);
     assert2::assert!(two.unwrap().status() == StatusCode::OK);
     assert2::assert!(max_active.load(Ordering::SeqCst) == 1);

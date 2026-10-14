@@ -7,8 +7,14 @@ use super::{
     SchemaRef,
 };
 
+#[derive(Clone, Debug)]
+pub struct AttributeColumn {
+    pub key: String,
+    pub data_type: DataType,
+}
+
 #[must_use]
-pub fn span_schema_with_attrs(attr_cols: &[(String, DataType)]) -> SchemaRef {
+pub fn span_schema_with_attrs(attr_cols: &[AttributeColumn]) -> SchemaRef {
     let mut fields = vec![
         Field::new(COL_TRACE_ID, DataType::FixedSizeBinary(16), false),
         Field::new(COL_SPAN_ID, DataType::FixedSizeBinary(8), false),
@@ -35,11 +41,13 @@ pub fn span_schema_with_attrs(attr_cols: &[(String, DataType)]) -> SchemaRef {
         Field::new(COL_LINK_SPAN_ID, DataType::FixedSizeBinary(8), true),
     ];
 
-    fields.extend(
-        attr_cols
-            .iter()
-            .map(|(key, dt)| Field::new(format!("{ATTR_PREFIX}{key}"), dt.clone(), true)),
-    );
+    fields.extend(attr_cols.iter().map(|column| {
+        Field::new(
+            format!("{ATTR_PREFIX}{}", column.key),
+            column.data_type.clone(),
+            true,
+        )
+    }));
 
     Arc::new(Schema::new(fields))
 }

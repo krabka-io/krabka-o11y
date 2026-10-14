@@ -119,12 +119,10 @@ impl InMemoryMetricStore {
             let selected = self.float_head_summaries.get(tenant).and_then(|summary| {
                 summary.matching_series(rows.len(), &matchers, start_ms, start_ms, end_ms)
             });
-            if let Some((series, _)) = selected {
-                by_fp.extend(
-                    series
-                        .into_iter()
-                        .map(|entry| (entry.latest.0, Arc::clone(&entry.labels))),
-                );
+            if let Some(selected) = selected {
+                for entry in selected.series {
+                    by_fp.insert(entry.latest.fingerprint, Arc::clone(&entry.labels));
+                }
             } else {
                 insert_matching_series(
                     &mut by_fp,

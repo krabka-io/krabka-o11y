@@ -10,8 +10,8 @@ pub struct SpanMetricsRegistry {
     pub(crate) enable_status_message: bool,
     pub(crate) config: SpanMetricsConfig,
     pub(crate) entries: HashMap<DimKey, DimEntry>,
-    pub(crate) targets: HashSet<Vec<(String, String)>>,
-    pub(crate) hosts: HashSet<Vec<(String, String)>>,
+    pub(crate) targets: HashSet<Vec<krabka_traceql::MetricLabel>>,
+    pub(crate) hosts: HashSet<Vec<krabka_traceql::MetricLabel>>,
     pub(crate) host_info: HostInfoConfig,
     pub(crate) discarded_series: f64,
 }
@@ -47,14 +47,17 @@ impl SpanMetricsRegistry {
     pub fn record_span(&mut self, span: &SpanRecord) -> RecordOutcome {
         if self.host_info.enabled {
             for identifier in &self.host_info.host_identifiers {
-                if let Some((_, value)) = span
+                if let Some(attribute) = span
                     .resource_attributes
                     .iter()
-                    .find(|(name, value)| name == identifier && !value.is_empty())
+                    .find(|attribute| attribute.key == *identifier && !attribute.value.is_empty())
                 {
                     let labels = sorted_labels(vec![
-                        ("grafana_host_id".into(), value.clone()),
-                        ("host_source".into(), identifier.clone()),
+                        krabka_traceql::MetricLabel::new(
+                            "grafana_host_id",
+                            attribute.value.clone(),
+                        ),
+                        krabka_traceql::MetricLabel::new("host_source", identifier.clone()),
                     ]);
                     if self.hosts.contains(&labels)
                         || self.max_active_series == 0
@@ -106,8 +109,8 @@ impl SpanMetricsRegistry {
             entry.exemplars.push(Exemplar {
                 value: duration_ns / NS_PER_SEC,
                 labels: sorted_labels(vec![
-                    ("trace_id".to_string(), hex::encode(span.trace_id)),
-                    ("span_id".to_string(), hex::encode(span.span_id)),
+                    krabka_traceql::MetricLabel::new("trace_id", hex::encode(span.trace_id)),
+                    krabka_traceql::MetricLabel::new("span_id", hex::encode(span.span_id)),
                 ]),
                 timestamp_ms: span.start_ns / 1_000_000,
             });
@@ -148,8 +151,9 @@ impl SpanMetricsRegistry {
             timestamp_ms,
         });
 
-        for (labels, entry) in &mut self.entries {
-            let labels = labels.clone();
+        for entry in &mut self.entries {
+            let labels = entry.0.clone();
+            let entry = entry.1;
             if self.config.subprocessor_enabled("count") {
                 series.push(Series {
                     name: "traces_spanmetrics_calls_total".to_string(),
@@ -169,7 +173,11 @@ impl SpanMetricsRegistry {
                 });
             }
 
-            let (buckets, sum, count) = entry.latency.cumulative_seconds();
+            let HistogramSummary {
+                buckets,
+                sum,
+                count,
+            } = entry.latency.cumulative_seconds();
             if self.config.subprocessor_enabled("latency") {
                 series.push(Series {
                     name: "traces_spanmetrics_latency".to_string(),
@@ -207,12 +215,28 @@ impl SpanMetricsRegistry {
     }
 }
 
-fn target_info_labels(span: &SpanRecord, config: &SpanMetricsConfig) -> Vec<(String, String)> {
-    let labels = std::iter::once(("service".to_string(), span.service_name.clone())).chain(
+fn target_info_labels(
+    span: &SpanRecord,
+    config: &SpanMetricsConfig,
+) -> Vec<krabka_traceql::MetricLabel> {
+    let labels = std::iter::once(krabka_traceql::MetricLabel::new(
+        "service",
+        span.service_name.clone(),
+    ))
+    .chain(
         span.resource_attributes
             .iter()
-            .filter(|(name, _)| !config.target_info_excluded_dimensions.contains(name))
-            .map(|(name, value)| (prometheus_label_name(name), value.clone())),
+            .filter(|attribute| {
+                !config
+                    .target_info_excluded_dimensions
+                    .contains(&attribute.key)
+            })
+            .map(|attribute| {
+                krabka_traceql::MetricLabel::new(
+                    prometheus_label_name(&attribute.key),
+                    attribute.value.clone(),
+                )
+            }),
     );
     sorted_labels(labels.collect())
 }

@@ -3,6 +3,11 @@ use super::{
     Time, TimeExt, Value, merge_limits,
 };
 
+type ApiWriteGuard<'a> = (
+    Option<std::fs::File>,
+    std::sync::RwLockWriteGuard<'a, HashMap<String, VersionedOverride>>,
+);
+
 #[derive(Clone, Debug)]
 pub struct OverridesProvider {
     pub(crate) defaults: Limits,
@@ -10,6 +15,12 @@ pub struct OverridesProvider {
     file_overrides: HashMap<String, PartialLimits>,
     api: std::sync::Arc<RwLock<HashMap<String, VersionedOverride>>>,
     api_path: Option<std::sync::Arc<std::path::PathBuf>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApiOverrideSnapshot {
+    pub raw: Value,
+    pub version: String,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -64,12 +75,10 @@ impl OverridesProvider {
     pub fn from_yaml_with_defaults(yaml: &str, defaults: Limits) -> Result<Self, OverridesError> {
         let file = serde_yaml::from_str::<RuntimeFile>(yaml)
             .map_err(|err| OverridesError::Yaml(err.to_string()))?;
-        let per_tenant = file
-            .overrides
-            .iter()
-            .map(|(tenant, limits)| (tenant, merge_limits(&defaults, limits)))
-            .map(|(tenant, limits)| (tenant.clone(), limits))
-            .collect();
+        let mut per_tenant = HashMap::new();
+        for entry in &file.overrides {
+            per_tenant.insert(entry.0.clone(), merge_limits(&defaults, entry.1));
+        }
 
         Ok(Self {
             defaults,
@@ -106,13 +115,16 @@ impl OverridesProvider {
     }
 
     #[must_use]
-    pub fn api_get(&self, tenant: &str) -> Option<(Value, String)> {
+    pub fn api_get(&self, tenant: &str) -> Option<ApiOverrideSnapshot> {
         let _ = self.refresh_api();
         self.api
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(tenant)
-            .map(|entry| (entry.raw.clone(), entry.version.to_string()))
+            .map(|entry| ApiOverrideSnapshot {
+                raw: entry.raw.clone(),
+                version: entry.version.to_string(),
+            })
     }
 
     #[must_use]
@@ -124,7 +136,9 @@ impl OverridesProvider {
             return false;
         };
         raw.as_object().is_some_and(|raw| {
-            raw.iter().any(|(key, value)| {
+            raw.iter().any(|entry| {
+                let key = entry.0;
+                let value = entry.1;
                 !value.is_null()
                     && file
                         .get(key)
@@ -144,12 +158,7 @@ impl OverridesProvider {
         expected: &str,
     ) -> Result<String, OverrideMutationError> {
         let limits = parse_api_limits(&raw)?;
-        let _file_lock = self.lock_api_file()?;
-        let mut api = self
-            .api
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)?;
+        let (_file_lock, mut api) = self.lock_and_reload_api()?;
         let current = api.get(tenant).map_or(0, |entry| entry.version);
         if expected.parse::<u64>().ok() != Some(current) {
             return Err(OverrideMutationError::VersionMismatch);
@@ -179,13 +188,8 @@ impl OverridesProvider {
         &self,
         tenant: &str,
         patch: Value,
-    ) -> Result<(Value, String), OverrideMutationError> {
-        let _file_lock = self.lock_api_file()?;
-        let mut api = self
-            .api
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)?;
+    ) -> Result<ApiOverrideSnapshot, OverrideMutationError> {
+        let (_file_lock, mut api) = self.lock_and_reload_api()?;
         let previous = api.clone();
         let mut raw = api
             .get(tenant)
@@ -207,7 +211,10 @@ impl OverridesProvider {
             *api = previous;
             return Err(error);
         }
-        Ok((raw, version.to_string()))
+        Ok(ApiOverrideSnapshot {
+            raw,
+            version: version.to_string(),
+        })
     }
 
     /// Delete a tenant's API overrides when `expected` matches its version.
@@ -215,12 +222,7 @@ impl OverridesProvider {
     /// # Errors
     /// Returns [`OverrideMutationError`] when the override is absent or stale.
     pub fn api_delete(&self, tenant: &str, expected: &str) -> Result<(), OverrideMutationError> {
-        let _file_lock = self.lock_api_file()?;
-        let mut api = self
-            .api
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)?;
+        let (_file_lock, mut api) = self.lock_and_reload_api()?;
         let entry = api.get(tenant).ok_or(OverrideMutationError::NotFound)?;
         if expected.parse::<u64>().ok() != Some(entry.version) {
             return Err(OverrideMutationError::VersionMismatch);
@@ -235,12 +237,17 @@ impl OverridesProvider {
     }
 
     fn refresh_api(&self) -> Result<(), OverrideMutationError> {
-        let _file_lock = self.lock_api_file()?;
+        self.lock_and_reload_api().map(|_| ())
+    }
+
+    fn lock_and_reload_api(&self) -> Result<ApiWriteGuard<'_>, OverrideMutationError> {
+        let file_lock = self.lock_api_file()?;
         let mut api = self
             .api
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)
+        self.reload_locked(&mut api)?;
+        Ok((file_lock, api))
     }
 
     fn lock_api_file(&self) -> Result<Option<std::fs::File>, OverrideMutationError> {
@@ -334,7 +341,9 @@ fn merge_json(target: &mut Value, patch: Value) {
                 *target = Value::Object(Map::default());
             }
             let target = target.as_object_mut().expect("target was made an object");
-            for (key, value) in patch {
+            for entry in patch {
+                let key = entry.0;
+                let value = entry.1;
                 if value.is_null() {
                     target.remove(&key);
                 } else {

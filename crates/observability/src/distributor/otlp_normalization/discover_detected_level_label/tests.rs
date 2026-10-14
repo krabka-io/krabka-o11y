@@ -8,48 +8,161 @@ use crate::{
     normalize_loki_proto_push, normalize_loki_push,
 };
 
+struct LevelTextCase {
+    line: &'static str,
+    expected: &'static str,
+}
+
+struct FieldDiscoveryCase {
+    fields: Vec<String>,
+    depth: i64,
+    line: &'static str,
+    expected: &'static str,
+}
+
+struct SeverityNumberCase {
+    number: &'static str,
+    expected: &'static str,
+}
+
+struct ProtobufEntryCase {
+    line: &'static str,
+    metadata: Vec<LokiProtoLabelPair>,
+}
+
+struct QueryMetadataCase {
+    pipeline: &'static str,
+    metadata: Labels,
+    expected: Option<&'static str>,
+}
+
+struct LabelFixture {
+    name: &'static str,
+    value: &'static str,
+}
+
+fn label_fixture(entries: impl IntoIterator<Item = LabelFixture>) -> Labels {
+    let mut labels = Labels::new();
+    for entry in entries {
+        labels.insert(entry.name.into(), entry.value.into());
+    }
+    labels
+}
+
 #[test]
 fn discovery_uses_entry_metadata_and_field_precedence_before_bounded_text() {
-    let labels = Labels::from([("app".into(), "api".into())]);
-    for (line, expected) in [
-        ("level=debug error=none", "debug"),
-        ("ſeverity=DBG error=none", "debug"),
-        (r#"{"level":"INFO","error":"fatal"}"#, "info"),
-        (r#"{"severity":"fatal","level":"info"}"#, "fatal"),
-        (r#"{"level":"info","severity":"fatal"}"#, "info"),
-        (r#"{"nested":{"severity":"warn"},"level":"info"}"#, "warn"),
-        (r#"{"level":"debug","level":"fatal"}"#, "debug"),
-        (r#"{"level":"\u0069nfo","message":"fatal"}"#, "fatal"),
-        (r#"{"l\u0065vel":"DBG"}"#, "debug"),
-        ("severity=WARN level=DBG", "debug"),
-        ("info before error", "info"),
-        ("misc:error terror error_code", "unknown"),
-        ("plain", "unknown"),
-        ("fatal: boom", "fatal"),
+    let labels = label_fixture([LabelFixture {
+        name: "app",
+        value: "api",
+    }]);
+    for case in [
+        LevelTextCase {
+            line: "level=debug error=none",
+            expected: "debug",
+        },
+        LevelTextCase {
+            line: "ſeverity=DBG error=none",
+            expected: "debug",
+        },
+        LevelTextCase {
+            line: r#"{"level":"INFO","error":"fatal"}"#,
+            expected: "info",
+        },
+        LevelTextCase {
+            line: r#"{"severity":"fatal","level":"info"}"#,
+            expected: "fatal",
+        },
+        LevelTextCase {
+            line: r#"{"level":"info","severity":"fatal"}"#,
+            expected: "info",
+        },
+        LevelTextCase {
+            line: r#"{"nested":{"severity":"warn"},"level":"info"}"#,
+            expected: "warn",
+        },
+        LevelTextCase {
+            line: r#"{"level":"debug","level":"fatal"}"#,
+            expected: "debug",
+        },
+        LevelTextCase {
+            line: r#"{"level":"\u0069nfo","message":"fatal"}"#,
+            expected: "fatal",
+        },
+        LevelTextCase {
+            line: r#"{"l\u0065vel":"DBG"}"#,
+            expected: "debug",
+        },
+        LevelTextCase {
+            line: "severity=WARN level=DBG",
+            expected: "debug",
+        },
+        LevelTextCase {
+            line: "info before error",
+            expected: "info",
+        },
+        LevelTextCase {
+            line: "misc:error terror error_code",
+            expected: "unknown",
+        },
+        LevelTextCase {
+            line: "plain",
+            expected: "unknown",
+        },
+        LevelTextCase {
+            line: "fatal: boom",
+            expected: "fatal",
+        },
     ] {
+        let line = case.line;
+        let expected = case.expected;
         let mut metadata = Labels::new();
         discover_detected_level_label(&labels, &mut metadata, line, &Limits::default());
         assert!(
-            metadata == Labels::from([("detected_level".into(), expected.into())]),
+            metadata
+                == label_fixture([LabelFixture {
+                    name: "detected_level",
+                    value: expected
+                }]),
             "{line}"
         );
-        assert!(labels == Labels::from([("app".into(), "api".into())]));
+        assert!(
+            labels
+                == label_fixture([LabelFixture {
+                    name: "app",
+                    value: "api"
+                }])
+        );
     }
-    let mut existing = Labels::from([
-        ("detected_level".into(), "WrN".into()),
-        ("level".into(), "fatal".into()),
+    let mut existing = label_fixture([
+        LabelFixture {
+            name: "detected_level",
+            value: "WrN",
+        },
+        LabelFixture {
+            name: "level",
+            value: "fatal",
+        },
     ]);
     discover_detected_level_label(&labels, &mut existing, "level=debug", &Limits::default());
     assert!(existing["detected_level"] == "warn");
-    let stream = Labels::from([("level".into(), "custom".into())]);
-    let mut metadata = Labels::from([("level".into(), "fatal".into())]);
+    let stream = label_fixture([LabelFixture {
+        name: "level",
+        value: "custom",
+    }]);
+    let mut metadata = label_fixture([LabelFixture {
+        name: "level",
+        value: "fatal",
+    }]);
     discover_detected_level_label(&stream, &mut metadata, "level=debug", &Limits::default());
     assert!(metadata["detected_level"] == "custom");
 }
 
 #[test]
 fn discovery_honors_disabled_custom_fields_json_depth_and_otlp_severity() {
-    let labels = Labels::from([("app".into(), "api".into())]);
+    let labels = label_fixture([LabelFixture {
+        name: "app",
+        value: "api",
+    }]);
     let disabled = Limits {
         discover_log_levels: false,
         ..Limits::default()
@@ -60,33 +173,42 @@ fn discovery_honors_disabled_custom_fields_json_depth_and_otlp_severity() {
     metadata.insert("detected_level".into(), "DBG".into());
     discover_detected_level_label(&labels, &mut metadata, "level=error", &disabled);
     assert!(metadata["detected_level"] == "DBG");
-    for (fields, depth, line, expected) in [
-        (
-            vec!["priority".into()],
-            2,
-            "priority=DBG error=none",
-            "debug",
-        ),
-        (
-            vec!["priority".into()],
-            2,
-            r#"{"outer":{"inner":{"priority":"INF"}}}"#,
-            "unknown",
-        ),
-        (
-            vec!["priority".into()],
-            0,
-            r#"{"outer":{"inner":{"priority":"INF"}}}"#,
-            "info",
-        ),
-        (
-            vec!["priority".into()],
-            -1,
-            r#"{"outer":{"inner":{"priority":"INF"}}}"#,
-            "info",
-        ),
-        (vec![], 2, "level=DBG error=none", "debug"),
+    for case in [
+        FieldDiscoveryCase {
+            fields: vec!["priority".into()],
+            depth: 2,
+            line: "priority=DBG error=none",
+            expected: "debug",
+        },
+        FieldDiscoveryCase {
+            fields: vec!["priority".into()],
+            depth: 2,
+            line: r#"{"outer":{"inner":{"priority":"INF"}}}"#,
+            expected: "unknown",
+        },
+        FieldDiscoveryCase {
+            fields: vec!["priority".into()],
+            depth: 0,
+            line: r#"{"outer":{"inner":{"priority":"INF"}}}"#,
+            expected: "info",
+        },
+        FieldDiscoveryCase {
+            fields: vec!["priority".into()],
+            depth: -1,
+            line: r#"{"outer":{"inner":{"priority":"INF"}}}"#,
+            expected: "info",
+        },
+        FieldDiscoveryCase {
+            fields: vec![],
+            depth: 2,
+            line: "level=DBG error=none",
+            expected: "debug",
+        },
     ] {
+        let fields = case.fields;
+        let depth = case.depth;
+        let line = case.line;
+        let expected = case.expected;
         let config = Limits {
             log_level_fields: fields,
             log_level_from_json_max_depth: depth,
@@ -99,18 +221,50 @@ fn discovery_honors_disabled_custom_fields_json_depth_and_otlp_severity() {
             "{line} depth{depth}"
         );
     }
-    for (number, expected) in [
-        ("0", "unknown"),
-        ("4", "trace"),
-        ("8", "debug"),
-        ("12", "info"),
-        ("16", "warn"),
-        ("20", "error"),
-        ("24", "fatal"),
-        ("25", "unknown"),
-        ("bad", "info"),
+    for case in [
+        SeverityNumberCase {
+            number: "0",
+            expected: "unknown",
+        },
+        SeverityNumberCase {
+            number: "4",
+            expected: "trace",
+        },
+        SeverityNumberCase {
+            number: "8",
+            expected: "debug",
+        },
+        SeverityNumberCase {
+            number: "12",
+            expected: "info",
+        },
+        SeverityNumberCase {
+            number: "16",
+            expected: "warn",
+        },
+        SeverityNumberCase {
+            number: "20",
+            expected: "error",
+        },
+        SeverityNumberCase {
+            number: "24",
+            expected: "fatal",
+        },
+        SeverityNumberCase {
+            number: "25",
+            expected: "unknown",
+        },
+        SeverityNumberCase {
+            number: "bad",
+            expected: "info",
+        },
     ] {
-        let mut metadata = Labels::from([("severity_number".into(), number.into())]);
+        let number = case.number;
+        let expected = case.expected;
+        let mut metadata = label_fixture([LabelFixture {
+            name: "severity_number",
+            value: number,
+        }]);
         discover_detected_level_label(&labels, &mut metadata, "level=debug", &Limits::default());
         assert!(metadata["detected_level"] == expected);
     }
@@ -133,10 +287,13 @@ fn json_and_protobuf_push_keep_one_series_and_per_entry_level_metadata() {
             labels: r#"{app="api"}"#.into(),
             hash: 0,
             entries: [
-                ("level=debug error=none", vec![]),
-                (
-                    "level=info",
-                    vec![
+                ProtobufEntryCase {
+                    line: "level=debug error=none",
+                    metadata: vec![],
+                },
+                ProtobufEntryCase {
+                    line: "level=info",
+                    metadata: vec![
                         LokiProtoLabelPair {
                             name: "detected_level".into(),
                             value: "WRN".into(),
@@ -146,34 +303,45 @@ fn json_and_protobuf_push_keep_one_series_and_per_entry_level_metadata() {
                             value: "abc".into(),
                         },
                     ],
-                ),
-                ("plain", vec![]),
+                },
+                ProtobufEntryCase {
+                    line: "plain",
+                    metadata: vec![],
+                },
             ]
             .into_iter()
-            .enumerate()
-            .map(|(offset, (line, metadata))| {
-                let time = time + i64::try_from(offset).unwrap();
-                LokiProtoEntry {
+            .scan(0_i64, |offset, case| {
+                let time = time + *offset;
+                *offset += 1;
+                Some(LokiProtoEntry {
                     timestamp: Some(LokiProtoTimestamp {
                         seconds: time / 1_000_000_000,
                         nanos: i32::try_from(time % 1_000_000_000).unwrap(),
                     }),
-                    line: line.into(),
-                    structured_metadata: metadata,
+                    line: case.line.into(),
+                    structured_metadata: case.metadata,
                     parsed: vec![],
-                }
+                })
             })
             .collect(),
         }],
     };
     let protobuf = normalize_loki_proto_push(&tenant, proto, &Limits::default()).unwrap();
     assert!(protobuf == json);
-    for (row, level) in json.iter().zip(["debug", "warn", "unknown"]) {
+    for pair in json.iter().zip(["debug", "warn", "unknown"]) {
+        let row = pair.0;
+        let level = pair.1;
         assert!(
             row.labels
-                == Labels::from([
-                    ("app".into(), "api".into()),
-                    ("service_name".into(), "api".into())
+                == label_fixture([
+                    LabelFixture {
+                        name: "app",
+                        value: "api"
+                    },
+                    LabelFixture {
+                        name: "service_name",
+                        value: "api"
+                    },
                 ])
         );
         assert!(row.structured_metadata["detected_level"] == level);
@@ -183,18 +351,45 @@ fn json_and_protobuf_push_keep_one_series_and_per_entry_level_metadata() {
 
 #[test]
 fn queries_do_not_recreate_missing_or_dropped_discovery_metadata() {
-    let labels = Labels::from([("app".into(), "api".into())]);
-    let detected = Labels::from([("detected_level".into(), "unknown".into())]);
-    for (pipeline, metadata, expected) in [
-        ("", Labels::new(), None),
-        ("", detected.clone(), Some("unknown")),
-        (" | drop detected_level", detected.clone(), None),
-        (" | keep app", detected, None),
+    let labels = label_fixture([LabelFixture {
+        name: "app",
+        value: "api",
+    }]);
+    let detected = label_fixture([LabelFixture {
+        name: "detected_level",
+        value: "unknown",
+    }]);
+    for case in [
+        QueryMetadataCase {
+            pipeline: "",
+            metadata: Labels::new(),
+            expected: None,
+        },
+        QueryMetadataCase {
+            pipeline: "",
+            metadata: detected.clone(),
+            expected: Some("unknown"),
+        },
+        QueryMetadataCase {
+            pipeline: " | drop detected_level",
+            metadata: detected.clone(),
+            expected: None,
+        },
+        QueryMetadataCase {
+            pipeline: " | keep app",
+            metadata: detected,
+            expected: None,
+        },
     ] {
+        let pipeline = case.pipeline;
+        let metadata = case.metadata;
+        let expected = case.expected;
         let stream = crate::parse_query(&format!(r#"{{app="api"}}{pipeline}"#)).unwrap();
-        let (fields, entry) =
+        let matching =
             crate::matching_loki_stream_entry(&stream, &labels, "plain", &metadata, 1, false)
                 .unwrap();
+        let fields = matching.labels;
+        let entry = matching.entry;
         assert!(fields.get("detected_level").map(String::as_str) == expected);
         assert!(
             entry
@@ -206,12 +401,12 @@ fn queries_do_not_recreate_missing_or_dropped_discovery_metadata() {
         let metric =
             crate::parse_metric_query(&format!(r#"count_over_time({{app="api"}}{pipeline}[1m])"#))
                 .unwrap();
-        let (fields, _, _) =
-            crate::querier::aggregate::record_matching::matching_loki_metric_sample(
-                &metric, &labels, "plain", &metadata, 1,
-            )
-            .unwrap()
-            .unwrap();
+        let sample = crate::querier::aggregate::record_matching::matching_loki_metric_sample(
+            &metric, &labels, "plain", &metadata, 1,
+        )
+        .unwrap()
+        .unwrap();
+        let fields = sample.labels;
         assert!(fields.get("detected_level").map(String::as_str) == expected);
     }
 }

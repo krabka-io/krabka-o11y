@@ -1,26 +1,46 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct UtilitySampleCase {
+    name: &'static str,
+    job: &'static str,
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct TimestampExpectation {
+    job: &'static str,
+    seconds: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn util_planner_path_matches_interpreter() {
     // NaN-aware whole-result comparison covering both scalar and vector
     // results, sorting vector samples by fingerprint first.
     fn results_match(left: QueryResult, right: QueryResult) -> bool {
-        match (left, right) {
-            (
+        match left {
+            QueryResult::Scalar {
+                ts_ms: left_ts,
+                value: left_value,
+            } => match right {
                 QueryResult::Scalar {
-                    ts_ms: lt,
-                    value: lv,
-                },
-                QueryResult::Scalar {
-                    ts_ms: rt,
-                    value: rv,
-                },
-            ) => lt == rt && (lv.to_bits() == rv.to_bits() || (lv.is_nan() && rv.is_nan())),
-            (QueryResult::InstantVector(mut l), QueryResult::InstantVector(mut r)) => {
-                l.sort_by_key(|sample| sample.labels.fingerprint());
-                r.sort_by_key(|sample| sample.labels.fingerprint());
-                nan_equal_samples(&l, &r)
-            }
+                    ts_ms: right_ts,
+                    value: right_value,
+                } => {
+                    left_ts == right_ts
+                        && (left_value.to_bits() == right_value.to_bits()
+                            || (left_value.is_nan() && right_value.is_nan()))
+                }
+                _ => false,
+            },
+            QueryResult::InstantVector(mut left_samples) => match right {
+                QueryResult::InstantVector(mut right_samples) => {
+                    left_samples.sort_by_key(|sample| sample.labels.fingerprint());
+                    right_samples.sort_by_key(|sample| sample.labels.fingerprint());
+                    nan_equal_samples(&left_samples, &right_samples)
+                }
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -31,21 +51,64 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     // genuine-NaN row survives `timestamp`/calendar drops. `present` exists,
     // `gone` does not (for absent / absent_over_time).
     let mut store = InMemoryMetricStore::new();
-    for (name, job, ts, value) in [
+    for case in [
         // Two `m` series at different timestamps within the lookback window.
-        ("m", "api", 30_000_i64, 100.0),
-        ("m", "db", 60_000, 1_700_000_000.0),
+        UtilitySampleCase::builder()
+            .name("m")
+            .job("api")
+            .timestamp_ms(30_000)
+            .value(100.0)
+            .build(),
+        UtilitySampleCase::builder()
+            .name("m")
+            .job("db")
+            .timestamp_ms(60_000)
+            .value(1_700_000_000.0)
+            .build(),
         // A genuine-NaN `m` row (must survive timestamp/calendar, value-> ts).
-        ("m", "nan", 45_000, f64::NAN),
+        UtilitySampleCase::builder()
+            .name("m")
+            .job("nan")
+            .timestamp_ms(45_000)
+            .value(f64::NAN)
+            .build(),
         // A single-series metric for scalar(single).
-        ("solo", "x", 60_000, 42.5),
+        UtilitySampleCase::builder()
+            .name("solo")
+            .job("x")
+            .timestamp_ms(60_000)
+            .value(42.5)
+            .build(),
         // Two series sharing a name for scalar(multi)->NaN.
-        ("dup", "a", 60_000, 1.0),
-        ("dup", "b", 60_000, 2.0),
+        UtilitySampleCase::builder()
+            .name("dup")
+            .job("a")
+            .timestamp_ms(60_000)
+            .value(1.0)
+            .build(),
+        UtilitySampleCase::builder()
+            .name("dup")
+            .job("b")
+            .timestamp_ms(60_000)
+            .value(2.0)
+            .build(),
         // A present series for absent(present)->empty / absent_over_time.
-        ("present", "p", 55_000, 7.0),
+        UtilitySampleCase::builder()
+            .name("present")
+            .job("p")
+            .timestamp_ms(55_000)
+            .value(7.0)
+            .build(),
     ] {
-        store.push_float("t", labels(&[("__name__", name), ("job", job)]), ts, value);
+        store.push_float(
+            "t",
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", case.name),
+                crate::test_support::TestLabelPair::new("job", case.job),
+            ]),
+            case.timestamp_ms,
+            case.value,
+        );
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let time_ms = 60_000_i64;
@@ -89,8 +152,9 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     ];
 
     for query in queries {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, time_ms).await;
+        let parity = planned_and_interpreted(&engine, query, time_ms).await;
+        let via_operators = parity.via_operators;
+        let via_interpreter = parity.via_interpreter;
 
         assert2::assert!(results_match(
             via_interpreter.clone(),
@@ -175,14 +239,31 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
             .iter()
             .all(|s| s.labels.get("__name__").is_none())
     );
-    let by_job: std::collections::BTreeMap<&str, f64> = ts_samples
-        .iter()
-        .map(|s| (s.labels.get("job").unwrap(), float_value(&s.value)))
-        .collect();
-    for (job, want) in [("api", 30.0_f64), ("db", 60.0), ("nan", 45.0)] {
+    let mut by_job = std::collections::BTreeMap::new();
+    for sample in &ts_samples {
+        by_job.insert(
+            sample.labels.get("job").unwrap(),
+            float_value(&sample.value),
+        );
+    }
+    for expected in [
+        TimestampExpectation {
+            job: "api",
+            seconds: 30.0_f64,
+        },
+        TimestampExpectation {
+            job: "db",
+            seconds: 60.0,
+        },
+        TimestampExpectation {
+            job: "nan",
+            seconds: 45.0,
+        },
+    ] {
         check!(
-            by_job[&job].to_bits() == want.to_bits(),
-            "timestamp {job} row"
+            by_job[expected.job].to_bits() == expected.seconds.to_bits(),
+            "timestamp {} row",
+            expected.job
         );
     }
 }

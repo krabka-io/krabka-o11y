@@ -9,7 +9,7 @@ use krabka_units::{Time, convert::TimeExt as _};
 use super::{
     AlertmanagerSink, BufferedRulerOutputs, KafkaRecordingRuleWalSink, KafkaRulerStateSink,
     MetricStore, PrometheusApiState, PrometheusRulerStateSink, RecordingRuleWalSink,
-    RulerOutputBatch, RulerShard, RulerStateSink, RulerWalError, advance_ruler_lease,
+    RulerOutputBatch, RulerShard, RulerSinks, RulerStateSink, RulerWalError, advance_ruler_lease,
     current_time_ms, evaluate_ruler_once_deferred,
 };
 
@@ -17,6 +17,11 @@ struct CommittedPass {
     batch: RulerOutputBatch,
     reports: Vec<krabka_promql::RulerEvaluationReport>,
     eval_time_ms: i64,
+}
+
+pub struct RulerTopics {
+    pub wal: String,
+    pub state: String,
 }
 
 /// Runs ruler evaluations only while this replica owns the shard's durable,
@@ -32,7 +37,7 @@ pub async fn run_fenced_ruler_evaluation_loop<S, A, Stop>(
     role: Role,
     member: MemberId,
     shard: RulerShard,
-    topics: (String, String),
+    topics: RulerTopics,
     eval_interval: Time,
     lease_config: LeaseConfig,
     metrics: krabka_promql::metrics::ServiceMetrics,
@@ -199,10 +204,12 @@ async fn evaluate_and_commit<S: MetricStore, A: AlertmanagerSink>(
     alert_sink: &A,
     producer: Arc<Producer>,
     shard: RulerShard,
-    topics: &(String, String),
+    topics: &RulerTopics,
     eval_time_ms: i64,
 ) -> Result<CommittedPass, RulerWalError> {
-    let (mut alert_state, mut group_state) = state.ruler_evaluation_state();
+    let evaluation_state = state.ruler_evaluation_state();
+    let mut alert_state = evaluation_state.alert_state;
+    let mut group_state = evaluation_state.group_state;
     let mut batch = RulerOutputBatch::default();
     let mut reports = Vec::new();
     for tenant in state.ruler_tenants() {
@@ -211,12 +218,14 @@ async fn evaluate_and_commit<S: MetricStore, A: AlertmanagerSink>(
         let outputs = BufferedRulerOutputs::new(alert_sink);
         match evaluate_ruler_once_deferred(
             state,
-            (&outputs, &outputs, &outputs),
+            RulerSinks::new(&outputs, &outputs, &outputs),
             &mut alert_state,
             &mut group_state,
-            &tenant,
-            shard,
-            eval_time_ms,
+            super::RulerEvaluationContext {
+                tenant: &tenant,
+                shard,
+                eval_time_ms,
+            },
         )
         .await
         {
@@ -235,8 +244,8 @@ async fn evaluate_and_commit<S: MetricStore, A: AlertmanagerSink>(
         .begin_transaction()
         .await
         .map_err(|error| transaction_error(&error))?;
-    let wal = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), topics.0.clone());
-    let ruler_state = KafkaRulerStateSink::new(Arc::clone(&producer), topics.1.clone());
+    let wal = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), topics.wal.clone());
+    let ruler_state = KafkaRulerStateSink::new(Arc::clone(&producer), topics.state.clone());
     let writes = async {
         for record in &batch.wal {
             wal.append_recording_rule_record(record.clone()).await?;
@@ -291,10 +300,14 @@ async fn publish_committed<S: MetricStore + 'static, A: AlertmanagerSink>(
     for report in &pass.reports {
         state.apply_ruler_evaluation_report(report);
     }
-    for (tenant, alerts) in pass.batch.alerts {
-        let result = match tenant {
-            Some(tenant) => alert_sink.dispatch_alerts_for_tenant(&tenant, alerts).await,
-            None => alert_sink.dispatch_alerts(alerts).await,
+    for batch in pass.batch.alerts {
+        let result = match batch.tenant {
+            Some(tenant) => {
+                alert_sink
+                    .dispatch_alerts_for_tenant(&tenant, batch.alerts)
+                    .await
+            }
+            None => alert_sink.dispatch_alerts(batch.alerts).await,
         };
         if let Err(error) = result {
             tracing::error!(%error, "committed ruler alerts did not enqueue for delivery");

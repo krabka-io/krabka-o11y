@@ -1,4 +1,9 @@
-use super::{BTreeMap, ProfilesError};
+use super::{BTreeMap, LegacyStackFrame, ProfilesError};
+
+struct ParsedTextStackLine<'a> {
+    stack: &'a str,
+    value: i64,
+}
 
 /// A plain-text stack format that the legacy ingest endpoint accepts.
 #[derive(Clone, Copy)]
@@ -29,19 +34,29 @@ impl TextStackFormat {
 
     /// Splits `line`, the `line_number`th of its body, into its stack and the
     /// sample value it adds to that stack.
-    fn stack_and_value(self, line: &str, line_number: usize) -> Result<(&str, i64), ProfilesError> {
+    fn stack_and_value(
+        self,
+        line: &str,
+        line_number: usize,
+    ) -> Result<ParsedTextStackLine<'_>, ProfilesError> {
         match self {
-            Self::Lines => Ok((line, 1)),
+            Self::Lines => Ok(ParsedTextStackLine {
+                stack: line,
+                value: 1,
+            }),
             Self::Folded => {
-                let (stack, value) = line.rsplit_once(char::is_whitespace).ok_or_else(|| {
+                let stack_and_value = line.rsplit_once(char::is_whitespace).ok_or_else(|| {
                     ProfilesError::Decode(format!("folded line {line_number} missing value"))
                 })?;
-                let value = value.parse::<i64>().map_err(|err| {
+                let value = stack_and_value.1.parse::<i64>().map_err(|err| {
                     ProfilesError::Decode(format!(
                         "folded line {line_number} has invalid value: {err}"
                     ))
                 })?;
-                Ok((stack, value))
+                Ok(ParsedTextStackLine {
+                    stack: stack_and_value.0,
+                    value,
+                })
             }
         }
     }
@@ -57,19 +72,16 @@ impl TextStackFormat {
 pub(crate) fn parse_text_stacks(
     body: &str,
     format: TextStackFormat,
-) -> Result<BTreeMap<Vec<(String, i32)>, i64>, ProfilesError> {
-    let mut stacks = BTreeMap::<Vec<(String, i32)>, i64>::new();
-    for (line_no, raw_line) in body.lines().enumerate() {
-        let line = raw_line.trim();
+) -> Result<BTreeMap<Vec<LegacyStackFrame>, i64>, ProfilesError> {
+    let mut stacks = BTreeMap::<Vec<LegacyStackFrame>, i64>::new();
+    for line_entry in body.lines().enumerate() {
+        let line_no = line_entry.0;
+        let line = line_entry.1.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (stack, value) = format.stack_and_value(line, line_no + 1)?;
-        let frames = stack
-            .split(';')
-            .filter(|frame| !frame.is_empty())
-            .map(|frame| (frame.to_string(), 0))
-            .collect::<Vec<_>>();
+        let parsed = format.stack_and_value(line, line_no + 1)?;
+        let frames = super::legacy_stack_frames(parsed.stack);
         if frames.is_empty() {
             return Err(ProfilesError::Decode(format!(
                 "{} {} has empty stack",
@@ -77,7 +89,7 @@ pub(crate) fn parse_text_stacks(
                 line_no + 1
             )));
         }
-        *stacks.entry(frames).or_default() += value;
+        *stacks.entry(frames).or_default() += parsed.value;
     }
 
     if stacks.is_empty() {

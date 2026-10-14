@@ -11,10 +11,12 @@ pub(crate) fn json_value_pattern(value: &Value) -> Value {
         Value::Null | Value::Bool(_) => value.clone(),
         Value::String(text) => Value::String(templatize_text(text)),
         Value::Array(items) => Value::Array(items.iter().map(json_value_pattern).collect()),
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .map(|(key, value)| (key.clone(), json_value_pattern(value)))
-                .collect(),
-        ),
+        Value::Object(map) => {
+            let mut templatized_map = serde_json::Map::new();
+            for entry in map {
+                templatized_map.insert(entry.0.clone(), json_value_pattern(entry.1));
+            }
+            Value::Object(templatized_map)
+        }
     }
 }

@@ -1,4 +1,4 @@
-use super::*;
+use super::{cached_up_matrix::up_api_series, *};
 
 #[tokio::test]
 pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently() {
@@ -21,7 +21,7 @@ pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently(
     let executor = ConcurrencyProbeExecutor::new(width);
     let cache = QueryFrontendCache::default();
 
-    let (results, annotations) = tokio::time::timeout(
+    let execution = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         execute_planned_range_queries(
             &executor,
@@ -34,6 +34,8 @@ pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently(
     .await
     .expect("parallel fan-out must not block on the per-subquery barrier")
     .unwrap();
+    let results = execution.results;
+    let annotations = execution.annotations;
 
     // Every planned sub-query was dispatched exactly once.
     let mut dispatched = executor
@@ -53,12 +55,11 @@ pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently(
         merge_range_query_results_with_reducer(results.clone(), QueryShardReducer::First).unwrap();
     let mut sequential = Vec::new();
     for subquery in &planned {
-        sequential.push(QueryResult::RangeMatrix(vec![RangeSeries {
-            drop_name: false,
-            start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
-            samples: vec![(subquery.start_ms, SampleValue::Float(1.0))],
-        }]));
+        let point = FloatPoint::builder()
+            .ts_ms(subquery.start_ms)
+            .value(1.0)
+            .build();
+        sequential.push(QueryResult::RangeMatrix(vec![up_api_series(&[point])]));
     }
     let sequential_merge =
         merge_range_query_results_with_reducer(sequential, QueryShardReducer::First).unwrap();

@@ -21,10 +21,13 @@ use krabka_units::{
 
 use crate::{
     error::{Result, TraceqlError},
-    result::{AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagScope, TraceSpans, TypedValue},
+    result::{
+        AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagNameGroups, TagNameSets,
+        TagScope, TraceSpans, TypedValue,
+    },
     span_columns::{
-        EVENT_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, InputSpan, LINK_ATTR_PREFIX, NestedSet,
-        assign_nested_set, span_schema_with_attrs,
+        AttributeColumn, EVENT_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, InputSpan,
+        LINK_ATTR_PREFIX, NestedSet, assign_nested_set, span_schema_with_attrs,
     },
     span_matching::{
         attr_values_match, collect_event_values, collect_link_values, collect_span_field_values,
@@ -34,6 +37,11 @@ use crate::{
     },
     store::{MatchCmp, MatchScope, MatchValue, ScanResult, SpanMatcher, SpanStore, TagCatalog},
 };
+
+struct AttrBuilderEntry {
+    key: String,
+    builder: AttrBuilder,
+}
 
 #[cfg(test)]
 mod tests {
@@ -48,6 +56,71 @@ mod tests {
         span_matching::present_value_matches,
         testkit::span::SpanFixture,
     };
+
+    struct TypedTagValueCase {
+        tag: &'static str,
+        type_name: &'static str,
+        value: &'static str,
+    }
+
+    struct TagValueCase {
+        tag: &'static str,
+        value: &'static str,
+    }
+
+    struct MatcherCase {
+        key: &'static str,
+        operator: MatchCmp,
+        value: MatchValue,
+    }
+
+    struct IntegerComparisonCountCase {
+        operator: MatchCmp,
+        value: i64,
+        expected_count: i64,
+    }
+
+    struct FloatComparisonCountCase {
+        operator: MatchCmp,
+        value: f64,
+        expected_count: i64,
+    }
+
+    struct EnumNameCase {
+        name: &'static str,
+        code: i32,
+    }
+
+    struct IntrinsicMatchCase {
+        comparison: MatchCmp,
+        value: MatchValue,
+        expected: bool,
+    }
+
+    struct LinkMatchCase {
+        tag: &'static str,
+        comparison: MatchCmp,
+        value: MatchValue,
+        expected: bool,
+    }
+
+    struct TagMatchCase {
+        tag: &'static str,
+        value: MatchValue,
+        expected: bool,
+    }
+
+    struct NestedSetMatchCase {
+        tag: &'static str,
+        value: i64,
+        expected: bool,
+    }
+
+    struct PresentMatchCase {
+        comparison: MatchCmp,
+        value: MatchValue,
+        expected: Option<bool>,
+    }
 
     /// `int_matches` is the numeric comparison behind every integer attribute
     /// filter, and each operator is one character from its neighbour. The pairs
@@ -108,7 +181,7 @@ mod tests {
                     id: 2,
                     parent: Some(1),
                     name: "db",
-                    attrs: vec![("http.method", AttrValue::Str("GET".into()))],
+                    attrs: vec![Attribute::new("http.method", AttrValue::Str("GET".into()))],
                     ..trace_seven_span()
                 }),
             ],
@@ -160,7 +233,10 @@ mod tests {
                 trace_id: [7; 16],
                 root_service_name: "svc".into(),
                 root_trace_name: "op".into(),
-                resource_attributes: vec![("service.name".into(), AttrValue::Str("svc".into()))],
+                resource_attributes: vec![Attribute::new(
+                    "service.name",
+                    AttrValue::Str("svc".into())
+                )],
                 spans: vec![SpanRef {
                     span_id: [1; 8],
                     name: "root".into(),
@@ -185,7 +261,7 @@ mod tests {
             "op",
             vec![span(SpanFixture {
                 name: "root",
-                attrs: vec![("svc", AttrValue::Str("a".into()))],
+                attrs: vec![Attribute::new("svc", AttrValue::Str("a".into()))],
                 ..trace_seven_span()
             })],
         );
@@ -224,7 +300,7 @@ mod tests {
                 instrumentation_version: "1.2.3".into(),
                 ..span(SpanFixture {
                     name: "root",
-                    attrs: vec![("svc", AttrValue::Str("a".into()))],
+                    attrs: vec![Attribute::new("svc", AttrValue::Str("a".into()))],
                     ..trace_seven_span()
                 })
             }],
@@ -254,12 +330,12 @@ mod tests {
         input.events = vec![EventRef {
             time_since_start: nanos(50),
             name: "exception".into(),
-            attributes: vec![("cache.key".into(), AttrValue::Str("users".into()))],
+            attributes: vec![Attribute::new("cache.key", AttrValue::Str("users".into()))],
         }];
         input.links = vec![LinkRef {
             trace_id: [9; 16],
             span_id: [8; 8],
-            attributes: vec![("link.kind".into(), AttrValue::Str("retry".into()))],
+            attributes: vec![Attribute::new("link.kind", AttrValue::Str("retry".into()))],
         }];
         let mut s = InMemorySpanStore::new();
         s.push_trace("t", "svc", "op", vec![input]);
@@ -297,20 +373,57 @@ mod tests {
         );
 
         let cases = [
-            ("event:name", "string", "exception"),
-            ("event:timeSinceStart", "duration", "50"),
-            ("cache.key", "string", "users"),
-            ("event.cache.key", "string", "users"),
-            ("link:traceID", "string", "09090909090909090909090909090909"),
-            ("link:spanID", "string", "0808080808080808"),
-            ("link.kind", "string", "retry"),
-            ("link.link.kind", "string", "retry"),
+            TypedTagValueCase {
+                tag: "event:name",
+                type_name: "string",
+                value: "exception",
+            },
+            TypedTagValueCase {
+                tag: "event:timeSinceStart",
+                type_name: "duration",
+                value: "50",
+            },
+            TypedTagValueCase {
+                tag: "cache.key",
+                type_name: "string",
+                value: "users",
+            },
+            TypedTagValueCase {
+                tag: "event.cache.key",
+                type_name: "string",
+                value: "users",
+            },
+            TypedTagValueCase {
+                tag: "link:traceID",
+                type_name: "string",
+                value: "09090909090909090909090909090909",
+            },
+            TypedTagValueCase {
+                tag: "link:spanID",
+                type_name: "string",
+                value: "0808080808080808",
+            },
+            TypedTagValueCase {
+                tag: "link.kind",
+                type_name: "string",
+                value: "retry",
+            },
+            TypedTagValueCase {
+                tag: "link.link.kind",
+                type_name: "string",
+                value: "retry",
+            },
         ];
-        for (tag, type_, value) in cases {
+        for TypedTagValueCase {
+            tag,
+            type_name,
+            value,
+        } in cases
+        {
             let got = s.tag_values("t", tag, 0, 10_000).await.unwrap();
             assert!(
                 got == vec![TypedValue {
-                    type_: type_.into(),
+                    type_: type_name.into(),
                     value: value.into(),
                 }],
                 "tag {tag}"
@@ -369,7 +482,7 @@ mod tests {
             vec![
                 span(SpanFixture {
                     name: "root",
-                    attrs: vec![("svc", AttrValue::Str("a".into()))],
+                    attrs: vec![Attribute::new("svc", AttrValue::Str("a".into()))],
                     ..trace_seven_span()
                 }),
                 InputSpan {
@@ -378,7 +491,7 @@ mod tests {
                         id: 2,
                         parent: Some(1),
                         name: "child",
-                        attrs: vec![("svc", AttrValue::Str("a".into()))],
+                        attrs: vec![Attribute::new("svc", AttrValue::Str("a".into()))],
                         ..trace_seven_span()
                     })
                 },
@@ -386,7 +499,7 @@ mod tests {
                     id: 3,
                     parent: Some(1),
                     name: "child",
-                    attrs: vec![("svc", AttrValue::Str("b".into()))],
+                    attrs: vec![Attribute::new("svc", AttrValue::Str("b".into()))],
                     ..trace_seven_span()
                 }),
             ],
@@ -476,20 +589,20 @@ mod tests {
             instrumentation_name: "tracer".into(),
             instrumentation_version: "1.2.3".into(),
             attrs: vec![
-                ("http.method".into(), AttrValue::Str("GET".into())),
-                ("http.status".into(), AttrValue::Int(500)),
-                ("ratio".into(), AttrValue::Float(0.5)),
-                ("ok".into(), AttrValue::Bool(true)),
+                Attribute::new("http.method", AttrValue::Str("GET".into())),
+                Attribute::new("http.status", AttrValue::Int(500)),
+                Attribute::new("ratio", AttrValue::Float(0.5)),
+                Attribute::new("ok", AttrValue::Bool(true)),
             ],
             events: vec![EventRef {
                 time_since_start: nanos(50),
                 name: "exception".into(),
-                attributes: vec![("ev.attr".into(), AttrValue::Str("kaboom".into()))],
+                attributes: vec![Attribute::new("ev.attr", AttrValue::Str("kaboom".into()))],
             }],
             links: vec![LinkRef {
                 trace_id: [9; 16],
                 span_id: [8; 8],
-                attributes: vec![("ln.attr".into(), AttrValue::Int(42))],
+                attributes: vec![Attribute::new("ln.attr", AttrValue::Int(42))],
             }],
         }
     }
@@ -585,66 +698,95 @@ mod tests {
         // Drilldown uses to find roots.
         let cases = [
             // String intrinsics.
-            (
-                "span:name",
-                MatchCmp::Eq,
-                MatchValue::Str("checkout".into()),
-            ),
-            (
-                "span:statusMessage",
-                MatchCmp::Eq,
-                MatchValue::Str("boom".into()),
-            ),
-            (
-                "trace:rootService",
-                MatchCmp::Eq,
-                MatchValue::Str("checkout".into()),
-            ),
-            (
-                "trace:rootName",
-                MatchCmp::Eq,
-                MatchValue::Str("POST /pay".into()),
-            ),
-            (
-                "trace:id",
-                MatchCmp::Eq,
-                MatchValue::Str("07070707070707070707070707070707".into()),
-            ),
-            (
-                "span:id",
-                MatchCmp::Eq,
-                MatchValue::Str("0101010101010101".into()),
-            ),
+            MatcherCase {
+                key: "span:name",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("checkout".into()),
+            },
+            MatcherCase {
+                key: "span:statusMessage",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("boom".into()),
+            },
+            MatcherCase {
+                key: "trace:rootService",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("checkout".into()),
+            },
+            MatcherCase {
+                key: "trace:rootName",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("POST /pay".into()),
+            },
+            MatcherCase {
+                key: "trace:id",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("07070707070707070707070707070707".into()),
+            },
+            MatcherCase {
+                key: "span:id",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("0101010101010101".into()),
+            },
             // span:parentID present.
-            (
-                "span:parentID",
-                MatchCmp::Eq,
-                MatchValue::Str("0202020202020202".into()),
-            ),
+            MatcherCase {
+                key: "span:parentID",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("0202020202020202".into()),
+            },
             // Numeric / duration intrinsics.
-            ("span:duration", MatchCmp::Gt, MatchValue::Int(1_000_000)),
-            ("trace:duration", MatchCmp::Gte, MatchValue::Int(0)),
-            ("span:childCount", MatchCmp::Gte, MatchValue::Int(0)),
+            MatcherCase {
+                key: "span:duration",
+                operator: MatchCmp::Gt,
+                value: MatchValue::Int(1_000_000),
+            },
+            MatcherCase {
+                key: "trace:duration",
+                operator: MatchCmp::Gte,
+                value: MatchValue::Int(0),
+            },
+            MatcherCase {
+                key: "span:childCount",
+                operator: MatchCmp::Gte,
+                value: MatchValue::Int(0),
+            },
             // Nested-set intrinsics.
-            ("span:nestedSetLeft", MatchCmp::Gte, MatchValue::Int(0)),
-            ("span:nestedSetRight", MatchCmp::Gte, MatchValue::Int(0)),
-            ("span:nestedSetParent", MatchCmp::Lt, MatchValue::Int(0)),
+            MatcherCase {
+                key: "span:nestedSetLeft",
+                operator: MatchCmp::Gte,
+                value: MatchValue::Int(0),
+            },
+            MatcherCase {
+                key: "span:nestedSetRight",
+                operator: MatchCmp::Gte,
+                value: MatchValue::Int(0),
+            },
+            MatcherCase {
+                key: "span:nestedSetParent",
+                operator: MatchCmp::Lt,
+                value: MatchValue::Int(0),
+            },
             // Instrumentation intrinsics.
-            (
-                "instrumentation:name",
-                MatchCmp::Eq,
-                MatchValue::Str("tracer".into()),
-            ),
-            (
-                "instrumentation:version",
-                MatchCmp::Eq,
-                MatchValue::Str("1.2.3".into()),
-            ),
+            MatcherCase {
+                key: "instrumentation:name",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("tracer".into()),
+            },
+            MatcherCase {
+                key: "instrumentation:version",
+                operator: MatchCmp::Eq,
+                value: MatchValue::Str("1.2.3".into()),
+            },
         ];
-        for (key, op, value) in cases {
-            let desc = format!("{key} {op:?} {value:?}");
+        for MatcherCase {
+            key,
+            operator,
+            value,
+        } in cases
+        {
+            let desc = format!("{key} {operator:?} {value:?}");
             assert!(
-                scan_matches(&[matcher(MatchScope::Intrinsic, key, op, value)]).await == 1,
+                scan_matches(&[matcher(MatchScope::Intrinsic, key, operator, value)]).await == 1,
                 "intrinsic {desc} should match"
             );
         }
@@ -1041,25 +1183,81 @@ mod tests {
 
     #[tokio::test]
     async fn tag_values_cover_trace_and_span_intrinsics() {
-        for (tag, type_, value) in [
-            ("trace:duration", "duration", "5000000"),
-            ("trace:id", "string", "07070707070707070707070707070707"),
-            ("trace:rootName", "string", "POST /pay"),
-            ("trace:rootService", "string", "checkout"),
-            ("span:duration", "duration", "5000000"),
-            ("span:id", "string", "0101010101010101"),
-            ("span:kind", "int", "2"),
-            ("span:name", "string", "checkout"),
-            ("span:parentID", "string", "0202020202020202"),
-            ("span:status", "int", "2"),
-            ("span:statusMessage", "string", "boom"),
-            ("instrumentation:name", "string", "tracer"),
-            ("instrumentation:version", "string", "1.2.3"),
+        for TypedTagValueCase {
+            tag,
+            type_name,
+            value,
+        } in [
+            TypedTagValueCase {
+                tag: "trace:duration",
+                type_name: "duration",
+                value: "5000000",
+            },
+            TypedTagValueCase {
+                tag: "trace:id",
+                type_name: "string",
+                value: "07070707070707070707070707070707",
+            },
+            TypedTagValueCase {
+                tag: "trace:rootName",
+                type_name: "string",
+                value: "POST /pay",
+            },
+            TypedTagValueCase {
+                tag: "trace:rootService",
+                type_name: "string",
+                value: "checkout",
+            },
+            TypedTagValueCase {
+                tag: "span:duration",
+                type_name: "duration",
+                value: "5000000",
+            },
+            TypedTagValueCase {
+                tag: "span:id",
+                type_name: "string",
+                value: "0101010101010101",
+            },
+            TypedTagValueCase {
+                tag: "span:kind",
+                type_name: "int",
+                value: "2",
+            },
+            TypedTagValueCase {
+                tag: "span:name",
+                type_name: "string",
+                value: "checkout",
+            },
+            TypedTagValueCase {
+                tag: "span:parentID",
+                type_name: "string",
+                value: "0202020202020202",
+            },
+            TypedTagValueCase {
+                tag: "span:status",
+                type_name: "int",
+                value: "2",
+            },
+            TypedTagValueCase {
+                tag: "span:statusMessage",
+                type_name: "string",
+                value: "boom",
+            },
+            TypedTagValueCase {
+                tag: "instrumentation:name",
+                type_name: "string",
+                value: "tracer",
+            },
+            TypedTagValueCase {
+                tag: "instrumentation:version",
+                type_name: "string",
+                value: "1.2.3",
+            },
         ] {
             assert!(
                 tag_values_for(tag).await
                     == vec![TypedValue {
-                        type_: type_.into(),
+                        type_: type_name.into(),
                         value: value.into(),
                     }],
                 "tag {tag}"
@@ -1069,11 +1267,20 @@ mod tests {
 
     #[tokio::test]
     async fn tag_values_cover_nested_set_intrinsics() {
-        for (tag, value) in [
-            ("span:nestedSetLeft", "1"),
-            ("span:nestedSetRight", "2"),
+        for TagValueCase { tag, value } in [
+            TagValueCase {
+                tag: "span:nestedSetLeft",
+                value: "1",
+            },
+            TagValueCase {
+                tag: "span:nestedSetRight",
+                value: "2",
+            },
             // root: Tempo nestedSetParent sentinel
-            ("span:nestedSetParent", "-1"),
+            TagValueCase {
+                tag: "span:nestedSetParent",
+                value: "-1",
+            },
         ] {
             assert!(
                 tag_values_for(tag).await
@@ -1090,15 +1297,31 @@ mod tests {
     async fn tag_values_cover_typed_span_attributes() {
         // Int, Float, and Bool span attributes round-trip through
         // typed_value_parts with the right type tags.
-        for (tag, type_, value) in [
-            (".http.status", "int", "500"),
-            (".ratio", "float", "0.5"),
-            (".ok", "bool", "true"),
+        for TypedTagValueCase {
+            tag,
+            type_name,
+            value,
+        } in [
+            TypedTagValueCase {
+                tag: ".http.status",
+                type_name: "int",
+                value: "500",
+            },
+            TypedTagValueCase {
+                tag: ".ratio",
+                type_name: "float",
+                value: "0.5",
+            },
+            TypedTagValueCase {
+                tag: ".ok",
+                type_name: "bool",
+                value: "true",
+            },
         ] {
             assert!(
                 tag_values_for(tag).await
                     == vec![TypedValue {
-                        type_: type_.into(),
+                        type_: type_name.into(),
                         value: value.into(),
                     }],
                 "tag {tag}"
@@ -1130,8 +1353,8 @@ mod tests {
         let mut input = span(SpanFixture {
             name: "root",
             attrs: vec![
-                ("library", AttrValue::Str("span".into())),
-                (
+                Attribute::new("library", AttrValue::Str("span".into())),
+                Attribute::new(
                     "__instrumentation.library",
                     AttrValue::Str("instrumentation".into()),
                 ),
@@ -1228,29 +1451,74 @@ mod tests {
     async fn int_intrinsic_matches_every_operator() {
         // rich_span has span:duration == 5_000_000.
         let cases = [
-            (MatchCmp::Eq, 5_000_000, 1),
-            (MatchCmp::Eq, 5_000_001, 0),
-            (MatchCmp::Neq, 5_000_001, 1),
-            (MatchCmp::Neq, 5_000_000, 0),
-            (MatchCmp::Lt, 5_000_001, 1),
-            (MatchCmp::Lt, 5_000_000, 0),
-            (MatchCmp::Lte, 5_000_000, 1),
-            (MatchCmp::Gt, 4_999_999, 1),
-            (MatchCmp::Gte, 5_000_000, 1),
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Eq,
+                value: 5_000_000,
+                expected_count: 1,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Eq,
+                value: 5_000_001,
+                expected_count: 0,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Neq,
+                value: 5_000_001,
+                expected_count: 1,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Neq,
+                value: 5_000_000,
+                expected_count: 0,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Lt,
+                value: 5_000_001,
+                expected_count: 1,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Lt,
+                value: 5_000_000,
+                expected_count: 0,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Lte,
+                value: 5_000_000,
+                expected_count: 1,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Gt,
+                value: 4_999_999,
+                expected_count: 1,
+            },
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Gte,
+                value: 5_000_000,
+                expected_count: 1,
+            },
             // A regex op against an int intrinsic is always false.
-            (MatchCmp::Re, 5_000_000, 0),
+            IntegerComparisonCountCase {
+                operator: MatchCmp::Re,
+                value: 5_000_000,
+                expected_count: 0,
+            },
         ];
-        for (op, val, expected) in cases {
+        for IntegerComparisonCountCase {
+            operator,
+            value,
+            expected_count,
+        } in cases
+        {
             let got = scan_matches(&[matcher(
                 MatchScope::Intrinsic,
                 "span:duration",
-                op,
-                MatchValue::Int(val),
+                operator,
+                MatchValue::Int(value),
             )])
             .await;
             assert!(
-                got == expected,
-                "duration {op:?} {val} -> {got}, want {expected}"
+                got == expected_count,
+                "duration {operator:?} {value} -> {got}, want {expected_count}"
             );
         }
         // A non-int expected value against an int intrinsic does not match.
@@ -1270,30 +1538,71 @@ mod tests {
     async fn float_attr_matches_every_operator() {
         // rich_span has attr ratio == 0.5.
         let cases = [
-            (MatchCmp::Eq, 0.5, 1),
-            (MatchCmp::Neq, 0.25, 1),
-            (MatchCmp::Lt, 1.0, 1),
+            FloatComparisonCountCase {
+                operator: MatchCmp::Eq,
+                value: 0.5,
+                expected_count: 1,
+            },
+            FloatComparisonCountCase {
+                operator: MatchCmp::Neq,
+                value: 0.25,
+                expected_count: 1,
+            },
+            FloatComparisonCountCase {
+                operator: MatchCmp::Lt,
+                value: 1.0,
+                expected_count: 1,
+            },
             // Boundary: value == expected. `<` is strict, so 0.5 < 0.5 is false.
             // Distinguishes `<` from `<=`.
-            (MatchCmp::Lt, 0.5, 0),
-            (MatchCmp::Lte, 0.5, 1),
-            (MatchCmp::Gt, 0.25, 1),
+            FloatComparisonCountCase {
+                operator: MatchCmp::Lt,
+                value: 0.5,
+                expected_count: 0,
+            },
+            FloatComparisonCountCase {
+                operator: MatchCmp::Lte,
+                value: 0.5,
+                expected_count: 1,
+            },
+            FloatComparisonCountCase {
+                operator: MatchCmp::Gt,
+                value: 0.25,
+                expected_count: 1,
+            },
             // Boundary: 0.5 > 0.5 is false. Distinguishes `>` from `>=`.
-            (MatchCmp::Gt, 0.5, 0),
-            (MatchCmp::Gte, 0.5, 1),
-            (MatchCmp::Gt, 0.75, 0),
+            FloatComparisonCountCase {
+                operator: MatchCmp::Gt,
+                value: 0.5,
+                expected_count: 0,
+            },
+            FloatComparisonCountCase {
+                operator: MatchCmp::Gte,
+                value: 0.5,
+                expected_count: 1,
+            },
+            FloatComparisonCountCase {
+                operator: MatchCmp::Gt,
+                value: 0.75,
+                expected_count: 0,
+            },
         ];
-        for (op, val, expected) in cases {
+        for FloatComparisonCountCase {
+            operator,
+            value,
+            expected_count,
+        } in cases
+        {
             let got = scan_matches(&[matcher(
                 MatchScope::Span,
                 "ratio",
-                op,
-                MatchValue::Float(val),
+                operator,
+                MatchValue::Float(value),
             )])
             .await;
             assert!(
-                got == expected,
-                "ratio {op:?} {val} -> {got}, want {expected}"
+                got == expected_count,
+                "ratio {operator:?} {value} -> {got}, want {expected_count}"
             );
         }
         // A non-float expected value against a float attribute does not match.
@@ -1404,16 +1713,39 @@ mod tests {
 
     #[tokio::test]
     async fn kind_and_status_enum_names_resolve() {
-        for (name, kind) in [
-            ("unspecified", 0),
-            ("internal", 1),
-            ("server", 2),
-            ("client", 3),
-            ("producer", 4),
-            ("consumer", 5),
+        for case in [
+            EnumNameCase {
+                name: "unspecified",
+                code: 0,
+            },
+            EnumNameCase {
+                name: "internal",
+                code: 1,
+            },
+            EnumNameCase {
+                name: "server",
+                code: 2,
+            },
+            EnumNameCase {
+                name: "client",
+                code: 3,
+            },
+            EnumNameCase {
+                name: "producer",
+                code: 4,
+            },
+            EnumNameCase {
+                name: "consumer",
+                code: 5,
+            },
         ] {
             let mut s = InMemorySpanStore::new();
-            s.push_trace("t", "svc", "op", vec![span_with_kind_and_status(kind, 0)]);
+            s.push_trace(
+                "t",
+                "svc",
+                "op",
+                vec![span_with_kind_and_status(case.code, 0)],
+            );
             let r = s
                 .scan(
                     "t",
@@ -1421,27 +1753,7 @@ mod tests {
                         MatchScope::Intrinsic,
                         "span:kind",
                         MatchCmp::Eq,
-                        MatchValue::Str(name.into()),
-                    )],
-                    0,
-                    10_000,
-                )
-                .await
-                .unwrap();
-            assert!(row_count(&r).await == 1, "kind name {name} should resolve");
-        }
-
-        for (name, status) in [("unset", 0), ("ok", 1), ("error", 2)] {
-            let mut s = InMemorySpanStore::new();
-            s.push_trace("t", "svc", "op", vec![span_with_kind_and_status(1, status)]);
-            let r = s
-                .scan(
-                    "t",
-                    &[matcher(
-                        MatchScope::Intrinsic,
-                        "span:status",
-                        MatchCmp::Eq,
-                        MatchValue::Str(name.into()),
+                        MatchValue::Str(case.name.into()),
                     )],
                     0,
                     10_000,
@@ -1450,7 +1762,50 @@ mod tests {
                 .unwrap();
             assert!(
                 row_count(&r).await == 1,
-                "status name {name} should resolve"
+                "kind name {} should resolve",
+                case.name
+            );
+        }
+
+        for case in [
+            EnumNameCase {
+                name: "unset",
+                code: 0,
+            },
+            EnumNameCase {
+                name: "ok",
+                code: 1,
+            },
+            EnumNameCase {
+                name: "error",
+                code: 2,
+            },
+        ] {
+            let mut s = InMemorySpanStore::new();
+            s.push_trace(
+                "t",
+                "svc",
+                "op",
+                vec![span_with_kind_and_status(1, case.code)],
+            );
+            let r = s
+                .scan(
+                    "t",
+                    &[matcher(
+                        MatchScope::Intrinsic,
+                        "span:status",
+                        MatchCmp::Eq,
+                        MatchValue::Str(case.name.into()),
+                    )],
+                    0,
+                    10_000,
+                )
+                .await
+                .unwrap();
+            assert!(
+                row_count(&r).await == 1,
+                "status name {} should resolve",
+                case.name
             );
         }
     }
@@ -1624,14 +1979,33 @@ mod tests {
         }];
         let trace = stored_trace_with(sp);
 
-        for (cmp, value, want) in [
-            (MatchCmp::Neq, MatchValue::Nil, true),
-            (MatchCmp::Eq, MatchValue::Int(50), true),
-            (MatchCmp::Eq, MatchValue::Int(51), false),
+        for case in [
+            IntrinsicMatchCase {
+                comparison: MatchCmp::Neq,
+                value: MatchValue::Nil,
+                expected: true,
+            },
+            IntrinsicMatchCase {
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Int(50),
+                expected: true,
+            },
+            IntrinsicMatchCase {
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Int(51),
+                expected: false,
+            },
         ] {
             assert!(
-                intrinsic(&trace, "event:timeSinceStart", cmp, value.clone()) == want,
-                "case {cmp:?} {value:?}"
+                intrinsic(
+                    &trace,
+                    "event:timeSinceStart",
+                    case.comparison,
+                    case.value.clone()
+                ) == case.expected,
+                "case {:?} {:?}",
+                case.comparison,
+                case.value
             );
         }
 
@@ -1661,37 +2035,50 @@ mod tests {
         let trace = stored_trace_with(sp);
 
         // Presence + value probes for both link intrinsics.
-        for (tag, cmp, value, want) in [
-            ("link:traceID", MatchCmp::Neq, MatchValue::Nil, true),
-            (
-                "link:traceID",
-                MatchCmp::Eq,
-                MatchValue::Str("09090909090909090909090909090909".into()),
-                true,
-            ),
-            (
-                "link:traceID",
-                MatchCmp::Eq,
-                MatchValue::Str("00000000000000000000000000000000".into()),
-                false,
-            ),
-            ("link:spanID", MatchCmp::Neq, MatchValue::Nil, true),
-            (
-                "link:spanID",
-                MatchCmp::Eq,
-                MatchValue::Str("0808080808080808".into()),
-                true,
-            ),
-            (
-                "link:spanID",
-                MatchCmp::Eq,
-                MatchValue::Str("0000000000000000".into()),
-                false,
-            ),
+        for case in [
+            LinkMatchCase {
+                tag: "link:traceID",
+                comparison: MatchCmp::Neq,
+                value: MatchValue::Nil,
+                expected: true,
+            },
+            LinkMatchCase {
+                tag: "link:traceID",
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Str("09090909090909090909090909090909".into()),
+                expected: true,
+            },
+            LinkMatchCase {
+                tag: "link:traceID",
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Str("00000000000000000000000000000000".into()),
+                expected: false,
+            },
+            LinkMatchCase {
+                tag: "link:spanID",
+                comparison: MatchCmp::Neq,
+                value: MatchValue::Nil,
+                expected: true,
+            },
+            LinkMatchCase {
+                tag: "link:spanID",
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Str("0808080808080808".into()),
+                expected: true,
+            },
+            LinkMatchCase {
+                tag: "link:spanID",
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Str("0000000000000000".into()),
+                expected: false,
+            },
         ] {
             assert!(
-                intrinsic(&trace, tag, cmp, value.clone()) == want,
-                "case {tag} {cmp:?} {value:?}"
+                intrinsic(&trace, case.tag, case.comparison, case.value.clone()) == case.expected,
+                "case {} {:?} {:?}",
+                case.tag,
+                case.comparison,
+                case.value
             );
         }
 
@@ -1728,39 +2115,73 @@ mod tests {
 
         // Each intrinsic arm gets a matching and a non-matching value (each
         // arm differs from the `_ => true` fallthrough).
-        for (tag, value, want) in [
-            ("trace:rootService", MatchValue::Str("rootsvc".into()), true),
-            ("trace:rootService", MatchValue::Str("nope".into()), false),
-            ("trace:rootName", MatchValue::Str("rootname".into()), true),
-            ("trace:rootName", MatchValue::Str("nope".into()), false),
-            ("trace:duration", MatchValue::Int(1234), true),
-            ("trace:duration", MatchValue::Int(5), false),
-            ("span:statusMessage", MatchValue::Str("boom".into()), true),
-            ("span:statusMessage", MatchValue::Str("nope".into()), false),
-            (
-                "instrumentation:name",
-                MatchValue::Str("tracer".into()),
-                true,
-            ),
-            (
-                "instrumentation:name",
-                MatchValue::Str("nope".into()),
-                false,
-            ),
-            (
-                "instrumentation:version",
-                MatchValue::Str("1.2.3".into()),
-                true,
-            ),
-            (
-                "instrumentation:version",
-                MatchValue::Str("9.9.9".into()),
-                false,
-            ),
+        for case in [
+            TagMatchCase {
+                tag: "trace:rootService",
+                value: MatchValue::Str("rootsvc".into()),
+                expected: true,
+            },
+            TagMatchCase {
+                tag: "trace:rootService",
+                value: MatchValue::Str("nope".into()),
+                expected: false,
+            },
+            TagMatchCase {
+                tag: "trace:rootName",
+                value: MatchValue::Str("rootname".into()),
+                expected: true,
+            },
+            TagMatchCase {
+                tag: "trace:rootName",
+                value: MatchValue::Str("nope".into()),
+                expected: false,
+            },
+            TagMatchCase {
+                tag: "trace:duration",
+                value: MatchValue::Int(1234),
+                expected: true,
+            },
+            TagMatchCase {
+                tag: "trace:duration",
+                value: MatchValue::Int(5),
+                expected: false,
+            },
+            TagMatchCase {
+                tag: "span:statusMessage",
+                value: MatchValue::Str("boom".into()),
+                expected: true,
+            },
+            TagMatchCase {
+                tag: "span:statusMessage",
+                value: MatchValue::Str("nope".into()),
+                expected: false,
+            },
+            TagMatchCase {
+                tag: "instrumentation:name",
+                value: MatchValue::Str("tracer".into()),
+                expected: true,
+            },
+            TagMatchCase {
+                tag: "instrumentation:name",
+                value: MatchValue::Str("nope".into()),
+                expected: false,
+            },
+            TagMatchCase {
+                tag: "instrumentation:version",
+                value: MatchValue::Str("1.2.3".into()),
+                expected: true,
+            },
+            TagMatchCase {
+                tag: "instrumentation:version",
+                value: MatchValue::Str("9.9.9".into()),
+                expected: false,
+            },
         ] {
             assert!(
-                intrinsic(&trace, tag, MatchCmp::Eq, value.clone()) == want,
-                "case {tag} {value:?}"
+                intrinsic(&trace, case.tag, MatchCmp::Eq, case.value.clone()) == case.expected,
+                "case {} {:?}",
+                case.tag,
+                case.value
             );
         }
     }
@@ -1772,15 +2193,34 @@ mod tests {
             ..trace_seven_span()
         }));
         // nested set is { left: 1, right: 2, parent_id: 0 }.
-        for (tag, value, want) in [
-            ("span:nestedSetLeft", 1, true),
-            ("span:nestedSetLeft", 2, false),
-            ("span:nestedSetRight", 2, true),
-            ("span:nestedSetRight", 1, false),
+        for case in [
+            NestedSetMatchCase {
+                tag: "span:nestedSetLeft",
+                value: 1,
+                expected: true,
+            },
+            NestedSetMatchCase {
+                tag: "span:nestedSetLeft",
+                value: 2,
+                expected: false,
+            },
+            NestedSetMatchCase {
+                tag: "span:nestedSetRight",
+                value: 2,
+                expected: true,
+            },
+            NestedSetMatchCase {
+                tag: "span:nestedSetRight",
+                value: 1,
+                expected: false,
+            },
         ] {
             assert!(
-                intrinsic(&trace, tag, MatchCmp::Eq, MatchValue::Int(value)) == want,
-                "case {tag} {value}"
+                intrinsic(&trace, case.tag, MatchCmp::Eq, MatchValue::Int(case.value))
+                    == case.expected,
+                "case {} {}",
+                case.tag,
+                case.value
             );
         }
     }
@@ -1814,21 +2254,35 @@ mod tests {
             "instrumentation:version",
             &mut values,
         );
-        assert!(values == BTreeSet::from([("string".to_string(), "1.2.3".to_string())]));
+        assert!(values == BTreeSet::from([TypedValue::new("string", "1.2.3")]));
     }
 
     #[test]
     fn present_value_matches_eq_nil_is_false_neq_nil_is_true() {
         // A PRESENT value: `= nil` must be false, `!= nil` must be true;
         // non-nil comparisons defer to the typed path (None).
-        for (cmp, value, want) in [
-            (MatchCmp::Eq, MatchValue::Nil, Some(false)),
-            (MatchCmp::Neq, MatchValue::Nil, Some(true)),
-            (MatchCmp::Eq, MatchValue::Int(1), None),
+        for case in [
+            PresentMatchCase {
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Nil,
+                expected: Some(false),
+            },
+            PresentMatchCase {
+                comparison: MatchCmp::Neq,
+                value: MatchValue::Nil,
+                expected: Some(true),
+            },
+            PresentMatchCase {
+                comparison: MatchCmp::Eq,
+                value: MatchValue::Int(1),
+                expected: None,
+            },
         ] {
             assert!(
-                present_value_matches(cmp, &value) == want,
-                "case {cmp:?} {value:?}"
+                present_value_matches(case.comparison, &case.value) == case.expected,
+                "case {:?} {:?}",
+                case.comparison,
+                case.value
             );
         }
     }
@@ -1859,7 +2313,7 @@ mod tests {
         let link = LinkRef {
             trace_id: [9; 16],
             span_id: [8; 8],
-            attributes: vec![("ln.kind".into(), AttrValue::Str("retry".into()))],
+            attributes: vec![Attribute::new("ln.kind", AttrValue::Str("retry".into()))],
         };
         let hit = matcher(
             MatchScope::Link,
@@ -1916,16 +2370,16 @@ mod tests {
             time_since_start: nanos(1),
             name: "e".into(),
             attributes: vec![
-                ("want".into(), AttrValue::Str("yes".into())),
-                ("other".into(), AttrValue::Str("no".into())),
+                Attribute::new("want", AttrValue::Str("yes".into())),
+                Attribute::new("other", AttrValue::Str("no".into())),
             ],
         }];
         sp.links = vec![LinkRef {
             trace_id: [9; 16],
             span_id: [8; 8],
             attributes: vec![
-                ("lwant".into(), AttrValue::Str("yes".into())),
-                ("lother".into(), AttrValue::Str("no".into())),
+                Attribute::new("lwant", AttrValue::Str("yes".into())),
+                Attribute::new("lother", AttrValue::Str("no".into())),
             ],
         }];
         let trace = stored_trace_with(sp);
@@ -2051,7 +2505,6 @@ mod nested_event_matchers_match;
 mod nested_link_matchers_match;
 mod resource_matches;
 mod scan_builders;
-mod scoped_attribute_tag;
 mod span_attr_matches;
 mod span_matches;
 mod span_ref;
@@ -2078,7 +2531,6 @@ use nested_event_matchers_match::nested_event_matchers_match;
 use nested_link_matchers_match::nested_link_matchers_match;
 use resource_matches::resource_matches;
 use scan_builders::ScanBuilders;
-use scoped_attribute_tag::scoped_attribute_tag;
 use span_attr_matches::span_attr_matches;
 use span_matches::span_matches;
 use span_ref::span_ref;

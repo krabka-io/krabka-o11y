@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use super::WireError;
-use crate::span::{AttrValue, KeyValue, Span, SpanKind, StatusCode};
+use crate::span::{AttrValue, KeyValue, Span, SpanKind, StatusCode, WireSpanStatus};
 
 #[cfg(test)]
 mod tests {
@@ -59,36 +59,42 @@ mod tests {
     #[test]
     fn decodes_zipkin_span() {
         let spans = decode_zipkin(BODY.as_bytes()).unwrap();
+        let [span] = spans.as_slice() else {
+            panic!("expected exactly one decoded span")
+        };
+        assert2::assert!(span.trace_id == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        assert2::assert!(span.span_id == [0, 0, 0, 0, 0, 0, 0, 2]);
+        assert2::assert!(span.parent_span_id.is_none());
+        assert2::assert!(span.name == "get /");
+        assert2::assert!(span.kind == SpanKind::Server);
+        assert2::assert!(span.start_ns == 1_000_000 && span.duration_ns == 500_000);
+        assert2::assert!(span.status == StatusCode::Unset);
+        assert2::assert!(span.status_message.is_empty());
         assert2::assert!(
-            spans
-                == vec![Span {
-                    trace_id: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-                    span_id: [0, 0, 0, 0, 0, 0, 0, 2],
-                    parent_span_id: None,
-                    name: "get /".into(),
-                    kind: SpanKind::Server,
-                    start_ns: 1_000_000,
-                    duration_ns: 500_000,
-                    status: StatusCode::Unset,
-                    status_message: String::new(),
-                    resource_attrs: vec![KeyValue {
-                        key: "service.name".into(),
-                        value: AttrValue::Str("api".into()),
-                    }],
-                    span_attrs: vec![KeyValue {
-                        key: "http.method".into(),
-                        value: AttrValue::Str("GET".into()),
-                    }],
-                    events: vec![EventRecord {
-                        time_unix_nano: 1_100_000,
-                        name: "cache miss".into(),
-                        attrs: Vec::new(),
-                    }],
-                    links: Vec::new(),
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+            span.resource_attrs
+                == vec![KeyValue {
+                    key: "service.name".into(),
+                    value: AttrValue::Str("api".into()),
                 }]
         );
+        assert2::assert!(
+            span.span_attrs
+                == vec![KeyValue {
+                    key: "http.method".into(),
+                    value: AttrValue::Str("GET".into()),
+                }]
+        );
+        assert2::assert!(
+            span.events
+                == vec![EventRecord {
+                    time_unix_nano: 1_100_000,
+                    name: "cache miss".into(),
+                    attrs: Vec::new(),
+                }]
+        );
+        assert2::assert!(span.links.is_empty());
+        assert2::assert!(span.instrumentation_scope.is_empty());
+        assert2::assert!(span.instrumentation_version.is_empty());
     }
 
     #[test]

@@ -23,6 +23,12 @@ use crate::{ProfilesError, wire::pb};
 const RULES_PREFIX: &str = "profiles-admin";
 const EXPORT_PREFIX: &str = "profiles-admin/recording-exports";
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct StackIdentity {
+    partition: u64,
+    stack_id: u32,
+}
+
 /// Shared object-store marker advertised by query roles when recording export is configured.
 pub const RECORDING_RULES_ENABLED_KEY: &str = "profiles-admin/recording-rules-enabled";
 
@@ -231,7 +237,7 @@ async fn evaluate_block(
         let matching = index
             .matching_fingerprints(&block.tenant, &matchers)
             .map_err(recording_error)?;
-        let mut groups = BTreeMap::<Vec<(String, String)>, BTreeMap<i64, i64>>::new();
+        let mut groups = BTreeMap::<Vec<krabka_blockstore::LabelPair>, BTreeMap<i64, i64>>::new();
         for fingerprint in matching.intersection(&available) {
             let Some(total) = rule_totals.get(fingerprint) else {
                 continue;
@@ -241,7 +247,10 @@ async fn evaluate_block(
             let Some(labels) = labels.first() else {
                 continue;
             };
-            let labels: HashMap<_, _> = labels.iter().cloned().collect();
+            let mut label_values = HashMap::new();
+            for label in labels {
+                label_values.insert(label.name.clone(), label.value.clone());
+            }
             let mut exported = BTreeMap::new();
             for label in &rule.external_labels {
                 if !matches!(label.name.as_str(), "__name__" | "profiles_rule_id") {
@@ -249,7 +258,7 @@ async fn evaluate_block(
                 }
             }
             for name in &rule.group_by {
-                if let Some(value) = labels.get(name)
+                if let Some(value) = label_values.get(name)
                     && !value.is_empty()
                 {
                     exported.insert(name.clone(), value.clone());
@@ -257,28 +266,45 @@ async fn evaluate_block(
             }
             exported.insert("__name__".to_string(), rule.metric_name.clone());
             exported.insert("profiles_rule_id".to_string(), rule.id.clone());
-            let group = groups.entry(exported.into_iter().collect()).or_default();
-            for (timestamp, value) in total {
-                *group.entry(*timestamp).or_default() += value;
+            let mut group_labels = Vec::with_capacity(exported.len());
+            for name in exported.keys() {
+                if let Some(value) = exported.get(name) {
+                    group_labels.push(krabka_blockstore::LabelPair::new(name, value));
+                }
+            }
+            let group = groups.entry(group_labels).or_default();
+            for timestamp in total.keys() {
+                if let Some(value) = total.get(timestamp) {
+                    *group.entry(*timestamp).or_default() += value;
+                }
             }
         }
-        output.extend(groups.into_iter().map(|(labels, values)| {
-            TimeSeries {
-                labels: labels
-                    .into_iter()
-                    .map(|(name, value)| Label { name, value })
-                    .collect(),
-                samples: values
-                    .into_iter()
-                    .map(|(timestamp, value)| Sample {
+        for labels in groups.keys() {
+            let Some(values) = groups.get(labels) else {
+                continue;
+            };
+            let mut samples = Vec::with_capacity(values.len());
+            for timestamp in values.keys() {
+                if let Some(value) = values.get(timestamp) {
+                    samples.push(Sample {
                         #[allow(clippy::cast_precision_loss)]
-                        value: value as f64,
-                        timestamp,
+                        value: *value as f64,
+                        timestamp: *timestamp,
+                    });
+                }
+            }
+            output.push(TimeSeries {
+                labels: labels
+                    .iter()
+                    .map(|pair| Label {
+                        name: pair.name.clone(),
+                        value: pair.value.clone(),
                     })
                     .collect(),
+                samples,
                 ..Default::default()
-            }
-        }));
+            });
+        }
     }
     Ok(output)
 }
@@ -316,8 +342,8 @@ async fn block_totals(
             .map_err(recording_error)?;
         Some(SymbolDb::decode(&bytes).map_err(recording_error)?)
     };
-    let mut matching_stacks = HashMap::<(u64, u32), BTreeSet<String>>::new();
-    let (_, _, mut batches) = open_block_stream(
+    let mut matching_stacks = HashMap::<StackIdentity, BTreeSet<String>>::new();
+    let block_stream = open_block_stream(
         Arc::clone(store),
         object_key,
         DEFAULT_BLOCK_READ_MAX,
@@ -325,12 +351,14 @@ async fn block_totals(
     )
     .await
     .map_err(recording_error)?;
+    let mut batches = block_stream.batches;
+    let mut function_totals = HashMap::new();
+    for name in function_names {
+        function_totals.insert((*name).to_string(), ProfileTotals::new());
+    }
     let mut totals = BlockTotals {
         unfiltered: ProfileTotals::new(),
-        functions: function_names
-            .iter()
-            .map(|name| ((*name).to_string(), ProfileTotals::new()))
-            .collect(),
+        functions: function_totals,
     };
     while let Some(batch) = batches.next().await {
         let batch = batch.map_err(recording_error)?;
@@ -374,7 +402,7 @@ fn add_function_totals(
     batch: &arrow::record_batch::RecordBatch,
     symbols: &SymbolDb,
     function_names: &BTreeSet<&str>,
-    matching_stacks: &mut HashMap<(u64, u32), BTreeSet<String>>,
+    matching_stacks: &mut HashMap<StackIdentity, BTreeSet<String>>,
     functions: &mut HashMap<String, ProfileTotals>,
 ) -> Result<(), ProfilesError> {
     let fingerprints = batch
@@ -400,7 +428,10 @@ fn add_function_totals(
     for row in 0..batch.num_rows() {
         let stack = u32::try_from(stacks.value(row)).map_err(recording_error)?;
         let matching = matching_stacks
-            .entry((partitions.value(row), stack))
+            .entry(StackIdentity {
+                partition: partitions.value(row),
+                stack_id: stack,
+            })
             .or_insert_with(|| {
                 function_names
                     .iter()
@@ -413,13 +444,16 @@ fn add_function_totals(
         // Pyroscope 2.3.1 metrics/observer.go matches any exact frame,
         // including inline frames. A set counts recursive occurrences
         // once per stack sample. Keep zeroes for matched series too.
-        for (name, function_totals) in &mut *functions {
+        for name in function_names {
+            let Some(function_totals) = functions.get_mut(*name) else {
+                continue;
+            };
             let total = function_totals
                 .entry(fingerprints.value(row))
                 .or_default()
                 .entry(timestamps.value(row))
                 .or_default();
-            if matching.contains(name) {
+            if matching.contains(*name) {
                 *total += values.value(row);
             }
         }
@@ -454,7 +488,10 @@ mod tests {
     };
 
     const PROFILE_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
-    type Capture = (HeaderMap, Bytes);
+    struct CapturedRequest {
+        headers: HeaderMap,
+        body: Bytes,
+    }
 
     #[tokio::test]
     async fn ingested_block_retries_and_preserves_profile_timestamps() {
@@ -474,7 +511,7 @@ mod tests {
             "tenant-a",
             0,
             &[first.clone(), second],
-            (0, 0),
+            krabka_blockstore::OffsetRange::new(0, 0),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -513,17 +550,21 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Capture>();
+        let captured_requests = tokio::sync::mpsc::unbounded_channel::<CapturedRequest>();
+        let tx = captured_requests.0;
+        let mut rx = captured_requests.1;
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let app = Router::new()
             .route(
                 "/write",
                 post(
-                    |Extension(tx): Extension<tokio::sync::mpsc::UnboundedSender<Capture>>,
+                    |Extension(tx): Extension<
+                        tokio::sync::mpsc::UnboundedSender<CapturedRequest>,
+                    >,
                      Extension(attempts): Extension<Arc<std::sync::atomic::AtomicUsize>>,
                      headers: HeaderMap,
                      body: Bytes| async move {
-                        tx.send((headers, body)).unwrap();
+                        tx.send(CapturedRequest { headers, body }).unwrap();
                         if attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
                             StatusCode::INTERNAL_SERVER_ERROR
                         } else {
@@ -551,9 +592,11 @@ mod tests {
                 .unwrap()
                 == 1
         );
-        let (headers, body) = rx.recv().await.unwrap();
-        assert!(headers[krabka_blockstore::TENANT_HEADER] == "tenant-a");
-        let decoded = snap::raw::Decoder::new().decompress_vec(&body).unwrap();
+        let captured = rx.recv().await.unwrap();
+        assert!(captured.headers[krabka_blockstore::TENANT_HEADER] == "tenant-a");
+        let decoded = snap::raw::Decoder::new()
+            .decompress_vec(&captured.body)
+            .unwrap();
         let request = WriteRequest::decode(decoded.as_slice()).unwrap();
         let series = &request.timeseries[0];
         assert!(series.samples.len() == 2);

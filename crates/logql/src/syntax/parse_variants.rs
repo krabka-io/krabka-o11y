@@ -32,13 +32,16 @@ pub(crate) fn parse_variants(input: &str) -> Result<Option<LogqlExpr>, ParseErro
             Ok(expression)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let common_text = if let Some((inner, rest)) = split_metric_parentheses(common[0]) {
-        format!("{inner}{rest}")
+    let common_text = if let Some(split) = split_metric_parentheses(common[0]) {
+        format!("{}{}", split.inner, split.remainder)
     } else {
         common[0].to_string()
     };
     let mut parser = Parser::new(&common_text);
-    let (mut stream, range_ns, offset_ns) = parser.parse_metric_range_stream_query()?;
+    let parsed = parser.parse_metric_range_stream_query()?;
+    let mut stream = parsed.stream;
+    let range_ns = parsed.range_ns;
+    let offset_ns = parsed.offset_ns;
     if parser.pos != parser.input.len() {
         return Err(syntax_error("expected end of common log range"));
     }

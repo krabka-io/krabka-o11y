@@ -39,7 +39,39 @@ mod tests {
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
 
     use super::*;
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct RowGroupStatus {
+        index: usize,
+        compressed: bool,
+    }
+
+    struct ChangedObjectCase {
+        description: &'static str,
+        changed: ObjectMeta,
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct BlockReadSummary {
+        object_key: String,
+        skip_reason: Option<crate::BlockSkipReason>,
+        missing: bool,
+    }
     use crate::{log_line_schema::log_line_schema, writer::BlockWriter};
+
+    async fn write_test_log_block(store: Arc<dyn ObjectStore>) -> RecordBatch {
+        let batch = two_line_batch(["x", "y"]);
+        BlockWriter::new(store)
+            .write_block(
+                "t",
+                "b.parquet",
+                log_line_schema(),
+                std::slice::from_ref(&batch),
+            )
+            .await
+            .unwrap();
+        batch
+    }
 
     #[test]
     fn max_block_bytes_is_one_gib() {
@@ -65,13 +97,7 @@ mod tests {
     #[tokio::test]
     async fn write_then_read_round_trips_rows() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = log_line_schema();
-        let batch = two_line_batch(["x", "y"]);
-
-        BlockWriter::new(store.clone())
-            .write_block("t", "b.parquet", schema, std::slice::from_ref(&batch))
-            .await
-            .unwrap();
+        let batch = write_test_log_block(store.clone()).await;
 
         let out = read_block(store, "b.parquet").await.unwrap();
         assert2::assert!(out == vec![batch]);
@@ -192,13 +218,7 @@ mod tests {
     #[tokio::test]
     async fn read_block_with_max_bytes_rejects_over_cap_block() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = log_line_schema();
-        let batch = two_line_batch(["x", "y"]);
-
-        BlockWriter::new(store.clone())
-            .write_block("t", "b.parquet", schema, &[batch])
-            .await
-            .unwrap();
+        let _batch = write_test_log_block(store.clone()).await;
 
         // A tiny cap stands in for the production cap so the test need not
         // materialize an over-cap block; the real block is well above 1 byte.
@@ -230,10 +250,25 @@ mod tests {
         let project = |metadata: &[RowGroupMeta]| {
             metadata
                 .iter()
-                .map(|group| (group.index, group.compressed > ByteSize::ZERO))
+                .map(|group| RowGroupStatus {
+                    index: group.index,
+                    compressed: group.compressed > ByteSize::ZERO,
+                })
                 .collect::<Vec<_>>()
         };
-        assert2::assert!(project(&meta) == vec![(0, true), (1, true)]);
+        assert2::assert!(
+            project(&meta)
+                == vec![
+                    RowGroupStatus {
+                        index: 0,
+                        compressed: true
+                    },
+                    RowGroupStatus {
+                        index: 1,
+                        compressed: true
+                    },
+                ]
+        );
 
         let got = read_row_group_metadata_with_max_bytes(
             store.clone(),
@@ -251,7 +286,19 @@ mod tests {
         )
         .await
         .unwrap();
-        assert2::assert!(project(&meta) == vec![(0, true), (1, true)]);
+        assert2::assert!(
+            project(&meta)
+                == vec![
+                    RowGroupStatus {
+                        index: 0,
+                        compressed: true
+                    },
+                    RowGroupStatus {
+                        index: 1,
+                        compressed: true
+                    },
+                ]
+        );
     }
 
     fn two_line_batch(lines: [&str; 2]) -> RecordBatch {
@@ -347,33 +394,33 @@ mod tests {
             let error = read_row_group_metadata(store.clone(), key)
                 .await
                 .expect_err("an unreadable block is an error");
-            let (object_key, failure) = error
+            let unreadable = error
                 .unreadable_block()
                 .expect("the error is about one block");
-            got.push((
-                object_key.to_string(),
-                failure.skip_reason(),
-                failure.is_missing(),
-            ));
+            got.push(BlockReadSummary {
+                object_key: unreadable.object_key.to_string(),
+                skip_reason: unreadable.failure.skip_reason(),
+                missing: unreadable.failure.is_missing(),
+            });
         }
 
         assert2::assert!(
             got == [
-                (
-                    "absent.parquet".to_string(),
-                    Some(crate::BlockSkipReason::Missing),
-                    true
-                ),
-                (
-                    "garbage.parquet".to_string(),
-                    Some(crate::BlockSkipReason::Corrupt),
-                    false
-                ),
-                (
-                    "truncated.parquet".to_string(),
-                    Some(crate::BlockSkipReason::Corrupt),
-                    false
-                ),
+                BlockReadSummary {
+                    object_key: "absent.parquet".to_string(),
+                    skip_reason: Some(crate::BlockSkipReason::Missing),
+                    missing: true,
+                },
+                BlockReadSummary {
+                    object_key: "garbage.parquet".to_string(),
+                    skip_reason: Some(crate::BlockSkipReason::Corrupt),
+                    missing: false,
+                },
+                BlockReadSummary {
+                    object_key: "truncated.parquet".to_string(),
+                    skip_reason: Some(crate::BlockSkipReason::Corrupt),
+                    missing: false,
+                },
             ]
         );
     }
@@ -417,33 +464,33 @@ mod tests {
         assert2::assert!(cache.get(&meta).is_some());
 
         let cases = [
-            (
-                "a different size",
-                ObjectMeta {
+            ChangedObjectCase {
+                description: "a different size",
+                changed: ObjectMeta {
                     size: meta.size + 1,
                     ..meta.clone()
                 },
-            ),
-            (
-                "a different etag",
-                ObjectMeta {
+            },
+            ChangedObjectCase {
+                description: "a different etag",
+                changed: ObjectMeta {
                     e_tag: Some("rewritten".to_string()),
                     ..meta.clone()
                 },
-            ),
-            (
-                "a different version",
-                ObjectMeta {
+            },
+            ChangedObjectCase {
+                description: "a different version",
+                changed: ObjectMeta {
                     version: Some("2".to_string()),
                     ..meta.clone()
                 },
-            ),
+            },
         ];
-        for (case, changed) in cases {
+        for case in cases {
             cache.put(&meta, Arc::clone(&metadata));
-            assert2::assert!(cache.get(&changed).is_none(), "{case}");
+            assert2::assert!(cache.get(&case.changed).is_none(), "{}", case.description);
             // The stale entry is dropped rather than left to the LRU.
-            assert2::assert!(cache.is_empty(), "{case}");
+            assert2::assert!(cache.is_empty(), "{}", case.description);
         }
     }
 
@@ -556,3 +603,24 @@ pub(crate) use row_group_metadata::row_group_metadata;
 use same_object::same_object;
 use to_parquet_error::to_parquet_error;
 use unreadable::unreadable;
+
+async fn collect_block_batches(
+    reader: ObjectStoreReader,
+    object_key: &str,
+    row_groups: Option<&[usize]>,
+) -> Result<Vec<RecordBatch>> {
+    let builder = ParquetRecordBatchStreamBuilder::new(reader)
+        .await
+        .map_err(|error| unreadable(object_key, error))?;
+    crate::validate_persisted_block_format(builder.metadata())
+        .map_err(crate::BlockStoreError::InvalidBlock)?;
+    let stream = match row_groups {
+        Some(row_groups) => builder.with_row_groups(row_groups.to_vec()).build(),
+        None => builder.build(),
+    }
+    .map_err(|error| unreadable(object_key, error))?;
+    stream
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|error| unreadable(object_key, error))
+}

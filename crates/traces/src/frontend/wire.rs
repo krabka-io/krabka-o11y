@@ -12,7 +12,7 @@
 //! reverse-`From` projections. The by-id edge model is a minimal typed
 //! OTLP-JSON mirror, `TraceByIdResponseJson`, shaped to the querier's v2 body.
 
-use krabka_traceql::{AttrValue, SpanRef, SpanSet, TraceResult};
+use krabka_traceql::{AttrValue, Attribute, SpanRef, SpanSet, TraceResult};
 use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt, TimeExt as _},
@@ -222,7 +222,7 @@ mod tests {
             instrumentation_name: String::new(),
             instrumentation_version: String::new(),
             resource_attributes: Vec::new(),
-            attributes: vec![("k".into(), AttrValue::Int(9))],
+            attributes: vec![Attribute::new("k", AttrValue::Int(9))],
             events: Vec::new(),
             links: Vec::new(),
         };
@@ -279,6 +279,13 @@ mod span_json;
 mod span_ref;
 mod span_set;
 mod span_set_json;
+
+fn attributes_from_json(values: &[key_value_json::KeyValueJson]) -> Vec<Attribute> {
+    values
+        .iter()
+        .map(|kv| Attribute::new(kv.key.clone(), AttrValue::from(&kv.value)))
+        .collect()
+}
 mod trace_by_id_response_json;
 mod trace_envelope_json;
 mod trace_json;

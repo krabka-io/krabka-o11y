@@ -74,26 +74,24 @@ where
     let mixed_histogram_keys = find_mixed_histogram_keys(&native_samples, &groups, &metric_names);
     let mut out = native_samples
         .into_iter()
-        .filter_map(|(key, sample)| (!mixed_histogram_keys.contains(&key)).then_some(sample))
+        .filter_map(|entry| (!mixed_histogram_keys.contains(&entry.0)).then_some(entry.1))
         .collect::<Vec<_>>();
-    out.extend(
-        groups
-            .into_iter()
-            .filter_map(|(key, (labels, mut buckets))| {
-                if mixed_histogram_keys.contains(&key) {
-                    return None;
-                }
-                let classic_value = classic(
-                    metric_names.get(&key).map_or("", String::as_str),
-                    &mut buckets,
-                );
-                Some(InstantSample {
-                    labels,
-                    ts_ms: time_ms,
-                    value: SampleValue::Float(classic_value),
-                    drop_name: true,
-                })
-            }),
-    );
+    out.extend(groups.into_iter().filter_map(|entry| {
+        let key = entry.0;
+        let mut group = entry.1;
+        if mixed_histogram_keys.contains(&key) {
+            return None;
+        }
+        let classic_value = classic(
+            metric_names.get(&key).map_or("", String::as_str),
+            &mut group.buckets,
+        );
+        Some(InstantSample {
+            labels: group.labels,
+            ts_ms: time_ms,
+            value: SampleValue::Float(classic_value),
+            drop_name: true,
+        })
+    }));
     Ok(out)
 }

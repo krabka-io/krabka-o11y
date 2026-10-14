@@ -1,4 +1,5 @@
 use super::{AttrValue, CompareRow, Scope};
+use crate::result::normalized_attr_value;
 
 pub(crate) fn compare_row_attr_values<'a>(
     row: &'a CompareRow,
@@ -31,8 +32,8 @@ pub(crate) fn compare_row_attr_values<'a>(
         out.extend(
             row.raw_span_attrs
                 .iter()
-                .filter(|(attr_key, _)| attr_key == key)
-                .map(|(_, value)| value),
+                .filter(|attribute| attribute.key == key)
+                .map(|attribute| &attribute.value),
         );
     }
     // Tempo vParquet AttributeFor checks span attributes before falling back
@@ -41,8 +42,8 @@ pub(crate) fn compare_row_attr_values<'a>(
         out.extend(
             row.raw_resource_attrs
                 .iter()
-                .filter(|(attr_key, _)| attr_key == key)
-                .map(|(_, value)| value),
+                .filter(|attribute| attribute.key == key)
+                .map(|attribute| &attribute.value),
         );
     }
     if matches!(scope, Scope::Both) && out.is_empty() {
@@ -55,8 +56,8 @@ pub(crate) fn compare_row_attr_values<'a>(
             out.extend(
                 row.raw_span_attrs
                     .iter()
-                    .filter(|(key, _)| key == &prefixed)
-                    .map(|(_, value)| value),
+                    .filter(|attribute| attribute.key == prefixed)
+                    .map(|attribute| &attribute.value),
             );
             if !out.is_empty() {
                 break;
@@ -65,14 +66,7 @@ pub(crate) fn compare_row_attr_values<'a>(
     }
     // Pinned vParquet5 attributeCollector ignores IsArray: empty lists are
     // nil and a single element is scalar. Keep original shape for retrieval.
-    out.into_iter()
-        .filter_map(|value| match value {
-            AttrValue::Unsupported(_) => None,
-            AttrValue::Array(values) if values.is_empty() => None,
-            AttrValue::Array(values) if values.len() == 1 => values.first(),
-            value => Some(value),
-        })
-        .collect()
+    out.into_iter().filter_map(normalized_attr_value).collect()
 }
 
 #[cfg(test)]
@@ -86,10 +80,10 @@ mod tests {
         let row = CompareRow {
             ts: super::super::UnixNano(0),
             attrs: Vec::new(),
-            raw_span_attrs: vec![("shared".into(), AttrValue::Int(1))],
+            raw_span_attrs: vec![crate::result::Attribute::new("shared", AttrValue::Int(1))],
             raw_resource_attrs: vec![
-                ("shared".into(), AttrValue::Str("1".into())),
-                ("fallback".into(), AttrValue::Bool(true)),
+                crate::result::Attribute::new("shared", AttrValue::Str("1".into())),
+                crate::result::Attribute::new("fallback", AttrValue::Bool(true)),
             ],
             name: None,
             status_code: None,

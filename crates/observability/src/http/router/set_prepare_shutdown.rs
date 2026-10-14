@@ -1,6 +1,5 @@
 use super::{
-    AuditOutcome, DistributorState, IntoResponse, OPERATION_INGESTER_PREPARE_SHUTDOWN_SET,
-    RequestSecurity, Response, State, StatusCode,
+    DistributorState, OPERATION_INGESTER_PREPARE_SHUTDOWN_SET, RequestSecurity, Response, State,
 };
 
 /// `POST /ingester/prepare_shutdown`: take this process out of rotation.
@@ -21,14 +20,5 @@ pub(crate) async fn set_prepare_shutdown(
     State(state): State<DistributorState>,
     security: RequestSecurity,
 ) -> Response {
-    if let Err(denied) = security.authorize_admin() {
-        return denied.into_response();
-    }
-    state.prepare_shutdown.mark_unready();
-    security.admin_operation(
-        OPERATION_INGESTER_PREPARE_SHUTDOWN_SET,
-        vec![security.ingester()],
-        AuditOutcome::Success,
-    );
-    StatusCode::NO_CONTENT.into_response()
+    super::prepare_ingester_shutdown(&state, &security, OPERATION_INGESTER_PREPARE_SHUTDOWN_SET)
 }

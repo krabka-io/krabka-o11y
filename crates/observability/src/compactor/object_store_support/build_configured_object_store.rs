@@ -61,10 +61,10 @@ fn open_configured_object_store(
             })
         }
         Ok(url) => {
-            let (store, prefix) = parse_url_opts(&url, std::env::vars())?;
+            let store_config = parse_url_opts(&url, std::env::vars())?;
             Ok(ConfiguredObjectStore {
-                store: MeteredObjectStore::wrap(Arc::from(store), metrics),
-                prefix,
+                store: MeteredObjectStore::wrap(Arc::from(store_config.0), metrics),
+                prefix: store_config.1,
             })
         }
         Err(url::ParseError::RelativeUrlWithoutBase) => Ok(ConfiguredObjectStore {

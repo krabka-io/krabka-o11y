@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     sync::Arc,
 };
 
@@ -12,15 +13,30 @@ use super::{
     token_digest::TokenDigest,
 };
 
+struct TokenOwner {
+    digest: TokenDigest,
+    principal_index: u64,
+}
+
 /// A validated credentials file.
-#[derive(Debug)]
 pub struct Credentials {
     principals: Vec<ConfiguredPrincipal>,
     /// Every token digest, with one more than the index of its principal.
     /// Zero is never an owner, so a constant-time scan can start from it.
-    token_digests: Vec<(TokenDigest, u64)>,
+    token_digests: Vec<TokenOwner>,
     /// Every client certificate identity, with the index of its principal.
     client_certificates: BTreeMap<String, usize>,
+}
+
+impl fmt::Debug for Credentials {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Credentials")
+            .field("principal_count", &self.principals.len())
+            .field("token_count", &self.token_digests.len())
+            .field("client_certificate_count", &self.client_certificates.len())
+            .finish()
+    }
 }
 
 impl Credentials {
@@ -38,7 +54,9 @@ impl Credentials {
             token_digests: Vec::new(),
             client_certificates: BTreeMap::new(),
         };
-        for (index, entry) in file.principals.into_iter().enumerate() {
+        for principal_entry in file.principals.into_iter().enumerate() {
+            let index = principal_entry.0;
+            let entry = principal_entry.1;
             if entry.name.is_empty() {
                 return Err(CredentialsError::EmptyName { index });
             }
@@ -54,19 +72,22 @@ impl Credentials {
             }
             let tenants = Self::parse_tenant_grant(&entry.name, &entry.tenants)?;
             let owner = u64::try_from(index + 1).expect("a principal count fits in u64");
-            for (position, hex) in entry.token_sha256.iter().enumerate() {
+            for token_entry in entry.token_sha256.iter().enumerate() {
+                let position = token_entry.0;
+                let hex = token_entry.1;
                 let digest = TokenDigest::parse(hex).ok_or_else(|| {
                     CredentialsError::InvalidTokenDigest {
                         name: entry.name.clone(),
                         position,
                     }
                 })?;
-                if let Some((_, first)) = credentials
+                if let Some(owner) = credentials
                     .token_digests
                     .iter()
-                    .find(|(known, _)| bool::from(known.ct_eq(&digest)))
+                    .find(|known| bool::from(known.digest.ct_eq(&digest)))
                 {
-                    let first = usize::try_from(*first - 1).expect("an owner index fits in usize");
+                    let first = usize::try_from(owner.principal_index - 1)
+                        .expect("an owner index fits in usize");
                     let first = credentials.principals.get(first).map_or_else(
                         || entry.name.clone(),
                         |principal| principal.name.to_string(),
@@ -76,7 +97,10 @@ impl Credentials {
                         second: entry.name,
                     });
                 }
-                credentials.token_digests.push((digest, owner));
+                credentials.token_digests.push(TokenOwner {
+                    digest,
+                    principal_index: owner,
+                });
             }
             for identity in &entry.client_certificates {
                 if identity.is_empty() {
@@ -120,8 +144,11 @@ impl Credentials {
     pub fn principal_for_token(&self, token: &[u8]) -> Option<&ConfiguredPrincipal> {
         let presented = TokenDigest::of_token(token);
         let mut owner = 0_u64;
-        for (digest, candidate) in &self.token_digests {
-            owner.conditional_assign(candidate, digest.ct_eq(&presented));
+        for candidate in &self.token_digests {
+            owner.conditional_assign(
+                &candidate.principal_index,
+                candidate.digest.ct_eq(&presented),
+            );
         }
         let index = usize::try_from(owner.checked_sub(1)?).ok()?;
         self.principals.get(index)
@@ -147,14 +174,15 @@ impl Credentials {
             .filter_map(|name| self.client_certificates.get(name).copied())
             .collect();
         let mut owners = owners.into_iter();
-        match (owners.next(), owners.next()) {
-            (Some(index), None) => self
-                .principals
-                .get(index)
-                .ok_or(AuthFailureReason::UnknownCredential),
-            (Some(_), Some(_)) => Err(AuthFailureReason::AmbiguousClientCertificate),
-            (None, _) => Err(AuthFailureReason::UnknownCredential),
+        let Some(index) = owners.next() else {
+            return Err(AuthFailureReason::UnknownCredential);
+        };
+        if owners.next().is_some() {
+            return Err(AuthFailureReason::AmbiguousClientCertificate);
         }
+        self.principals
+            .get(index)
+            .ok_or(AuthFailureReason::UnknownCredential)
     }
 
     fn parse_tenant_grant(name: &str, tenants: &[String]) -> Result<TenantGrant, CredentialsError> {

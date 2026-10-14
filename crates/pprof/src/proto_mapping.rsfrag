@@ -18,6 +18,14 @@ impl ::core::fmt::Debug for Mapping {
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
 pub struct MappingSymbolization(u8);
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
+pub struct MappingSymbolizationParts {
+    pub functions: bool,
+    pub filenames: bool,
+    pub line_numbers: bool,
+    pub inline_frames: bool,
+}
+
 impl MappingSymbolization {
     const FUNCTIONS: u8 = 1;
     const FILENAMES: u8 = 1 << 1;
@@ -25,13 +33,12 @@ impl MappingSymbolization {
     const INLINE_FRAMES: u8 = 1 << 3;
 
     #[must_use]
-    pub fn from_parts(parts: (bool, bool, bool, bool)) -> Self {
-        let (has_functions, has_filenames, has_line_numbers, has_inline_frames) = parts;
+    pub fn from_parts(parts: MappingSymbolizationParts) -> Self {
         let mut flags = 0;
-        if has_functions { flags |= Self::FUNCTIONS; }
-        if has_filenames { flags |= Self::FILENAMES; }
-        if has_line_numbers { flags |= Self::LINE_NUMBERS; }
-        if has_inline_frames { flags |= Self::INLINE_FRAMES; }
+        if parts.functions { flags |= Self::FUNCTIONS; }
+        if parts.filenames { flags |= Self::FILENAMES; }
+        if parts.line_numbers { flags |= Self::LINE_NUMBERS; }
+        if parts.inline_frames { flags |= Self::INLINE_FRAMES; }
         Self(flags)
     }
 

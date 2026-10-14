@@ -6,12 +6,23 @@ use super::{
     scale_native_histogram_values,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExtendedIndices {
+    pub first: usize,
+    pub last: usize,
+}
+
+pub(crate) struct HistogramSample {
+    pub timestamp_ms: i64,
+    pub histogram: NativeHistogram,
+}
+
 pub(crate) fn extended_indices(
     timestamps: &[i64],
     start: i64,
     end: i64,
     smoothed: bool,
-) -> Option<(usize, usize)> {
+) -> Option<ExtendedIndices> {
     let mut last = timestamps.len().checked_sub(1)?;
     let first = timestamps[..last]
         .partition_point(|timestamp| *timestamp <= start)
@@ -22,7 +33,7 @@ pub(crate) fn extended_indices(
     if timestamps[last] <= start || smoothed && timestamps[first] > end {
         return None;
     }
-    Some((first, last))
+    Some(ExtendedIndices { first, last })
 }
 
 pub(crate) fn extended_float_range_value(
@@ -34,7 +45,7 @@ pub(crate) fn extended_float_range_value(
     kind: RangeFn,
     smoothed: bool,
 ) -> Option<f64> {
-    let (first, last) = extended_indices(timestamps, start, end, smoothed)?;
+    let ExtendedIndices { first, last } = extended_indices(timestamps, start, end, smoothed)?;
     let counter = matches!(kind, RangeFn::Rate | RangeFn::Increase);
     let interpolate = |left: usize, right: usize, target: i64| -> Option<f64> {
         let y1 = if counter && values[right] < values[left] {
@@ -103,28 +114,29 @@ fn combine(
 }
 
 pub(crate) fn interpolate_histogram(
-    left: &(i64, NativeHistogram),
-    right: &(i64, NativeHistogram),
+    left: &HistogramSample,
+    right: &HistogramSample,
     target: i64,
     counter: bool,
     metric: &str,
 ) -> Option<NativeHistogram> {
-    if target == left.0 {
-        return Some(left.1.clone());
+    if target == left.timestamp_ms {
+        return Some(left.histogram.clone());
     }
-    if target == right.0 {
-        return Some(right.1.clone());
+    if target == right.timestamp_ms {
+        return Some(right.histogram.clone());
     }
-    if left.1.is_nhcb() != right.1.is_nhcb() {
+    if left.histogram.is_nhcb() != right.histogram.is_nhcb() {
         emit_warning(mixed_exponential_custom_warning(metric));
         return None;
     }
-    let fraction = (target - left.0).to_f64()? / (right.0 - left.0).to_f64()?;
-    let mut result = right.1.clone();
-    if !counter || !native_histogram_detect_reset(&left.1, &right.1) {
-        combine(&mut result, &left.1, -1.0, metric)?;
+    let fraction = (target - left.timestamp_ms).to_f64()?
+        / (right.timestamp_ms - left.timestamp_ms).to_f64()?;
+    let mut result = right.histogram.clone();
+    if !counter || !native_histogram_detect_reset(&left.histogram, &right.histogram) {
+        combine(&mut result, &left.histogram, -1.0, metric)?;
         scale_native_histogram_values(&mut result, fraction);
-        combine(&mut result, &left.1, 1.0, metric)?;
+        combine(&mut result, &left.histogram, 1.0, metric)?;
     } else {
         scale_native_histogram_values(&mut result, fraction);
     }
@@ -132,7 +144,7 @@ pub(crate) fn interpolate_histogram(
 }
 
 pub(crate) fn extended_histogram_range_value(
-    points: &[(i64, NativeHistogram)],
+    points: &[HistogramSample],
     start: i64,
     end: i64,
     range: Time,
@@ -140,11 +152,15 @@ pub(crate) fn extended_histogram_range_value(
     smoothed: bool,
     metric: &str,
 ) -> Option<NativeHistogram> {
-    let timestamps = points.iter().map(|point| point.0).collect::<Vec<_>>();
-    let (first, last) = extended_indices(&timestamps, start, end, smoothed)?;
+    let timestamps = points
+        .iter()
+        .map(|point| point.timestamp_ms)
+        .collect::<Vec<_>>();
+    let ExtendedIndices { first, last } = extended_indices(&timestamps, start, end, smoothed)?;
     let counter = matches!(kind, RangeFn::Rate | RangeFn::Increase);
-    let custom = points[first].1.is_nhcb();
-    for (_, histogram) in &points[first..=last] {
+    let custom = points[first].histogram.is_nhcb();
+    for point in &points[first..=last] {
+        let histogram = &point.histogram;
         if histogram.is_nhcb() != custom {
             emit_warning(mixed_exponential_custom_warning(metric));
             return None;
@@ -156,12 +172,12 @@ pub(crate) fn extended_histogram_range_value(
     let left = if smoothed && timestamps[first] < start {
         interpolate_histogram(&points[first], &points[first + 1], start, counter, metric)?
     } else {
-        points[first].1.clone()
+        points[first].histogram.clone()
     };
     let right = if smoothed && last > 0 && timestamps[last] > end {
         interpolate_histogram(&points[last - 1], &points[last], end, counter, metric)?
     } else {
-        points[last].1.clone()
+        points[last].histogram.clone()
     };
     if !counter && (left.reset_hint != ResetHint::Gauge || right.reset_hint != ResetHint::Gauge) {
         emit_warning(native_histogram_not_gauge_warning(metric));
@@ -173,13 +189,14 @@ pub(crate) fn extended_histogram_range_value(
         let mut begin = first + 1;
         if smoothed
             && timestamps[first] < start
-            && native_histogram_detect_reset(&points[first].1, &points[first + 1].1)
+            && native_histogram_detect_reset(&points[first].histogram, &points[first + 1].histogram)
         {
-            previous = &points[first + 1].1;
+            previous = &points[first + 1].histogram;
             begin += 1;
         }
         if begin <= last {
-            for (_, histogram) in &points[begin..last] {
+            for point in &points[begin..last] {
+                let histogram = &point.histogram;
                 if native_histogram_detect_reset(previous, histogram) {
                     combine(&mut result, previous, 1.0, metric)?;
                 }
@@ -195,9 +212,11 @@ pub(crate) fn extended_histogram_range_value(
     }
     result.reset_hint = ResetHint::Gauge;
     result.start_timestamp_ms = None;
-    (result.positive_spans, result.positive_counts) =
-        super::compact_histogram_spans(&result.positive_spans, &result.positive_counts);
-    (result.negative_spans, result.negative_counts) =
-        super::compact_histogram_spans(&result.negative_spans, &result.negative_counts);
+    let positive = super::compact_histogram_spans(&result.positive_spans, &result.positive_counts);
+    result.positive_spans = positive.spans;
+    result.positive_counts = positive.counts;
+    let negative = super::compact_histogram_spans(&result.negative_spans, &result.negative_counts);
+    result.negative_spans = negative.spans;
+    result.negative_counts = negative.counts;
     Some(result)
 }

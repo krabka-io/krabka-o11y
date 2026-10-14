@@ -4,7 +4,12 @@ use super::{
 };
 use crate::format_promql_expr;
 
-pub(crate) fn avg_partial_queries(expr: &Expr) -> Option<(String, String)> {
+pub(crate) struct AvgPartialQueries {
+    pub(crate) sum: String,
+    pub(crate) count: String,
+}
+
+pub(crate) fn avg_partial_queries(expr: &Expr) -> Option<AvgPartialQueries> {
     match expr {
         Expr::Aggregate(aggregate)
             if aggregate.op.id() == T_AVG
@@ -16,10 +21,10 @@ pub(crate) fn avg_partial_queries(expr: &Expr) -> Option<(String, String)> {
             sum_aggregate.op = TokenType::new(T_SUM);
             let mut count_aggregate = aggregate.clone();
             count_aggregate.op = TokenType::new(T_COUNT);
-            Some((
-                format_promql_expr(&Expr::Aggregate(sum_aggregate)),
-                format_promql_expr(&Expr::Aggregate(count_aggregate)),
-            ))
+            Some(AvgPartialQueries {
+                sum: format_promql_expr(&Expr::Aggregate(sum_aggregate)),
+                count: format_promql_expr(&Expr::Aggregate(count_aggregate)),
+            })
         }
         Expr::Paren(paren) => avg_partial_queries(&paren.expr),
         _ => None,

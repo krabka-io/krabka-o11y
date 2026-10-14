@@ -14,10 +14,11 @@ use std::{
 use async_trait::async_trait;
 use krabka_blockstore::{
     BlockDeletion, BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex, LogBlockStoreError,
-    TimeRange, delete_blocks, labels, log_block_object_path, read_log_block_from_object_store,
+    TimeRange, delete_blocks, log_block_object_path, read_log_block_from_object_store,
     read_tenant_log_index_manifest_from_object_store,
     write_tenant_log_index_manifest_to_object_store,
 };
+use krabka_integration::MapEntry;
 use krabka_logql::{parse_query, plan_stream_query};
 use krabka_observability::{
     CompactionCommitError, CompactionOffsetCommitter, Offset, PartitionIndex, WalLogRecord,
@@ -54,14 +55,28 @@ struct TenantIndex {
     blocks: LogBlockIndex,
 }
 
-type Cached = (Instant, LabelIndex, LogBlockIndex);
+struct CachedLogIndex {
+    loaded_at: Instant,
+    labels: LabelIndex,
+    blocks: LogBlockIndex,
+}
+
+struct LoadedLogIndex {
+    labels: LabelIndex,
+    blocks: LogBlockIndex,
+}
+
+struct MergeReport {
+    output_blocks: u64,
+    blocks_deleted: u64,
+}
 
 pub struct LogsSignal {
     stores: Stores,
     seed: u64,
     prefix: ObjectPath,
     writer: HashMap<&'static str, AsyncMutex<TenantIndex>>,
-    reader: AsyncMutex<HashMap<String, Cached>>,
+    reader: AsyncMutex<HashMap<String, CachedLogIndex>>,
 }
 
 impl LogsSignal {
@@ -70,8 +85,14 @@ impl LogsSignal {
         let prefix = ObjectPath::from(PREFIX);
         let mut writer = HashMap::new();
         for tenant in TENANTS {
-            let (labels, blocks) = load(&stores.write, &prefix, tenant).await?;
-            writer.insert(tenant, AsyncMutex::new(TenantIndex { labels, blocks }));
+            let indexes = load(&stores.write, &prefix, tenant).await?;
+            writer.insert(
+                tenant,
+                AsyncMutex::new(TenantIndex {
+                    labels: indexes.labels,
+                    blocks: indexes.blocks,
+                }),
+            );
         }
         Ok(Self {
             stores,
@@ -131,12 +152,15 @@ impl LogsSignal {
     }
 
     /// Merges the oldest [`MERGE_BLOCKS`] blocks of `tenant` into one.
-    async fn merge(&self, tenant: &str) -> Result<(u64, u64), String> {
+    async fn merge(&self, tenant: &str) -> Result<MergeReport, String> {
         let store = &*self.stores.maintenance;
         let mut index = self.index(tenant)?.lock().await;
         let mut inputs: Vec<BlockDescriptor> = index.blocks.blocks().to_vec();
         if inputs.len() < MERGE_BLOCKS {
-            return Ok((0, 0));
+            return Ok(MergeReport {
+                output_blocks: 0,
+                blocks_deleted: 0,
+            });
         }
         inputs.sort_by_key(|block| block.key.time_range.start_ns);
         inputs.truncate(MERGE_BLOCKS);
@@ -173,7 +197,10 @@ impl LogsSignal {
             .map_err(err)?;
         let dropped: Vec<BlockKey> = inputs.into_iter().map(|block| block.key).collect();
         let deleted = self.retire(tenant, &mut index, &dropped).await?;
-        Ok((1, deleted))
+        Ok(MergeReport {
+            output_blocks: 1,
+            blocks_deleted: deleted,
+        })
     }
 }
 
@@ -181,11 +208,17 @@ async fn load(
     store: &Arc<dyn object_store::ObjectStore>,
     prefix: &ObjectPath,
     tenant: &str,
-) -> Result<(LabelIndex, LogBlockIndex), String> {
+) -> Result<LoadedLogIndex, String> {
     match read_tenant_log_index_manifest_from_object_store(&**store, prefix, tenant).await {
-        Ok(indexes) => Ok(indexes),
+        Ok(indexes) => Ok(LoadedLogIndex {
+            labels: indexes.labels,
+            blocks: indexes.blocks,
+        }),
         Err(LogBlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
-            Ok((LabelIndex::default(), LogBlockIndex::default()))
+            Ok(LoadedLogIndex {
+                labels: LabelIndex::default(),
+                blocks: LogBlockIndex::default(),
+            })
         }
         Err(error) => Err(err(error)),
     }
@@ -217,7 +250,20 @@ impl Signal for LogsSignal {
                 let value = mix(self.seed, batch.seq, series, point);
                 records.push(WalLogRecord {
                     tenant: tenant.to_string(),
-                    labels: labels([("app", "api"), ("env", "prod"), ("series", &stream)]),
+                    labels: krabka_integration::ordered_map([
+                        MapEntry {
+                            key: "app".into(),
+                            value: "api".into(),
+                        },
+                        MapEntry {
+                            key: "env".into(),
+                            value: "prod".into(),
+                        },
+                        MapEntry {
+                            key: "series".into(),
+                            value: stream.clone(),
+                        },
+                    ]),
                     timestamp_ns: now - i64::from(batch.samples - point) * 1_000,
                     line: format!("level=info series={series} point={point} value={value:016x}"),
                     structured_metadata: BTreeMap::new(),
@@ -245,20 +291,27 @@ impl Signal for LogsSignal {
     }
 
     async fn query(&self, tenant: &str, window: Duration, fresh: bool) -> Result<u64, String> {
-        let (label_index, block_index) = {
+        let indexes = {
             let mut reader = self.reader.lock().await;
             let cached = reader
                 .get(tenant)
-                .filter(|(at, _, _)| !due(Some(*at), fresh));
-            if let Some((_, labels, blocks)) = cached {
-                (labels.clone(), blocks.clone())
+                .filter(|cached| !due(Some(cached.loaded_at), fresh));
+            if let Some(cached) = cached {
+                LoadedLogIndex {
+                    labels: cached.labels.clone(),
+                    blocks: cached.blocks.clone(),
+                }
             } else {
-                let (labels, blocks) = load(&self.stores.read, &self.prefix, tenant).await?;
+                let indexes = load(&self.stores.read, &self.prefix, tenant).await?;
                 reader.insert(
                     tenant.to_string(),
-                    (Instant::now(), labels.clone(), blocks.clone()),
+                    CachedLogIndex {
+                        loaded_at: Instant::now(),
+                        labels: indexes.labels.clone(),
+                        blocks: indexes.blocks.clone(),
+                    },
                 );
-                (labels, blocks)
+                indexes
             }
         };
         let end = now_ns();
@@ -267,15 +320,15 @@ impl Signal for LogsSignal {
             tenant,
             range,
             parse_query(QUERY).map_err(err)?,
-            &label_index,
-            &block_index,
+            &indexes.labels,
+            &indexes.blocks,
         )
         .map_err(err)?;
         let response = execute_stream_query_from_object_store(
             Arc::clone(&self.stores.read),
             &self.prefix,
             &plan,
-            &label_index,
+            &indexes.labels,
         )
         .await
         .map_err(err)?;
@@ -283,11 +336,12 @@ impl Signal for LogsSignal {
     }
 
     async fn compact(&self) -> Result<Value, String> {
-        let (mut outputs, mut deleted) = (0, 0);
+        let mut outputs = 0;
+        let mut deleted = 0;
         for tenant in TENANTS {
-            let (o, d) = self.merge(tenant).await?;
-            outputs += o;
-            deleted += d;
+            let merged = self.merge(tenant).await?;
+            outputs += merged.output_blocks;
+            deleted += merged.blocks_deleted;
         }
         Ok(json!({ "outputs": outputs, "blocks_deleted": deleted }))
     }

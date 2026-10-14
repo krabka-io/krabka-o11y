@@ -59,12 +59,17 @@ fn native_api_record(
 
 // `tenant-a`'s `api error` line at 1.9 ms, with a `trace_id` and no position.
 fn api_error_record() -> WalLogRecord {
+    let mut structured_metadata = BTreeMap::new();
+    structured_metadata.insert("trace_id".to_string(), "abc".to_string());
     WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         timestamp_ns: 1_900_000,
         line: "api error".to_string(),
-        structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+        structured_metadata,
         position: None,
     }
 }
@@ -157,7 +162,7 @@ fn kafka_wal_record_decode_rejects_invalid_payload() {
 
 #[test]
 fn a_kafka_wal_record_without_a_version_header_decodes_only_as_a_native_record() {
-    let labels = labels([("app", "api")]);
+    let labels = labels([krabka_blockstore::LabelPair::new("app", "api")]);
     let json_record = WalLogRecord {
         tenant: "tenant-a".to_string(),
         labels: labels.clone(),

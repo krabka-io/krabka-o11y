@@ -1,5 +1,8 @@
 use super::*;
 
+type FixtureSample = FloatSampleInput;
+type FixtureSeries = LabeledFloatSeries;
+
 /// Direct totality assertion over a representative construct sweep.
 ///
 /// For every valid query family that the corpus can produce, `plan_instant_expr`
@@ -13,23 +16,72 @@ pub(crate) async fn plan_instant_expr_is_total_over_construct_sweep() {
 
     let mut store = InMemoryMetricStore::new();
     let time_ms = 300_000_i64;
-    for (lbls, samples) in [
-        (
-            labels(&[("__name__", "m"), ("job", "a")]),
-            vec![(120_000_i64, 1.0_f64), (240_000, 2.0), (300_000, 3.0)],
-        ),
-        (
-            labels(&[("__name__", "m"), ("job", "b")]),
-            vec![(120_000, 4.0), (240_000, 5.0), (300_000, 6.0)],
-        ),
-        (
-            labels(&[("__name__", "n"), ("job", "a")]),
-            vec![(120_000, 7.0), (240_000, 8.0), (300_000, 9.0)],
-        ),
+    for fixture in [
+        FixtureSeries {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "a"),
+            ])
+            .into(),
+            samples: vec![
+                FixtureSample {
+                    timestamp_ms: 120_000,
+                    value: 1.0,
+                },
+                FixtureSample {
+                    timestamp_ms: 240_000,
+                    value: 2.0,
+                },
+                FixtureSample {
+                    timestamp_ms: 300_000,
+                    value: 3.0,
+                },
+            ],
+        },
+        FixtureSeries {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "m"),
+                crate::test_support::TestLabelPair::new("job", "b"),
+            ])
+            .into(),
+            samples: vec![
+                FixtureSample {
+                    timestamp_ms: 120_000,
+                    value: 4.0,
+                },
+                FixtureSample {
+                    timestamp_ms: 240_000,
+                    value: 5.0,
+                },
+                FixtureSample {
+                    timestamp_ms: 300_000,
+                    value: 6.0,
+                },
+            ],
+        },
+        FixtureSeries {
+            labels: labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "n"),
+                crate::test_support::TestLabelPair::new("job", "a"),
+            ])
+            .into(),
+            samples: vec![
+                FixtureSample {
+                    timestamp_ms: 120_000,
+                    value: 7.0,
+                },
+                FixtureSample {
+                    timestamp_ms: 240_000,
+                    value: 8.0,
+                },
+                FixtureSample {
+                    timestamp_ms: 300_000,
+                    value: 9.0,
+                },
+            ],
+        },
     ] {
-        for (ts, value) in samples {
-            store.push_float("t", lbls.clone(), ts, value);
-        }
+        push_float_series(&mut store, [fixture]);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 

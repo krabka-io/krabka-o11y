@@ -20,12 +20,12 @@ pub(crate) fn block_builder_config(
     wal_security: Option<ClientSecurity>,
     catch_up: ReadinessGate,
 ) -> BlockBuilderConfig {
-    let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
+    let client_policy = client_resource_policy(cli);
     let mut config = BlockBuilderConfig::new(cli.bootstrap.clone(), store)
         .with_metrics(metrics)
         .with_catch_up(catch_up);
-    config.client_dispatch_queue_capacity = client_dispatch_queue_capacity;
-    config.client_frame_max = client_frame_max;
+    config.client_dispatch_queue_capacity = client_policy.client_dispatch_queue_capacity;
+    config.client_frame_max = client_policy.client_frame_max;
     config.wal_topic.clone_from(&cli.wal_topic);
     config.group_id.clone_from(&cli.block_builder_group_id);
     config.index_key = index_key;

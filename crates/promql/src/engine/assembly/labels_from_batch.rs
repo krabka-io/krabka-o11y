@@ -19,7 +19,10 @@ pub(super) fn labels_from_batch_columns(
     is_value_column: impl Fn(&str) -> bool,
 ) -> Labels {
     let mut labels = Labels::new();
-    for (index, field) in batch.schema().fields().iter().enumerate() {
+    let schema = batch.schema();
+    let fields = schema.fields();
+    for index in 0..fields.len() {
+        let field = &fields[index];
         if is_value_column(field.name()) {
             continue;
         }

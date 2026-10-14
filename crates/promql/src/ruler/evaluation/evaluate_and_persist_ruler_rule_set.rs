@@ -1,21 +1,47 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupStateRecord,
-    RulerStateSink, TenantId,
+    RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupRef,
+    RulerGroupStateRecord, RulerSinks, RulerStateSink, TenantId,
     evaluate_and_persist_ruler_rule_group::evaluate_and_persist_ruler_rule_group_with_report,
 };
+
+pub type RulerRuleSet = BTreeMap<String, BTreeMap<String, serde_yaml::Value>>;
+
+pub struct RulerRuleSetEvaluationRequest<'a, S: MetricStore, W, A, R> {
+    pub engine: &'a PromqlEngine<S>,
+    pub sinks: RulerSinks<'a, W, A, R>,
+    pub alert_state: &'a mut RulerAlertState,
+    pub tenant: &'a TenantId,
+    pub rules: &'a RulerRuleSet,
+    pub eval_time_ms: i64,
+}
+
+impl<'a, S: MetricStore, W, A, R> RulerRuleSetEvaluationRequest<'a, S, W, A, R> {
+    pub fn new(
+        engine: &'a PromqlEngine<S>,
+        sinks: RulerSinks<'a, W, A, R>,
+        alert_state: &'a mut RulerAlertState,
+        tenant: &'a TenantId,
+        rules: &'a RulerRuleSet,
+        eval_time_ms: i64,
+    ) -> Self {
+        Self {
+            engine,
+            sinks,
+            alert_state,
+            tenant,
+            rules,
+            eval_time_ms,
+        }
+    }
+}
 
 /// Evaluates all ruler rule groups for one tenant and persists compactable group state.
 ///
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
 pub async fn evaluate_and_persist_ruler_rule_set<S, W, A, R>(
-    engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
-    alert_state: &mut RulerAlertState,
-    tenant: &TenantId,
-    rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
-    eval_time_ms: i64,
+    request: RulerRuleSetEvaluationRequest<'_, S, W, A, R>,
 ) -> Result<RulerGroupEvaluation, PromqlError>
 where
     S: MetricStore,
@@ -23,16 +49,9 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    Ok(evaluate_and_persist_ruler_rule_set_with_report(
-        engine,
-        sinks,
-        alert_state,
-        tenant,
-        rules,
-        eval_time_ms,
-    )
-    .await?
-    .evaluation)
+    Ok(evaluate_and_persist_ruler_rule_set_with_report(request)
+        .await?
+        .evaluation)
 }
 
 /// Evaluates every rule independently and returns detailed health information.
@@ -43,12 +62,7 @@ where
 /// # Errors
 /// Returns an error when metric input is malformed or a limit is exceeded.
 pub async fn evaluate_and_persist_ruler_rule_set_with_report<S, W, A, R>(
-    engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
-    alert_state: &mut RulerAlertState,
-    tenant: &TenantId,
-    rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
-    eval_time_ms: i64,
+    request: RulerRuleSetEvaluationRequest<'_, S, W, A, R>,
 ) -> Result<RulerEvaluationReport, PromqlError>
 where
     S: MetricStore,
@@ -56,16 +70,34 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let (wal_sink, alert_sink, state_sink) = sinks;
+    let RulerRuleSetEvaluationRequest {
+        engine,
+        sinks,
+        alert_state,
+        tenant,
+        rules,
+        eval_time_ms,
+    } = request;
+    let wal_sink = sinks.wal;
+    let alert_sink = sinks.alertmanager;
+    let state_sink = sinks.ruler_state;
     let mut total = RulerEvaluationReport::default();
-    for (namespace, namespace_groups) in rules {
-        for (group_name, group) in namespace_groups {
+    for namespace_entry in rules {
+        let namespace = namespace_entry.0;
+        let namespace_groups = namespace_entry.1;
+        for group_entry in namespace_groups {
+            let group_name = group_entry.0;
+            let group = group_entry.1;
             let group_report = evaluate_and_persist_ruler_rule_group_with_report(
                 engine,
-                (wal_sink, alert_sink, state_sink),
+                RulerSinks::new(wal_sink, alert_sink, state_sink),
                 alert_state,
                 tenant,
-                (namespace, group_name, group),
+                RulerGroupRef {
+                    namespace,
+                    group_name,
+                    group,
+                },
                 eval_time_ms,
             )
             .await;

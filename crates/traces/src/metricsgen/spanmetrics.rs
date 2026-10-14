@@ -8,7 +8,7 @@ use num_traits::ToPrimitive as _;
 use crate::metricsgen::{
     config::{HostInfoConfig, MetricsGenConfig, SpanMetricsConfig},
     contract::{SpanKind, SpanRecord, StatusCode},
-    series::{Exemplar, Series, SeriesSample, sorted_labels},
+    series::{Exemplar, HistogramBucket, HistogramSummary, Series, SeriesSample, sorted_labels},
     servicegraph::RecordOutcome,
 };
 
@@ -19,6 +19,7 @@ mod tests {
 
     use super::*;
     use crate::metricsgen::{
+        SpanAttribute,
         config::MetricsGenConfig,
         contract::{SpanKind, SpanRecord, StatusCode},
         series::{Series, SeriesSample},
@@ -43,17 +44,20 @@ mod tests {
         check!(
             labels
                 == vec![
-                    ("service".to_string(), "checkout".to_string()),
-                    ("span_kind".to_string(), "SPAN_KIND_CLIENT".to_string()),
-                    ("span_name".to_string(), "GET /orders".to_string()),
-                    ("status_code".to_string(), "STATUS_CODE_ERROR".to_string()),
+                    krabka_traceql::MetricLabel::new("service", "checkout".to_string()),
+                    krabka_traceql::MetricLabel::new("span_kind", "SPAN_KIND_CLIENT".to_string()),
+                    krabka_traceql::MetricLabel::new("span_name", "GET /orders".to_string()),
+                    krabka_traceql::MetricLabel::new(
+                        "status_code",
+                        "STATUS_CODE_ERROR".to_string()
+                    ),
                 ],
             "got {labels:?}"
         );
 
         // Sorted by name, not by the order they are written in the source: the
         // kind comes before the name alphabetically though it is built after.
-        let names: Vec<&str> = labels.iter().map(|(name, _)| name.as_str()).collect();
+        let names: Vec<&str> = labels.iter().map(|label| label.key.as_str()).collect();
         let mut sorted = names.clone();
         sorted.sort_unstable();
         check!(names == sorted, "labels are not sorted: {names:?}");
@@ -62,19 +66,19 @@ mod tests {
         // constant.
         let other = span("api", "POST /x", SpanKind::Server, StatusCode::Ok, 5, 1);
         let other = super::dimension_labels(&other);
-        check!(other[1].1 == "SPAN_KIND_SERVER");
-        check!(other[3].1 == "STATUS_CODE_OK");
-        check!(other[0].1 == "api", "the service follows its span");
-        check!(other[2].1 == "POST /x");
+        check!(other[1].value == "SPAN_KIND_SERVER");
+        check!(other[3].value == "STATUS_CODE_OK");
+        check!(other[0].value == "api", "the service follows its span");
+        check!(other[2].value == "POST /x");
     }
 
     #[test]
     fn custom_dimension_names_are_normalized_and_deduplicated() {
         let mut record = ok_span("api", "GET /x");
         record.attributes = vec![
-            ("http.route".into(), "/orders".into()),
-            ("http-route".into(), "/ignored".into()),
-            ("env".into(), "prod".into()),
+            SpanAttribute::new("http.route", "/orders"),
+            SpanAttribute::new("http-route", "/ignored"),
+            SpanAttribute::new("env", "prod"),
         ];
         let config = SpanMetricsConfig {
             dimensions: vec!["service".into(), "http.route".into(), "http-route".into()],
@@ -95,19 +99,26 @@ mod tests {
 
         let labels = dim_key(&record, false, &config);
 
-        check!(labels.iter().filter(|(name, _)| name == "service").count() == 1);
-        check!(labels.iter().find(|(name, _)| name == "service").unwrap().1 == "api");
+        check!(labels.iter().filter(|label| label.key == "service").count() == 1);
         check!(
             labels
                 .iter()
-                .filter(|(name, _)| name == "http_route")
+                .find(|label| label.key == "service")
+                .unwrap()
+                .value
+                == "api"
+        );
+        check!(
+            labels
+                .iter()
+                .filter(|label| label.key == "http_route")
                 .count()
                 == 1
         );
         check!(
             labels
                 .iter()
-                .any(|(name, value)| name == "deployment_env" && value == "prod")
+                .any(|label| label.key == "deployment_env" && label.value == "prod")
         );
     }
 
@@ -158,7 +169,7 @@ mod tests {
                 s.name == name
                     && s.labels
                         .iter()
-                        .any(|(k, v)| k == "span_name" && v == span_name)
+                        .any(|label| label.key == "span_name" && label.value == span_name)
             })
             .unwrap_or_else(|| panic!("no {name} for {span_name}"))
     }
@@ -188,8 +199,8 @@ mod tests {
             .filter_map(|s| {
                 s.labels
                     .iter()
-                    .find(|(k, _)| k == "span_name")
-                    .map(|(_, v)| v.clone())
+                    .find(|label| label.key == "span_name")
+                    .map(|label| label.value.clone())
             })
             .collect();
         names.sort();
@@ -293,7 +304,11 @@ mod tests {
             .collect();
         check!(target_info.len() == 1);
         check!(
-            target_info[0].labels == vec![("service".to_string(), "api".to_string())],
+            target_info[0].labels
+                == vec![krabka_traceql::MetricLabel::new(
+                    "service",
+                    "api".to_string()
+                )],
             "only the admitted service is tracked"
         );
         let counter = out
@@ -313,8 +328,8 @@ mod tests {
         let mut reg = SpanMetricsRegistry::new(&cfg);
         let mut span = ok_span("api", "GET /x");
         span.resource_attributes = vec![
-            ("deployment.environment".into(), "prod".into()),
-            ("service.instance.id".into(), "api-1".into()),
+            SpanAttribute::new("deployment.environment", "prod"),
+            SpanAttribute::new("service.instance.id", "api-1"),
         ];
         reg.record_span(&span);
 
@@ -326,9 +341,9 @@ mod tests {
         check!(
             target.labels
                 == vec![
-                    ("deployment_environment".into(), "prod".into()),
-                    ("service".into(), "api".into()),
-                    ("service_instance_id".into(), "api-1".into()),
+                    krabka_traceql::MetricLabel::new("deployment_environment", "prod"),
+                    krabka_traceql::MetricLabel::new("service", "api"),
+                    krabka_traceql::MetricLabel::new("service_instance_id", "api-1"),
                 ]
         );
     }
@@ -351,7 +366,7 @@ mod tests {
             .insert("size".into(), false);
         let mut reg = SpanMetricsRegistry::new(&cfg);
         let mut span = ok_span("api", "GET /x");
-        span.resource_attributes = vec![("host.id".into(), "node-1".into())];
+        span.resource_attributes = vec![SpanAttribute::new("host.id", "node-1")];
         reg.record_span(&span);
 
         let out = reg.drain(1_000);
@@ -359,8 +374,8 @@ mod tests {
             series.name == "custom_host_info"
                 && series.labels
                     == [
-                        ("grafana_host_id".into(), "node-1".into()),
-                        ("host_source".into(), "host.id".into()),
+                        krabka_traceql::MetricLabel::new("grafana_host_id", "node-1"),
+                        krabka_traceql::MetricLabel::new("host_source", "host.id"),
                     ]
         }));
         check!(
@@ -388,7 +403,7 @@ mod tests {
         let mut reg = SpanMetricsRegistry::new(&cfg);
         for host in ["node-1", "node-2"] {
             let mut span = ok_span("api", "GET /x");
-            span.resource_attributes = vec![("host.id".into(), host.into())];
+            span.resource_attributes = vec![SpanAttribute::new("host.id", host)];
             reg.record_span(&span);
         }
 
@@ -480,10 +495,10 @@ mod tests {
         assert2::assert!(
             calls_x.labels
                 == vec![
-                    ("service".to_string(), "api".to_string()),
-                    ("span_kind".to_string(), "SPAN_KIND_SERVER".to_string()),
-                    ("span_name".to_string(), "GET /x".to_string()),
-                    ("status_code".to_string(), "STATUS_CODE_OK".to_string()),
+                    krabka_traceql::MetricLabel::new("service", "api".to_string()),
+                    krabka_traceql::MetricLabel::new("span_kind", "SPAN_KIND_SERVER".to_string()),
+                    krabka_traceql::MetricLabel::new("span_name", "GET /x".to_string()),
+                    krabka_traceql::MetricLabel::new("status_code", "STATUS_CODE_OK".to_string()),
                 ]
         );
 
@@ -509,7 +524,7 @@ mod tests {
             calls
                 .labels
                 .iter()
-                .any(|(k, v)| k == "status_message" && v == "deadline exceeded")
+                .any(|label| label.key == "status_message" && label.value == "deadline exceeded")
         );
     }
 
@@ -544,14 +559,14 @@ mod tests {
                 assert2::assert!((*sum - 0.012).abs() < 1e-6);
                 let le_8ms = buckets
                     .iter()
-                    .find(|(le, _)| (*le - 0.008).abs() < 1e-9)
+                    .find(|bucket| (bucket.upper_bound - 0.008).abs() < 1e-9)
                     .unwrap();
-                assert2::assert!((le_8ms.1 - 2.0).abs() < 1e-9);
+                assert2::assert!((le_8ms.cumulative_count - 2.0).abs() < 1e-9);
                 let le_4ms = buckets
                     .iter()
-                    .find(|(le, _)| (*le - 0.004).abs() < 1e-9)
+                    .find(|bucket| (bucket.upper_bound - 0.004).abs() < 1e-9)
                     .unwrap();
-                assert2::assert!(le_4ms.1.abs() < 1e-9);
+                assert2::assert!(le_4ms.cumulative_count.abs() < 1e-9);
             }
             other => panic!("expected ClassicHistogram, got {other:?}"),
         }
@@ -594,10 +609,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn exemplar_carries_trace_id_when_enabled() {
+    #[yare::parameterized(
+        enabled = { 2, 1 },
+        disabled_by_default = { 0, 0 },
+    )]
+    fn exemplar_policy_controls_emission(max_exemplars_per_series: usize, expected: usize) {
         let cfg = MetricsGenConfig {
-            max_exemplars_per_series: 2,
+            max_exemplars_per_series,
             ..MetricsGenConfig::default()
         };
         let mut reg = SpanMetricsRegistry::new(&cfg);
@@ -611,30 +629,14 @@ mod tests {
         ));
         let out = reg.drain(1_000);
         let lat = find(&out, "traces_spanmetrics_latency", "GET /x");
-        assert2::assert!(lat.exemplars.len() == 1);
-        let ex = &lat.exemplars[0];
-        assert2::assert!(
-            ex.labels
-                .iter()
-                .any(|(k, v)| { k == "trace_id" && v == "abababababababababababababababab" })
-        );
-        assert2::assert!((ex.value - 0.005).abs() < 1e-6);
-    }
-
-    #[test]
-    fn exemplars_off_by_default() {
-        let mut reg = SpanMetricsRegistry::new(&MetricsGenConfig::default());
-        reg.record_span(&span(
-            "api",
-            "GET /x",
-            SpanKind::Server,
-            StatusCode::Ok,
-            5_000_000,
-            1,
-        ));
-        let out = reg.drain(1_000);
-        let lat = find(&out, "traces_spanmetrics_latency", "GET /x");
-        assert2::assert!(lat.exemplars.is_empty());
+        assert2::assert!(lat.exemplars.len() == expected);
+        if expected > 0 {
+            let ex = &lat.exemplars[0];
+            assert2::assert!(ex.labels.iter().any(|label| {
+                label.key == "trace_id" && label.value == "abababababababababababababababab"
+            }));
+            assert2::assert!((ex.value - 0.005).abs() < 1e-6);
+        }
     }
 
     #[test]

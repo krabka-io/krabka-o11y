@@ -1,10 +1,12 @@
 pub(crate) fn parse_decimal_seconds_timestamp(value: &str) -> Option<i64> {
-    let (negative, unsigned) = match value.as_bytes().first() {
-        Some(b'-') => (true, &value[1..]),
-        Some(b'+') => (false, &value[1..]),
-        _ => (false, value),
-    };
-    let (seconds, fraction) = unsigned.split_once('.')?;
+    let negative = value.starts_with('-');
+    let unsigned = value
+        .strip_prefix('-')
+        .or_else(|| value.strip_prefix('+'))
+        .unwrap_or(value);
+    let separator = unsigned.find('.')?;
+    let seconds = &unsigned[..separator];
+    let fraction = &unsigned[separator + 1..];
     if seconds.is_empty() && fraction.is_empty() {
         return None;
     }

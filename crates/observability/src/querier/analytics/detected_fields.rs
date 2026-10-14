@@ -4,12 +4,11 @@ use crate::{
     BTreeMap, DetectedFieldStats, DetectedFieldType, DetectedFieldsParams, HeaderMap,
     HttpQueryError, Labels, QuerierState, QueryError, RequestSecurity, StreamPlan,
     TenantErrorSurface, TimeRange, Value, VolumeAggregateBy, VolumeKind, VolumeParams,
-    WalLogRecord, active_log_delete_filters, add_loki_query_stats_for_stream_plan,
-    authorized_tenant, clamp_query_lookback, current_unix_time_ns, is_deleted_log_entry, json,
-    loki_success_value, parse_query, parse_volume_params, plan_stream_query,
-    read_planned_log_block, unix_ns_string_to_loki_seconds, validate_loki_volume_query_range_limit,
-    validate_query_bytes_limit, validate_query_range_limit, validate_query_series_limit,
-    validate_query_string_bytes_limit,
+    WalLogRecord, add_loki_query_stats_for_stream_plan, clamp_query_lookback, current_unix_time_ns,
+    is_deleted_log_entry, json, loki_success_value, parse_query, parse_volume_params,
+    plan_stream_query, read_planned_log_block, unix_ns_string_to_loki_seconds,
+    validate_loki_volume_query_range_limit, validate_query_bytes_limit, validate_query_range_limit,
+    validate_query_series_limit, validate_query_string_bytes_limit,
 };
 
 mod add_detected_field;
@@ -47,6 +46,8 @@ pub(crate) use detect_json_fields::detect_json_fields;
 pub(crate) use detect_logfmt_fields::detect_logfmt_fields;
 pub(crate) use detect_structured_metadata_fields::detect_structured_metadata_fields;
 pub(crate) use detected_bytes_unit::detected_bytes_unit;
+#[cfg(test)]
+pub(crate) use detected_duration_unit::DetectedDurationUnit;
 pub(crate) use detected_duration_unit::detected_duration_unit;
 pub(crate) use detected_json_value_string::detected_json_value_string;
 pub(crate) use execute_index_volume_query::execute_index_volume_query;
@@ -58,8 +59,12 @@ pub(crate) use is_prometheus_duration_literal::is_prometheus_duration_literal;
 pub(crate) use limit_volume_series::limit_volume_series;
 pub(crate) use loki_volume_matrix_response::loki_volume_matrix_response;
 pub(crate) use loki_volume_vector_response::loki_volume_vector_response;
+#[cfg(test)]
+pub(crate) use parse_logfmt_pairs::ParsedLogfmtPair;
 pub(crate) use parse_logfmt_pairs::parse_logfmt_pairs;
-pub(crate) use plan_analytics_query::{AnalyticsQuery, VolumeRangeLimit, plan_analytics_query};
+pub(crate) use plan_analytics_query::{
+    AnalyticsQuery, PlannedAnalyticsQuery, VolumeRangeLimit, plan_analytics_query,
+};
 pub(crate) use plan_hot_tail_records::plan_hot_tail_records;
 pub(crate) use project_labels::project_labels;
 pub(crate) use reads_planned_row::{PlannedRead, RangeEnd, reads_planned_row};

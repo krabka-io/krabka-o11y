@@ -10,9 +10,9 @@ pub(crate) async fn cardinality_label_values_inner<S: MetricStore>(
 ) -> Response {
     authorized_cardinality_series(state, auth, &params)
         .await
-        .map(|(_, series)| {
+        .map(|selected| {
             Json(cardinality_label_values_response(
-                &series,
+                &selected.series,
                 &params.label_names,
                 params.limit,
             ))

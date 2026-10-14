@@ -28,7 +28,8 @@ pub fn validate(series: &[DecodedSeries], limits: &Limits) -> Result<(), WireErr
                 limits.max_samples_per_series
             )));
         }
-        for (name, _) in series.labels.iter() {
+        for pair in &series.labels {
+            let name = pair.name;
             if !is_valid_label_name(name) {
                 return Err(WireError::Invalid(format!("invalid label name `{name}`")));
             }

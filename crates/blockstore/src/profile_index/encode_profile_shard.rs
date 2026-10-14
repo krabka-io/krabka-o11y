@@ -19,7 +19,8 @@ pub(crate) fn encode_profile_shard(tenant: &str, shard: &ProfileShard) -> Vec<u8
     out.extend_from_slice(&inner);
 
     push_len(&mut out, shard.partitions.len());
-    for (object_key, partitions) in &shard.partitions {
+    for object_key in shard.partitions.keys() {
+        let partitions = &shard.partitions[object_key];
         push_len(&mut out, object_key.len());
         out.extend_from_slice(object_key.as_bytes());
         push_len(&mut out, partitions.len());

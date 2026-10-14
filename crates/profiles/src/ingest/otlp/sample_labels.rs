@@ -8,9 +8,9 @@ pub(crate) fn sample_labels(
 ) -> Result<Vec<krabka_pprof::proto::Label>, ProfilesError> {
     let mut labels = Vec::new();
     for attr_idx in &sample.attribute_indices {
-        let (name, value) = attribute_label(*attr_idx, dict)?;
-        let key = intern_profile_string(strings, &name);
-        let value_idx = intern_profile_string(strings, &value);
+        let label = attribute_label(*attr_idx, dict)?;
+        let key = intern_profile_string(strings, &label.name);
+        let value_idx = intern_profile_string(strings, &label.value);
         labels.push(krabka_pprof::proto::Label {
             key,
             str: value_idx,

@@ -24,16 +24,23 @@ pub(crate) fn add_span_attr_columns(
 ) -> Result<Vec<RecordBatch>, TraceqlError> {
     let mut wanted: Vec<ProjectedAttrColumn<Option<DataType>>> = Vec::new();
     for matcher in projection_matchers {
-        let (lookup_key, resource) = match matcher.scope {
-            MatchScope::Span | MatchScope::Both => (matcher.key.clone(), ResourceAttrs::Exclude),
-            MatchScope::Resource => (
-                format!("{RESOURCE_ATTR_PREFIX}{}", matcher.key),
-                ResourceAttrs::Include,
-            ),
-            MatchScope::Instrumentation => (
-                format!("{INSTRUMENTATION_ATTR_PREFIX}{}", matcher.key),
-                ResourceAttrs::Exclude,
-            ),
+        struct Lookup {
+            key: String,
+            resource: ResourceAttrs,
+        }
+        let lookup = match matcher.scope {
+            MatchScope::Span | MatchScope::Both => Lookup {
+                key: matcher.key.clone(),
+                resource: ResourceAttrs::Exclude,
+            },
+            MatchScope::Resource => Lookup {
+                key: format!("{RESOURCE_ATTR_PREFIX}{}", matcher.key),
+                resource: ResourceAttrs::Include,
+            },
+            MatchScope::Instrumentation => Lookup {
+                key: format!("{INSTRUMENTATION_ATTR_PREFIX}{}", matcher.key),
+                resource: ResourceAttrs::Exclude,
+            },
             _ => continue,
         };
         if matcher.key == "service.name" {
@@ -67,8 +74,8 @@ pub(crate) fn add_span_attr_columns(
         } else {
             wanted.push(ProjectedAttrColumn {
                 column_name,
-                lookup_key,
-                resource,
+                lookup_key: lookup.key,
+                resource: lookup.resource,
                 data_type: hint,
             });
         }
@@ -90,11 +97,11 @@ pub(crate) fn add_span_attr_columns(
             let mut inferred = None;
             for batch in &batches {
                 for row in 0..batch.num_rows() {
-                    if let Some((_, value)) = attr_values_with_resource(batch, row, resource)?
+                    if let Some(attribute) = attr_values_with_resource(batch, row, resource)?
                         .into_iter()
-                        .find(|(key, _)| key == &lookup_key)
+                        .find(|attribute| attribute.key == lookup_key)
                     {
-                        let next = value.arrow_data_type();
+                        let next = attribute.value.arrow_data_type();
                         inferred = Some(match inferred.as_ref() {
                             Some(previous) => merge_projection_types(&column_name, previous, next)?,
                             None => next,
@@ -155,6 +162,15 @@ mod tests {
         AttrValue as SpanAttrValue, KeyValue, Span, SpanKind, StatusCode, batch::span_batch,
     };
 
+    struct SpanAttributeInput {
+        key: &'static str,
+        value: SpanAttrValue,
+    }
+
+    fn span_attribute(key: &'static str, value: SpanAttrValue) -> SpanAttributeInput {
+        SpanAttributeInput { key, value }
+    }
+
     fn projection(key: &str, value: MatchValue) -> SpanMatcher {
         SpanMatcher {
             scope: MatchScope::Span,
@@ -165,32 +181,45 @@ mod tests {
         }
     }
 
-    fn packed(attrs: Vec<Vec<(&str, SpanAttrValue)>>) -> RecordBatch {
+    fn typed_projection() -> Vec<SpanMatcher> {
+        vec![
+            projection("attempts", MatchValue::Int(3)),
+            projection("load", MatchValue::Float(3.0)),
+            projection("ready", MatchValue::Bool(true)),
+            projection("db.system", MatchValue::Str("postgresql".into())),
+        ]
+    }
+
+    fn packed(attrs: Vec<Vec<SpanAttributeInput>>) -> RecordBatch {
         let spans = attrs
             .into_iter()
             .enumerate()
-            .map(|(index, attrs)| Span {
-                trace_id: [1; 16],
-                span_id: [u8::try_from(index + 1).unwrap(); 8],
-                parent_span_id: None,
-                name: "operation".into(),
-                kind: SpanKind::Server,
-                start_ns: 1_000,
-                duration_ns: 500,
-                status: StatusCode::Ok,
-                status_message: String::new(),
-                resource_attrs: Vec::new(),
-                span_attrs: attrs
-                    .into_iter()
-                    .map(|(key, value)| KeyValue {
-                        key: key.into(),
-                        value,
-                    })
-                    .collect(),
-                events: Vec::new(),
-                links: Vec::new(),
-                instrumentation_scope: String::new(),
-                instrumentation_version: String::new(),
+            .map(|entry| {
+                let index = entry.0;
+                let attrs = entry.1;
+                Span {
+                    trace_id: [1; 16],
+                    span_id: [u8::try_from(index + 1).unwrap(); 8],
+                    parent_span_id: None,
+                    name: "operation".into(),
+                    kind: SpanKind::Server,
+                    start_ns: 1_000,
+                    duration_ns: 500,
+                    status: StatusCode::Ok,
+                    status_message: String::new(),
+                    resource_attrs: Vec::new(),
+                    span_attrs: attrs
+                        .into_iter()
+                        .map(|attribute| KeyValue {
+                            key: attribute.key.into(),
+                            value: attribute.value,
+                        })
+                        .collect(),
+                    events: Vec::new(),
+                    links: Vec::new(),
+                    instrumentation_scope: String::new(),
+                    instrumentation_version: String::new(),
+                }
             })
             .collect::<Vec<_>>();
         span_batch(&spans).expect("packed span fixture")
@@ -207,30 +236,21 @@ mod tests {
     async fn packed_typed_values_support_comparisons_without_string_coercion() {
         let batch = packed(vec![
             vec![
-                ("attempts", SpanAttrValue::Int(3)),
-                ("load", SpanAttrValue::Double(3.5)),
-                ("ready", SpanAttrValue::Bool(true)),
-                ("db.system", SpanAttrValue::Str("postgresql".into())),
+                span_attribute("attempts", SpanAttrValue::Int(3)),
+                span_attribute("load", SpanAttrValue::Double(3.5)),
+                span_attribute("ready", SpanAttrValue::Bool(true)),
+                span_attribute("db.system", SpanAttrValue::Str("postgresql".into())),
             ],
             vec![
-                ("attempts", SpanAttrValue::Int(7)),
-                ("load", SpanAttrValue::Double(7.5)),
-                ("ready", SpanAttrValue::Bool(true)),
-                ("db.system", SpanAttrValue::Str("postgresql".into())),
+                span_attribute("attempts", SpanAttrValue::Int(7)),
+                span_attribute("load", SpanAttrValue::Double(7.5)),
+                span_attribute("ready", SpanAttrValue::Bool(true)),
+                span_attribute("db.system", SpanAttrValue::Str("postgresql".into())),
             ],
             vec![],
-            vec![("attempts", SpanAttrValue::Str("7".into()))],
+            vec![span_attribute("attempts", SpanAttrValue::Str("7".into()))],
         ]);
-        let batches = add_span_attr_columns(
-            vec![batch],
-            &[
-                projection("attempts", MatchValue::Int(3)),
-                projection("load", MatchValue::Float(3.0)),
-                projection("ready", MatchValue::Bool(true)),
-                projection("db.system", MatchValue::Str("postgresql".into())),
-            ],
-        )
-        .unwrap();
+        let batches = add_span_attr_columns(vec![batch], &typed_projection()).unwrap();
         let attempts = batches[0]
             .column_by_name("attr.attempts")
             .unwrap()
@@ -263,8 +283,14 @@ mod tests {
     async fn unhinted_numeric_projections_infer_one_type_across_batches() {
         let batches = add_span_attr_columns(
             vec![
-                packed(vec![vec![("attempts", SpanAttrValue::Int(3))]]),
-                packed(vec![vec![], vec![("attempts", SpanAttrValue::Int(7))]]),
+                packed(vec![vec![span_attribute(
+                    "attempts",
+                    SpanAttrValue::Int(3),
+                )]]),
+                packed(vec![
+                    vec![],
+                    vec![span_attribute("attempts", SpanAttrValue::Int(7))],
+                ]),
             ],
             &[projection("attempts", MatchValue::Nil)],
         )
@@ -294,12 +320,12 @@ mod tests {
             for reverse in [false, true] {
                 let mut packed_batches = vec![
                     packed(vec![
-                        vec![("cost", SpanAttrValue::Int(1))],
-                        vec![("cost", SpanAttrValue::Int(2))],
+                        vec![span_attribute("cost", SpanAttrValue::Int(1))],
+                        vec![span_attribute("cost", SpanAttrValue::Int(2))],
                     ]),
                     packed(vec![
-                        vec![("cost", SpanAttrValue::Double(1.25))],
-                        vec![("cost", SpanAttrValue::Double(1.75))],
+                        vec![span_attribute("cost", SpanAttrValue::Double(1.25))],
+                        vec![span_attribute("cost", SpanAttrValue::Double(1.75))],
                     ]),
                     packed(vec![vec![]]),
                 ];
@@ -345,26 +371,37 @@ mod tests {
 
     #[tokio::test]
     async fn empty_store_exposes_requested_typed_columns() {
-        let batches = add_span_attr_columns(
-            Vec::new(),
-            &[
-                projection("attempts", MatchValue::Int(3)),
-                projection("load", MatchValue::Float(3.0)),
-                projection("ready", MatchValue::Bool(true)),
-                projection("db.system", MatchValue::Str("postgresql".into())),
-            ],
-        )
-        .unwrap();
+        let batches = add_span_attr_columns(Vec::new(), &typed_projection()).unwrap();
         assert!(batches.len() == 1);
         assert!(batches[0].num_rows() == 0);
-        for (name, expected) in [
-            ("attr.attempts", DataType::Int64),
-            ("attr.load", DataType::Float64),
-            ("attr.ready", DataType::Boolean),
-            ("attr.db.system", DataType::Utf8),
+        struct ExpectedField {
+            name: &'static str,
+            data_type: DataType,
+        }
+        for expected in [
+            ExpectedField {
+                name: "attr.attempts",
+                data_type: DataType::Int64,
+            },
+            ExpectedField {
+                name: "attr.load",
+                data_type: DataType::Float64,
+            },
+            ExpectedField {
+                name: "attr.ready",
+                data_type: DataType::Boolean,
+            },
+            ExpectedField {
+                name: "attr.db.system",
+                data_type: DataType::Utf8,
+            },
         ] {
-            let field = batches[0].schema().field_with_name(name).unwrap().clone();
-            assert!(field.data_type() == &expected);
+            let field = batches[0]
+                .schema()
+                .field_with_name(expected.name)
+                .unwrap()
+                .clone();
+            assert!(field.data_type() == &expected.data_type);
             assert!(field.is_nullable());
         }
         let result = sql(
@@ -380,8 +417,8 @@ mod tests {
     #[test]
     fn incompatible_unhinted_values_and_literal_hints_are_explicit_errors() {
         let batch = packed(vec![
-            vec![("attempts", SpanAttrValue::Int(7))],
-            vec![("attempts", SpanAttrValue::Str("7".into()))],
+            vec![span_attribute("attempts", SpanAttrValue::Int(7))],
+            vec![span_attribute("attempts", SpanAttrValue::Str("7".into()))],
         ]);
         let mixed = add_span_attr_columns(vec![batch], &[projection("attempts", MatchValue::Nil)])
             .unwrap_err();

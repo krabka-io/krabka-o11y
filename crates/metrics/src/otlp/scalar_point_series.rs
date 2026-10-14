@@ -55,7 +55,7 @@ impl ScalarPointSeries<'_> {
                 name,
                 self.resource_attributes,
                 self.attributes,
-                extra_label.map(|label| (label.label_name, label.label_value)),
+                extra_label,
                 self.strategy,
             ),
             samples: vec![DecodedSample::with_start_timestamp(
@@ -68,5 +68,28 @@ impl ScalarPointSeries<'_> {
             exemplars,
             metadata: self.metadata.clone(),
         }
+    }
+}
+
+pub(crate) fn append_count_and_sum(
+    out: &mut Vec<DecodedSeries>,
+    point: &ScalarPointSeries<'_>,
+    name: &str,
+    count: f64,
+    sum: Option<f64>,
+) {
+    out.push(point.series(ScalarSeries {
+        name: &format!("{name}_count"),
+        extra_label: None,
+        sample_value: count,
+        exemplars: Vec::new(),
+    }));
+    if let Some(sum) = sum {
+        out.push(point.series(ScalarSeries {
+            name: &format!("{name}_sum"),
+            extra_label: None,
+            sample_value: sum,
+            exemplars: Vec::new(),
+        }));
     }
 }

@@ -1,7 +1,13 @@
 use super::{
     BTreeMap, Offset, PartitionIndex, WalHead, WalHeadConsumerRecord, WalHeadPartitionOffset,
-    WalHeadReplayError, WalHeadReplayResult, WalRecord, wal_record_max_timestamp_ms,
+    WalHeadReplayError, WalHeadReplayResult, WalRecord, WalRecordAt, wal_record_max_timestamp_ms,
 };
+
+struct DecodedWalRecord {
+    record: WalRecord,
+    partition: PartitionIndex,
+    offset: Offset,
+}
 
 #[tracing::instrument(
     level = "debug",
@@ -45,7 +51,11 @@ pub fn replay_wal_head_records(
         }
         // partition/offset are now the shared krabka_ids types promql also uses,
         // so they pass straight through with no conversion at the seam.
-        decoded.push((wal_record, record.partition, record.offset));
+        decoded.push(DecodedWalRecord {
+            record: wal_record,
+            partition: record.partition,
+            offset: record.offset,
+        });
         committed_offsets
             .entry(record.partition)
             .and_modify(|offset| *offset = (*offset).max(record.offset + 1))
@@ -55,7 +65,7 @@ pub fn replay_wal_head_records(
     head.apply_wal_records_at(
         decoded
             .iter()
-            .map(|(record, partition, offset)| (record, *partition, *offset)),
+            .map(|record| WalRecordAt::new(&record.record, record.partition, record.offset)),
     );
     if let Some(timestamp_ms) = newest_timestamp_ms {
         let _ = head.prune(timestamp_ms);
@@ -66,7 +76,10 @@ pub fn replay_wal_head_records(
         replayed_records,
         committed_offsets: committed_offsets
             .into_iter()
-            .map(|(partition, offset)| WalHeadPartitionOffset { partition, offset })
+            .map(|entry| WalHeadPartitionOffset {
+                partition: entry.0,
+                offset: entry.1,
+            })
             .collect(),
     })
 }

@@ -1,6 +1,7 @@
 use super::{
-    AllowAllQueryAuthorizer, Arc, CancellationToken, RoleQueryAuthorizer, RoleReadiness,
-    ServiceConfig, ServiceDependencies, SwappableQueryAuthorizer, spawn_query_authorizer_connect,
+    AllowAllQueryAuthorizer, Arc, BackgroundTask, CancellationToken, RoleQueryAuthorizer,
+    RoleReadiness, ServiceConfig, ServiceDependencies, SwappableQueryAuthorizer,
+    spawn_query_authorizer_connect,
 };
 
 /// The query authorizer a querier or a block builder checks tenants against,
@@ -32,7 +33,9 @@ pub(crate) fn query_authorizer_for_role(
             task: None,
         };
     };
-    let (swappable, slot) = SwappableQueryAuthorizer::new();
+    let parts = SwappableQueryAuthorizer::unavailable();
+    let swappable = parts.authorizer;
+    let slot = parts.slot;
     let task = spawn_query_authorizer_connect(
         connect,
         slot,
@@ -42,6 +45,6 @@ pub(crate) fn query_authorizer_for_role(
     );
     RoleQueryAuthorizer {
         authorizer: Arc::new(swappable),
-        task: Some(("query authorization", task)),
+        task: Some(BackgroundTask::new("query authorization", task)),
     }
 }

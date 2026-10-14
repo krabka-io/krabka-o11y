@@ -1,5 +1,5 @@
 use super::{
-    BlockBuildOptions, BlockMeta, BlockWriter, SpanRecord, TraceIndex, TracesError,
+    BlockBuildOptions, BlockMeta, BlockWriter, OffsetRange, SpanRecord, TraceIndex, TracesError,
     build_blocks_with_options,
 };
 
@@ -14,7 +14,7 @@ pub async fn build_blocks_with_prefix(
     tenant: &str,
     partition: i32,
     records: &[SpanRecord],
-    offset_range: (i64, i64),
+    offset_range: OffsetRange,
 ) -> Result<Vec<BlockMeta>, TracesError> {
     build_blocks_with_options(
         writer,

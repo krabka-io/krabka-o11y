@@ -1,5 +1,10 @@
 use super::{Labels, insert_json_parser_error, insert_raw_parsed_field, sanitize_json_field_name};
-use crate::parse_json_object_entries;
+use crate::{JsonObjectEntry, parse_json_object_entries};
+
+struct PendingEntries<'a> {
+    prefix_len: usize,
+    entries: std::vec::IntoIter<JsonObjectEntry<'a>>,
+}
 
 pub(crate) fn parse_json_fields(line: &str, fields: &mut Labels) {
     let Ok(object) = parse_json_object_entries(line) else {
@@ -9,24 +14,30 @@ pub(crate) fn parse_json_fields(line: &str, fields: &mut Labels) {
     flatten_entries(object, fields);
 }
 
-fn flatten_entries(entries: Vec<(String, &serde_json::value::RawValue)>, fields: &mut Labels) {
+fn flatten_entries(entries: Vec<JsonObjectEntry<'_>>, fields: &mut Labels) {
     // RawValue accepts deeper objects than serde's DOM recursion limit. Keep
     // ObjectEach's depth-first order on the heap, with one rollback prefix.
-    let mut pending = vec![(0, entries.into_iter())];
+    let mut pending = vec![PendingEntries {
+        prefix_len: 0,
+        entries: entries.into_iter(),
+    }];
     let mut name = String::new();
-    while let Some((prefix_len, entries)) = pending.last_mut() {
-        name.truncate(*prefix_len);
-        let Some((key, value)) = entries.next() else {
+    while let Some(frame) = pending.last_mut() {
+        name.truncate(frame.prefix_len);
+        let Some(entry) = frame.entries.next() else {
             pending.pop();
             continue;
         };
-        name.push_str(&sanitize_json_field_name(&key));
-        let value = value.get();
+        name.push_str(&sanitize_json_field_name(&entry.key));
+        let value = entry.value.get();
         match value.as_bytes().first() {
             Some(b'{') => {
                 if let Ok(entries) = parse_json_object_entries(value) {
                     name.push('_');
-                    pending.push((name.len(), entries.into_iter()));
+                    pending.push(PendingEntries {
+                        prefix_len: name.len(),
+                        entries: entries.into_iter(),
+                    });
                 }
             }
             Some(b'[' | b'n') => {}

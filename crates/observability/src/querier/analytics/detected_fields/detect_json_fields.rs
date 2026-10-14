@@ -7,7 +7,9 @@ pub(crate) fn detect_json_fields(fields: &mut BTreeMap<String, DetectedFieldStat
     let Ok(Value::Object(object)) = serde_json::from_str::<Value>(line) else {
         return;
     };
-    for (name, json_value) in object {
+    for entry in object {
+        let name = entry.0;
+        let json_value = entry.1;
         let Some(value) = detected_json_value_string(&json_value) else {
             continue;
         };

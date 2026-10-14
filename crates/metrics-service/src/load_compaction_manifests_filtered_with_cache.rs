@@ -2,8 +2,8 @@ use futures::StreamExt;
 use krabka_metrics::CompactionIndexListing;
 
 use super::{
-    Arc, BTreeMap, BTreeSet, CompactionIndexManifest, MetricsServiceError, ObjectStore,
-    ObjectStoreExt, Path, TryStreamExt,
+    Arc, BTreeMap, BTreeSet, CompactionIndexManifest, ManifestTimeRange, MetricsServiceError,
+    ObjectStore, ObjectStoreExt, Path, TryStreamExt,
 };
 
 #[tracing::instrument(
@@ -16,11 +16,11 @@ use super::{
 pub(crate) async fn load_compaction_manifests_filtered_with_cache(
     store: Arc<dyn ObjectStore>,
     manifest_prefix: &str,
-    time_range: Option<(i64, i64)>,
+    time_range: Option<ManifestTimeRange>,
     cache: Option<&tokio::sync::RwLock<BTreeMap<String, Arc<CompactionIndexManifest>>>>,
 ) -> Result<Vec<Arc<CompactionIndexManifest>>, MetricsServiceError> {
     let prefix = (!manifest_prefix.is_empty()).then(|| Path::from(manifest_prefix));
-    let mut retired_missing: Option<(String, object_store::Error)> = None;
+    let mut retired_missing: Option<RetiredManifest> = None;
     let mut retries = 2;
     loop {
         let mut objects = store.list(prefix.as_ref()).try_collect::<Vec<_>>().await?;
@@ -31,14 +31,14 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
             .iter()
             .map(|object| object.location.as_ref().to_string())
             .collect::<BTreeSet<_>>();
-        if let Some((key, error)) = retired_missing.take()
+        if let Some(RetiredManifest { key, error }) = retired_missing.take()
             && live_keys.contains(&key)
         {
             // Still listed: this is missing current data, not retirement.
             return Err(error.into());
         }
         let mut manifests = Vec::new();
-        let mut fetched = Vec::new();
+        let mut fetched = BTreeMap::new();
         // Keep listing order and retirement retries while overlapping bounded I/O.
         let mut loads = futures::stream::iter(objects)
             .map(|object| {
@@ -54,11 +54,20 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
                     } else {
                         None
                     };
-                    (object, cached, bytes)
+                    ManifestLoad {
+                        object,
+                        cached,
+                        bytes,
+                    }
                 }
             })
             .buffered(4);
-        while let Some((object, cached, bytes)) = loads.next().await {
+        while let Some(ManifestLoad {
+            object,
+            cached,
+            bytes,
+        }) = loads.next().await
+        {
             let key = object.location.as_ref();
             let manifest = if let Some(manifest) = cached {
                 manifest
@@ -66,19 +75,22 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
                 let bytes = match bytes.expect("uncached manifest was read") {
                     Ok(bytes) => bytes,
                     Err(error @ object_store::Error::NotFound { .. }) if retries > 0 => {
-                        retired_missing = Some((key.to_string(), error));
+                        retired_missing = Some(RetiredManifest {
+                            key: key.to_string(),
+                            error,
+                        });
                         break;
                     }
                     Err(error) => return Err(error.into()),
                 };
                 let manifest = Arc::new(CompactionIndexManifest::decode(&bytes)?);
-                fetched.push((key.to_string(), Arc::clone(&manifest)));
+                fetched.insert(key.to_string(), Arc::clone(&manifest));
                 manifest
             };
             // Metadata has no event timestamp, so its zero bounds are timeless.
             if manifest.kind == krabka_metrics::MetricBlockKind::Metadata
-                || time_range.is_none_or(|(start_ms, end_ms)| {
-                    manifest.max_ts >= start_ms && manifest.min_ts <= end_ms
+                || time_range.is_none_or(|range| {
+                    manifest.max_ts >= range.start_ms && manifest.min_ts <= range.end_ms
                 })
             {
                 manifests.push(manifest);
@@ -97,4 +109,15 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
         tracing::Span::current().record("manifests", manifests.len());
         return Ok(manifests);
     }
+}
+
+struct RetiredManifest {
+    key: String,
+    error: object_store::Error,
+}
+
+struct ManifestLoad {
+    object: object_store::ObjectMeta,
+    cached: Option<Arc<CompactionIndexManifest>>,
+    bytes: Option<Result<bytes::Bytes, object_store::Error>>,
 }

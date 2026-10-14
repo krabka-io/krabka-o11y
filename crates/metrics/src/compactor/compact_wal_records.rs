@@ -11,15 +11,7 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
         let fingerprint = record.series_fingerprint();
         let rows = tenants
             .entry(record.tenant.clone())
-            .or_insert_with(|| TenantCompactionRows {
-                tenant: record.tenant.clone(),
-                series_labels: BTreeMap::new(),
-                float_rows: Vec::new(),
-                histogram_rows: Vec::new(),
-                exemplar_rows: Vec::new(),
-                metadata_rows: Vec::new(),
-                clock_rows: Vec::new(),
-            });
+            .or_insert_with(|| TenantCompactionRows::empty(record.tenant.as_str()));
         rows.series_labels
             .entry(fingerprint)
             .or_insert_with(|| record.labels());
@@ -76,26 +68,17 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
             .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
         rows.histogram_rows
             .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
-        rows.exemplar_rows
-            .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
-        rows.clock_rows
-            .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
-        rows.metadata_rows.sort_by(|left, right| {
-            (
-                left.fingerprint,
-                left.metric_family_name.as_str(),
-                left.metric_type.as_str(),
-                left.help.as_str(),
-                left.unit.as_str(),
-            )
-                .cmp(&(
-                    right.fingerprint,
-                    right.metric_family_name.as_str(),
-                    right.metric_type.as_str(),
-                    right.help.as_str(),
-                    right.unit.as_str(),
-                ))
+        rows.exemplar_rows.sort_by(|left, right| {
+            left.fingerprint
+                .cmp(&right.fingerprint)
+                .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
         });
+        rows.clock_rows.sort_by(|left, right| {
+            left.fingerprint
+                .cmp(&right.fingerprint)
+                .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
+        });
+        rows.metadata_rows.sort();
     }
     out
 }

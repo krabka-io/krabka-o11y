@@ -11,12 +11,12 @@ pub(crate) fn ingest_quota_bytes(records: &[WalLogRecord]) -> ByteSize {
                     + record
                         .labels
                         .iter()
-                        .map(|(name, value)| name.len() + value.len())
+                        .map(|entry| entry.0.len() + entry.1.len())
                         .sum::<usize>()
                     + record
                         .structured_metadata
                         .iter()
-                        .map(|(name, value)| name.len() + value.len())
+                        .map(|entry| entry.0.len() + entry.1.len())
                         .sum::<usize>()
             })
             .sum(),

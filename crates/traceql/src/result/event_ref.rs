@@ -1,4 +1,4 @@
-use super::{AttrValue, Time};
+use super::{Attribute, Time};
 
 /// One span event attached to a returned span.
 #[derive(Clone, Debug, PartialEq)]
@@ -6,5 +6,5 @@ pub struct EventRef {
     /// How long after the span started the event fired.
     pub time_since_start: Time,
     pub name: String,
-    pub attributes: Vec<(String, AttrValue)>,
+    pub attributes: Vec<Attribute>,
 }

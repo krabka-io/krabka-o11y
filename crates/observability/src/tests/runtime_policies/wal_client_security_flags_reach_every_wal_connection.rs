@@ -2,16 +2,29 @@ use krabka_client_core::{ClientSecurity, SaslCredentials};
 use krabka_security::ListenerProtocol;
 
 use super::*;
+use crate::tests::prelude::WalDependenciesRequest;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PlainCredentials {
+    protocol: ListenerProtocol,
+    username: String,
+    password: String,
+}
+
+struct SecurityCase<'a> {
+    config: &'a ServiceConfig,
+    expected: Option<PlainCredentials>,
+}
 
 // The SASL user name and password that a policy carries, or `None`.
-fn plain_credentials_for_test(
-    security: Option<&ClientSecurity>,
-) -> Option<(ListenerProtocol, String, String)> {
+fn plain_credentials_for_test(security: Option<&ClientSecurity>) -> Option<PlainCredentials> {
     let security = security?;
     match security.sasl.as_ref()? {
-        SaslCredentials::Plain { username, password } => {
-            Some((security.protocol, username.clone(), password.clone()))
-        }
+        SaslCredentials::Plain { username, password } => Some(PlainCredentials {
+            protocol: security.protocol,
+            username: username.clone(),
+            password: password.clone(),
+        }),
         _ => None,
     }
 }
@@ -40,23 +53,34 @@ pub(crate) fn wal_client_security_flags_reach_every_wal_connection() {
     .expect("the secured flags parse");
     let plain = ServiceConfig::try_parse_from(base).expect("the plain flags parse");
     let policy = ClientResourcePolicy::default();
-    let expected = Some((
-        ListenerProtocol::SaslPlaintext,
-        "krabka-logs".to_string(),
-        "wal-secret".to_string(),
-    ));
+    let expected = Some(PlainCredentials {
+        protocol: ListenerProtocol::SaslPlaintext,
+        username: "krabka-logs".to_string(),
+        password: "wal-secret".to_string(),
+    });
 
-    for (config, expected) in [(&secured, expected), (&plain, None)] {
+    for case in [
+        SecurityCase {
+            config: &secured,
+            expected,
+        },
+        SecurityCase {
+            config: &plain,
+            expected: None,
+        },
+    ] {
+        let config = case.config;
+        let expected = case.expected;
         let security = config.wal_client_security.load().expect("the flags load");
         let options = admin_connection_options(policy, security.as_ref());
-        let dependencies = with_querier_dependencies(
-            ServiceDependencies::default(),
+        let dependencies = with_querier_dependencies(WalDependenciesRequest {
+            dependencies: ServiceDependencies::default(),
             config,
-            "group".to_string(),
-            policy,
-            security.as_ref(),
-            crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
-        )
+            group_id: "group".to_string(),
+            client_resource_policy: policy,
+            security: security.as_ref(),
+            metrics: crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
+        })
         .expect("the querier dependencies build");
         let authorizer = dependencies
             .deferred_query_authorizer_connect

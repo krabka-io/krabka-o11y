@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct HistogramAggregateExpectation {
+    query: &'static str,
+    count: f64,
+    sum: f64,
+    average: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn instant_sum_and_avg_aggregations_combine_compatible_native_histograms() {
     let mut left = native_histogram(4.0, 10.0);
@@ -17,14 +25,24 @@ pub(crate) async fn instant_sum_and_avg_aggregations_combine_compatible_native_h
     let store = instance_histogram_store(InstanceHistograms { a: left, b: right });
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    for (query, expected_count, expected_sum, expected_avg) in [
-        ("sum by (job) (request_duration_seconds)", 10.0, 30.0, 3.0),
-        ("avg by (job) (request_duration_seconds)", 5.0, 15.0, 3.0),
+    for expected in [
+        HistogramAggregateExpectation::builder()
+            .query("sum by (job) (request_duration_seconds)")
+            .count(10.0)
+            .sum(30.0)
+            .average(3.0)
+            .build(),
+        HistogramAggregateExpectation::builder()
+            .query("avg by (job) (request_duration_seconds)")
+            .count(5.0)
+            .sum(15.0)
+            .average(3.0)
+            .build(),
     ] {
         let count = engine
             .query_instant(
                 &tenant_id("tenant-a"),
-                &format!("histogram_count({query})"),
+                &format!("histogram_count({})", expected.query),
                 10_000,
             )
             .await
@@ -32,7 +50,7 @@ pub(crate) async fn instant_sum_and_avg_aggregations_combine_compatible_native_h
         let sum = engine
             .query_instant(
                 &tenant_id("tenant-a"),
-                &format!("histogram_sum({query})"),
+                &format!("histogram_sum({})", expected.query),
                 10_000,
             )
             .await
@@ -40,14 +58,14 @@ pub(crate) async fn instant_sum_and_avg_aggregations_combine_compatible_native_h
         let avg = engine
             .query_instant(
                 &tenant_id("tenant-a"),
-                &format!("histogram_avg({query})"),
+                &format!("histogram_avg({})", expected.query),
                 10_000,
             )
             .await
             .unwrap();
 
-        assert_single_float_sample(&count, "api", expected_count, query);
-        assert_single_float_sample(&sum, "api", expected_sum, query);
-        assert_single_float_sample(&avg, "api", expected_avg, query);
+        assert_single_float_sample(&count, "api", expected.count, expected.query);
+        assert_single_float_sample(&sum, "api", expected.sum, expected.query);
+        assert_single_float_sample(&avg, "api", expected.average, expected.query);
     }
 }

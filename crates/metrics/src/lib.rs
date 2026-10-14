@@ -5,10 +5,38 @@
 //! append, and compactor block and index writes. Query execution lives in
 //! `krabka-promql`.
 
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
+/// Adds the registry-backed constructors shared by metric service bundles.
+#[macro_export]
+macro_rules! impl_service_metrics_registry_constructors {
+    ($shared_registry:ty, $role:ty, $register_bundle:path, $register_role:path) => {
+        /// Builds a fresh registry, registers every metric, and returns the bundle.
+        #[must_use]
+        pub fn new() -> Self {
+            $register_bundle(Self::register)
+        }
+
+        /// Registers this role's instruments in the process registry.
+        pub async fn for_role(shared: $shared_registry, role: $role) -> Self {
+            $register_role(shared, role, Self::register).await
+        }
+    };
+}
+
+fn append_optional_i64(builder: &mut arrow::array::Int64Builder, value: Option<i64>) {
+    if let Some(value) = value {
+        builder.append_value(value);
+    } else {
+        builder.append_null();
+    }
+}
+
 mod arrow_codec;
+mod least_recently_touched;
 mod metric_labels;
 mod metric_string;
-pub use metric_labels::{IntoMetricLabelsArc, MetricLabels};
+pub use metric_labels::{IntoMetricLabelsArc, MetricLabelPair, MetricLabelRef, MetricLabels};
 pub use metric_string::MetricString;
 
 pub mod compactor;
@@ -17,6 +45,7 @@ pub mod histogram;
 pub mod limits;
 pub mod metadata;
 pub mod metrics;
+mod numeric_sample_columns;
 pub mod otlp;
 pub mod request_tenant;
 pub mod runtime;
@@ -56,8 +85,8 @@ pub use compactor::{
     write_compacted_tenant_partition_blocks,
 };
 pub use histogram::{
-    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, compact_spanned_histogram_counts,
-    decode_native_histograms, encode_native_histograms,
+    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, SpannedHistogramCounts,
+    compact_spanned_histogram_counts, decode_native_histograms, encode_native_histograms,
 };
 pub use limits::{
     DEFAULT_MAX_RATE_BUCKETS, IngestEnforcer, LimitError, Limits, OverridesError,
@@ -81,7 +110,7 @@ pub use schema::{
     clock_reading_decl, clock_reading_schema, exemplar_schema, float_sample_schema,
     metadata_schema, native_histogram_schema,
 };
-pub use symbols::{SymbolError, SymbolTable};
+pub use symbols::{ResolvedLabel, SymbolError, SymbolTable};
 pub use tsdb_import::{
     DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportBinding, TsdbImportError,
     TsdbImportLimits, TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportStats,

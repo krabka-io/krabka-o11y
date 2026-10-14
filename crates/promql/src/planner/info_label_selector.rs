@@ -4,9 +4,24 @@ use promql_parser::parser::Expr;
 
 use super::skip_literal_or_comment;
 
+pub(crate) struct NormalizedInfoSelectors {
+    pub query: String,
+    pub marker: String,
+}
+
+pub(crate) struct NormalizedStartTimestamp {
+    pub query: String,
+    pub start_functions: std::collections::VecDeque<bool>,
+}
+
+struct InfoCall {
+    is_info: bool,
+    argument_count: usize,
+}
+
 // An info() data-label selector can match empty strings. The dependency applies
 // ordinary vector-selector validation before it sees the enclosing function.
-pub(crate) fn normalize_info_selectors(query: &str) -> (String, String) {
+pub(crate) fn normalize_info_selectors(query: &str) -> NormalizedInfoSelectors {
     let mut marker = "__krabka_info_data_selector__".to_string();
     while query.contains(&marker) {
         marker.push('_');
@@ -18,7 +33,7 @@ pub(crate) fn normalize_info_selectors(query: &str) -> (String, String) {
     let mut quote = None;
     let mut braces = 0_u32;
     let mut brackets = 0_u32;
-    let mut calls = Vec::<(bool, usize)>::new();
+    let mut calls = Vec::<InfoCall>::new();
     while index < bytes.len() {
         if skip_literal_or_comment(&mut quote, bytes, &mut index) {
             continue;
@@ -30,7 +45,10 @@ pub(crate) fn normalize_info_selectors(query: &str) -> (String, String) {
                 .rsplit(|character: char| !character.is_ascii_alphanumeric() && character != '_')
                 .next()
                 .unwrap_or("");
-            calls.push((name == "info", 0));
+            calls.push(InfoCall {
+                is_info: name == "info",
+                argument_count: 0,
+            });
         } else if byte == b')' {
             calls.pop();
         } else if byte == b'[' {
@@ -38,7 +56,12 @@ pub(crate) fn normalize_info_selectors(query: &str) -> (String, String) {
         } else if byte == b']' {
             brackets = brackets.saturating_sub(1);
         } else if byte == b'{' {
-            if braces == 0 && brackets == 0 && calls.last() == Some(&(true, 1)) {
+            if braces == 0
+                && brackets == 0
+                && calls
+                    .last()
+                    .is_some_and(|call| call.is_info && call.argument_count == 1)
+            {
                 output.push_str(&query[start..=index]);
                 write!(output, "{marker}=\"true\",").expect("writing into String succeeds");
                 start = index + 1;
@@ -49,14 +72,17 @@ pub(crate) fn normalize_info_selectors(query: &str) -> (String, String) {
         } else if byte == b','
             && braces == 0
             && brackets == 0
-            && let Some((_, arguments)) = calls.last_mut()
+            && let Some(call) = calls.last_mut()
         {
-            *arguments += 1;
+            call.argument_count += 1;
         }
         index += 1;
     }
     output.push_str(&query[start..]);
-    (output, marker)
+    NormalizedInfoSelectors {
+        query: output,
+        marker,
+    }
 }
 
 pub(crate) fn restore_info_selectors(
@@ -103,7 +129,7 @@ pub(crate) fn restore_info_selectors(
     }
 }
 
-pub(crate) fn normalize_start_timestamp(query: &str) -> (String, std::collections::VecDeque<bool>) {
+pub(crate) fn normalize_start_timestamp(query: &str) -> NormalizedStartTimestamp {
     let bytes = query.as_bytes();
     let mut output = String::new();
     let mut starts = std::collections::VecDeque::new();
@@ -150,7 +176,10 @@ pub(crate) fn normalize_start_timestamp(query: &str) -> (String, std::collection
         }
     }
     output.push_str(&query[copied..]);
-    (output, starts)
+    NormalizedStartTimestamp {
+        query: output,
+        start_functions: starts,
+    }
 }
 
 #[cfg(test)]
@@ -165,7 +194,9 @@ mod tests {
             r#"info(sum by(job,instance)(up), {data=~".*"})"#,
             "info(up, {})",
         ] {
-            let (query, marker) = normalize_info_selectors(query);
+            let normalized = normalize_info_selectors(query);
+            let query = normalized.query;
+            let marker = normalized.marker;
             let mut expr = parse(&query).unwrap();
             restore_info_selectors(&mut expr, &marker, &mut std::collections::VecDeque::new());
             let Expr::Call(call) = expr else {
@@ -182,8 +213,8 @@ mod tests {
                     .all(|matcher| matcher.name != marker)
             );
         }
-        let (query, _) = normalize_info_selectors(r#"info({x=~".*"}, {data="info"})"#);
-        assert2::assert!(parse(&query).is_err());
+        let normalized = normalize_info_selectors(r#"info({x=~".*"}, {data="info"})"#);
+        assert2::assert!(parse(&normalized.query).is_err());
     }
 }
 

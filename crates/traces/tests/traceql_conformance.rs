@@ -1,6 +1,11 @@
 use std::path::Path;
 
-const KNOWN_UNSUPPORTED: &[(&str, &str)] = &[];
+struct UnsupportedCase {
+    suffix: &'static str,
+    reason: &'static str,
+}
+
+const KNOWN_UNSUPPORTED: &[UnsupportedCase] = &[];
 
 fn traceql_case_file(path: &Path) -> datatest_stable::Result<()> {
     let report = krabka_traceql::testkit::run_and_print_corpus_file(path)?;
@@ -10,9 +15,9 @@ fn traceql_case_file(path: &Path) -> datatest_stable::Result<()> {
         .iter()
         .filter(|case| {
             !case.passed
-                && !KNOWN_UNSUPPORTED
-                    .iter()
-                    .any(|(name, _)| case.name.ends_with(name))
+                && !KNOWN_UNSUPPORTED.iter().any(|unsupported| {
+                    case.name.ends_with(unsupported.suffix) && !unsupported.reason.is_empty()
+                })
         })
         .collect::<Vec<_>>();
 

@@ -1,5 +1,8 @@
 use super::*;
-use crate::test_support::{ExpectedCardinality, assert_tenant_cardinality};
+use crate::test_support::{
+    ExpectedCardinality, ExpectedLabelNameCount, ExpectedLabelValueCount,
+    assert_tenant_cardinality, up_instance_labels,
+};
 
 #[tokio::test]
 pub(crate) async fn index_metadata_methods_report_float_and_histogram_series() {
@@ -8,12 +11,12 @@ pub(crate) async fn index_metadata_methods_report_float_and_histogram_series() {
     let mut floats = BlockStore::new(object_store.clone(), base.clone());
     let mut histograms = BlockStore::new(object_store, base);
 
-    let up = labels(&[("__name__", "up"), ("instance", "a"), ("job", "api")]);
+    let up = up_instance_labels("a");
     let latency = labels(&[
-        ("__name__", "http_request_duration_seconds"),
-        ("instance", "b"),
-        ("job", "api"),
-        ("le", "0.5"),
+        crate::test_support::TestLabelPair::new("__name__", "http_request_duration_seconds"),
+        crate::test_support::TestLabelPair::new("instance", "b"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+        crate::test_support::TestLabelPair::new("le", "0.5"),
     ]);
     floats
         .index_mut()
@@ -41,14 +44,55 @@ pub(crate) async fn index_metadata_methods_report_float_and_histogram_series() {
         &store,
         ExpectedCardinality {
             active_series: vec![up.into(), latency.into()],
-            label_name_counts: &[("__name__", 2), ("instance", 2), ("job", 2), ("le", 1)],
+            label_name_counts: &[
+                ExpectedLabelNameCount {
+                    name: "__name__",
+                    series_count: 2,
+                },
+                ExpectedLabelNameCount {
+                    name: "instance",
+                    series_count: 2,
+                },
+                ExpectedLabelNameCount {
+                    name: "job",
+                    series_count: 2,
+                },
+                ExpectedLabelNameCount {
+                    name: "le",
+                    series_count: 1,
+                },
+            ],
             label_value_counts: &[
-                ("job", "api", 2),
-                ("__name__", "http_request_duration_seconds", 1),
-                ("__name__", "up", 1),
-                ("instance", "a", 1),
-                ("instance", "b", 1),
-                ("le", "0.5", 1),
+                ExpectedLabelValueCount {
+                    name: "job",
+                    value: "api",
+                    series_count: 2,
+                },
+                ExpectedLabelValueCount {
+                    name: "__name__",
+                    value: "http_request_duration_seconds",
+                    series_count: 1,
+                },
+                ExpectedLabelValueCount {
+                    name: "__name__",
+                    value: "up",
+                    series_count: 1,
+                },
+                ExpectedLabelValueCount {
+                    name: "instance",
+                    value: "a",
+                    series_count: 1,
+                },
+                ExpectedLabelValueCount {
+                    name: "instance",
+                    value: "b",
+                    series_count: 1,
+                },
+                ExpectedLabelValueCount {
+                    name: "le",
+                    value: "0.5",
+                    series_count: 1,
+                },
             ],
         },
     )
@@ -66,28 +110,76 @@ pub(crate) async fn index_metadata_methods_report_float_and_histogram_series() {
                     max_time: 0,
                 },
                 series_count_by_metric_name: expected_stats(&[
-                    ("http_request_duration_seconds", 1),
-                    ("up", 1),
+                    ExpectedStat {
+                        name: "http_request_duration_seconds",
+                        value: 1
+                    },
+                    ExpectedStat {
+                        name: "up",
+                        value: 1
+                    },
                 ]),
                 label_value_count_by_label_name: expected_stats(&[
-                    ("__name__", 2),
-                    ("instance", 2),
-                    ("job", 1),
-                    ("le", 1),
+                    ExpectedStat {
+                        name: "__name__",
+                        value: 2
+                    },
+                    ExpectedStat {
+                        name: "instance",
+                        value: 2
+                    },
+                    ExpectedStat {
+                        name: "job",
+                        value: 1
+                    },
+                    ExpectedStat {
+                        name: "le",
+                        value: 1
+                    },
                 ]),
                 memory_in_bytes_by_label_name: expected_stats(&[
-                    ("__name__", 47),
-                    ("instance", 18),
-                    ("job", 12),
-                    ("le", 5),
+                    ExpectedStat {
+                        name: "__name__",
+                        value: 47
+                    },
+                    ExpectedStat {
+                        name: "instance",
+                        value: 18
+                    },
+                    ExpectedStat {
+                        name: "job",
+                        value: 12
+                    },
+                    ExpectedStat {
+                        name: "le",
+                        value: 5
+                    },
                 ]),
                 series_count_by_label_value_pair: expected_stats(&[
-                    ("job=api", 2),
-                    ("__name__=http_request_duration_seconds", 1),
-                    ("__name__=up", 1),
-                    ("instance=a", 1),
-                    ("instance=b", 1),
-                    ("le=0.5", 1),
+                    ExpectedStat {
+                        name: "job=api",
+                        value: 2
+                    },
+                    ExpectedStat {
+                        name: "__name__=http_request_duration_seconds",
+                        value: 1
+                    },
+                    ExpectedStat {
+                        name: "__name__=up",
+                        value: 1
+                    },
+                    ExpectedStat {
+                        name: "instance=a",
+                        value: 1
+                    },
+                    ExpectedStat {
+                        name: "instance=b",
+                        value: 1
+                    },
+                    ExpectedStat {
+                        name: "le=0.5",
+                        value: 1
+                    },
                 ]),
             }
     );

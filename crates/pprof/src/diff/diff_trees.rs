@@ -5,20 +5,21 @@ use super::{
 
 #[must_use]
 pub fn diff_trees(left: &Tree, right: &Tree, max_nodes: i64) -> FlameGraphDiff {
-    let (left_root, left_nodes) = left.snapshot();
-    let (right_root, right_nodes) = right.snapshot();
+    let left_snapshot = left.snapshot();
+    let right_snapshot = right.snapshot();
     let mut merged = Vec::new();
     let root = merge_node(
-        Some(left_root),
-        &left_nodes,
-        Some(right_root),
-        &right_nodes,
+        Some(left_snapshot.root),
+        &left_snapshot.nodes,
+        Some(right_snapshot.root),
+        &right_snapshot.nodes,
         ROOT_NAME,
         &mut merged,
     );
     let keep = keep_set(&merged, root, max_nodes);
     let mut names = vec![ROOT_NAME.to_string()];
-    let mut name_index = HashMap::from([(ROOT_NAME.to_string(), 0_i64)]);
+    let mut name_index = HashMap::new();
+    name_index.insert(ROOT_NAME.to_string(), 0_i64);
     let mut levels = Vec::new();
     let mut current = vec![Bar {
         node: Some(root),

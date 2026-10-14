@@ -145,11 +145,11 @@ fn common_ordering(groups: &[FileGroup]) -> Option<LexOrdering> {
     let mut common = files.next()?.ordering.clone()?;
     for file in files {
         let ordering = file.ordering.as_ref()?;
-        let prefix = common
-            .iter()
-            .zip(ordering.iter())
-            .take_while(|(left, right)| left == right)
-            .count();
+        let mut prefix = 0;
+        while prefix < common.len() && prefix < ordering.len() && common[prefix] == ordering[prefix]
+        {
+            prefix += 1;
+        }
         common = LexOrdering::new(common.iter().take(prefix).cloned())?;
     }
     Some(common)

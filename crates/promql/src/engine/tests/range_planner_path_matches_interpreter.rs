@@ -1,5 +1,54 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct RangeFixtureSample {
+    timestamp_ms: i64,
+    value: f64,
+}
+
+struct RangeFixtureSeries {
+    labels: Labels,
+    samples: Vec<RangeFixtureSample>,
+}
+
+fn range_labels(metric: &str, job: &str, group: &str) -> Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", metric),
+        crate::test_support::TestLabelPair::new("job", job),
+        crate::test_support::TestLabelPair::new("group", group),
+    ])
+}
+
+fn minute_samples(values: &[f64]) -> Vec<RangeFixtureSample> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(minute, &value)| {
+            RangeFixtureSample::builder()
+                .timestamp_ms(minute as i64 * 60_000)
+                .value(value)
+                .build()
+        })
+        .collect()
+}
+
+fn push_range_series(store: &mut InMemoryMetricStore, series: RangeFixtureSeries) {
+    for sample in series.samples {
+        store.push_float(
+            "t",
+            series.labels.clone(),
+            sample.timestamp_ms,
+            sample.value,
+        );
+    }
+}
+
+struct RangeQueryBounds {
+    start_ms: i64,
+    end_ms: i64,
+    step_ms: krabka_units::prelude::Time,
+}
+
 #[tokio::test]
 pub(crate) async fn range_planner_path_matches_interpreter() {
     use crate::DurationExprContext;
@@ -7,127 +56,131 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
     let mut store = InMemoryMetricStore::new();
     let stale_bits = stale_nan();
     // Two counters (for rate and sum-by-rate), grouped by `group`.
-    for (lbls, samples) in [
-        (
-            labels(&[
-                ("__name__", "http_requests_total"),
-                ("job", "api"),
-                ("group", "a"),
-            ]),
-            vec![
-                (0_i64, 0.0),
-                (60_000, 1.0),
-                (120_000, 3.0),
-                (180_000, 6.0),
-                (240_000, 10.0),
-                (300_000, 15.0),
-            ],
-        ),
-        (
-            labels(&[
-                ("__name__", "http_requests_total"),
-                ("job", "db"),
-                ("group", "a"),
-            ]),
-            vec![
-                (0, 0.0),
-                (60_000, 2.0),
-                (120_000, 4.0),
-                (180_000, 8.0),
-                (240_000, 16.0),
-                (300_000, 32.0),
-            ],
-        ),
-        (
+    for series in [
+        RangeFixtureSeries {
+            labels: range_labels("http_requests_total", "api", "a"),
+            samples: minute_samples(&[0.0, 1.0, 3.0, 6.0, 10.0, 15.0]),
+        },
+        RangeFixtureSeries {
+            labels: range_labels("http_requests_total", "db", "a"),
+            samples: minute_samples(&[0.0, 2.0, 4.0, 8.0, 16.0, 32.0]),
+        },
+        RangeFixtureSeries {
             // group b: a full history so `rate` has a value at every step
             // (no no-value NaN sentinel), keeping the operator aggregate
             // over this rate parity-exact in the forced comparison below.
-            labels(&[
-                ("__name__", "http_requests_total"),
-                ("job", "cache"),
-                ("group", "b"),
-            ]),
-            vec![
-                (0, 1.0),
-                (60_000, 5.0),
-                (120_000, 7.0),
-                (180_000, 9.0),
-                (240_000, 11.0),
-                (300_000, 20.0),
-            ],
-        ),
+            labels: range_labels("http_requests_total", "cache", "b"),
+            samples: minute_samples(&[1.0, 5.0, 7.0, 9.0, 11.0, 20.0]),
+        },
     ] {
-        for (ts, value) in samples {
-            store.push_float("t", lbls.clone(), ts, value);
-        }
+        push_range_series(&mut store, series);
     }
     // A second counter family with a single-sample (no-value rate) series, to
     // exercise the SPARSE aggregate-over-rate parity (group b's only member is
     // no-value, so it is excluded from the group on both paths).
-    for (lbls, samples) in [
-        (
-            labels(&[("__name__", "spotty_total"), ("job", "api"), ("group", "a")]),
-            vec![
-                (0_i64, 0.0),
-                (60_000, 1.0),
-                (120_000, 2.0),
-                (180_000, 3.0),
-                (240_000, 4.0),
-                (300_000, 5.0),
-            ],
-        ),
-        (
+    for series in [
+        RangeFixtureSeries {
+            labels: range_labels("spotty_total", "api", "a"),
+            samples: minute_samples(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]),
+        },
+        RangeFixtureSeries {
             // Only one in-window sample at each step's 2m window: rate has no
             // value -> the operator rate emits NULL (not a NaN sentinel), the
             // aggregate planner drops it before grouping, and group b collapses
             // to no row at those steps — matching the interpreter, which omits
             // the no-value series. This drives the SPARSE aggregate-over-rate
             // parity proof below.
-            labels(&[("__name__", "spotty_total"), ("job", "db"), ("group", "b")]),
-            vec![(180_000, 100.0)],
-        ),
+            labels: range_labels("spotty_total", "db", "b"),
+            samples: vec![
+                RangeFixtureSample::builder()
+                    .timestamp_ms(180_000)
+                    .value(100.0)
+                    .build(),
+            ],
+        },
     ] {
-        for (ts, value) in samples {
-            store.push_float("t", lbls.clone(), ts, value);
-        }
+        push_range_series(&mut store, series);
     }
     // A plain gauge for a bare-selector range and a binary op.
-    for (ts, value) in [
-        (0_i64, 2.0),
-        (60_000, 4.0),
-        (120_000, 8.0),
-        (180_000, 16.0),
-        (240_000, 32.0),
-        (300_000, 64.0),
+    for sample in [
+        RangeFixtureSample::builder()
+            .timestamp_ms(0)
+            .value(2.0)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(60_000)
+            .value(4.0)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(120_000)
+            .value(8.0)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(180_000)
+            .value(16.0)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(240_000)
+            .value(32.0)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(300_000)
+            .value(64.0)
+            .build(),
     ] {
         store.push_float(
             "t",
-            labels(&[("__name__", "gauge"), ("job", "api")]),
-            ts,
-            value,
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "gauge"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]),
+            sample.timestamp_ms,
+            sample.value,
         );
     }
     // A series whose mid-range latest in-window sample is a stale-NaN marker
     // (the series must vanish for the steps that select it) and whose later
     // sample is a genuine NaN (kept as a NaN value).
-    for (ts, value) in [
-        (0_i64, 1.0),
-        (60_000, stale_bits),
-        (120_000, 3.0),
-        (180_000, f64::NAN),
-        (240_000, 5.0),
+    for sample in [
+        RangeFixtureSample::builder()
+            .timestamp_ms(0)
+            .value(1.0)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(60_000)
+            .value(stale_bits)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(120_000)
+            .value(3.0)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(180_000)
+            .value(f64::NAN)
+            .build(),
+        RangeFixtureSample::builder()
+            .timestamp_ms(240_000)
+            .value(5.0)
+            .build(),
     ] {
         store.push_float(
             "t",
-            labels(&[("__name__", "spotty"), ("job", "api")]),
-            ts,
-            value,
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "spotty"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]),
+            sample.timestamp_ms,
+            sample.value,
         );
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    let (start, end, step) = (0_i64, 300_000_i64, millis(60_000));
+    let bounds = RangeQueryBounds {
+        start_ms: 0,
+        end_ms: 300_000,
+        step_ms: millis(60_000),
+    };
 
     // Queries the production gate routes through the per-step operator
     // planner. For these, the gate must accept them and the planner-routed
@@ -180,12 +233,18 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
     for query in planner_routed {
         assert2::assert!(range_query_routes_through_planner(
             query,
-            DurationExprContext::range(start, end, step)
+            DurationExprContext::range(bounds.start_ms, bounds.end_ms, bounds.step_ms)
         ));
         // The public range path now routes these through the planner (the
         // only evaluation engine); it must evaluate without falling back.
         let planner = engine
-            .query_range(&tenant_id("t"), query, start, end, step)
+            .query_range(
+                &tenant_id("t"),
+                query,
+                bounds.start_ms,
+                bounds.end_ms,
+                bounds.step_ms,
+            )
             .await
             .unwrap_or_else(|error| panic!("planner `{query}`: {error}"));
         assert2::assert!(matches!(planner, QueryResult::RangeMatrix(_)));
@@ -197,7 +256,7 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
     // planner). Assert the gate excludes it.
     assert2::assert!(!range_query_routes_through_planner(
         "http_requests_total[2m]",
-        DurationExprContext::range(start, end, step)
+        DurationExprContext::range(bounds.start_ms, bounds.end_ms, bounds.step_ms)
     ));
 
     // The headline fix, proven directly on the SPARSE aggregate-over-rate.
@@ -211,9 +270,9 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
         .eval_range_via_planner_forced(
             "t",
             "sum by(group)(rate(spotty_total[2m]))",
-            start,
-            end,
-            step,
+            bounds.start_ms,
+            bounds.end_ms,
+            bounds.step_ms,
         )
         .await
         .unwrap()
@@ -229,7 +288,13 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
     // Pin the stale-vs-genuine-NaN semantics the scalar-math `spotty` parity
     // relies on, via the forced planner path on `abs(spotty - 10)`.
     let QueryResult::RangeMatrix(series) = engine
-        .eval_range_via_planner_forced("t", "spotty", start, end, step)
+        .eval_range_via_planner_forced(
+            "t",
+            "spotty",
+            bounds.start_ms,
+            bounds.end_ms,
+            bounds.step_ms,
+        )
         .await
         .unwrap()
     else {
@@ -240,13 +305,13 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
     //   0 -> 1.0; 60k -> stale (DROPPED, no point); 120k -> 3.0;
     //   180k -> NaN (kept); 240k -> 5.0; 300k -> 5.0 (240k still in window).
     let points = &series[0].samples;
-    let times: Vec<i64> = points.iter().map(|(t, _)| *t).collect();
+    let times: Vec<i64> = points.iter().map(|sample| sample.timestamp_ms).collect();
     assert2::assert!(times == vec![0, 120_000, 180_000, 240_000, 300_000]);
     let nan_point = points
         .iter()
-        .find(|(t, _)| *t == 180_000)
+        .find(|sample| sample.timestamp_ms == 180_000)
         .expect("180k point");
-    let SampleValue::Float(nan_value) = nan_point.1 else {
+    let SampleValue::Float(nan_value) = nan_point.value else {
         panic!("expected float at 180k");
     };
     assert2::assert!(nan_value.is_nan());

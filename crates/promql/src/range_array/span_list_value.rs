@@ -3,7 +3,9 @@ use super::{
 };
 
 pub(crate) fn span_list_value(list: &ListArray, row: usize) -> Option<HistogramSpanView<'_>> {
-    let (start, end) = list_offsets(list, row)?;
+    let offsets = list_offsets(list, row)?;
+    let start = offsets.start;
+    let end = offsets.end;
     let values = list.values().as_any().downcast_ref::<StructArray>()?;
     let offsets = values
         .column(0)

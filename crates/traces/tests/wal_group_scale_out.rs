@@ -40,8 +40,14 @@ const DEADLINE: Duration = Duration::from_mins(1);
 struct Member {
     consumer: BlockBuilderConsumer,
     gate: ReadinessGate,
-    buffer: Vec<(i32, i64)>,
-    written: Vec<(i32, i64)>,
+    buffer: Vec<WalRecordPosition>,
+    written: Vec<WalRecordPosition>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct WalRecordPosition {
+    partition: i32,
+    offset: i64,
 }
 
 impl Member {
@@ -81,12 +87,12 @@ impl Member {
         let polled = self.consumer.poll(millis(100)).await.unwrap_or_default();
         let revoked = self.consumer.take_revoked_partitions();
         self.buffer
-            .retain(|(partition, _)| !revoked.contains(partition));
-        self.buffer.extend(
-            polled
-                .iter()
-                .map(|record| (record.partition, record.offset)),
-        );
+            .retain(|position| !revoked.contains(&position.partition));
+        self.buffer
+            .extend(polled.iter().map(|record| WalRecordPosition {
+                partition: record.partition,
+                offset: record.offset,
+            }));
         if flush == Flush::Commit && !self.buffer.is_empty() {
             assert!(let Ok(()) = self.consumer.commit_sync().await);
             self.written.append(&mut self.buffer);
@@ -115,7 +121,7 @@ struct Outcome {
     first_ready: bool,
     second_ready: bool,
     /// Every record that some member wrote, without duplicates.
-    written: BTreeSet<(i32, i64)>,
+    written: BTreeSet<WalRecordPosition>,
 }
 
 /// Starts one member, lets it read the whole WAL, then scales the group to
@@ -145,7 +151,9 @@ async fn scale_out(name: &str, buffer_at_join: BufferAtJoin) -> Outcome {
     // The second member joins on its own task, as a second pod does. The first
     // member keeps polling, and no poll of it is cancelled part way.
     let joining = tokio::spawn({
-        let (bootstrap, topic, name) = (proc.bootstrap.clone(), topic.clone(), name.to_owned());
+        let bootstrap = proc.bootstrap.clone();
+        let topic = topic.clone();
+        let name = name.to_owned();
         async move { Member::join(&bootstrap, &topic, &name).await }
     });
     let deadline = Instant::now() + DEADLINE;
@@ -183,20 +191,33 @@ fn expected() -> Outcome {
         first_ready: true,
         second_ready: true,
         written: (0..PARTITIONS)
-            .flat_map(|partition| (0..RECORDS_PER_PARTITION).map(move |offset| (partition, offset)))
+            .flat_map(|partition| {
+                (0..RECORDS_PER_PARTITION)
+                    .map(move |offset| WalRecordPosition { partition, offset })
+            })
             .collect(),
     }
 }
 
 #[tokio::test]
 async fn both_members_are_caught_up_and_every_record_is_written_after_a_scale_out() {
+    struct ScaleOutCase {
+        name: &'static str,
+        buffer_at_join: BufferAtJoin,
+    }
     let cases = [
-        ("flushed", BufferAtJoin::Flushed),
-        ("buffered", BufferAtJoin::Buffered),
+        ScaleOutCase {
+            name: "flushed",
+            buffer_at_join: BufferAtJoin::Flushed,
+        },
+        ScaleOutCase {
+            name: "buffered",
+            buffer_at_join: BufferAtJoin::Buffered,
+        },
     ];
-    for (name, buffer_at_join) in cases {
-        let outcome = Box::pin(scale_out(name, buffer_at_join)).await;
-        check!(outcome == expected(), "case {name}");
+    for case in cases {
+        let outcome = Box::pin(scale_out(case.name, case.buffer_at_join)).await;
+        check!(outcome == expected(), "case {}", case.name);
     }
 }
 

@@ -7,15 +7,7 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
         serde_json::json!({
             "data": {
                 "resultType": "streams",
-                "result": counts
-                    .iter()
-                    .map(|count| serde_json::json!({
-                        "stream": {"app": "a"},
-                        "values": (0..*count)
-                            .map(|i| serde_json::json!([i.to_string(), "line"]))
-                            .collect::<Vec<_>>(),
-                    }))
-                    .collect::<Vec<_>>(),
+                "result": crate::tests::prelude::loki_streams_with_counts(counts, "a"),
             }
         })
     };

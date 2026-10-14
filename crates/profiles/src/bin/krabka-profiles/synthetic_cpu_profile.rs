@@ -46,7 +46,14 @@ impl SyntheticCpuProfile {
             ],
             mapping: vec![proto::Mapping {
                 id: 1,
-                symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
+                symbolization: proto::MappingSymbolization::from_parts(
+                    proto::MappingSymbolizationParts {
+                        functions: true,
+                        filenames: false,
+                        line_numbers: false,
+                        inline_frames: false,
+                    },
+                ),
                 ..Default::default()
             }],
             location: vec![

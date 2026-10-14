@@ -53,7 +53,7 @@
 //! under `{:?}`. See [`WalClientSecurityArgs::load`].
 
 use std::{
-    fmt, fs, io,
+    fs, io,
     path::{Path, PathBuf},
 };
 

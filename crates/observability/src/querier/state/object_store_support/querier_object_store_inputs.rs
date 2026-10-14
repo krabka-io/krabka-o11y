@@ -2,11 +2,17 @@ use super::{
     ObjectPath, ObjectStore, ServiceConfig, ServiceConfigError, querier_object_store_prefix,
 };
 
+pub(crate) struct QuerierObjectStoreInputs<'a> {
+    pub(crate) store: &'a dyn ObjectStore,
+    pub(crate) tenant: &'a str,
+    pub(crate) prefix: ObjectPath,
+}
+
 pub(crate) fn querier_object_store_inputs<'a>(
     config: &'a ServiceConfig,
     object_store: Option<&'a dyn ObjectStore>,
     object_store_prefix: Option<&ObjectPath>,
-) -> Result<(&'a dyn ObjectStore, &'a str, ObjectPath), ServiceConfigError> {
+) -> Result<QuerierObjectStoreInputs<'a>, ServiceConfigError> {
     let store = object_store.ok_or(ServiceConfigError::MissingObjectStore)?;
     let tenant = config
         .tenant
@@ -20,5 +26,9 @@ pub(crate) fn querier_object_store_inputs<'a>(
         },
     )?;
 
-    Ok((store, tenant, prefix))
+    Ok(QuerierObjectStoreInputs {
+        store,
+        tenant,
+        prefix,
+    })
 }

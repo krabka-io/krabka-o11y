@@ -20,7 +20,7 @@ pub fn clock_wal_records(
             tenant: tenant.to_string(),
             labels: clock_identity_labels(reading)
                 .into_iter()
-                .map(|(name, value)| (name, value.into()))
+                .map(|pair| crate::MetricLabelPair::new(pair.name, pair.value.into()))
                 .collect(),
             payload: SamplePayload::ClockReading(Box::new(ClockReadingPayload {
                 reading: reading.clone(),

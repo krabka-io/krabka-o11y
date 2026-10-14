@@ -1,4 +1,4 @@
-use krabka_observability::persisted_format::validate_persisted_format;
+use krabka_observability::persisted_format::{PersistedHeader, validate_persisted_format};
 
 use super::{
     HaElectionConsumerCommit, HaElectionConsumerError, HaElectionConsumerPoll,
@@ -19,12 +19,10 @@ where
 {
     let records = consumer.poll(timeout).await?;
     for record in records.iter().filter(|record| record.topic == ha_topic) {
-        validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
-        )
+        validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
+            key: header.key.as_str(),
+            value: header.value.as_deref(),
+        }))
         .map_err(|error| HaElectionConsumerError::UnsupportedFormat(error.to_string()))?;
     }
     let replay_records = records

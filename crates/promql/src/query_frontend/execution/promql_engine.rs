@@ -15,18 +15,13 @@ impl<S: MetricStore> RangeQueryExecutor for PromqlEngine<S> {
             None => query.query.clone(),
         };
 
-        let (result, annotations) = self
-            .query_range_with_annotations(
-                tenant,
-                &query_text,
-                query.start_ms,
-                query.end_ms,
-                query.step,
-            )
-            .await?;
-        Ok(AnnotatedQueryResult {
-            result,
-            annotations,
-        })
+        self.query_range_with_annotations(
+            tenant,
+            &query_text,
+            query.start_ms,
+            query.end_ms,
+            query.step,
+        )
+        .await
     }
 }

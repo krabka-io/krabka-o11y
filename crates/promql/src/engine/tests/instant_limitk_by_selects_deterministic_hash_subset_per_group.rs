@@ -2,26 +2,57 @@
 use super::*;
 
 #[cfg(feature = "experimental-functions")]
+struct SeriesInput {
+    job: &'static str,
+    instance: &'static str,
+    value: f64,
+}
+
+#[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_limitk_by_selects_deterministic_hash_subset_per_group() {
     let mut store = InMemoryMetricStore::new();
-    for (job, instance, value) in [
-        ("api", "a", 1.0),
-        ("api", "b", 2.0),
-        ("api", "c", 3.0),
-        ("worker", "d", 4.0),
-        ("worker", "e", 5.0),
-        ("worker", "f", 6.0),
+    for series in [
+        SeriesInput {
+            job: "api",
+            instance: "a",
+            value: 1.0,
+        },
+        SeriesInput {
+            job: "api",
+            instance: "b",
+            value: 2.0,
+        },
+        SeriesInput {
+            job: "api",
+            instance: "c",
+            value: 3.0,
+        },
+        SeriesInput {
+            job: "worker",
+            instance: "d",
+            value: 4.0,
+        },
+        SeriesInput {
+            job: "worker",
+            instance: "e",
+            value: 5.0,
+        },
+        SeriesInput {
+            job: "worker",
+            instance: "f",
+            value: 6.0,
+        },
     ] {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "memory_bytes"),
-                ("job", job),
-                ("instance", instance),
+                crate::test_support::TestLabelPair::new("__name__", "memory_bytes"),
+                crate::test_support::TestLabelPair::new("job", series.job),
+                crate::test_support::TestLabelPair::new("instance", series.instance),
             ]),
             10_000,
-            value,
+            series.value,
         );
     }
 

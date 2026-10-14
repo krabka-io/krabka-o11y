@@ -1,6 +1,6 @@
 //! A populated in-memory span store, for `TraceQL` filtering.
 
-use krabka_traceql::{AttrValue, InMemorySpanStore, InputSpan};
+use krabka_traceql::{AttrValue, Attribute, InMemorySpanStore, InputSpan};
 use krabka_units::{Time, convert::TimeExt as _};
 
 use crate::{Seeded, index::TENANT};
@@ -55,12 +55,12 @@ pub fn span_store(traces: usize, spans_per_trace: usize) -> InMemorySpanStore {
                 instrumentation_name: String::new(),
                 instrumentation_version: String::new(),
                 attrs: vec![
-                    ("service.name".to_string(), AttrValue::Str(service)),
-                    (
+                    Attribute::new("service.name", AttrValue::Str(service)),
+                    Attribute::new(
                         "http.method".to_string(),
                         AttrValue::Str(METHODS[pick.next_below(METHODS.len())].to_string()),
                     ),
-                    (
+                    Attribute::new(
                         "http.status_code".to_string(),
                         AttrValue::Int(STATUSES[pick.next_below(STATUSES.len())]),
                     ),

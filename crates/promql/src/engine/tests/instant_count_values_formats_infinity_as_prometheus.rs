@@ -11,9 +11,9 @@ pub(crate) async fn instant_count_values_formats_infinity_as_prometheus() {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "ratio"),
-                ("job", "api"),
-                ("instance", &instance.to_string()),
+                crate::test_support::TestLabelPair::new("__name__", "ratio"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", &instance.to_string()),
             ]),
             10_000,
             f64::INFINITY,

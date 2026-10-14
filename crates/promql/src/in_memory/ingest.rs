@@ -9,13 +9,60 @@ use krabka_units::prelude::*;
 
 use super::{
     ExemplarRow, FloatHeadSummary, FloatRow, HistRow, InMemoryMetricStore, PartitionWatermark,
-    PruneStats,
+    PruneStats, RowChunks,
 };
 use crate::{
     PromqlLabels as Labels,
     ids::{Offset, PartitionIndex},
     store::{MetadataRecord, TsdbBlock},
 };
+
+struct InternedSeriesLabels {
+    fingerprint: SeriesFingerprint,
+    labels: Arc<Labels>,
+}
+
+trait RetentionSample {
+    fn fingerprint(&self) -> SeriesFingerprint;
+    fn timestamp_ms(&self) -> i64;
+}
+
+impl RetentionSample for FloatRow {
+    fn fingerprint(&self) -> SeriesFingerprint {
+        self.fp
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.ts_ms
+    }
+}
+
+impl RetentionSample for HistRow {
+    fn fingerprint(&self) -> SeriesFingerprint {
+        self.fp
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.ts_ms
+    }
+}
+
+fn remember_sample_series<R: RetentionSample>(
+    rows: &RowChunks<R>,
+    seen: &mut BTreeSet<SeriesFingerprint>,
+) {
+    seen.extend(rows.iter().map(RetentionSample::fingerprint));
+}
+
+fn retain_samples<R: RetentionSample + Clone>(
+    rows: &mut RowChunks<R>,
+    cutoff: i64,
+    stats: &mut PruneStats,
+) {
+    let before = rows.len();
+    rows.retain(|row| row.timestamp_ms() >= cutoff);
+    stats.samples_dropped += before - rows.len();
+}
 
 impl InMemoryMetricStore {
     fn observe_sample_timestamp(&mut self, timestamp_ms: i64) {
@@ -62,18 +109,17 @@ impl InMemoryMetricStore {
             .find(|candidate| matches(candidate))
     }
 
-    fn intern_series_labels(
-        &mut self,
-        tenant: &str,
-        labels: Arc<Labels>,
-    ) -> (SeriesFingerprint, Arc<Labels>) {
+    fn intern_series_labels(&mut self, tenant: &str, labels: Arc<Labels>) -> InternedSeriesLabels {
         let fp = labels.fingerprint();
         // A live cache hit does not change the cache. Preserve its sharing
         // with query snapshots instead of copying every series' weak entries.
         if let Some(candidate) =
             self.live_series_labels(tenant, fp, |other| other == labels.as_ref())
         {
-            return (fp, candidate);
+            return InternedSeriesLabels {
+                fingerprint: fp,
+                labels: candidate,
+            };
         }
         let cache = self.series_labels.entry(tenant.to_string()).or_default();
         let candidates = Arc::make_mut(cache).entry(fp).or_default();
@@ -81,11 +127,17 @@ impl InMemoryMetricStore {
         for candidate in candidates.iter().filter_map(std::sync::Weak::upgrade) {
             // Equality matters even when two label sets have the same hash.
             if candidate.as_ref() == labels.as_ref() {
-                return (fp, candidate);
+                return InternedSeriesLabels {
+                    fingerprint: fp,
+                    labels: candidate,
+                };
             }
         }
         candidates.push(Arc::downgrade(&labels));
-        (fp, labels)
+        InternedSeriesLabels {
+            fingerprint: fp,
+            labels,
+        }
     }
 
     /// Appends a float sample.
@@ -114,10 +166,10 @@ impl InMemoryMetricStore {
         start_timestamp_ms: Option<i64>,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (fp, labels) = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
+        let interned = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
         let row = FloatRow {
-            fp,
-            labels,
+            fp: interned.fingerprint,
+            labels: interned.labels,
             ts_ms,
             value,
             start_timestamp_ms,
@@ -151,13 +203,13 @@ impl InMemoryMetricStore {
         hist: impl Into<Arc<NativeHistogram>>,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (fp, labels) = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
+        let interned = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
         self.hists
             .entry(tenant.to_string())
             .or_default()
             .push(HistRow {
-                fp,
-                labels,
+                fp: interned.fingerprint,
+                labels: interned.labels,
                 ts_ms,
                 hist: hist.into(),
             });
@@ -174,13 +226,12 @@ impl InMemoryMetricStore {
         value: f64,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (_, series_labels) =
-            self.intern_series_labels(tenant, series_labels.into_metric_labels_arc());
+        let interned = self.intern_series_labels(tenant, series_labels.into_metric_labels_arc());
         self.exemplars
             .entry(tenant.to_string())
             .or_default()
             .push(ExemplarRow {
-                series_labels,
+                series_labels: interned.labels,
                 labels: labels.into_metric_labels_arc(),
                 ts_ms,
                 value,
@@ -234,12 +285,24 @@ impl InMemoryMetricStore {
         let series_labels = record
             .labels
             .windows(2)
-            .all(|pair| pair[0].0 < pair[1].0)
+            .all(|pair| pair[0].name < pair[1].name)
             .then(|| {
                 self.live_series_labels(&record.tenant, record.series_fingerprint(), |labels| {
-                    labels
-                        .iter()
-                        .eq(record.labels.iter().map(|(name, value)| (name, value)))
+                    if labels.len() != record.labels.len() {
+                        return false;
+                    }
+                    let mut cached_labels = labels.iter();
+                    for incoming in record.labels.iter().take(labels.len()) {
+                        let Some(cached) = cached_labels.next() else {
+                            return false;
+                        };
+                        if cached.name.as_str() != incoming.name.as_str()
+                            || cached.value.as_bytes() != incoming.value.as_bytes()
+                        {
+                            return false;
+                        }
+                    }
+                    true
                 })
             })
             .flatten()
@@ -355,13 +418,13 @@ impl InMemoryMetricStore {
         // Fingerprints that had a sample before pruning.
         let mut seen: BTreeSet<SeriesFingerprint> = BTreeSet::new();
 
-        for (tenant, rows) in &mut self.floats {
-            for row in rows.iter() {
-                seen.insert(row.fp);
-            }
-            let before = rows.len();
-            rows.retain(|row| row.ts_ms >= cutoff);
-            stats.samples_dropped += before - rows.len();
+        let float_tenants = self.floats.keys().cloned().collect::<Vec<_>>();
+        for tenant in float_tenants {
+            let Some(rows) = self.floats.get_mut(&tenant) else {
+                continue;
+            };
+            remember_sample_series(rows, &mut seen);
+            retain_samples(rows, cutoff, &mut stats);
             // Rebuild in the survivor pass already needed for retention.
             // Never mutate from retain's predicate: it may run twice per row.
             let mut summary = FloatHeadSummary::default();
@@ -371,19 +434,14 @@ impl InMemoryMetricStore {
                 oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));
             }
             if rows.is_empty() {
-                self.float_head_summaries.remove(tenant);
+                self.float_head_summaries.remove(&tenant);
             } else {
-                self.float_head_summaries
-                    .insert(tenant.clone(), Arc::new(summary));
+                self.float_head_summaries.insert(tenant, Arc::new(summary));
             }
         }
         for rows in self.hists.values_mut() {
-            for row in rows.iter() {
-                seen.insert(row.fp);
-            }
-            let before = rows.len();
-            rows.retain(|row| row.ts_ms >= cutoff);
-            stats.samples_dropped += before - rows.len();
+            remember_sample_series(rows, &mut seen);
+            retain_samples(rows, cutoff, &mut stats);
             for row in rows.iter() {
                 live.insert(row.fp);
                 oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));

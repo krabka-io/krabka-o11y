@@ -1,15 +1,16 @@
 use super::{
-    BTreeMap, BucketSpan, OtlpError, ToPrimitive, compact_spanned_histogram_counts,
+    BTreeMap, OtlpError, ToPrimitive, compact_spanned_histogram_counts,
     exponential_histogram_data_point,
 };
+use crate::SpannedHistogramCounts;
 
 pub(crate) fn downscaled_spans(
     buckets: Option<&exponential_histogram_data_point::Buckets>,
     source_schema: i32,
     target_schema: i32,
-) -> Result<(Vec<BucketSpan>, Vec<f64>), OtlpError> {
+) -> Result<SpannedHistogramCounts, OtlpError> {
     let Some(buckets) = buckets else {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok(SpannedHistogramCounts::default());
     };
     let shift = u32::try_from(source_schema - target_schema)
         .map_err(|_| OtlpError::Invalid("exponential histogram".into(), "invalid scale".into()))?;
@@ -20,8 +21,8 @@ pub(crate) fn downscaled_spans(
         )
     })?;
     let mut merged = BTreeMap::<i32, u64>::new();
-    for (idx, count) in buckets.bucket_counts.iter().enumerate() {
-        let idx = i32::try_from(idx).map_err(|_| {
+    for bucket in buckets.bucket_counts.iter().enumerate() {
+        let idx = i32::try_from(bucket.0).map_err(|_| {
             OtlpError::Invalid("exponential histogram".into(), "too many buckets".into())
         })?;
         let original_offset = buckets.offset.checked_add(idx).ok_or_else(|| {
@@ -40,7 +41,7 @@ pub(crate) fn downscaled_spans(
                 )
             })?;
         let merged_count = merged.entry(offset).or_default();
-        if target_schema < source_schema && *merged_count != 0 && *count != 0 {
+        if target_schema < source_schema && *merged_count != 0 && *bucket.1 != 0 {
             return Err(OtlpError::Invalid(
                 "exponential histogram".into(),
                 format!(
@@ -48,15 +49,14 @@ pub(crate) fn downscaled_spans(
                 ),
             ));
         }
-        *merged_count += count;
+        *merged_count += bucket.1;
     }
 
     // Counts are carried as f64 downstream, and the span encoder is shared
     // with the merge path so both produce the same delta-offset form.
-    Ok(compact_spanned_histogram_counts(
-        merged
-            .into_iter()
-            .map(|(index, count)| (index, count.to_f64().unwrap_or(f64::MAX)))
-            .collect(),
-    ))
+    let mut float_counts = BTreeMap::new();
+    for bucket in merged {
+        float_counts.insert(bucket.0, bucket.1.to_f64().unwrap_or(f64::MAX));
+    }
+    Ok(compact_spanned_histogram_counts(float_counts))
 }

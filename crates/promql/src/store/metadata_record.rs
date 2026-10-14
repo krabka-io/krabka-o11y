@@ -1,5 +1,5 @@
 /// Metric metadata served by `/api/v1/metadata`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MetadataRecord {
     pub metric_family_name: String,
     pub metric_type: String,

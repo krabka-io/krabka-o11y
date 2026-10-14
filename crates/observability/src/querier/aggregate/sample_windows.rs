@@ -31,7 +31,7 @@ pub(crate) use aggregate_vector_samples::aggregate_vector_samples;
 pub(crate) use apply_absent_over_time::apply_absent_over_time;
 pub(crate) use count_values_vector_samples::count_values_vector_samples;
 pub(crate) use format_metric_samples::format_metric_samples;
-pub(crate) use formatted_metric_series::FormattedMetricSeries;
+pub(crate) use formatted_metric_series::{FormattedMetricSeries, FormattedMetricSeriesEntry};
 pub(crate) use group_range_samples::group_range_samples;
 pub(crate) use is_unwrapped_metric_query::is_unwrapped_metric_query;
 pub(crate) use merge_metric_samples::merge_metric_samples;

@@ -41,8 +41,9 @@ impl<T> CompactionIndexListing<T> {
                     Some(&mut listing.markers)
                 } else if !is_index(key) {
                     None
-                } else if key.rsplit_once('/').is_some_and(|(directory, _)| {
-                    TsdbImportKeys::is_import_directory(directory) && !published.contains(directory)
+                } else if path_parts(key).is_some_and(|parts| {
+                    TsdbImportKeys::is_import_directory(parts.directory)
+                        && !published.contains(parts.directory)
                 }) {
                     Some(&mut listing.pending)
                 } else {
@@ -59,12 +60,25 @@ impl<T> CompactionIndexListing<T> {
 
 /// The import directory of `key` if `key` is a publication marker.
 fn marker_directory(key: &str) -> Option<&str> {
-    key.rsplit_once('/')
-        .filter(|(directory, name)| {
-            *name == TsdbImportKeys::PUBLISHED_MARKER
-                && TsdbImportKeys::is_import_directory(directory)
+    path_parts(key)
+        .filter(|parts| {
+            parts.name == TsdbImportKeys::PUBLISHED_MARKER
+                && TsdbImportKeys::is_import_directory(parts.directory)
         })
-        .map(|(directory, _)| directory)
+        .map(|parts| parts.directory)
+}
+
+struct PathParts<'a> {
+    directory: &'a str,
+    name: &'a str,
+}
+
+fn path_parts(key: &str) -> Option<PathParts<'_>> {
+    let separator = key.rfind('/')?;
+    Some(PathParts {
+        directory: &key[..separator],
+        name: &key[separator + 1..],
+    })
 }
 
 /// Whether `key` names a manifest: its extension is `index` in any ASCII

@@ -47,6 +47,35 @@ enum Quirk {
     CreateRaced,
 }
 
+struct ProbeCase {
+    quirk: Quirk,
+    requirement: ConditionalUpdateRequirement,
+    want: Result<ObjectStoreCapabilities, &'static str>,
+}
+
+struct CreateFailureCase {
+    quirk: Quirk,
+    want_error: &'static str,
+    want_left: usize,
+}
+
+struct RequirementCase {
+    requirement: ConditionalUpdateRequirement,
+    want: Result<ObjectStoreCapabilities, &'static str>,
+}
+
+struct UrlRequirementCase {
+    url: &'static str,
+    requirement: ConditionalUpdateRequirement,
+}
+
+struct ReadOnlyCase {
+    name: &'static str,
+    quirk: Quirk,
+    with_block: bool,
+    want: Result<(), &'static str>,
+}
+
 #[derive(Debug)]
 struct QuirkyStore {
     inner: InMemory,
@@ -189,7 +218,7 @@ krabka_blockstore::delegate_object_store! {
             return futures::stream::empty().boxed();
         }
         if self.quirk == Quirk::ListingRefused {
-            let path = prefix.map(ToString::to_string).unwrap_or_default();
+            let path = prefix.map_or_else(Default::default, ToString::to_string);
             return futures::stream::once(async move { Err(permission_denied(&Path::from(path))) })
                 .boxed();
         }
@@ -242,53 +271,55 @@ const FULL: ObjectStoreCapabilities = ObjectStoreCapabilities {
 #[tokio::test]
 async fn the_probe_names_the_first_semantic_a_store_is_missing() {
     let cases = [
-        (
-            Quirk::None,
-            ConditionalUpdateRequirement::Required,
-            Ok(FULL),
-        ),
-        (
-            Quirk::VersionMatchedUpdate,
-            ConditionalUpdateRequirement::Required,
-            Ok(FULL),
-        ),
-        (
-            Quirk::SuffixUnsupported,
-            ConditionalUpdateRequirement::Required,
-            Ok(ObjectStoreCapabilities {
+        ProbeCase {
+            quirk: Quirk::None,
+            requirement: ConditionalUpdateRequirement::Required,
+            want: Ok(FULL),
+        },
+        ProbeCase {
+            quirk: Quirk::VersionMatchedUpdate,
+            requirement: ConditionalUpdateRequirement::Required,
+            want: Ok(FULL),
+        },
+        ProbeCase {
+            quirk: Quirk::SuffixUnsupported,
+            requirement: ConditionalUpdateRequirement::Required,
+            want: Ok(ObjectStoreCapabilities {
                 conditional_update: true,
                 suffix_range_read: false,
             }),
-        ),
-        (
-            Quirk::CreateUnsupported,
-            ConditionalUpdateRequirement::Optional,
-            Err("CreateIfAbsentUnsupported"),
-        ),
-        (
-            Quirk::CreateIgnored,
-            ConditionalUpdateRequirement::Optional,
-            Err("CreateIfAbsentIgnored"),
-        ),
-        (
-            Quirk::UpdateIgnored,
-            ConditionalUpdateRequirement::Optional,
-            Err("ConditionalUpdateIgnored"),
-        ),
-        (
-            Quirk::ListingLags,
-            ConditionalUpdateRequirement::Required,
-            Err("ListingMissedWrite"),
-        ),
+        },
+        ProbeCase {
+            quirk: Quirk::CreateUnsupported,
+            requirement: ConditionalUpdateRequirement::Optional,
+            want: Err("CreateIfAbsentUnsupported"),
+        },
+        ProbeCase {
+            quirk: Quirk::CreateIgnored,
+            requirement: ConditionalUpdateRequirement::Optional,
+            want: Err("CreateIfAbsentIgnored"),
+        },
+        ProbeCase {
+            quirk: Quirk::UpdateIgnored,
+            requirement: ConditionalUpdateRequirement::Optional,
+            want: Err("ConditionalUpdateIgnored"),
+        },
+        ProbeCase {
+            quirk: Quirk::ListingLags,
+            requirement: ConditionalUpdateRequirement::Required,
+            want: Err("ListingMissedWrite"),
+        },
     ];
-    for (quirk, requirement, want) in cases {
-        let store = QuirkyStore::new(quirk);
+    for case in cases {
+        let store = QuirkyStore::new(case.quirk);
         let result =
-            verify_object_store_semantics(&store, &Path::from("tenant-data"), requirement).await;
-        check!(describe(&result) == want, "{quirk:?}");
+            verify_object_store_semantics(&store, &Path::from("tenant-data"), case.requirement)
+                .await;
+        check!(describe(&result) == case.want, "{:?}", case.quirk);
         check!(
             store.keys().await.is_empty(),
-            "{quirk:?}: the probe leaves no object behind"
+            "{:?}: the probe leaves no object behind",
+            case.quirk
         );
     }
 }
@@ -298,19 +329,19 @@ async fn a_failed_create_keeps_its_error_and_deletes_only_an_object_the_probe_wr
     // Each case is the quirk, the error the probe returns, and how many
     // objects stay in the store.
     let cases = [
-        (
-            Quirk::CreateCommittedThenLost,
-            "Generic QuirkyStore error: the connection closed before the response",
-            0,
-        ),
-        (
-            Quirk::CreateRaced,
-            "already exists: another writer created it",
-            1,
-        ),
+        CreateFailureCase {
+            quirk: Quirk::CreateCommittedThenLost,
+            want_error: "Generic QuirkyStore error: the connection closed before the response",
+            want_left: 0,
+        },
+        CreateFailureCase {
+            quirk: Quirk::CreateRaced,
+            want_error: "already exists: another writer created it",
+            want_left: 1,
+        },
     ];
-    for (quirk, want_error, want_left) in cases {
-        let store = QuirkyStore::new(quirk);
+    for case in cases {
+        let store = QuirkyStore::new(case.quirk);
 
         let result = verify_object_store_semantics(
             &store,
@@ -322,9 +353,11 @@ async fn a_failed_create_keeps_its_error_and_deletes_only_an_object_the_probe_wr
         assert!(let Err(ObjectStoreSemanticsError::ObjectStore { step, source }) = result);
         let error = source.to_string();
         check!(
-            (step, error.ends_with(want_error), store.keys().await.len())
-                == ("create a probe object", true, want_left),
-            "{quirk:?}: {error}"
+            step == "create a probe object"
+                && error.ends_with(case.want_error)
+                && store.keys().await.len() == case.want_left,
+            "{:?}: {error}",
+            case.quirk
         );
     }
 }
@@ -334,25 +367,26 @@ async fn a_local_filesystem_passes_only_when_a_conditional_update_is_optional() 
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let cases = [
-        (
-            ConditionalUpdateRequirement::Optional,
-            Ok(ObjectStoreCapabilities {
+        RequirementCase {
+            requirement: ConditionalUpdateRequirement::Optional,
+            want: Ok(ObjectStoreCapabilities {
                 conditional_update: false,
                 suffix_range_read: true,
             }),
-        ),
-        (
-            ConditionalUpdateRequirement::Required,
-            Err("ConditionalUpdateUnsupported"),
-        ),
+        },
+        RequirementCase {
+            requirement: ConditionalUpdateRequirement::Required,
+            want: Err("ConditionalUpdateUnsupported"),
+        },
     ];
-    for (requirement, want) in cases {
-        let result = verify_object_store_semantics(&store, &Path::from(""), requirement).await;
-        check!(describe(&result) == want, "{requirement:?}");
+    for case in cases {
+        let result = verify_object_store_semantics(&store, &Path::from(""), case.requirement).await;
+        check!(describe(&result) == case.want, "{:?}", case.requirement);
         let left: Vec<ObjectMeta> = store.list(None).try_collect().await.unwrap();
         check!(
             left.is_empty(),
-            "{requirement:?}: the probe leaves no object behind"
+            "{:?}: the probe leaves no object behind",
+            case.requirement
         );
     }
 }
@@ -387,28 +421,44 @@ async fn the_probe_writes_below_its_own_prefix_and_leaves_the_rest_alone() {
 #[test]
 fn only_a_store_one_process_owns_may_skip_the_conditional_update() {
     let cases = [
-        (
-            "file:///var/lib/krabka",
-            ConditionalUpdateRequirement::Optional,
-        ),
-        ("memory:///", ConditionalUpdateRequirement::Optional),
-        ("./data", ConditionalUpdateRequirement::Optional),
-        ("/var/lib/krabka", ConditionalUpdateRequirement::Optional),
-        ("s3://bucket/prefix", ConditionalUpdateRequirement::Required),
-        ("gs://bucket/prefix", ConditionalUpdateRequirement::Required),
-        (
-            "az://container/prefix",
-            ConditionalUpdateRequirement::Required,
-        ),
-        (
-            "https://account.blob.core.windows.net/container",
-            ConditionalUpdateRequirement::Required,
-        ),
+        UrlRequirementCase {
+            url: "file:///var/lib/krabka",
+            requirement: ConditionalUpdateRequirement::Optional,
+        },
+        UrlRequirementCase {
+            url: "memory:///",
+            requirement: ConditionalUpdateRequirement::Optional,
+        },
+        UrlRequirementCase {
+            url: "./data",
+            requirement: ConditionalUpdateRequirement::Optional,
+        },
+        UrlRequirementCase {
+            url: "/var/lib/krabka",
+            requirement: ConditionalUpdateRequirement::Optional,
+        },
+        UrlRequirementCase {
+            url: "s3://bucket/prefix",
+            requirement: ConditionalUpdateRequirement::Required,
+        },
+        UrlRequirementCase {
+            url: "gs://bucket/prefix",
+            requirement: ConditionalUpdateRequirement::Required,
+        },
+        UrlRequirementCase {
+            url: "az://container/prefix",
+            requirement: ConditionalUpdateRequirement::Required,
+        },
+        UrlRequirementCase {
+            url: "https://account.blob.core.windows.net/container",
+            requirement: ConditionalUpdateRequirement::Required,
+        },
     ];
-    for (url, want) in cases {
+    for case in cases {
         check!(
-            ConditionalUpdateRequirement::for_object_store_url(url) == want,
-            "{url}"
+            ConditionalUpdateRequirement::for_object_store_url(case.url) == case.requirement,
+            "{}",
+            case.url
         );
     }
 }
@@ -453,30 +503,40 @@ async fn a_block_reads_from_a_store_without_suffix_ranges() {
 async fn a_read_only_role_probes_without_writing() {
     const BLOCK: &str = "tenant-data/blocks/a.parquet";
     let cases = [
-        ("an empty prefix", Quirk::ReadOnlyCredential, false, Ok(())),
-        (
-            "a prefix with a block",
-            Quirk::ReadOnlyCredential,
-            true,
-            Ok(()),
-        ),
-        ("a store with every semantic", Quirk::None, true, Ok(())),
-        (
-            "a range read that comes back short",
-            Quirk::ShortRange,
-            true,
-            Err("RangedReadMismatch"),
-        ),
-        (
-            "a listing that fails",
-            Quirk::ListingRefused,
-            false,
-            Err("list the configured prefix"),
-        ),
+        ReadOnlyCase {
+            name: "an empty prefix",
+            quirk: Quirk::ReadOnlyCredential,
+            with_block: false,
+            want: Ok(()),
+        },
+        ReadOnlyCase {
+            name: "a prefix with a block",
+            quirk: Quirk::ReadOnlyCredential,
+            with_block: true,
+            want: Ok(()),
+        },
+        ReadOnlyCase {
+            name: "a store with every semantic",
+            quirk: Quirk::None,
+            with_block: true,
+            want: Ok(()),
+        },
+        ReadOnlyCase {
+            name: "a range read that comes back short",
+            quirk: Quirk::ShortRange,
+            with_block: true,
+            want: Err("RangedReadMismatch"),
+        },
+        ReadOnlyCase {
+            name: "a listing that fails",
+            quirk: Quirk::ListingRefused,
+            with_block: false,
+            want: Err("list the configured prefix"),
+        },
     ];
-    for (name, quirk, with_block, want) in cases {
-        let store = QuirkyStore::new(quirk);
-        if with_block {
+    for case in cases {
+        let store = QuirkyStore::new(case.quirk);
+        if case.with_block {
             object_store::ObjectStoreExt::put(&store.inner, &Path::from(BLOCK), "block".into())
                 .await
                 .unwrap();
@@ -491,10 +551,15 @@ async fn a_read_only_role_probes_without_writing() {
         )
         .await;
 
-        check!(describe(&result.map(|()| FULL)).map(drop) == want, "{name}");
+        check!(
+            describe(&result.map(|()| FULL)).map(drop) == case.want,
+            "{}",
+            case.name
+        );
         check!(
             store.keys().await == before,
-            "{name}: the probe writes nothing"
+            "{}: the probe writes nothing",
+            case.name
         );
     }
 

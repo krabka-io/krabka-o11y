@@ -1,11 +1,23 @@
 use krabka_client_consumer::Consumer;
 use krabka_units::prelude::{Time, TimeExt as _, secs};
 
-use super::{BTreeSet, WalAssignmentChange, WalConsumerMetrics};
+use super::{BTreeSet, WalAssignmentChange, WalConsumerMetrics, WalPartitionAssignment};
 use crate::ReadinessGate;
 
 /// The longest a poll loop waits for one broker query about the log end.
 const LOG_END_QUERY_TIMEOUT: Time = secs(5);
+
+async fn observed_assignments(consumer: &Consumer) -> Vec<WalPartitionAssignment> {
+    consumer
+        .assignment()
+        .await
+        .iter()
+        .map(|assignment| WalPartitionAssignment {
+            topic: assignment.0.clone(),
+            partition: assignment.1,
+        })
+        .collect()
+}
 
 /// Whether the position of every partition in `assigned` has reached its end
 /// offset.
@@ -13,26 +25,39 @@ const LOG_END_QUERY_TIMEOUT: Time = secs(5);
 /// A partition whose end offset the last fetch reported is checked locally.
 /// For a partition with no known end offset, this asks the broker. With
 /// `read_committed`, that end offset is the last stable offset.
-async fn positions_at_log_end(consumer: &Consumer, assigned: &[(String, i32)]) -> bool {
+async fn positions_at_log_end(consumer: &Consumer, assigned: &[WalPartitionAssignment]) -> bool {
     let mut unknown = Vec::new();
-    for (topic, partition) in assigned {
-        match consumer.current_lag(topic.clone(), *partition).await {
+    for assignment in assigned {
+        match consumer
+            .current_lag(assignment.topic.clone(), assignment.partition)
+            .await
+        {
             Ok(Some(lag)) if lag <= 0 => {}
-            Ok(None) => unknown.push((topic.clone(), *partition)),
+            Ok(None) => unknown.push(assignment.clone()),
             _ => return false,
         }
     }
     if unknown.is_empty() {
         return true;
     }
-    let Ok(ends) = consumer.end_offsets(&unknown).await else {
+    let unknown_client_partitions = unknown
+        .iter()
+        .map(|assignment| (assignment.topic.clone(), assignment.partition))
+        .collect::<Vec<_>>();
+    let Ok(ends) = consumer.end_offsets(&unknown_client_partitions).await else {
         return false;
     };
-    for (topic, partition) in unknown {
-        let Some(end) = ends.get(&(topic.clone(), partition)).copied() else {
+    for assignment in unknown {
+        let Some(end) = ends
+            .get(&(assignment.topic.clone(), assignment.partition))
+            .copied()
+        else {
             return false;
         };
-        match consumer.position(topic, partition).await {
+        match consumer
+            .position(assignment.topic, assignment.partition)
+            .await
+        {
             Ok(position) if position >= end => {}
             _ => return false,
         }
@@ -46,33 +71,43 @@ async fn positions_at_log_end(consumer: &Consumer, assigned: &[(String, i32)]) -
 /// A partition with no commit counts as committed when it holds no record,
 /// that is when its beginning offset equals its end offset. Retention can
 /// remove every record without moving the offsets back to zero.
-async fn group_committed_log_end(consumer: &Consumer, assigned: &[(String, i32)]) -> bool {
-    let Ok(ends) = consumer.end_offsets(assigned).await else {
+async fn group_committed_log_end(consumer: &Consumer, assigned: &[WalPartitionAssignment]) -> bool {
+    let client_assignments = assigned
+        .iter()
+        .map(|assignment| (assignment.topic.clone(), assignment.partition))
+        .collect::<Vec<_>>();
+    let Ok(ends) = consumer.end_offsets(&client_assignments).await else {
         return false;
     };
-    let Ok(committed) = consumer.committed(assigned).await else {
+    let Ok(committed) = consumer.committed(&client_assignments).await else {
         return false;
     };
     let mut never_committed = Vec::new();
-    for partition in assigned {
-        let Some(end) = ends.get(partition) else {
+    for assignment in assigned {
+        let client_partition = (assignment.topic.clone(), assignment.partition);
+        let Some(end) = ends.get(&client_partition) else {
             return false;
         };
-        match committed.get(partition).and_then(Option::as_ref) {
+        match committed.get(&client_partition).and_then(Option::as_ref) {
             Some(committed) if committed.offset >= *end => {}
             Some(_) => return false,
-            None => never_committed.push(partition.clone()),
+            None => never_committed.push(assignment.clone()),
         }
     }
     if never_committed.is_empty() {
         return true;
     }
-    let Ok(beginnings) = consumer.beginning_offsets(&never_committed).await else {
+    let never_committed_client = never_committed
+        .iter()
+        .map(|assignment| (assignment.topic.clone(), assignment.partition))
+        .collect::<Vec<_>>();
+    let Ok(beginnings) = consumer.beginning_offsets(&never_committed_client).await else {
         return false;
     };
-    never_committed
-        .iter()
-        .all(|partition| beginnings.get(partition) == ends.get(partition))
+    never_committed.iter().all(|assignment| {
+        let client_partition = (assignment.topic.clone(), assignment.partition);
+        beginnings.get(&client_partition) == ends.get(&client_partition)
+    })
 }
 
 /// Runs one broker query under [`LOG_END_QUERY_TIMEOUT`]. A late answer counts
@@ -109,7 +144,7 @@ enum Unapplied {
 /// synchronous fencing signal used to recover them.
 pub struct WalAssignmentWatch {
     metrics: WalConsumerMetrics,
-    owned: BTreeSet<(String, i32)>,
+    owned: BTreeSet<WalPartitionAssignment>,
     first_observation: bool,
     catch_up: Option<ReadinessGate>,
     unapplied: Unapplied,
@@ -154,8 +189,8 @@ impl WalAssignmentWatch {
     ///
     /// An empty `assigned` is a real state and the watch treats it as one: a
     /// member that holds nothing has lost everything it held.
-    pub fn observe(&mut self, assigned: &[(String, i32)]) -> WalAssignmentChange {
-        let current: BTreeSet<(String, i32)> = assigned.iter().cloned().collect();
+    pub fn observe(&mut self, assigned: &[WalPartitionAssignment]) -> WalAssignmentChange {
+        let current: BTreeSet<WalPartitionAssignment> = assigned.iter().cloned().collect();
         let change = WalAssignmentChange::between(&self.owned, &current);
         self.owned = current;
         let first_observation = std::mem::replace(&mut self.first_observation, false);
@@ -167,11 +202,13 @@ impl WalAssignmentWatch {
             }
         }
 
-        for (topic, partition) in &change.gained {
-            self.metrics.record_partition_assigned(topic, *partition);
+        for assignment in &change.gained {
+            self.metrics
+                .record_partition_assigned(&assignment.topic, assignment.partition);
         }
-        for (topic, partition) in &change.revoked {
-            self.metrics.record_partition_revoked(topic, *partition);
+        for assignment in &change.revoked {
+            self.metrics
+                .record_partition_revoked(&assignment.topic, assignment.partition);
         }
         if self.unapplied == Unapplied::Held && change.strands_buffered_records() {
             self.unapplied = Unapplied::Fenced;
@@ -216,16 +253,16 @@ impl WalAssignmentWatch {
         consumer: &Consumer,
         has_records: bool,
     ) -> WalAssignmentChange {
-        let assigned = consumer.assignment().await;
-        let change = self.observe(&assigned);
-        let mut at_log_end = self.at_log_end(consumer, &assigned).await;
+        let observed_assignments = observed_assignments(consumer).await;
+        let change = self.observe(&observed_assignments);
+        let mut at_log_end = self.at_log_end(consumer, &observed_assignments).await;
         self.caught_up_after_apply |=
             at_log_end && (has_records || self.unapplied != Unapplied::None);
         if has_records {
             self.unapplied = Unapplied::Held;
         }
         if self.may_settle_fenced_records(has_records)
-            && self.group_committed(consumer, &assigned).await
+            && self.group_committed(consumer, &observed_assignments).await
         {
             // A rebalance fenced the records this member counted as
             // unapplied, so no apply reports them. Every record up to the log
@@ -233,16 +270,16 @@ impl WalAssignmentWatch {
             self.unapplied = Unapplied::None;
             at_log_end = true;
         }
-        self.record_recovery(&assigned, at_log_end);
+        self.record_recovery(&observed_assignments, at_log_end);
         change
     }
 
     /// Marks every record observed since the last call as successfully
     /// applied, then refreshes recovery readiness from the consumer.
     pub async fn observe_applied(&mut self, consumer: &Consumer) {
-        let assigned = consumer.assignment().await;
-        let at_log_end = self.at_log_end(consumer, &assigned).await;
-        self.record_applied(&assigned, at_log_end);
+        let observed_assignments = observed_assignments(consumer).await;
+        let at_log_end = self.at_log_end(consumer, &observed_assignments).await;
+        self.record_applied(&observed_assignments, at_log_end);
     }
 
     /// Whether `consumer` has read every assigned partition to its end.
@@ -258,7 +295,7 @@ impl WalAssignmentWatch {
     ///
     /// So while the gate is closed, this checks each partition, and asks the
     /// broker for the end offsets that the fetches did not report.
-    async fn at_log_end(&self, consumer: &Consumer, assigned: &[(String, i32)]) -> bool {
+    async fn at_log_end(&self, consumer: &Consumer, assigned: &[WalPartitionAssignment]) -> bool {
         if consumer.at_log_end().await {
             return true;
         }
@@ -274,7 +311,11 @@ impl WalAssignmentWatch {
     /// A rebalance can fence records that this member counted as unapplied.
     /// No apply then reports them, and on an idle WAL the gate stays closed
     /// until a producer writes again.
-    async fn group_committed(&self, consumer: &Consumer, assigned: &[(String, i32)]) -> bool {
+    async fn group_committed(
+        &self,
+        consumer: &Consumer,
+        assigned: &[WalPartitionAssignment],
+    ) -> bool {
         if !self.gate_closed() || assigned.is_empty() {
             return false;
         }
@@ -299,13 +340,20 @@ impl WalAssignmentWatch {
     /// which may already be ready before the final append arrives.
     pub(crate) async fn is_drained(&self, consumer: &Consumer) -> bool {
         let assigned = consumer.assignment().await;
+        let observed_assignments = assigned
+            .iter()
+            .map(|assignment| WalPartitionAssignment {
+                topic: assignment.0.clone(),
+                partition: assignment.1,
+            })
+            .collect::<Vec<_>>();
         if assigned.is_empty() {
             return false;
         }
-        bounded(group_committed_log_end(consumer, &assigned)).await
+        bounded(group_committed_log_end(consumer, &observed_assignments)).await
     }
 
-    fn record_applied(&mut self, assigned: &[(String, i32)], at_log_end: bool) {
+    fn record_applied(&mut self, assigned: &[WalPartitionAssignment], at_log_end: bool) {
         self.unapplied = Unapplied::None;
         let caught_up_after_apply = std::mem::take(&mut self.caught_up_after_apply);
         self.record_recovery(assigned, at_log_end);
@@ -314,7 +362,7 @@ impl WalAssignmentWatch {
         }
     }
 
-    fn record_recovery(&self, assigned: &[(String, i32)], at_log_end: bool) {
+    fn record_recovery(&self, assigned: &[WalPartitionAssignment], at_log_end: bool) {
         let caught_up = at_log_end && self.unapplied == Unapplied::None;
         self.metrics.record_assignment(assigned, caught_up);
         if let Some(gate) = &self.catch_up
@@ -326,7 +374,7 @@ impl WalAssignmentWatch {
 
     /// The partitions this member holds, as of the last [`Self::observe`] call.
     #[must_use]
-    pub fn owned(&self) -> &BTreeSet<(String, i32)> {
+    pub fn owned(&self) -> &BTreeSet<WalPartitionAssignment> {
         &self.owned
     }
 }
@@ -354,37 +402,73 @@ mod recovery_tests {
         }
     }
 
+    fn held_wal_partition() -> [WalPartitionAssignment; 1] {
+        [WalPartitionAssignment {
+            topic: "wal".to_string(),
+            partition: 0,
+        }]
+    }
+
+    fn hold_fetched_batch(watch: &mut WalAssignmentWatch) {
+        watch.unapplied = Unapplied::Held;
+    }
+
     #[test]
     fn only_records_fenced_by_a_revocation_may_be_settled_by_the_broker() {
-        let wal = |partition| ("wal".to_string(), partition);
+        let wal = |partition| WalPartitionAssignment {
+            topic: "wal".to_string(),
+            partition,
+        };
         // Each case: the assignment after the batch was polled, whether the
         // batch was applied before that, and whether the broker may settle it.
+        struct FencedRecordsCase {
+            name: &'static str,
+            after: Vec<WalPartitionAssignment>,
+            applied: bool,
+            expected_settlement: bool,
+        }
         let cases = [
-            ("held, no rebalance", vec![wal(0), wal(1)], false, false),
-            (
-                "held, partition gained",
-                vec![wal(0), wal(1), wal(2)],
-                false,
-                false,
-            ),
-            ("held, partition revoked", vec![wal(0)], false, true),
-            ("applied, partition revoked", vec![wal(0)], true, false),
+            FencedRecordsCase {
+                name: "held, no rebalance",
+                after: vec![wal(0), wal(1)],
+                applied: false,
+                expected_settlement: false,
+            },
+            FencedRecordsCase {
+                name: "held, partition gained",
+                after: vec![wal(0), wal(1), wal(2)],
+                applied: false,
+                expected_settlement: false,
+            },
+            FencedRecordsCase {
+                name: "held, partition revoked",
+                after: vec![wal(0)],
+                applied: false,
+                expected_settlement: true,
+            },
+            FencedRecordsCase {
+                name: "applied, partition revoked",
+                after: vec![wal(0)],
+                applied: true,
+                expected_settlement: false,
+            },
         ];
-        for (name, after, applied, expected) in cases {
+        for case in cases {
             let metrics = WalConsumerMetrics::unregistered();
             let gate = crate::RoleReadiness::new().gate("wal-catch-up");
             let mut watch = WalAssignmentWatch::with_catch_up(metrics, gate);
             watch.observe(&[wal(0), wal(1)]);
             watch.unapplied = Unapplied::Held;
-            if applied {
+            if case.applied {
                 watch.record_applied(&[wal(0), wal(1)], false);
             }
-            watch.observe(&after);
+            watch.observe(&case.after);
             assert2::check!(
-                watch.may_settle_fenced_records(false) == expected,
-                "case {name}"
+                watch.may_settle_fenced_records(false) == case.expected_settlement,
+                "case {}",
+                case.name
             );
-            assert2::check!(!watch.may_settle_fenced_records(true), "case {name}");
+            assert2::check!(!watch.may_settle_fenced_records(true), "case {}", case.name);
         }
     }
 
@@ -395,9 +479,9 @@ mod recovery_tests {
             gate,
             mut watch,
         } = CatchUpFixture::new();
-        let assigned = [("wal".to_string(), 0)];
+        let assigned = held_wal_partition();
 
-        watch.unapplied = Unapplied::Held;
+        hold_fetched_batch(&mut watch);
         watch.record_recovery(&assigned, true);
         assert2::check!(!gate.is_ready());
         assert2::check!(!metrics.recovery_status().caught_up);
@@ -410,21 +494,23 @@ mod recovery_tests {
 
     #[test]
     fn applied_log_end_snapshot_stays_ready_when_the_broker_advances() {
-        let CatchUpFixture {
-            metrics,
-            gate,
-            mut watch,
-        } = CatchUpFixture::new();
-        let assigned = [("wal".to_string(), 0)];
+        let fixture = CatchUpFixture::new();
+        let metrics = fixture.metrics;
+        let gate = fixture.gate;
+        let mut watch = fixture.watch;
+        let assigned = held_wal_partition();
 
-        watch.unapplied = Unapplied::Held;
+        hold_fetched_batch(&mut watch);
         watch.caught_up_after_apply = true;
         watch.record_applied(&assigned, false);
 
         assert2::check!(gate.is_ready());
         assert2::check!(!metrics.recovery_status().caught_up);
 
-        watch.observe(&[("wal".to_string(), 1)]);
+        watch.observe(&[WalPartitionAssignment {
+            topic: "wal".to_string(),
+            partition: 1,
+        }]);
         assert2::check!(!gate.is_ready());
     }
 }

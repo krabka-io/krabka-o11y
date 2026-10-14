@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
 use std::{
     net::SocketAddr,
     path::Path,
@@ -173,12 +175,38 @@ mod tests {
     }
 
     static ENV_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-    const DEBUGINFOD_ENV: [(&str, Option<&str>); 4] = [
-        ("KRABKA_PROFILES_DEBUGINFOD_URLS", None),
-        ("KRABKA_PROFILES_DEBUGINFOD_MAX_ARTIFACT_SIZE", None),
-        ("KRABKA_PROFILES_DEBUGINFOD_CONNECT_TIMEOUT", None),
-        ("KRABKA_PROFILES_DEBUGINFOD_REQUEST_TIMEOUT", None),
-    ];
+    #[derive(Clone, Copy)]
+    struct DebuginfodEnvironment {
+        urls: Option<&'static str>,
+        max_artifact_size: Option<&'static str>,
+        connect_timeout: Option<&'static str>,
+        request_timeout: Option<&'static str>,
+    }
+
+    fn with_debuginfod_environment<R>(
+        environment: DebuginfodEnvironment,
+        body: impl FnOnce() -> R,
+    ) -> R {
+        temp_env::with_var("KRABKA_PROFILES_DEBUGINFOD_URLS", environment.urls, || {
+            temp_env::with_var(
+                "KRABKA_PROFILES_DEBUGINFOD_MAX_ARTIFACT_SIZE",
+                environment.max_artifact_size,
+                || {
+                    temp_env::with_var(
+                        "KRABKA_PROFILES_DEBUGINFOD_CONNECT_TIMEOUT",
+                        environment.connect_timeout,
+                        || {
+                            temp_env::with_var(
+                                "KRABKA_PROFILES_DEBUGINFOD_REQUEST_TIMEOUT",
+                                environment.request_timeout,
+                                body,
+                            )
+                        },
+                    )
+                },
+            )
+        })
+    }
 
     #[test]
     fn debuginfod_config_preserves_defaults_and_accepts_cli_units() {
@@ -186,27 +214,36 @@ mod tests {
             .get_or_init(|| StdMutex::new(()))
             .lock()
             .expect("environment lock");
-        temp_env::with_vars(DEBUGINFOD_ENV, || {
-            let defaults = Cli::try_parse_from(["krabka-profiles", "--target", "querier"]).unwrap();
-            assert!(debuginfod_config(&defaults).unwrap() == DebuginfodConfig::default());
+        with_debuginfod_environment(
+            DebuginfodEnvironment {
+                urls: None,
+                max_artifact_size: None,
+                connect_timeout: None,
+                request_timeout: None,
+            },
+            || {
+                let defaults =
+                    Cli::try_parse_from(["krabka-profiles", "--target", "querier"]).unwrap();
+                assert!(debuginfod_config(&defaults).unwrap() == DebuginfodConfig::default());
 
-            let custom = Cli::try_parse_from([
-                "krabka-profiles",
-                "--target",
-                "querier",
-                "--debuginfod-max-artifact-size",
-                "64MiB",
-                "--debuginfod-connect-timeout",
-                "250ms",
-                "--debuginfod-request-timeout",
-                "3s",
-            ])
-            .unwrap();
-            let config = debuginfod_config(&custom).unwrap();
-            assert!(config.max_artifact_size() == mebibytes(64));
-            assert!(config.connect_timeout() == krabka_units::millis(250));
-            assert!(config.request_timeout() == secs(3));
-        });
+                let custom = Cli::try_parse_from([
+                    "krabka-profiles",
+                    "--target",
+                    "querier",
+                    "--debuginfod-max-artifact-size",
+                    "64MiB",
+                    "--debuginfod-connect-timeout",
+                    "250ms",
+                    "--debuginfod-request-timeout",
+                    "3s",
+                ])
+                .unwrap();
+                let config = debuginfod_config(&custom).unwrap();
+                assert!(config.max_artifact_size() == mebibytes(64));
+                assert!(config.connect_timeout() == krabka_units::millis(250));
+                assert!(config.request_timeout() == secs(3));
+            },
+        );
     }
 
     #[test]
@@ -215,19 +252,13 @@ mod tests {
             .get_or_init(|| StdMutex::new(()))
             .lock()
             .expect("environment lock");
-        temp_env::with_vars(
-            [
-                (
-                    "KRABKA_PROFILES_DEBUGINFOD_URLS",
-                    Some("http://one.example,http://two.example"),
-                ),
-                (
-                    "KRABKA_PROFILES_DEBUGINFOD_MAX_ARTIFACT_SIZE",
-                    Some("32MiB"),
-                ),
-                ("KRABKA_PROFILES_DEBUGINFOD_CONNECT_TIMEOUT", Some("500ms")),
-                ("KRABKA_PROFILES_DEBUGINFOD_REQUEST_TIMEOUT", Some("4s")),
-            ],
+        with_debuginfod_environment(
+            DebuginfodEnvironment {
+                urls: Some("http://one.example,http://two.example"),
+                max_artifact_size: Some("32MiB"),
+                connect_timeout: Some("500ms"),
+                request_timeout: Some("4s"),
+            },
             || {
                 let cli =
                     Cli::try_parse_from(["krabka-profiles", "--target", "symbolizer"]).unwrap();
@@ -333,22 +364,74 @@ mod tests {
 
     #[test]
     fn runtime_policy_rejects_zero_and_invalid_counts() {
-        for (flag, invalid) in [
-            ("--distributor-request-max", "0B"),
-            ("--distributor-max-tracked-tenants", "0"),
-            ("--legacy-max-nodes", "0"),
-            ("--legacy-max-path-bytes", "0B"),
-            ("--legacy-max-trie-depth", "0"),
-            ("--index-refresh-interval", "0s"),
-            ("--hot-store-max-age", "0s"),
-            ("--hot-store-max-records", "0"),
-            ("--heatmap-value-buckets", "0"),
-            ("--heatmap-time-buckets-max", "0"),
-            ("--query-frontend-shard-width", "0"),
-            ("--block-builder-flush-records", "0"),
-            ("--block-builder-flush-max-age", "0"),
-            ("--compactor-max-blocks-per-job", "1"),
-            ("--compactor-downsample-resolution", "0"),
+        struct InvalidOption {
+            flag: &'static str,
+            value: &'static str,
+        }
+        for InvalidOption {
+            flag,
+            value: invalid,
+        } in [
+            InvalidOption {
+                flag: "--distributor-request-max",
+                value: "0B",
+            },
+            InvalidOption {
+                flag: "--distributor-max-tracked-tenants",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--legacy-max-nodes",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--legacy-max-path-bytes",
+                value: "0B",
+            },
+            InvalidOption {
+                flag: "--legacy-max-trie-depth",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--index-refresh-interval",
+                value: "0s",
+            },
+            InvalidOption {
+                flag: "--hot-store-max-age",
+                value: "0s",
+            },
+            InvalidOption {
+                flag: "--hot-store-max-records",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--heatmap-value-buckets",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--heatmap-time-buckets-max",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--query-frontend-shard-width",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--block-builder-flush-records",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--block-builder-flush-max-age",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--compactor-max-blocks-per-job",
+                value: "1",
+            },
+            InvalidOption {
+                flag: "--compactor-downsample-resolution",
+                value: "0",
+            },
         ] {
             assert!(
                 Cli::try_parse_from(["krabka-profiles", "--target", "querier", flag, invalid])
@@ -976,20 +1059,49 @@ overrides:
         let broker = InProcessBroker::start().await;
         let bootstrap = broker.bootstrap.clone();
 
+        struct RoleTopicExpectation {
+            target: &'static str,
+            refuses_without_topics: bool,
+        }
         let roles = [
-            ("distributor", true),
-            ("block-builder", true),
-            ("querier", true),
-            ("query-frontend", true),
-            ("compactor", false),
-            ("symbolizer", false),
+            RoleTopicExpectation {
+                target: "distributor",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "block-builder",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "querier",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "query-frontend",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "compactor",
+                refuses_without_topics: false,
+            },
+            RoleTopicExpectation {
+                target: "symbolizer",
+                refuses_without_topics: false,
+            },
             // `all` runs four of those roles, and asks once for the process.
-            ("all", true),
+            RoleTopicExpectation {
+                target: "all",
+                refuses_without_topics: true,
+            },
         ];
 
-        for (target, refuses) in roles {
+        for role in &roles {
+            let RoleTopicExpectation {
+                target,
+                refuses_without_topics: refuses,
+            } = role;
             let outcome = require_role_topics(&cli_for(target, &bootstrap), None).await;
-            check!(outcome.is_err() == refuses, "{target} before provisioning");
+            check!(outcome.is_err() == *refuses, "{target} before provisioning");
             if let Err(error) = outcome {
                 check!(
                     error
@@ -1010,7 +1122,7 @@ overrides:
         .await
         .expect("provision the profiles WAL topic");
 
-        for (target, _) in roles {
+        for RoleTopicExpectation { target, .. } in &roles {
             check!(
                 require_role_topics(&cli_for(target, &bootstrap), None)
                     .await
@@ -1093,6 +1205,7 @@ mod build_all_stages;
 mod build_distributor_state;
 mod build_object_store;
 mod build_profile_read_path;
+mod build_ready_object_store;
 mod cli;
 mod client_resource_policy;
 mod compaction_loop;

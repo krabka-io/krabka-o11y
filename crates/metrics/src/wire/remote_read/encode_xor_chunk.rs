@@ -20,7 +20,9 @@ fn encode_xor_chunk(samples: &[v1::Sample]) -> Result<v1::Chunk, RemoteReadError
     let mut leading = u8::MAX;
     let mut trailing = 0_u8;
 
-    for (index, sample) in samples.iter().enumerate() {
+    for sample_entry in samples.iter().enumerate() {
+        let index = sample_entry.0;
+        let sample = sample_entry.1;
         match index {
             0 => {
                 bits.write_varint(sample.timestamp);

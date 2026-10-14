@@ -5,6 +5,13 @@ use super::{
 };
 use crate::ruler::{alert_template_variables, expand_alert_label_map_async};
 
+struct EvaluatedAlert {
+    key: AlertStateKey,
+    labels: crate::PromqlLabels,
+    value: f64,
+    annotations: BTreeMap<String, String>,
+}
+
 pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
     state: &PrometheusApiState<S>,
     tenant: &TenantId,
@@ -25,12 +32,14 @@ pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
     let hold = yaml_duration(rule, "for");
     let rule_id = format!("{name}\n{query}");
     let string_map = |key| {
-        yaml_mapping_json(rule, key)
-            .as_object()
-            .unwrap()
-            .iter()
-            .map(|(name, value)| (name.clone(), value.as_str().unwrap().to_owned()))
-            .collect::<BTreeMap<_, _>>()
+        let json = yaml_mapping_json(rule, key);
+        let object = json.as_object().unwrap();
+        let mut result = BTreeMap::new();
+        for name in object.keys() {
+            let value = object[name].as_str().unwrap().to_owned();
+            result.insert(name.clone(), value);
+        }
+        result
     };
     let rule_labels = string_map("labels");
     let annotations = string_map("annotations");
@@ -52,16 +61,16 @@ pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
             &external_labels,
             "",
         );
-        for (name, value) in expand_alert_label_map_async(
+        let expanded_labels = expand_alert_label_map_async(
             &state.engine,
             tenant,
             &rule_labels,
             &variables,
             eval_time_ms,
         )
-        .await
-        {
-            labels.insert(name, value);
+        .await;
+        for name in expanded_labels.keys() {
+            labels.insert(name.clone(), expanded_labels[name].clone());
         }
         labels.insert("alertname", name.as_str());
         let key = AlertStateKey {
@@ -83,7 +92,19 @@ pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
         )
         .await;
         active_keys.insert(key.clone());
-        evaluated.push((key, labels, value, expanded_annotations));
+        let mut annotation_values = BTreeMap::new();
+        for annotation_name in expanded_annotations.keys() {
+            annotation_values.insert(
+                annotation_name.clone(),
+                expanded_annotations[annotation_name].as_str().to_owned(),
+            );
+        }
+        evaluated.push(EvaluatedAlert {
+            key,
+            labels,
+            value,
+            annotations: annotation_values,
+        });
     }
 
     let mut alert_states = state
@@ -95,23 +116,26 @@ pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
     });
 
     let mut alerts = Vec::new();
-    for (key, labels, value, annotations) in evaluated {
-        let active_at_ms = *alert_states.entry(key).or_insert(eval_time_ms);
+    for evaluated_alert in evaluated {
+        let active_at_ms = *alert_states
+            .entry(evaluated_alert.key)
+            .or_insert(eval_time_ms);
         let active = Time::from_millis(eval_time_ms.saturating_sub(active_at_ms));
         let alert_state = if hold == Time::ZERO || active >= hold {
             "firing"
         } else {
             "pending"
         };
+        let annotations: crate::PromqlLabels = evaluated_alert.annotations.into();
         alerts.push(json!({
             "activeAt": rfc3339_time_string(active_at_ms),
-            "annotations": labels_map_json(annotations.into()),
+            "annotations": labels_map_json(&annotations),
             "duration": hold.secs_i64(),
-            "labels": labels_map_json(labels),
+            "labels": labels_map_json(&evaluated_alert.labels),
             "name": name,
             "query": query,
             "state": alert_state,
-            "value": sample_string(value),
+            "value": sample_string(evaluated_alert.value),
         }));
     }
     Ok(alerts)

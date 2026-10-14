@@ -1,13 +1,8 @@
-use std::{fmt, sync::Arc};
-
-use arrow::{array::Float64Array, record_batch::RecordBatch};
-use datafusion::{
-    common::{DataFusionError, Result as DfResult},
-    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
-};
-
 use super::InstantManipulateSettings;
-use crate::extension::{RowSelection, TimeColumn, take_rows_with_timestamps};
+use crate::extension::physical_exec_common::{
+    Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, Float64Array,
+    PlanProperties, RecordBatch, RowSelection, TimeColumn, fmt, take_rows_with_timestamps,
+};
 
 /// Physical node that emits one selected sample per valid grid step.
 #[derive(Debug, Clone)]
@@ -35,11 +30,13 @@ impl InstantManipulateExec {
                 self.settings.step_ms
             )));
         }
-        let (time_column_index, timestamps) = TimeColumn {
+        let found_time_column = TimeColumn {
             node: "InstantManipulate",
             name: &self.settings.time_index,
         }
         .find(batch)?;
+        let time_column_index = found_time_column.index;
+        let timestamps = found_time_column.timestamps;
         let values = batch
             .column_by_name(&self.settings.field_column)
             .and_then(|column| column.as_any().downcast_ref::<Float64Array>())

@@ -3,7 +3,7 @@ use super::{
     ServiceDependencies, ServiceRuntimeError, SupervisedTasks, TcpListener,
     compactor_delete_requests_for_config, compactor_router_with_delete_requests,
     limits_provider_for_config, query_authorizer_for_role, run_compactor_until_shutdown,
-    serve_router, service_audit_for_config, shutdown_signal, start_runtime_security,
+    serve_router, service_audit_for_config, shutdown_signal, start_audited_runtime_security,
     with_service_audit,
 };
 
@@ -13,11 +13,10 @@ pub(crate) async fn serve_compactor_service_listener(
     dependencies: ServiceDependencies,
     object_store: Option<&dyn ObjectStore>,
 ) -> Result<(), ServiceRuntimeError> {
-    let security = Box::pin(start_runtime_security(&config, &dependencies)).await?;
-    // Cancelled on every way out of this function, so an early error does not
-    // leave the audit writer waiting for a stop that never comes.
-    let _audit_stop = security.audit_stop.clone().drop_guard();
-    let dependencies = dependencies.with_audit(security.audit.clone());
+    let audited = Box::pin(start_audited_runtime_security(&config, dependencies)).await?;
+    let security = audited.security;
+    let _audit_stop = audited.stop_guard;
+    let dependencies = audited.dependencies;
     // The block builder resolves a tenant's retention window through the same
     // provider the other roles read their limits from. Without it the sweep
     // would read no window for any tenant and delete nothing, whatever the
@@ -40,8 +39,8 @@ pub(crate) async fn serve_compactor_service_listener(
     let mut tasks = SupervisedTasks::new(CancellationToken::new());
     let role_authorizer =
         query_authorizer_for_role(&config, &dependencies, tasks.token(), &readiness);
-    if let Some((name, handle)) = role_authorizer.task {
-        tasks.adopt(name, handle);
+    if let Some(task) = role_authorizer.task {
+        tasks.adopt(task.name, task.handle);
     }
     if let Some(writer) = security.audit_writer {
         tasks.adopt("audit writer", writer);
@@ -55,7 +54,9 @@ pub(crate) async fn serve_compactor_service_listener(
         service_audit_for_config(&config, &dependencies),
     );
     let dependencies = dependencies.with_delete_requests(delete_requests);
-    let (http_shutdown_tx, http_shutdown_rx) = tokio::sync::oneshot::channel();
+    let shutdown_channel = tokio::sync::oneshot::channel();
+    let http_shutdown_tx = shutdown_channel.0;
+    let http_shutdown_rx = shutdown_channel.1;
     let listener = ServerListener::bind(listener, &security.server)?;
     let server = serve_router(listener, app, &security.server)
         .with_graceful_shutdown(async {

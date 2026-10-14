@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, HttpQueryError, Response, StringArray, Value, loki_parquet_columns, loki_parquet_labels,
+    loki_parquet_value_response,
+};
 
 pub(crate) fn loki_streams_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
     let results = value
@@ -36,23 +39,6 @@ pub(crate) fn loki_streams_parquet_response(value: &Value) -> Result<Response, H
         }
     }
 
-    let timestamp_data_type = DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".into()));
-    let timestamp_array =
-        TimestampNanosecondArray::from(timestamps).with_data_type(timestamp_data_type.clone());
-    let labels_array = loki_parquet_label_array(&label_sets)?;
-    let line_array = StringArray::from(lines);
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("timestamp", timestamp_data_type, false),
-        Field::new("labels", labels_array.data_type().clone(), false),
-        Field::new("line", DataType::Utf8, false),
-    ]));
-    let batch = RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(timestamp_array) as ArrayRef,
-            Arc::new(labels_array) as ArrayRef,
-            Arc::new(line_array) as ArrayRef,
-        ],
-    )?;
-    loki_parquet_batch_response(&batch)
+    let columns = loki_parquet_columns(timestamps, &label_sets)?;
+    loki_parquet_value_response(columns, "line", Arc::new(StringArray::from(lines)))
 }

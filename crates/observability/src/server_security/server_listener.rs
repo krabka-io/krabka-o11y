@@ -59,7 +59,9 @@ impl ServerListener {
                 mode: ListenerMode::Plain(listener),
             });
         };
-        let (sender, handshaken) = mpsc::channel(HANDSHAKEN_QUEUE);
+        let channel = mpsc::channel(HANDSHAKEN_QUEUE);
+        let sender = channel.0;
+        let handshaken = channel.1;
         let stop = CancellationToken::new();
         tokio::spawn(run_tls_accept_loop(
             listener,
@@ -93,19 +95,19 @@ impl Listener for ServerListener {
         match &mut self.mode {
             ListenerMode::Plain(listener) => loop {
                 match TcpListener::accept(listener).await {
-                    Ok((tcp, socket)) => {
+                    Ok(connection) => {
                         let peer = PeerAddr {
-                            socket,
+                            socket: connection.1,
                             client_identity: None,
                         };
-                        return (ServerStream::Plain(tcp), peer);
+                        return (ServerStream::Plain(connection.0), peer);
                     }
                     Err(error) => handle_accept_error(error).await,
                 }
             },
             ListenerMode::Tls { handshaken, .. } => {
                 if let Some(connection) = handshaken.recv().await {
-                    return connection;
+                    return (connection.stream, connection.peer);
                 }
                 // The accept task owns the only sender, and it ends only when
                 // this listener drops its guard. A closed channel here means

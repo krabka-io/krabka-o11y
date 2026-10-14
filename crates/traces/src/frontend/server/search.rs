@@ -1,7 +1,7 @@
 use super::{
     BlockCatalog, FrontendRequest, IntoResponse, Json, QuerierBackend, Response, RouteVariant,
     SearchDelivery, StatusCode, backend_error_response, bounded_count, ndjson_search_stream,
-    search_request,
+    search_request, status_text_response,
 };
 
 /// `/api/search`, or for [`SearchDelivery::Streamed`] the NDJSON stream of
@@ -12,7 +12,7 @@ where
     C: BlockCatalog + 'static,
     D: RouteVariant<SearchDelivery>,
 {
-    let (tenant, query, start_ns, end_ns) = match search_request(request.tenant_request()) {
+    let search = match search_request(request.tenant_request()) {
         Ok(search) => search,
         Err(rejection) => return *rejection,
     };
@@ -22,15 +22,29 @@ where
 
     if matches!(D::VARIANT, SearchDelivery::Streamed) {
         return match qf
-            .search_stream(&tenant, &query, start_ns, end_ns, limit, spss)
+            .search_stream(
+                &search.tenant,
+                &search.query,
+                search.bounds.start_ns,
+                search.bounds.end_ns,
+                limit,
+                spss,
+            )
             .await
         {
             Ok(receiver) => ndjson_search_stream(receiver),
-            Err(error) => (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
+            Err(error) => status_text_response(StatusCode::BAD_GATEWAY, error.to_string()),
         };
     }
     match qf
-        .search(&tenant, &query, start_ns, end_ns, limit, spss)
+        .search(
+            &search.tenant,
+            &search.query,
+            search.bounds.start_ns,
+            search.bounds.end_ns,
+            limit,
+            spss,
+        )
         .await
     {
         Ok(resp) => Json(resp).into_response(),

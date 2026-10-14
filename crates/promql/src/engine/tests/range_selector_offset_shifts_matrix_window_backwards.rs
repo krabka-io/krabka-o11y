@@ -2,12 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn range_selector_offset_shifts_matrix_window_backwards() {
-    let store = SeriesFixture::new(labels(&[("__name__", "up")]))
-        .at(0_i64, 0.0)
-        .at(60_000, 1.0)
-        .at(120_000, 2.0)
-        .at(180_000, 3.0)
-        .store();
+    let store = up_series_store(&[(0, 0.0), (60_000, 1.0), (120_000, 2.0), (180_000, 3.0)]);
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine

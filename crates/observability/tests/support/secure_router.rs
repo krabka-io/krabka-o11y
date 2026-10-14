@@ -12,6 +12,18 @@ use krabka_observability::{
 };
 use tokio::net::TcpListener;
 
+pub struct BoundSecureListener {
+    pub listener: ServerListener,
+    pub addr: SocketAddr,
+}
+
+pub async fn bind_secure_listener(security: &ServerSecurity) -> BoundSecureListener {
+    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
+    let listener = ServerListener::bind(tcp, security).expect("the listener binds");
+    let addr = listener.local_addr();
+    BoundSecureListener { listener, addr }
+}
+
 /// The address a [`serve_secure_router`] call listens on, and the token that
 /// shuts it down gracefully.
 pub struct SecureRouter {
@@ -22,9 +34,7 @@ pub struct SecureRouter {
 /// Serves `router` behind `security` on a free local port until
 /// [`SecureRouter::stop`] is cancelled.
 pub async fn serve_secure_router(router: Router, security: &ServerSecurity) -> SecureRouter {
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
-    let listener = ServerListener::bind(tcp, security).expect("the listener binds");
-    let addr = listener.local_addr();
+    let BoundSecureListener { listener, addr } = bind_secure_listener(security).await;
     let stop = CancellationToken::new();
     tokio::spawn(
         serve_router(listener, router, security)

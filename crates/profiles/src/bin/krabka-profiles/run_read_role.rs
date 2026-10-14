@@ -66,14 +66,14 @@ pub(crate) async fn run_read_role(
     .await?;
     let Some(read) = read else { return Ok(()) };
     let mut tasks = SupervisedTasks::new(shutdown.clone());
-    for (name, handle) in read.spawn_background(
+    for background_task in read.spawn_background(
         &cli,
         &metrics,
         &shutdown,
         security.wal.as_ref(),
         readiness.gate("wal-catch-up"),
     ) {
-        tasks.adopt(name, handle);
+        tasks.adopt(background_task.name, background_task.handle);
     }
     let state = match role {
         ReadRole::Querier => QuerierState::new_with_overrides(Arc::clone(&read.union), overrides),
@@ -94,7 +94,7 @@ pub(crate) async fn run_read_role(
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );
-    let (bound, server) = serve_querier(
+    let server = serve_querier(
         cli.listen,
         state,
         readiness,
@@ -102,13 +102,14 @@ pub(crate) async fn run_read_role(
         shutdown.clone(),
     )
     .await?;
+    let bound = server.address;
     match role {
         ReadRole::Querier => {
-            tasks.adopt("profiles querier HTTP", server);
+            tasks.adopt("profiles querier HTTP", server.task);
             tracing::info!(%bound, "profiles querier listening");
         }
         ReadRole::QueryFrontend => {
-            tasks.adopt("profiles query-frontend HTTP", server);
+            tasks.adopt("profiles query-frontend HTTP", server.task);
             tracing::info!(
                 %bound,
                 shard_width = %cli.query_frontend_shard_width.human(),

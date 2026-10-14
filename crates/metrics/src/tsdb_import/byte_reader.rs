@@ -54,7 +54,8 @@ impl<'a> ByteReader<'a> {
     }
 
     pub fn be64(&mut self) -> Result<u64, TsdbImportError> {
-        let (high, low) = (u64::from(self.be32()?), u64::from(self.be32()?));
+        let high = u64::from(self.be32()?);
+        let low = u64::from(self.be32()?);
         Ok((high << 32) | low)
     }
 

@@ -1,5 +1,18 @@
 use super::{BTreeMap, CompareGroup};
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CompareCountKey {
+    pub(crate) group: CompareGroup,
+    pub(crate) attr_key: String,
+    pub(crate) value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CompareAttributeKey {
+    pub(crate) group: CompareGroup,
+    pub(crate) attr_key: String,
+}
+
 /// Upper bound on the distinct values tracked per `(group, attribute)`.
 ///
 /// The bound applies during accumulation, before the `top_n` cut. Without the
@@ -10,4 +23,4 @@ use super::{BTreeMap, CompareGroup};
 /// Memory then stays at `O(attrs * cap * buckets)`. The code clamps the cap to
 /// at least `top_n`, so the final `top_n` cut in `build_compare_series` is
 /// never starved.
-pub(crate) type CompareCounts = BTreeMap<(CompareGroup, String, String), Vec<u64>>;
+pub(crate) type CompareCounts = BTreeMap<CompareCountKey, Vec<u64>>;

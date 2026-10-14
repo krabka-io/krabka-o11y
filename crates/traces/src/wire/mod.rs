@@ -12,23 +12,39 @@ mod tests {
 
     use super::*;
 
+    struct PushPathCase {
+        path: &'static str,
+        content_type: Option<&'static str>,
+        expected_format: WireFormat,
+    }
+
     #[test]
     fn negotiate_trace_push_paths() {
-        for (path, content_type, want) in [
-            (
-                "/v1/traces",
-                Some("application/x-protobuf"),
-                WireFormat::Otlp,
-            ),
-            ("/api/push", None, WireFormat::Otlp),
-            (
-                "/api/v2/spans",
-                Some("application/json"),
-                WireFormat::Zipkin,
-            ),
-            ("/api/traces", None, WireFormat::Jaeger),
+        for case in [
+            PushPathCase {
+                path: "/v1/traces",
+                content_type: Some("application/x-protobuf"),
+                expected_format: WireFormat::Otlp,
+            },
+            PushPathCase {
+                path: "/api/push",
+                content_type: None,
+                expected_format: WireFormat::Otlp,
+            },
+            PushPathCase {
+                path: "/api/v2/spans",
+                content_type: Some("application/json"),
+                expected_format: WireFormat::Zipkin,
+            },
+            PushPathCase {
+                path: "/api/traces",
+                content_type: None,
+                expected_format: WireFormat::Jaeger,
+            },
         ] {
-            assert2::assert!(negotiate(path, content_type).unwrap() == want);
+            assert2::assert!(
+                negotiate(case.path, case.content_type).unwrap() == case.expected_format
+            );
         }
     }
 

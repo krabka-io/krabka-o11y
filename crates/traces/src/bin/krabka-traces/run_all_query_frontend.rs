@@ -4,7 +4,7 @@ use krabka_observability::{
     RoleKind,
     server_security::{ServerListener, serve_router},
 };
-use krabka_traces::frontend::{HttpQuerier, MembershipView, QuerierScheme, QueryFrontend};
+use krabka_traces::frontend::{HttpQuerier, MembershipView, QuerierScheme};
 use krabka_units::{
     ByteSize,
     convert::{ByteSizeExt as _, TimeExt as _},
@@ -12,8 +12,8 @@ use krabka_units::{
 use tokio::net::TcpListener;
 
 use super::{
-    AllRoleContext, Arc, BlockStoreGates, CancellationToken, SocketAddr, build_trace_index_catalog,
-    frontend, frontend_config_from_cli,
+    AllRoleContext, BlockStoreGates, CancellationToken, SocketAddr, build_query_frontend_app,
+    build_trace_index_catalog, frontend_config_from_cli,
 };
 
 /// The query-frontend of `--target all`, fanning out to the querier beside it.
@@ -72,13 +72,9 @@ pub(crate) async fn run_all_query_frontend(
         security.internal_client(),
     )?;
     let membership = MembershipView::fixed(cfg.querier_addrs.clone());
-    let qf = Arc::new(QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        membership,
-    ));
-    let app = frontend::server::router_with_backend(qf, readiness);
+    let app = build_query_frontend_app::build_query_frontend_app(
+        backend, catalog, cfg, membership, readiness,
+    );
     let listener = ServerListener::bind(listener, security)?;
     let bound = listener.local_addr();
     tracing::info!(%bound, %querier_addr, "traces all-in-one Tempo API listening");

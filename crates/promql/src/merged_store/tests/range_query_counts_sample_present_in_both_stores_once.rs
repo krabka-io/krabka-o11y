@@ -5,16 +5,11 @@ pub(crate) async fn range_query_counts_sample_present_in_both_stores_once() {
     // The same (fingerprint, timestamp) sample lives in both cold and hot —
     // the steady state, since hot retention is time-based and independent of
     // compaction. Without (fp, ts) dedup the merged scan double-counts it.
-    let mut cold = InMemoryMetricStore::new();
-    let mut hot = InMemoryMetricStore::new();
-    let labels = labels(&[("__name__", "up"), ("job", "api")]);
-    cold.push_float("tenant-a", labels.clone(), 10_000, 1.0);
-    cold.push_float("tenant-a", labels.clone(), 20_000, 1.0);
     // Hot re-reports the 20s sample (still within hot retention) and adds 30s.
-    hot.push_float("tenant-a", labels.clone(), 20_000, 1.0);
-    hot.push_float("tenant-a", labels.clone(), 30_000, 1.0);
-
-    let store = MergedMetricStore::new(cold, hot);
+    let store = merged_store_with_samples(
+        &[up_sample(10_000, 1.0), up_sample(20_000, 1.0)],
+        &[up_sample(20_000, 1.0), up_sample(30_000, 1.0)],
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let result = engine

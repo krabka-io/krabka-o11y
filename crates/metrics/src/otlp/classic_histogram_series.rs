@@ -1,6 +1,7 @@
 use super::{
     DecodedSeries, ExtraLabel, HistogramDataPoint, OtlpError, PointFamily, ScalarPointSeries,
-    ScalarSeries, ToPrimitive, exemplars_for_bucket, exemplars_from_histogram_point,
+    ScalarSeries, ToPrimitive, append_count_and_sum, exemplars_for_bucket,
+    exemplars_from_histogram_point,
 };
 
 pub(crate) fn classic_histogram_series(
@@ -34,8 +35,9 @@ pub(crate) fn classic_histogram_series(
     let mut out = Vec::new();
     let base_name = format!("{name}_bucket");
     let mut cumulative = 0_u64;
-    for (idx, count) in point.bucket_counts.iter().enumerate() {
-        cumulative = cumulative.saturating_add(*count);
+    for bucket in point.bucket_counts.iter().enumerate() {
+        let idx = bucket.0;
+        cumulative = cumulative.saturating_add(*bucket.1);
         let le = point
             .explicit_bounds
             .get(idx)
@@ -51,19 +53,12 @@ pub(crate) fn classic_histogram_series(
         }));
     }
 
-    out.push(scalar.series(ScalarSeries {
-        name: &format!("{name}_count"),
-        extra_label: None,
-        sample_value: point.count.to_f64().unwrap_or(f64::MAX),
-        exemplars: Vec::new(),
-    }));
-    if let Some(sum) = point.sum {
-        out.push(scalar.series(ScalarSeries {
-            name: &format!("{name}_sum"),
-            extra_label: None,
-            sample_value: sum,
-            exemplars: Vec::new(),
-        }));
-    }
+    append_count_and_sum(
+        &mut out,
+        &scalar,
+        name,
+        point.count.to_f64().unwrap_or(f64::MAX),
+        point.sum,
+    );
     Ok(out)
 }

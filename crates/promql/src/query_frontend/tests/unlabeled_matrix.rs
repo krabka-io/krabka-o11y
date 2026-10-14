@@ -4,13 +4,14 @@ use super::*;
 /// time.
 #[derive(Default)]
 pub(crate) struct UnlabeledMatrix {
-    samples: Vec<(i64, SampleValue)>,
+    samples: Vec<RangeSeriesSample>,
 }
 
 impl UnlabeledMatrix {
     /// Adds `sample_value` at `ts_ms`.
     pub(crate) fn at(mut self, ts_ms: i64, sample_value: SampleValue) -> Self {
-        self.samples.push((ts_ms, sample_value));
+        self.samples
+            .push(RangeSeriesSample::new(ts_ms, sample_value));
         self
     }
 

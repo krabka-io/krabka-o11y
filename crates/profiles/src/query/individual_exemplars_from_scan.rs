@@ -8,7 +8,7 @@ use super::{
 pub(crate) async fn individual_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,
     step: Time,
-    labels: &[(String, String)],
+    labels: &[krabka_pprof::ProfileLabel],
     profile_id: &str,
     call_sites: &[String],
 ) -> Result<BTreeMap<i64, Vec<pb::types::v1::Exemplar>>, ProfileError> {
@@ -22,7 +22,9 @@ pub(crate) async fn individual_exemplars_from_scan(
     }
     let label_pairs = types_label_pairs(labels.to_vec());
     let mut out: BTreeMap<i64, Vec<pb::types::v1::Exemplar>> = BTreeMap::new();
-    for (timestamp, value) in call_site_profile_totals(scan, call_sites).await? {
+    for point in call_site_profile_totals(scan, call_sites).await? {
+        let timestamp = point.timestamp_ms;
+        let value = point.total;
         out.entry(step_bucket_ms(timestamp, step))
             .or_default()
             .push(pb::types::v1::Exemplar {

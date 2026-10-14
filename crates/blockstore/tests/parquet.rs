@@ -6,12 +6,14 @@ use datafusion::{
     parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder,
 };
 use krabka_blockstore::{
-    BlockKey, LogRow, TimeRange, labels, log_block_object_path, read_log_block,
+    BlockDescriptor, BlockKey, LogRow, TimeRange, labels, log_block_object_path, read_log_block,
     read_log_block_from_object_store, series_fingerprint, write_log_block,
     write_log_block_to_object_store,
 };
 use krabka_units::prelude::*;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
+
+mod common;
 
 struct ApiAndWorker {
     api: u64,
@@ -38,27 +40,34 @@ fn mixed_rows(series: &ApiAndWorker) -> Vec<LogRow> {
     ]
 }
 
+fn assert_round_trip(
+    descriptor: &BlockDescriptor,
+    rows: &[LogRow],
+    key: &BlockKey,
+    series: &ApiAndWorker,
+) {
+    assert2::assert!(descriptor.key == key.clone());
+    assert2::assert!(descriptor.fingerprints == BTreeSet::from([series.api, series.worker]));
+    check!(descriptor.size > ByteSize::ZERO);
+
+    let mut expected = mixed_rows(series);
+    expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
+    assert2::assert!(rows == expected);
+}
+
 #[test]
 fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
     let dir = tempfile::tempdir().unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
-    let worker_labels = labels([("app", "worker"), ("env", "prod")]);
+    let api_labels = common::api_prod_labels();
+    let worker_labels = common::worker_prod_labels();
     let api = series_fingerprint(&api_labels);
     let worker = series_fingerprint(&worker_labels);
     let key = BlockKey::new("tenant-a", 3, 50, 55, TimeRange::new(10, 30).unwrap());
 
-    let descriptor =
-        write_log_block(dir.path(), &key, mixed_rows(&ApiAndWorker { api, worker })).unwrap();
-
-    assert2::assert!(descriptor.key == key.clone());
-    assert2::assert!(descriptor.fingerprints == BTreeSet::from([api, worker]));
-    check!(descriptor.size > ByteSize::ZERO);
-
+    let series = ApiAndWorker { api, worker };
+    let descriptor = write_log_block(dir.path(), &key, mixed_rows(&series)).unwrap();
     let rows = read_log_block(dir.path(), &key).unwrap();
-    let mut expected = mixed_rows(&ApiAndWorker { api, worker });
-    expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
-
-    assert2::assert!(rows == expected);
+    assert_round_trip(&descriptor, &rows, &key, &series);
 }
 
 #[test]
@@ -79,7 +88,10 @@ fn parquet_log_block_rejects_rows_outside_key_time_range() {
 #[test]
 fn parquet_log_block_writes_structured_metadata_as_arrow_map() {
     let dir = tempfile::tempdir().unwrap();
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
     let key = BlockKey::new("tenant-a", 0, 1, 1, TimeRange::new(10, 10).unwrap());
 
     write_log_block(
@@ -142,28 +154,22 @@ async fn parquet_log_block_round_trips_through_object_store() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("blocks");
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let worker = series_fingerprint(&labels([("app", "worker"), ("env", "prod")]));
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
+    let worker = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "worker"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
     let key = BlockKey::new("tenant-a", 3, 50, 55, TimeRange::new(10, 30).unwrap());
 
-    let descriptor = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &key,
-        mixed_rows(&ApiAndWorker { api, worker }),
-    )
-    .await
-    .unwrap();
-
-    assert2::assert!(descriptor.key == key.clone());
-    assert2::assert!(descriptor.fingerprints == BTreeSet::from([api, worker]));
-    check!(descriptor.size > ByteSize::ZERO);
-
+    let series = ApiAndWorker { api, worker };
+    let descriptor = write_log_block_to_object_store(&store, &prefix, &key, mixed_rows(&series))
+        .await
+        .unwrap();
     let rows = read_log_block_from_object_store(&store, &prefix, &key)
         .await
         .unwrap();
-    let mut expected = mixed_rows(&ApiAndWorker { api, worker });
-    expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
-
-    assert2::assert!(rows == expected);
+    assert_round_trip(&descriptor, &rows, &key, &series);
 }

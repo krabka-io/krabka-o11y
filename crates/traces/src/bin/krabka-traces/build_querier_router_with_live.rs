@@ -7,6 +7,13 @@ use super::{
     Url, engine_opts_from_cli, limits_from_cli, load_traces_limits_overrides_config, trace_querier,
 };
 
+pub(crate) struct QuerierRouterBuild {
+    pub(crate) router: axum::Router,
+    pub(crate) object_store: Arc<dyn ObjectStore>,
+    pub(crate) trace_index_key: String,
+    pub(crate) trace_index: SharedTraceIndex,
+}
+
 pub(crate) async fn build_querier_router_with_live(
     cli: &Cli,
     metrics: ServiceMetrics,
@@ -15,10 +22,7 @@ pub(crate) async fn build_querier_router_with_live(
     readiness: RoleReadiness,
     object_store: &SharedObjectStore,
     internal_client: &InternalClient,
-) -> Result<
-    (axum::Router, Arc<dyn ObjectStore>, String, SharedTraceIndex),
-    Box<dyn std::error::Error + Send + Sync>,
-> {
+) -> Result<QuerierRouterBuild, Box<dyn std::error::Error + Send + Sync>> {
     // Built first, so that a malformed overrides file stops the role before it
     // reaches the object store.
     let overrides = load_traces_limits_overrides_config(
@@ -85,5 +89,10 @@ pub(crate) async fn build_querier_router_with_live(
         metrics,
         readiness,
     );
-    Ok((router, configured.store, trace_index_key, trace_index))
+    Ok(QuerierRouterBuild {
+        router,
+        object_store: configured.store,
+        trace_index_key,
+        trace_index,
+    })
 }

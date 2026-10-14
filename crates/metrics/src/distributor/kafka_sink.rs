@@ -1,6 +1,6 @@
 use super::{
-    Arc, Bytes, Future, ProduceError, ProduceWindow, Producer, WalBatchError, WalRecord, WalSink,
-    current_trace_headers, wal_producer_record, write_batch_pipelined,
+    Arc, Bytes, Future, ProduceError, ProduceWindow, Producer, WalBatchError, WalBatchRecord,
+    WalRecord, WalSink, current_trace_headers, wal_producer_record, write_batch_pipelined,
 };
 
 /// Producer-backed metrics WAL sink.
@@ -34,7 +34,17 @@ impl KafkaSink {
         // span is active or OTLP is disabled.
         let ack = self
             .producer
-            .enqueue(wal_producer_record(key, value, current_trace_headers()))
+            .enqueue(wal_producer_record(
+                key,
+                value,
+                current_trace_headers()
+                    .into_iter()
+                    .map(|header| super::TraceHeader {
+                        key: header.0,
+                        value: header.1,
+                    })
+                    .collect(),
+            ))
             .await
             .map_err(|error| ProduceError::Append(error.to_string()))?;
         Ok(async move {
@@ -53,10 +63,10 @@ impl WalSink for KafkaSink {
 
     async fn append_batch(
         &self,
-        records: Vec<(Bytes, WalRecord)>,
+        records: Vec<WalBatchRecord>,
     ) -> Result<(), WalBatchError<ProduceError>> {
-        write_batch_pipelined(records, ProduceWindow::default(), |(key, record)| {
-            self.enqueue(key, record)
+        write_batch_pipelined(records, ProduceWindow::default(), |entry| {
+            self.enqueue(entry.key, entry.record)
         })
         .await
     }

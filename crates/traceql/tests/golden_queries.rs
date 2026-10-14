@@ -5,6 +5,11 @@ async fn query(q: &str) -> SearchResponse {
     engine().search("t", q, 0, 10_000, 20).await.unwrap()
 }
 
+struct QueryExpectation {
+    query: &'static str,
+    expected_ids: Vec<u8>,
+}
+
 fn trace_ids(resp: &SearchResponse) -> Vec<u8> {
     resp.traces.iter().map(|t| t.trace_id[0]).collect()
 }
@@ -24,12 +29,25 @@ fn span_ids(resp: &SearchResponse) -> Vec<u8> {
 
 #[tokio::test]
 async fn selector_queries_match_hand_computed_traces() {
-    for (q, want) in [
-        ("{ .http.method = \"GET\" }", vec![1]),
-        ("{ span:duration > 150 }", vec![1]),
-        ("{ .name =~ \"po.*\" }", vec![1]),
+    for case in [
+        QueryExpectation {
+            query: "{ .http.method = \"GET\" }",
+            expected_ids: vec![1],
+        },
+        QueryExpectation {
+            query: "{ span:duration > 150 }",
+            expected_ids: vec![1],
+        },
+        QueryExpectation {
+            query: "{ .name =~ \"po.*\" }",
+            expected_ids: vec![1],
+        },
     ] {
-        assert!(trace_ids(&query(q).await) == want, "query: {q}");
+        assert!(
+            trace_ids(&query(case.query).await) == case.expected_ids,
+            "query: {}",
+            case.query
+        );
     }
 }
 
@@ -41,14 +59,33 @@ async fn single_span_and_differs_from_inter_brace_and() {
 
 #[tokio::test]
 async fn structural_operators_return_right_hand_spans() {
-    for (q, want) in [
-        ("{ .svc = \"a\" } >> { .svc = \"c\" }", vec![4]),
-        ("{ .svc = \"c\" } << { .svc = \"a\" }", vec![1]),
-        ("{ .svc = \"a\" } > { .svc = \"b\" }", vec![2, 3]),
-        ("{ .svc = \"c\" } < { .svc = \"b\" }", vec![2]),
-        ("{ .svc = \"b\" } ~ { .svc = \"b\" }", vec![2, 3]),
+    for case in [
+        QueryExpectation {
+            query: "{ .svc = \"a\" } >> { .svc = \"c\" }",
+            expected_ids: vec![4],
+        },
+        QueryExpectation {
+            query: "{ .svc = \"c\" } << { .svc = \"a\" }",
+            expected_ids: vec![1],
+        },
+        QueryExpectation {
+            query: "{ .svc = \"a\" } > { .svc = \"b\" }",
+            expected_ids: vec![2, 3],
+        },
+        QueryExpectation {
+            query: "{ .svc = \"c\" } < { .svc = \"b\" }",
+            expected_ids: vec![2],
+        },
+        QueryExpectation {
+            query: "{ .svc = \"b\" } ~ { .svc = \"b\" }",
+            expected_ids: vec![2, 3],
+        },
     ] {
-        assert!(span_ids(&query(q).await) == want, "query: {q}");
+        assert!(
+            span_ids(&query(case.query).await) == case.expected_ids,
+            "query: {}",
+            case.query
+        );
     }
 }
 

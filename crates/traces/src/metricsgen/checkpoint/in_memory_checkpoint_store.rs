@@ -8,7 +8,10 @@ pub struct InMemoryCheckpointStore {
 impl EdgeCheckpointStore for InMemoryCheckpointStore {
     fn save(&self, tenant: &str, key: &[u8], value: &[u8]) {
         let mut inner = self.inner.lock().expect("checkpoint store mutex poisoned");
-        let store_key = (tenant.to_string(), key.to_vec());
+        let store_key = StoreKey {
+            tenant: tenant.to_string(),
+            key: key.to_vec(),
+        };
         if value.is_empty() {
             inner.remove(&store_key);
         } else {
@@ -16,12 +19,15 @@ impl EdgeCheckpointStore for InMemoryCheckpointStore {
         }
     }
 
-    fn load_all(&self, tenant: &str) -> Vec<(Vec<u8>, Vec<u8>)> {
+    fn load_all(&self, tenant: &str) -> Vec<super::CheckpointEntry> {
         let inner = self.inner.lock().expect("checkpoint store mutex poisoned");
         inner
             .iter()
-            .filter(|((stored_tenant, _), _)| stored_tenant == tenant)
-            .map(|((_, key), value)| (key.clone(), value.clone()))
+            .filter(|entry| entry.0.tenant == tenant)
+            .map(|entry| super::CheckpointEntry {
+                key: entry.0.key.clone(),
+                value: entry.1.clone(),
+            })
             .collect()
     }
 
@@ -29,7 +35,7 @@ impl EdgeCheckpointStore for InMemoryCheckpointStore {
         let inner = self.inner.lock().expect("checkpoint store mutex poisoned");
         let mut tenants: Vec<_> = inner
             .keys()
-            .map(|(tenant, _)| tenant.clone())
+            .map(|key| key.tenant.clone())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();

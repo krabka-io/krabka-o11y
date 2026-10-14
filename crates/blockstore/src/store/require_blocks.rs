@@ -1,7 +1,4 @@
-use super::{
-    Arc, BLOCK_PROBE_CONCURRENCY, BlockMetadataCache, ByteSize, ObjectStore, ProbedBlock, Result,
-    StreamExt, TryStreamExt, instrument, probe_block, stream,
-};
+use super::{Arc, BlockMetadataCache, ByteSize, ObjectStore, ProbedBlock, Result, instrument};
 
 /// Fails unless every one of `keys` is readable.
 ///
@@ -26,21 +23,8 @@ pub(crate) async fn require_blocks(
     max_bytes: ByteSize,
     cache: &BlockMetadataCache,
 ) -> Result<Vec<ProbedBlock>> {
-    // Every probe owns its key, its store handle and its cache handle, and is
-    // built here rather than in a closure. A closure that borrowed them would
-    // return a future tied to those borrows' lifetimes, so it would implement
-    // `FnOnce` for one lifetime rather than for any — and every `async fn` up
-    // the call chain would stop being `Send`.
-    let mut probes = Vec::with_capacity(keys.len());
-    for object_key in keys {
-        let store = Arc::clone(store);
-        let object_key = object_key.clone();
-        let cache = cache.clone();
-        probes.push(async move { probe_block(&store, &object_key, max_bytes, Some(&cache)).await });
-    }
-
-    stream::iter(probes)
-        .buffered(BLOCK_PROBE_CONCURRENCY)
-        .try_collect::<Vec<_>>()
+    super::probe_blocks::probe_keys(store, keys, max_bytes, cache)
         .await
+        .into_iter()
+        .collect()
 }

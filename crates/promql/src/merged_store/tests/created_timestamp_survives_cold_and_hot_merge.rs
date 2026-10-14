@@ -9,9 +9,15 @@ use crate::block_store::MetricBlockStore;
 pub(crate) async fn created_timestamp_survives_cold_and_hot_merge() {
     let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let mut blocks = BlockStore::new(object_store, url::Url::parse("memory:///").unwrap());
-    let series_labels = labels(&[("__name__", "http_requests_total"), ("job", "api")]);
+    let series_labels = crate::test_support::labels::http_requests_total_api_labels();
     let fp = series_labels.fingerprint();
-    let batch = encode_float_samples(&[(fp, 100_000, 5.0, Some(50_000))]).unwrap();
+    let batch = encode_float_samples(&[krabka_metrics::FloatSampleRow {
+        fingerprint: fp,
+        timestamp_ms: 100_000,
+        value: 5.0,
+        start_timestamp_ms: Some(50_000),
+    }])
+    .unwrap();
     let block_meta = blocks
         .writer()
         .write_block(

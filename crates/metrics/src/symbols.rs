@@ -57,7 +57,19 @@ mod tests {
         let env = t.intern("env");
         let prod = t.intern("prod");
         let labels = t.resolve_label_refs(&[app, api, env, prod]).unwrap();
-        assert!(labels == vec![("app".into(), "api".into()), ("env".into(), "prod".into())]);
+        assert!(
+            labels
+                == vec![
+                    ResolvedLabel {
+                        name: "app".into(),
+                        value: "api".into()
+                    },
+                    ResolvedLabel {
+                        name: "env".into(),
+                        value: "prod".into()
+                    },
+                ]
+        );
     }
 
     #[test]
@@ -100,4 +112,4 @@ mod symbol_error;
 mod symbol_table;
 
 pub use symbol_error::SymbolError;
-pub use symbol_table::SymbolTable;
+pub use symbol_table::{ResolvedLabel, SymbolTable};

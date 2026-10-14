@@ -17,12 +17,13 @@ pub(crate) async fn block_span_schema(
     object_key: &str,
 ) -> Result<SchemaRef, TraceqlError> {
     let keys = [object_key.to_string()];
-    let (ctx, table) = blocks
+    let registered = blocks
         .scan_block_keys(&keys, span_block_schema())
         .await
         .map_err(|err| block_err(&err))?;
-    let table = ctx
-        .table(&table)
+    let table = registered
+        .context
+        .table(&registered.table)
         .await
         .map_err(|err| TraceqlError::Store(err.to_string()))?;
     let promoted_attrs = block_promoted_attrs(table.schema().as_arrow())

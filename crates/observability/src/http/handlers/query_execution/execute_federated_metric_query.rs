@@ -2,15 +2,15 @@ use num_traits::ToPrimitive as _;
 
 use super::{apply_grouped_metric_selection, apply_nested_vector_aggregation};
 use crate::{
-    HttpMetricQuery, HttpQueryError, Labels, PipelineStage, QuerierState, QueryKind,
-    RangeAggregation, TimeRange, Value, VectorAggregationOp, add_loki_query_stats,
-    default_metric_range_step, eval_times,
+    FormattedMetricSeriesEntry, HttpMetricQuery, HttpQueryError, Labels, PipelineStage,
+    QuerierState, QueryKind, RangeAggregation, TimeRange, Value, VectorAggregationOp,
+    add_loki_query_stats, default_metric_range_step, eval_times,
     http::params_format::aggregation_formatting::apply_approx_metric_selection,
     json, loki_matrix_response, loki_vector_response_from_matrix, merge_loki_query_response,
     metric_scan_range,
     querier::{
         aggregate::sample_windows::absent_metric_labels,
-        metric_eval::scalar_samples::execute_http_metric_query,
+        metric_eval::scalar_samples::{execute_http_metric_query, validate_approximate_topk},
     },
 };
 
@@ -34,7 +34,12 @@ pub(crate) async fn execute_federated_metric_query(
     if absent_labels.is_some() {
         query.aggregation = RangeAggregation::CountOverTime;
     }
-    validate_approximate_aggregation(state, kind, aggregation.as_ref())?;
+    if aggregation
+        .as_ref()
+        .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::ApproxTopK(_)))
+    {
+        validate_approximate_topk(state, kind)?;
+    }
     let tenants = state
         .federated_metric_tenants
         .as_ref()
@@ -44,7 +49,8 @@ pub(crate) async fn execute_federated_metric_query(
         "resultType":if matches!(kind, QueryKind::Instant) { "vector" } else { "matrix" },"result":[]
     }}));
     for tenant in tenants.iter() {
-        let tenant_labels = Labels::from([("__tenant_id__".into(), tenant.as_str().into())]);
+        let mut tenant_labels = Labels::new();
+        tenant_labels.insert("__tenant_id__".into(), tenant.as_str().into());
         if !query
             .stream
             .matchers
@@ -118,29 +124,6 @@ pub(crate) async fn execute_federated_metric_query(
     Ok(response)
 }
 
-fn validate_approximate_aggregation(
-    state: &QuerierState,
-    kind: QueryKind,
-    aggregation: Option<&crate::VectorAggregation>,
-) -> Result<(), HttpQueryError> {
-    if aggregation
-        .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::ApproxTopK(_)))
-    {
-        if !state
-            .limits
-            .shard_aggregations
-            .iter()
-            .any(|name| name == "approx_topk")
-        {
-            return Err(HttpQueryError::ApproxTopKDisabled);
-        }
-        if matches!(kind, QueryKind::Range) {
-            return Err(HttpQueryError::ApproxTopKRangeQuery);
-        }
-    }
-    Ok(())
-}
-
 fn add_federated_tenant_labels(value: &mut Value, tenant: &str) {
     for row in value["data"]["result"]
         .as_array_mut()
@@ -207,7 +190,10 @@ fn apply_federated_absence(response: &mut Value, labels: Labels, evaluation: Fed
     let mut value = loki_matrix_response(if points.is_empty() {
         Vec::new()
     } else {
-        vec![(labels, points)]
+        vec![FormattedMetricSeriesEntry {
+            labels,
+            values: points,
+        }]
     });
     if matches!(kind, QueryKind::Instant) {
         value = loki_vector_response_from_matrix(value);

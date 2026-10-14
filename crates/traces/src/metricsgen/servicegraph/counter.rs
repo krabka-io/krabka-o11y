@@ -2,7 +2,7 @@ use super::{Series, SeriesSample};
 
 pub(crate) fn counter(
     name: &str,
-    labels: &[(String, String)],
+    labels: &[krabka_traceql::MetricLabel],
     value: f64,
     timestamp_ms: i64,
 ) -> Series {

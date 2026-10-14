@@ -1,3 +1,5 @@
+use krabka_traceql::next_duration_part;
+
 use super::parse_duration_component_ns;
 
 pub(crate) fn parse_go_duration_ns(value: &str) -> Result<u64, String> {
@@ -8,20 +10,13 @@ pub(crate) fn parse_go_duration_ns(value: &str) -> Result<u64, String> {
     let mut total = 0_u128;
     let mut rest = value;
     while !rest.is_empty() {
-        let number_len = rest
-            .char_indices()
-            .take_while(|(_, c)| c.is_ascii_digit() || *c == '.')
-            .map(|(idx, c)| idx + c.len_utf8())
-            .last()
-            .ok_or_else(|| format!("expected number in {value:?}"))?;
-        let (number, tail) = rest.split_at(number_len);
-        let unit_len = tail
-            .char_indices()
-            .take_while(|(_, c)| c.is_ascii_alphabetic() || *c == 'µ')
-            .map(|(idx, c)| idx + c.len_utf8())
-            .last()
-            .ok_or_else(|| format!("expected unit after {number:?}"))?;
-        let (unit, next) = tail.split_at(unit_len);
+        let part =
+            next_duration_part(rest).ok_or_else(|| format!("expected number in {value:?}"))?;
+        let number = part.number;
+        if part.unit.is_empty() {
+            return Err(format!("expected unit after {number:?}"));
+        }
+        let unit = part.unit;
         let multiplier = match unit {
             "ns" => 1,
             "us" | "µs" => 1_000,
@@ -34,7 +29,7 @@ pub(crate) fn parse_go_duration_ns(value: &str) -> Result<u64, String> {
         total = total
             .checked_add(parse_duration_component_ns(number, multiplier)?)
             .ok_or_else(|| "duration out of range".to_string())?;
-        rest = next;
+        rest = part.rest;
     }
 
     u64::try_from(total).map_err(|_| "duration out of range".into())

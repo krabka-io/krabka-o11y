@@ -2,6 +2,7 @@ use super::{
     Arc, DistributorState, ServerListener, ServerSecurity, SocketAddr, TcpListener, router,
     serve_router,
 };
+use crate::ServerTask;
 
 /// Serve the distributor, returning the bound address and the accept loop's
 /// handle for the caller to supervise.
@@ -25,7 +26,7 @@ pub async fn serve_supervised(
     readiness: krabka_observability::RoleReadiness,
     security: &ServerSecurity,
     shutdown: tokio_util::sync::CancellationToken,
-) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+) -> std::io::Result<ServerTask> {
     let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
         .map_err(std::io::Error::other)?;
     let bound = listener.local_addr();
@@ -37,5 +38,5 @@ pub async fn serve_supervised(
             tracing::error!(%err, "profiles distributor server stopped");
         }
     });
-    Ok((bound, handle))
+    Ok(ServerTask::new(bound, handle))
 }

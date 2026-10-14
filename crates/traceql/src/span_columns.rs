@@ -5,37 +5,42 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use krabka_units::Time;
 
-use crate::result::{AttrValue, EventRef, LinkRef};
+use crate::result::{EventRef, LinkRef};
 
 #[cfg(test)]
 mod tests {
     use arrow::datatypes::DataType;
     use assert2::{assert, check};
-    use krabka_units::nanos;
 
     use super::*;
+    use crate::testkit::span::SpanFixture;
+
+    struct SchemaColumn {
+        name: &'static str,
+        data_type: DataType,
+    }
 
     fn sid(n: u8) -> [u8; 8] {
-        [n, 0, 0, 0, 0, 0, 0, 0]
+        [n; 8]
     }
 
     fn span(id: u8, parent: Option<u8>) -> InputSpan {
-        InputSpan {
-            trace_id: [7; 16],
-            span_id: sid(id),
-            parent_span_id: parent.map(sid),
-            name: format!("span-{id}"),
-            kind: 0,
-            start_unix_nano: i64::from(id) * 100,
-            duration: nanos(10),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            attrs: vec![],
-            events: Vec::new(),
-            links: Vec::new(),
+        SpanFixture {
+            trace: 7,
+            id,
+            parent,
+            ..SpanFixture::default()
         }
+        .input_span()
+    }
+
+    fn four_spans() -> Vec<InputSpan> {
+        vec![
+            span(1, None),
+            span(2, Some(1)),
+            span(3, Some(1)),
+            span(4, Some(3)),
+        ]
     }
 
     fn idx(spans: &[InputSpan], id: u8) -> usize {
@@ -45,16 +50,32 @@ mod tests {
     #[test]
     fn schema_contains_traceql_planning_columns() {
         let schema = span_schema();
-        for (col, want) in [
-            (COL_TRACE_ID, DataType::FixedSizeBinary(16)),
-            (COL_NAME, DataType::Utf8),
-            (COL_NS_LEFT, DataType::Int32),
-            (COL_CHILD_COUNT, DataType::Int32),
-            (COL_TRACE_DURATION, DataType::Int64),
+        for column in [
+            SchemaColumn {
+                name: COL_TRACE_ID,
+                data_type: DataType::FixedSizeBinary(16),
+            },
+            SchemaColumn {
+                name: COL_NAME,
+                data_type: DataType::Utf8,
+            },
+            SchemaColumn {
+                name: COL_NS_LEFT,
+                data_type: DataType::Int32,
+            },
+            SchemaColumn {
+                name: COL_CHILD_COUNT,
+                data_type: DataType::Int32,
+            },
+            SchemaColumn {
+                name: COL_TRACE_DURATION,
+                data_type: DataType::Int64,
+            },
         ] {
             assert!(
-                schema.column_with_name(col).unwrap().1.data_type() == &want,
-                "column: {col}"
+                schema.column_with_name(column.name).unwrap().1.data_type() == &column.data_type,
+                "column: {}",
+                column.name
             );
         }
     }
@@ -66,12 +87,7 @@ mod tests {
 
     #[test]
     fn nested_set_parent_id_is_parent_left() {
-        let spans = vec![
-            span(1, None),
-            span(2, Some(1)),
-            span(3, Some(1)),
-            span(4, Some(3)),
-        ];
+        let spans = four_spans();
         let ns = assign_nested_set(&spans);
         let root_left = ns[idx(&spans, 1)].left;
         check!(ns[idx(&spans, 1)].parent_id == -1); // root: Tempo nestedSetParent sentinel
@@ -82,12 +98,7 @@ mod tests {
 
     #[test]
     fn nested_set_intervals_identify_ancestors() {
-        let spans = vec![
-            span(1, None),
-            span(2, Some(1)),
-            span(3, Some(1)),
-            span(4, Some(3)),
-        ];
+        let spans = four_spans();
         let ns = assign_nested_set(&spans);
         let root = ns[idx(&spans, 1)];
         let peer = ns[idx(&spans, 2)];
@@ -236,4 +247,4 @@ pub use instrumentation_attr_prefix::INSTRUMENTATION_ATTR_PREFIX;
 pub use link_attr_prefix::LINK_ATTR_PREFIX;
 pub use nested_set::NestedSet;
 pub use span_schema::span_schema;
-pub use span_schema_with_attrs::span_schema_with_attrs;
+pub use span_schema_with_attrs::{AttributeColumn, span_schema_with_attrs};

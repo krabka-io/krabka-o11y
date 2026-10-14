@@ -3,14 +3,14 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_group_returns_one_for_each_group() {
     let mut store = InMemoryMetricStore::new();
-    for (job, value) in [("api", 10.0), ("api", 30.0), ("web", 99.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", "up"), ("job", job)]),
-            10_000,
-            value,
-        );
-    }
+    push_metric_job_samples(
+        &mut store,
+        [
+            ("up", "api", 10.0),
+            ("up", "api", 30.0),
+            ("up", "web", 99.0),
+        ],
+    );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let samples = instant_vector(&engine, "group by (job) (up)", 10_000).await;

@@ -5,15 +5,12 @@ pub(crate) fn prometheus_alert_template_map(
     labels: &Labels,
     value: &str,
 ) -> Value {
-    Value::Object(
-        templates
-            .iter()
-            .map(|(key, template)| {
-                (
-                    key.clone(),
-                    json!(expand_prometheus_alert_template(template, labels, value)),
-                )
-            })
-            .collect(),
-    )
+    let mut rendered = serde_json::Map::new();
+    for entry in templates {
+        rendered.insert(
+            entry.0.clone(),
+            json!(expand_prometheus_alert_template(entry.1, labels, value)),
+        );
+    }
+    Value::Object(rendered)
 }

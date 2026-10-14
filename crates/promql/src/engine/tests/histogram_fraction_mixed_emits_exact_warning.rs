@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn histogram_fraction_mixed_emits_exact_warning() {
     let engine = PromqlEngine::new(Arc::new(mixed_histogram_store()), EngineOpts::default());
-    let (_, annotations) = engine
+    let annotated = engine
         .query_instant_with_annotations(
             &tenant_id("tenant-a"),
             "histogram_fraction(-Inf, 1, series)",
@@ -11,6 +11,7 @@ pub(crate) async fn histogram_fraction_mixed_emits_exact_warning() {
         )
         .await
         .expect("query");
+    let annotations = annotated.annotations;
     assert2::assert!(
         annotations.warnings.iter().any(|w| w
             == "PromQL warning: vector contains a mix of classic and native histograms for metric name \"series\" (1:29)")

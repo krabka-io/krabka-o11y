@@ -1,5 +1,11 @@
 use super::*;
 
+struct EncodingFlagCase {
+    values: &'static [&'static str],
+    flags: &'static [&'static str],
+    encoding: LokiStreamEncoding,
+}
+
 /// Loki reads `X-Loki-Response-Encoding-Flags` as a comma-separated list that
 /// it neither trims nor lowercases, echoes back exactly as given -- a flag it
 /// does not know included -- and matches against `categorize-labels` exactly.
@@ -20,40 +26,58 @@ pub(crate) fn encoding_flags_are_echoed_verbatim_but_only_categorize_labels_acts
         headers
     };
 
-    for (values, flags, encoding) in [
-        (&[][..], &[][..], LokiStreamEncoding::Folded),
-        (&[""], &[], LokiStreamEncoding::Folded),
-        (
-            &["categorize-labels"],
-            &["categorize-labels"],
-            LokiStreamEncoding::CategorizeLabels,
-        ),
-        (
-            &["CATEGORIZE-LABELS"],
-            &["CATEGORIZE-LABELS"],
-            LokiStreamEncoding::Folded,
-        ),
-        (&["bogus"], &["bogus"], LokiStreamEncoding::Folded),
-        (
-            &["categorize-labels, other"],
-            &["categorize-labels", " other"],
-            LokiStreamEncoding::CategorizeLabels,
-        ),
-        (
-            &["other", "categorize-labels"],
-            &["other"],
-            LokiStreamEncoding::Folded,
-        ),
+    for case in [
+        EncodingFlagCase {
+            values: &[],
+            flags: &[],
+            encoding: LokiStreamEncoding::Folded,
+        },
+        EncodingFlagCase {
+            values: &[""],
+            flags: &[],
+            encoding: LokiStreamEncoding::Folded,
+        },
+        EncodingFlagCase {
+            values: &["categorize-labels"],
+            flags: &["categorize-labels"],
+            encoding: LokiStreamEncoding::CategorizeLabels,
+        },
+        EncodingFlagCase {
+            values: &["CATEGORIZE-LABELS"],
+            flags: &["CATEGORIZE-LABELS"],
+            encoding: LokiStreamEncoding::Folded,
+        },
+        EncodingFlagCase {
+            values: &["bogus"],
+            flags: &["bogus"],
+            encoding: LokiStreamEncoding::Folded,
+        },
+        EncodingFlagCase {
+            values: &["categorize-labels, other"],
+            flags: &["categorize-labels", " other"],
+            encoding: LokiStreamEncoding::CategorizeLabels,
+        },
+        EncodingFlagCase {
+            values: &["other", "categorize-labels"],
+            flags: &["other"],
+            encoding: LokiStreamEncoding::Folded,
+        },
     ] {
-        let headers = headers(values);
-        let expected = flags
+        let request_headers = headers(case.values);
+        let expected = case
+            .flags
             .iter()
             .map(|flag| (*flag).to_string())
             .collect::<Vec<_>>();
-        check!(loki_encoding_flags(&headers) == expected, "{values:?}");
         check!(
-            loki_stream_encoding_for_headers(&headers) == encoding,
-            "{values:?}"
+            loki_encoding_flags(&request_headers) == expected,
+            "{:?}",
+            case.values
+        );
+        check!(
+            loki_stream_encoding_for_headers(&request_headers) == case.encoding,
+            "{:?}",
+            case.values
         );
     }
 

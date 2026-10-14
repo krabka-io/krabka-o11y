@@ -29,7 +29,6 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_observability::{
     QuerierIndexSource, Role, ServiceConfig, ServiceDependencies, build_service_dependencies,
@@ -40,6 +39,11 @@ use serde_json::{Value, json};
 use support::test_service_config;
 use tempfile::TempDir;
 use tower::ServiceExt as _;
+
+#[path = "support/in_process_broker.rs"]
+mod in_process_broker;
+
+use in_process_broker::InProcessBroker;
 
 /// The tenant the seed push and every query name.
 const TENANT: &str = "tenant-a";
@@ -64,26 +68,38 @@ const CONNECT_DEADLINE: Duration = Duration::from_mins(1);
 /// A metric query reaches the same slot before any range-vector evaluation
 /// runs, so it wedges on exactly the same lock as a stream query and is worth
 /// asking separately.
-const QUERIES: &[(&str, &str)] = &[
-    ("stream", r#"{app="api",env="prod"}"#),
-    ("metric", r#"count_over_time({app="api",env="prod"} [2s])"#),
+struct QueryCase {
+    kind: &'static str,
+    query: &'static str,
+}
+
+const QUERIES: &[QueryCase] = &[
+    QueryCase {
+        kind: "stream",
+        query: r#"{app="api",env="prod"}"#,
+    },
+    QueryCase {
+        kind: "metric",
+        query: r#"count_over_time({app="api",env="prod"} [2s])"#,
+    },
 ];
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_querier_serves_queries_after_its_authorizer_connects() {
     let stack = Box::pin(Stack::boot()).await;
 
-    for (kind, query) in QUERIES {
+    for case in QUERIES {
         let deadline = Instant::now() + CONNECT_DEADLINE;
         let mut last = None;
         let mut served = false;
         while Instant::now() < deadline {
-            let status = stack.query_status(query).await;
+            let status = stack.query_status(case.query).await;
             // `None` is the regression: the request never came back at all.
             assert!(
                 status.is_some(),
-                "the {kind} query never returned within {REQUEST_TIMEOUT:?}: the querier's \
-                 authorizer slot is wedged"
+                "the {} query never returned within {REQUEST_TIMEOUT:?}: the querier's \
+                 authorizer slot is wedged",
+                case.kind
             );
             last = status;
             if status == Some(StatusCode::OK) {
@@ -94,7 +110,8 @@ async fn the_querier_serves_queries_after_its_authorizer_connects() {
         }
         check!(
             served,
-            "the {kind} query was never served; last status {last:?}"
+            "the {} query was never served; last status {last:?}",
+            case.kind
         );
     }
 
@@ -103,7 +120,7 @@ async fn the_querier_serves_queries_after_its_authorizer_connects() {
 
 /// A broker, a seeded block, and the querier that reads it.
 struct Stack {
-    broker: BrokerHandle,
+    broker: InProcessBroker,
     querier: Router,
     start_ns: i64,
     end_ns: i64,
@@ -112,11 +129,8 @@ struct Stack {
 
 impl Stack {
     async fn boot() -> Self {
-        let broker_dir = TempDir::new().expect("broker tempdir");
-        let broker = Broker::start(BrokerConfig::for_tests(broker_dir.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let broker = InProcessBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
         create_wal_topic(&bootstrap).await;
 
         let data_root = TempDir::new().expect("data root");
@@ -162,7 +176,7 @@ impl Stack {
             querier: router(&querier_config).await,
             start_ns,
             end_ns,
-            _dirs: vec![broker_dir, data_root, object_root],
+            _dirs: vec![data_root, object_root],
         }
     }
 

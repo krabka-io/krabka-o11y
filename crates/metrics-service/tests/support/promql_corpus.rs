@@ -85,21 +85,49 @@ const REPLAYED_FILES: &[&str] = &[
 /// A file is either here or in `REPLAYED_FILES`; [`promql_corpus`] refuses to
 /// build when the directory holds one that is in neither, so a newly vendored
 /// file cannot arrive unnoticed and unrun.
-const EXCLUDED_FILES: &[(&str, &str)] = &[(
-    "limit.test",
-    "limitk and limit_ratio live behind the promql crate's `experimental-functions` \
+struct ExcludedFile {
+    name: &'static str,
+    reason: &'static str,
+}
+
+const EXCLUDED_FILES: &[ExcludedFile] = &[ExcludedFile {
+    name: "limit.test",
+    reason: "limitk and limit_ratio live behind the promql crate's `experimental-functions` \
      feature, which the default build these suites link does not turn on",
-)];
+}];
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CorpusLabel {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CorpusFloatSample {
+    pub timestamp_ms: i64,
+    pub value: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct CorpusHistogramSample {
+    pub timestamp_ms: i64,
+    pub histogram: NativeHistogram,
+}
+
+struct LoadedSample {
+    timestamp_ms: i64,
+    sample: SampleSpec,
+}
 
 /// One series to seed into both engines.
 #[derive(Clone, Debug, Default)]
 pub struct CorpusSeries {
     /// Label pairs, `__name__` included, sorted by name.
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<CorpusLabel>,
     /// Float samples, ascending by timestamp.
-    pub floats: Vec<(i64, f64)>,
+    pub floats: Vec<CorpusFloatSample>,
     /// Native-histogram samples, ascending by timestamp.
-    pub histograms: Vec<(i64, NativeHistogram)>,
+    pub histograms: Vec<CorpusHistogramSample>,
 }
 
 /// How one case is evaluated.
@@ -160,6 +188,12 @@ pub struct PromqlCorpus {
     pub skipped: Vec<SkippedCase>,
 }
 
+#[derive(Debug)]
+pub struct CorpusMismatch {
+    pub case_name: String,
+    pub detail: String,
+}
+
 impl PromqlCorpus {
     /// Total seeded samples, floats and histograms together.
     #[must_use]
@@ -193,11 +227,11 @@ pub fn promql_corpus() -> PromqlCorpus {
             .unwrap_or_else(|error| panic!("parse `{}`: {error}", path.display()));
         builder.add_file(file, &parsed.statements, &eval_lines(&source));
     }
-    for (file, reason) in EXCLUDED_FILES {
+    for excluded in EXCLUDED_FILES {
         builder.skipped.push(SkippedCase {
-            name: (*file).to_string(),
+            name: excluded.name.to_string(),
             promql: String::new(),
-            reason: (*reason).to_string(),
+            reason: excluded.reason.to_string(),
         });
     }
     builder.finish()
@@ -213,10 +247,11 @@ fn eval_lines(source: &str) -> Vec<usize> {
     source
         .lines()
         .enumerate()
-        .filter(|(_, line)| {
+        .filter(|entry| {
+            let line = entry.1;
             line.trim_start().starts_with("eval ") || line.trim_start().starts_with("eval_fail ")
         })
-        .map(|(index, _)| index + 1)
+        .map(|entry| entry.0 + 1)
         .collect()
 }
 
@@ -247,7 +282,7 @@ fn assert_corpus_files_are_accounted_for(dir: &Path) {
     let named: BTreeSet<String> = REPLAYED_FILES
         .iter()
         .map(|file| (*file).to_string())
-        .chain(EXCLUDED_FILES.iter().map(|(file, _)| (*file).to_string()))
+        .chain(EXCLUDED_FILES.iter().map(|file| file.name.to_string()))
         .collect();
     assert!(
         on_disk == named,
@@ -322,7 +357,9 @@ impl CorpusBuilder {
         let offset = self.offset_ms;
         let mut span = 0_i64;
 
-        for (metric, samples) in loaded {
+        for loaded_entry in loaded {
+            let metric = loaded_entry.0;
+            let samples = loaded_entry.1;
             let series = self
                 .series
                 .entry(metric.clone())
@@ -330,16 +367,25 @@ impl CorpusBuilder {
                     labels: metric_to_labels(metric),
                     ..CorpusSeries::default()
                 });
-            for (timestamp, sample) in samples {
+            for loaded_sample in samples {
+                let timestamp = loaded_sample.0;
+                let sample = loaded_sample.1;
                 span = span.max(*timestamp);
                 let at = offset + timestamp;
                 match sample {
-                    SampleSpec::Value(value) => series.floats.push((at, *value)),
-                    SampleSpec::Stale => series.floats.push((at, f64::from_bits(STALE_NAN_BITS))),
+                    SampleSpec::Value(value) => series.floats.push(CorpusFloatSample {
+                        timestamp_ms: at,
+                        value: *value,
+                    }),
+                    SampleSpec::Stale => series.floats.push(CorpusFloatSample {
+                        timestamp_ms: at,
+                        value: f64::from_bits(STALE_NAN_BITS),
+                    }),
                     SampleSpec::Histogram(histogram) => {
-                        series
-                            .histograms
-                            .push((at, merge_repeated_bounds(histogram)));
+                        series.histograms.push(CorpusHistogramSample {
+                            timestamp_ms: at,
+                            histogram: merge_repeated_bounds(histogram),
+                        });
                     }
                     // `_` is a hole in the series, and a `load` cannot carry a
                     // string; `apply_load` dropped both already.
@@ -350,15 +396,15 @@ impl CorpusBuilder {
 
         for eval in evals.drain(..) {
             let name = format!("{file}:{}", eval.line);
-            let (case, divergence) = case_from_eval(name, eval.statement, offset);
-            span = span.max(case_end_ms(case.kind) - offset);
-            match skip_reason(&case, divergence, offset) {
+            let evaluated = case_from_eval(name, eval.statement, offset);
+            span = span.max(case_end_ms(evaluated.case.kind) - offset);
+            match skip_reason(&evaluated.case, evaluated.divergence, offset) {
                 Some(reason) => self.skipped.push(SkippedCase {
-                    name: case.name,
-                    promql: case.promql,
+                    name: evaluated.case.name,
+                    promql: evaluated.case.promql,
                     reason,
                 }),
-                None => self.cases.push(case),
+                None => self.cases.push(evaluated.case),
             }
         }
 
@@ -368,8 +414,8 @@ impl CorpusBuilder {
     fn finish(self) -> PromqlCorpus {
         let mut series: Vec<CorpusSeries> = self.series.into_values().collect();
         for one in &mut series {
-            one.floats.sort_by_key(|(timestamp, _)| *timestamp);
-            one.histograms.sort_by_key(|(timestamp, _)| *timestamp);
+            one.floats.sort_by_key(|sample| sample.timestamp_ms);
+            one.histograms.sort_by_key(|sample| sample.timestamp_ms);
         }
         PromqlCorpus {
             series,
@@ -384,35 +430,42 @@ fn apply_load(
     step_ms: i64,
     series: &[krabka_promql::LoadSeries],
 ) {
-    let mut this_load: BTreeMap<String, Vec<(i64, SampleSpec)>> = BTreeMap::new();
+    let mut this_load: BTreeMap<String, Vec<LoadedSample>> = BTreeMap::new();
     for load_series in series {
         let samples = load_series
             .values
             .iter()
             .enumerate()
-            .filter(|(_, sample)| !matches!(sample, SampleSpec::Missing | SampleSpec::String(_)))
-            .map(|(index, sample)| {
+            .filter(|entry| !matches!(entry.1, SampleSpec::Missing | SampleSpec::String(_)))
+            .map(|entry| {
+                let index = entry.0;
+                let sample = entry.1;
                 let index = i64::try_from(index).expect("a sample index fits an i64");
-                (index * step_ms, sample.clone())
+                LoadedSample {
+                    timestamp_ms: index * step_ms,
+                    sample: sample.clone(),
+                }
             })
             .collect();
         // `insert` rather than `extend`: a series written twice in one `load`
         // keeps only the last line.
         this_load.insert(load_series.metric.clone(), samples);
     }
-    for (metric, samples) in this_load {
-        let entry = loaded.entry(metric).or_default();
-        for (timestamp, sample) in samples {
-            entry.insert(timestamp, sample);
+    for load_entry in this_load {
+        let entry = loaded.entry(load_entry.0).or_default();
+        let samples = load_entry.1;
+        for sample in samples {
+            entry.insert(sample.timestamp_ms, sample.sample);
         }
     }
 }
 
-fn case_from_eval(
-    name: String,
-    statement: &Statement,
-    offset: i64,
-) -> (CorpusCase, Option<String>) {
+struct EvaluatedCase {
+    case: CorpusCase,
+    divergence: Option<String>,
+}
+
+fn case_from_eval(name: String, statement: &Statement, offset: i64) -> EvaluatedCase {
     match statement {
         Statement::EvalInstant {
             at_ms,
@@ -420,8 +473,8 @@ fn case_from_eval(
             fail_message,
             divergence,
             ..
-        } => (
-            CorpusCase {
+        } => EvaluatedCase {
+            case: CorpusCase {
                 name,
                 promql: expr.clone(),
                 kind: QueryKind::Instant {
@@ -429,8 +482,8 @@ fn case_from_eval(
                 },
                 expects_failure: fail_message.is_some(),
             },
-            divergence.clone(),
-        ),
+            divergence: divergence.clone(),
+        },
         Statement::EvalRange {
             start_ms,
             end_ms,
@@ -439,8 +492,8 @@ fn case_from_eval(
             fail_message,
             divergence,
             ..
-        } => (
-            CorpusCase {
+        } => EvaluatedCase {
+            case: CorpusCase {
                 name,
                 promql: expr.clone(),
                 kind: QueryKind::Range {
@@ -450,8 +503,8 @@ fn case_from_eval(
                 },
                 expects_failure: fail_message.is_some(),
             },
-            divergence.clone(),
-        ),
+            divergence: divergence.clone(),
+        },
         Statement::Load { .. } | Statement::Clear => {
             unreachable!("only eval statements reach case_from_eval")
         }
@@ -502,7 +555,9 @@ fn merge_repeated_bounds(histogram: &NativeHistogram) -> NativeHistogram {
     );
     let mut new_bounds: Vec<f64> = Vec::with_capacity(bounds.len());
     let mut new_counts: Vec<f64> = Vec::with_capacity(bounds.len() + 1);
-    for (index, bound) in bounds.iter().enumerate() {
+    for indexed_bound in bounds.iter().enumerate() {
+        let index = indexed_bound.0;
+        let bound = indexed_bound.1;
         let count = dense.get(index).copied().unwrap_or_default();
         if new_bounds.last() == Some(bound) {
             *new_counts
@@ -587,9 +642,13 @@ pub fn has_literal_at_modifier(expr: &str) -> bool {
 }
 
 /// Splits `metric{label="value",…}` into label pairs, `__name__` included.
-fn metric_to_labels(metric: &str) -> Vec<(String, String)> {
+fn metric_to_labels(metric: &str) -> Vec<CorpusLabel> {
     krabka_promql::testkit::metric_to_labels(metric)
         .into_iter()
+        .map(|label| CorpusLabel {
+            name: label.name,
+            value: label.value,
+        })
         .collect()
 }
 
@@ -618,6 +677,17 @@ enum SeedSample<'a> {
     Histogram(&'a NativeHistogram),
 }
 
+struct OrderedSeedSample<'a> {
+    timestamp_ms: i64,
+    series_index: usize,
+    sample: SeedSample<'a>,
+}
+
+struct PendingSeedSample<'a> {
+    timestamp_ms: i64,
+    sample: SeedSample<'a>,
+}
+
 /// Snappy-compressed `remote_write` v1 bodies carrying the whole seed.
 ///
 /// The batches have to be posted in order. Both receivers hold one head per
@@ -631,28 +701,37 @@ enum SeedSample<'a> {
 /// buffer.
 #[must_use]
 pub fn remote_write_batches(series: &[CorpusSeries], samples_per_batch: usize) -> Vec<Vec<u8>> {
-    let mut ordered: Vec<(i64, usize, SeedSample<'_>)> = Vec::new();
-    for (index, one) in series.iter().enumerate() {
-        ordered.extend(
-            one.floats
-                .iter()
-                .map(|(timestamp, value)| (*timestamp, index, SeedSample::Float(*value))),
-        );
-        ordered.extend(
-            one.histograms.iter().map(|(timestamp, histogram)| {
-                (*timestamp, index, SeedSample::Histogram(histogram))
-            }),
-        );
+    let mut ordered: Vec<OrderedSeedSample<'_>> = Vec::new();
+    for indexed_series in series.iter().enumerate() {
+        let index = indexed_series.0;
+        let one = indexed_series.1;
+        ordered.extend(one.floats.iter().map(|sample| OrderedSeedSample {
+            timestamp_ms: sample.timestamp_ms,
+            series_index: index,
+            sample: SeedSample::Float(sample.value),
+        }));
+        ordered.extend(one.histograms.iter().map(|sample| OrderedSeedSample {
+            timestamp_ms: sample.timestamp_ms,
+            series_index: index,
+            sample: SeedSample::Histogram(&sample.histogram),
+        }));
     }
-    ordered.sort_by_key(|(timestamp, index, _)| (*timestamp, *index));
+    ordered.sort_by(|left, right| {
+        left.timestamp_ms
+            .cmp(&right.timestamp_ms)
+            .then_with(|| left.series_index.cmp(&right.series_index))
+    });
 
     let mut batches = Vec::new();
-    let mut pending: BTreeMap<usize, Vec<(i64, SeedSample<'_>)>> = BTreeMap::new();
+    let mut pending: BTreeMap<usize, Vec<PendingSeedSample<'_>>> = BTreeMap::new();
     let mut kinds: BTreeMap<usize, bool> = BTreeMap::new();
     let mut pending_count = 0_usize;
     let mut window_start = 0_i64;
 
-    for (timestamp, index, sample) in ordered {
+    for ordered_sample in ordered {
+        let timestamp = ordered_sample.timestamp_ms;
+        let index = ordered_sample.series_index;
+        let sample = ordered_sample.sample;
         let is_float = matches!(sample, SeedSample::Float(_));
         let over_size = pending_count >= samples_per_batch;
         let over_window = timestamp - window_start > BATCH_WINDOW_MS;
@@ -674,7 +753,10 @@ pub fn remote_write_batches(series: &[CorpusSeries], samples_per_batch: usize) -
             window_start = timestamp;
         }
         kinds.insert(index, is_float);
-        pending.entry(index).or_default().push((timestamp, sample));
+        pending.entry(index).or_default().push(PendingSeedSample {
+            timestamp_ms: timestamp,
+            sample,
+        });
         pending_count += 1;
     }
     if !pending.is_empty() {
@@ -685,11 +767,11 @@ pub fn remote_write_batches(series: &[CorpusSeries], samples_per_batch: usize) -
 
 fn encode_batch(
     series: &[CorpusSeries],
-    pending: &BTreeMap<usize, Vec<(i64, SeedSample<'_>)>>,
+    pending: &BTreeMap<usize, Vec<PendingSeedSample<'_>>>,
 ) -> Vec<u8> {
     let timeseries = pending
         .iter()
-        .flat_map(|(index, samples)| sample_runs(&series[*index].labels, samples))
+        .flat_map(|entry| sample_runs(&series[*entry.0].labels, entry.1))
         .collect();
     encode_write_request(timeseries)
 }
@@ -712,13 +794,15 @@ fn encode_write_request(timeseries: Vec<pb::v1::TimeSeries>) -> Vec<u8> {
 /// time, and the append is refused. Entries are processed in request order, so
 /// one entry per run keeps the whole series ascending.
 fn sample_runs(
-    labels: &[(String, String)],
-    samples: &[(i64, SeedSample<'_>)],
+    labels: &[CorpusLabel],
+    samples: &[PendingSeedSample<'_>],
 ) -> Vec<pb::v1::TimeSeries> {
     let labels = label_pairs(labels);
     let mut runs: Vec<pb::v1::TimeSeries> = Vec::new();
     let mut run_is_float: Option<bool> = None;
-    for (timestamp, sample) in samples {
+    for pending_sample in samples {
+        let timestamp = pending_sample.timestamp_ms;
+        let sample = &pending_sample.sample;
         let is_float = matches!(sample, SeedSample::Float(_));
         if run_is_float != Some(is_float) {
             runs.push(pb::v1::TimeSeries {
@@ -731,22 +815,22 @@ fn sample_runs(
         match sample {
             SeedSample::Float(value) => run.samples.push(pb::v1::Sample {
                 value: *value,
-                timestamp: *timestamp,
+                timestamp,
             }),
             SeedSample::Histogram(histogram) => run
                 .histograms
-                .push(native_histogram_to_pb(histogram, *timestamp)),
+                .push(native_histogram_to_pb(histogram, timestamp)),
         }
     }
     runs
 }
 
-fn label_pairs(labels: &[(String, String)]) -> Vec<pb::v1::Label> {
+fn label_pairs(labels: &[CorpusLabel]) -> Vec<pb::v1::Label> {
     labels
         .iter()
-        .map(|(name, value)| pb::v1::Label {
-            name: name.clone(),
-            value: value.clone(),
+        .map(|label| pb::v1::Label {
+            name: label.name.clone(),
+            value: label.value.clone(),
         })
         .collect()
 }
@@ -875,14 +959,17 @@ fn claimed_cases<'a>(lists: &[&'a [KnownDivergence]]) -> BTreeSet<&'a str> {
 #[must_use]
 pub fn check_divergences(
     corpus: &PromqlCorpus,
-    mismatches: &[(String, String)],
+    mismatches: &[CorpusMismatch],
     extra: &[KnownDivergence],
     agreed: &[KnownDivergence],
 ) -> Option<String> {
     let listed = claimed_cases(&[UPSTREAM_DIVERGENCES, extra]);
     let agreed = claimed_cases(&[agreed]);
     let expected: BTreeSet<&str> = listed.difference(&agreed).copied().collect();
-    let disagreed: BTreeSet<&str> = mismatches.iter().map(|(name, _)| name.as_str()).collect();
+    let disagreed: BTreeSet<&str> = mismatches
+        .iter()
+        .map(|mismatch| mismatch.case_name.as_str())
+        .collect();
     let run: BTreeSet<&str> = corpus.cases.iter().map(|case| case.name.as_str()).collect();
     let known: BTreeSet<&str> = run
         .iter()
@@ -915,8 +1002,8 @@ pub fn check_divergences(
         for name in &unexpected {
             let detail = mismatches
                 .iter()
-                .find(|(case, _)| case == name)
-                .map_or("", |(_, detail)| detail.as_str());
+                .find(|mismatch| mismatch.case_name == *name)
+                .map_or("", |mismatch| mismatch.detail.as_str());
             let _ = writeln!(verdict, "  {detail}");
         }
     }
@@ -953,18 +1040,25 @@ pub fn check_divergences(
 /// assert that Krabka reproduces Prometheus's wording.
 #[must_use]
 pub fn compare_case(case: &CorpusCase, krabka: &Value, upstream: &Value) -> Option<String> {
-    let (left, right) = if case.expects_failure {
-        (failure_shape(krabka), failure_shape(upstream))
+    struct ComparisonShapes {
+        left: Value,
+        right: Value,
+    }
+    let shapes = if case.expects_failure {
+        ComparisonShapes {
+            left: failure_shape(krabka),
+            right: failure_shape(upstream),
+        }
     } else {
-        (
-            crate::diff_corpus::normalize(krabka),
-            crate::diff_corpus::normalize(upstream),
-        )
+        ComparisonShapes {
+            left: crate::diff_corpus::normalize(krabka),
+            right: crate::diff_corpus::normalize(upstream),
+        }
     };
     let equal = if case.expects_failure {
-        left == right
+        shapes.left == shapes.right
     } else {
-        crate::diff_corpus::queries_equal(&left, &right)
+        crate::diff_corpus::queries_equal(&shapes.left, &shapes.right)
     };
     (!equal).then(|| {
         format!(
@@ -972,8 +1066,8 @@ pub fn compare_case(case: &CorpusCase, krabka: &Value, upstream: &Value) -> Opti
             case.name,
             case.promql,
             case.kind,
-            compact(&left),
-            compact(&right)
+            compact(&shapes.left),
+            compact(&shapes.right)
         )
     })
 }
@@ -999,7 +1093,7 @@ fn compact_limit() -> usize {
 fn compact(value: &Value) -> String {
     let text = value.to_string();
     match text.char_indices().nth(compact_limit()) {
-        Some((cut, _)) => format!("{}… ({} bytes)", &text[..cut], text.len()),
+        Some(entry) => format!("{}… ({} bytes)", &text[..entry.0], text.len()),
         None => text,
     }
 }
@@ -1020,7 +1114,7 @@ pub struct ReportConfiguration {
 pub fn write_report(
     suite: &str,
     corpus: &PromqlCorpus,
-    mismatches: &[(String, String)],
+    mismatches: &[CorpusMismatch],
     extra: &[KnownDivergence],
     configuration: &ReportConfiguration,
 ) {
@@ -1035,7 +1129,10 @@ pub fn write_report(
             "max_fetched_series": opts.max_fetched_series,
         },
     });
-    let disagreed: BTreeSet<&str> = mismatches.iter().map(|(name, _)| name.as_str()).collect();
+    let disagreed: BTreeSet<&str> = mismatches
+        .iter()
+        .map(|mismatch| mismatch.case_name.as_str())
+        .collect();
     let run: BTreeSet<&str> = corpus.cases.iter().map(|case| case.name.as_str()).collect();
     let mut report = String::new();
     let _ = writeln!(report, "{suite} differential report");
@@ -1086,8 +1183,8 @@ pub fn write_report(
     }
 
     let _ = writeln!(report, "\ndisagreements:");
-    for (_, detail) in mismatches {
-        let _ = writeln!(report, "  MISMATCH {detail}");
+    for mismatch in mismatches {
+        let _ = writeln!(report, "  MISMATCH {}", mismatch.detail);
     }
 
     let path = match std::env::var("TEST_UNDECLARED_OUTPUTS_DIR") {
@@ -1104,7 +1201,7 @@ pub fn write_report(
         "status": if disagreed.contains(case.name.as_str()) {
             if listed.contains(case.name.as_str()) { "expected_divergence" } else { "mismatch" }
         } else { "matched" },
-        "detail":mismatches.iter().find(|(name, _)| name == &case.name).map(|(_, detail)| detail),
+        "detail":mismatches.iter().find(|mismatch| mismatch.case_name == case.name).map(|mismatch| &mismatch.detail),
     })).chain(corpus.skipped.iter().map(|case| serde_json::json!({
         "id":case.name, "query":case.promql, "status":"skipped", "detail":case.reason,
     }))).collect::<Vec<_>>();

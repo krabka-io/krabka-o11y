@@ -3,6 +3,12 @@ use super::{
     filter_record_batch, fixed,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SpanIdentity {
+    trace_id: [u8; 16],
+    span_id: [u8; 8],
+}
+
 /// Collapse rows that describe the same span to the first one seen.
 ///
 /// A scan reads the cold blocks and the hot tier over the *same* window, so a
@@ -34,7 +40,7 @@ use super::{
 pub(crate) fn deduplicate_scan_batches(
     batches: Vec<RecordBatch>,
 ) -> Result<Vec<RecordBatch>, TraceqlError> {
-    let mut seen: HashSet<([u8; 16], [u8; 8])> = HashSet::new();
+    let mut seen: HashSet<SpanIdentity> = HashSet::new();
     let mut kept = Vec::with_capacity(batches.len());
     for batch in batches {
         let trace_ids = fixed(&batch, COL_TRACE_ID)?;
@@ -53,7 +59,7 @@ pub(crate) fn deduplicate_scan_batches(
             trace_id.copy_from_slice(trace_ids.value(row));
             let mut span_id = [0_u8; 8];
             span_id.copy_from_slice(span_ids.value(row));
-            let first = seen.insert((trace_id, span_id));
+            let first = seen.insert(SpanIdentity { trace_id, span_id });
             any_dropped |= !first;
             keep.push(first);
         }

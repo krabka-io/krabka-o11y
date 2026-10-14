@@ -20,6 +20,18 @@ struct LatestSeries {
     matching_labels: Option<Arc<Labels>>,
 }
 
+struct ColdCandidates {
+    fingerprints: BTreeSet<u64>,
+    keys: Vec<String>,
+    blocks: Vec<krabka_blockstore::BlockMeta>,
+    labels: BTreeMap<u64, Labels>,
+}
+
+struct LatestSeriesEntry {
+    fingerprint: u64,
+    series: LatestSeries,
+}
+
 impl MergedMetricStore<MetricBlockStore, WalHead> {
     /// Return latest float samples when a conservative full-window count fits
     /// the query limit. Skip cold blocks dominated by the captured hot head,
@@ -49,6 +61,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
     ///
     /// # Errors
     /// Returns an error when label matchers or cold metadata are invalid.
+    #[allow(clippy::too_many_lines)]
     pub async fn try_latest_float_scan(
         &self,
         tenant: &str,
@@ -83,7 +96,12 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                     let fps = cold_labels.keys().copied().collect::<BTreeSet<_>>();
                     let keys = index.candidate_blocks(tenant, &fps, start_ms, end_ms);
                     let blocks = index.all_blocks(tenant);
-                    (fps, keys, blocks, cold_labels)
+                    ColdCandidates {
+                        fingerprints: fps,
+                        keys,
+                        blocks,
+                        labels: cold_labels,
+                    }
                 });
         let mut latest = HashMap::<u64, LatestSeries, ahash::RandomState>::default();
         let mut upper_count = 0_usize;
@@ -94,24 +112,27 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                 .and_then(|summary| {
                     summary.matching_series(rows.len(), &prepared, label_start_ms, start_ms, end_ms)
                 })
-                .filter(|(_, count)| {
+                .filter(|summary| {
                     // A loose bound must use the exact hot loop, not the full
                     // scan: its boundary and duplicate limit behavior differs.
-                    cold_candidates.as_ref().is_ok_and(|(_, keys, blocks, _)| {
-                        blocks
+                    cold_candidates.as_ref().is_ok_and(|candidates| {
+                        candidates
+                            .blocks
                             .iter()
-                            .filter(|block| keys.contains(&block.object_key))
-                            .fold(*count, |count, block| count.saturating_add(block.row_count))
+                            .filter(|block| candidates.keys.contains(&block.object_key))
+                            .fold(summary.total_rows, |count, block| {
+                                count.saturating_add(block.row_count)
+                            })
                             <= max_samples
                     })
                 });
-            if let Some((series, count)) = summary {
-                upper_count = count;
-                for entry in series {
+            if let Some(summary) = summary {
+                upper_count = summary.total_rows;
+                for entry in summary.series {
                     latest.insert(
-                        entry.latest.0,
+                        entry.latest.fingerprint,
                         LatestSeries {
-                            sample: (entry.latest.1 >= start_ms).then_some(entry.latest),
+                            sample: (entry.latest.timestamp_ms >= start_ms).then_some(entry.latest),
                             labels: Some(Arc::clone(&entry.labels)),
                             ..LatestSeries::default()
                         },
@@ -171,11 +192,18 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                     if upper_count > max_samples {
                         return Ok(None);
                     }
-                    let sample = (row.fp, row.ts_ms, row.value, row.start_timestamp_ms);
                     // Keep the first hot row at equal timestamps, including stale
                     // markers and creation timestamps.
-                    if series.sample.is_none_or(|previous| row.ts_ms > previous.1) {
-                        series.sample = Some(sample);
+                    if series
+                        .sample
+                        .is_none_or(|previous| row.ts_ms > previous.timestamp_ms)
+                    {
+                        series.sample = Some(FloatSampleRow {
+                            fingerprint: row.fp,
+                            timestamp_ms: row.ts_ms,
+                            value: row.value,
+                            start_timestamp_ms: row.start_timestamp_ms,
+                        });
                     }
                 }
             }
@@ -208,11 +236,11 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
         // Selected values and labels retain the captured head's result.
         // Release its rows before the cold read can wait on object storage.
         drop(hot);
-        let (fps, keys, blocks, cold_labels) = cold_candidates?;
+        let candidates = cold_candidates?;
         let mut covered_blocks = 0;
         let mut uncovered = Vec::new();
-        for block in blocks {
-            if !keys.contains(&block.object_key) {
+        for block in candidates.blocks {
+            if !candidates.keys.contains(&block.object_key) {
                 continue;
             }
             covered_blocks += 1;
@@ -223,18 +251,18 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
             if block
                 .fingerprints
                 .iter()
-                .filter(|fp| fps.contains(fp))
+                .filter(|fp| candidates.fingerprints.contains(fp))
                 .any(|fp| {
                     latest
                         .get(fp)
                         .and_then(|series| series.sample)
-                        .is_none_or(|row| row.1 < block.max_ts)
+                        .is_none_or(|row| row.timestamp_ms < block.max_ts)
                 })
             {
                 uncovered.push(block.object_key.clone());
             }
         }
-        if covered_blocks != keys.len()
+        if covered_blocks != candidates.keys.len()
             || (!uncovered.is_empty() && latest.values().all(|series| series.sample.is_none()))
         {
             return Ok(None);
@@ -244,23 +272,35 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
         // read caps, footer cache and streaming scan as the ordinary path.
         if !uncovered.is_empty()
             && !self
-                .try_merge_latest_cold_samples(&uncovered, &fps, start_ms, end_ms, &mut latest)
+                .try_merge_latest_cold_samples(
+                    &uncovered,
+                    &candidates.fingerprints,
+                    start_ms,
+                    end_ms,
+                    &mut latest,
+                )
                 .await?
         {
             return Ok(None);
         }
-        let mut series = latest.into_iter().collect::<Vec<_>>();
-        series.sort_unstable_by_key(|(fp, _)| *fp);
-        let mut labels = cold_labels
+        let mut series = latest
             .into_iter()
-            .map(|(fp, labels)| (fp, Arc::new(labels)))
-            .collect::<BTreeMap<_, _>>();
+            .map(|entry| LatestSeriesEntry {
+                fingerprint: entry.0,
+                series: entry.1,
+            })
+            .collect::<Vec<_>>();
+        series.sort_unstable_by_key(|entry| entry.fingerprint);
+        let mut labels = BTreeMap::new();
+        for entry in candidates.labels {
+            labels.insert(entry.0, Arc::new(entry.1));
+        }
         let mut samples = Vec::new();
-        for (_, entry) in series {
-            if let Some(hot) = entry.labels {
+        for entry in series {
+            if let Some(hot) = entry.series.labels {
                 labels.entry(hot.fingerprint()).or_insert(hot);
             }
-            if let Some(sample) = entry.sample {
+            if let Some(sample) = entry.series.sample {
                 samples.push(sample);
             }
         }
@@ -293,30 +333,37 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                 return Ok(false);
             };
             for row in rows {
-                if !fps.contains(&row.0) || row.1 < start_ms || row.1 > end_ms {
+                if !fps.contains(&row.fingerprint)
+                    || row.timestamp_ms < start_ms
+                    || row.timestamp_ms > end_ms
+                {
                     continue;
                 }
-                if let Some(previous) = cold_latest.get_mut(&row.0) {
-                    if previous.1 == row.1
-                        && (previous.2.to_bits() != row.2.to_bits() || previous.3 != row.3)
+                if let Some(previous) = cold_latest.get_mut(&row.fingerprint) {
+                    if previous.timestamp_ms == row.timestamp_ms
+                        && (previous.value.to_bits() != row.value.to_bits()
+                            || previous.start_timestamp_ms != row.start_timestamp_ms)
                     {
                         // Equal-time conflicting cold values retain the
                         // full merge's tie behavior instead of choosing anew.
                         return Ok(false);
                     }
-                    if row.1 > previous.1 {
+                    if row.timestamp_ms > previous.timestamp_ms {
                         *previous = row;
                     }
                 } else {
-                    cold_latest.insert(row.0, row);
+                    cold_latest.insert(row.fingerprint, row);
                 }
             }
         }
-        for (fp, row) in cold_latest {
-            let series = latest.entry(fp).or_default();
+        for entry in cold_latest {
+            let series = latest.entry(entry.0).or_default();
             // Hot wins at equal timestamps, just as in a full scan.
-            if series.sample.is_none_or(|previous| row.1 > previous.1) {
-                series.sample = Some(row);
+            if series
+                .sample
+                .is_none_or(|previous| entry.1.timestamp_ms > previous.timestamp_ms)
+            {
+                series.sample = Some(entry.1);
             }
         }
         Ok(true)

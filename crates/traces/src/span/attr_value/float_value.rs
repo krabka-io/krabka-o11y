@@ -1,25 +1,9 @@
 use std::fmt;
 
 use num_traits::ToPrimitive;
-use serde::{Deserialize as _, Deserializer, Serializer, de::Visitor};
+use serde::{Deserialize as _, Deserializer, de::Visitor};
 
-pub(super) fn serialize<S: Serializer>(
-    value: impl std::borrow::Borrow<f64>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    let value = *value.borrow();
-    if serializer.is_human_readable() && !value.is_finite() {
-        serializer.serialize_str(if value.is_nan() {
-            "NaN"
-        } else if value.is_sign_positive() {
-            "Infinity"
-        } else {
-            "-Infinity"
-        })
-    } else {
-        serializer.serialize_f64(value)
-    }
-}
+pub(super) use crate::float_json::serialize_attr as serialize;
 
 pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
     if !deserializer.is_human_readable() {

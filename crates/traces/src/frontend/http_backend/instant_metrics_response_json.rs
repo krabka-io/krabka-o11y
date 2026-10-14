@@ -100,20 +100,6 @@ mod tests {
                     ..Metrics::default()
                 }
         );
-        for (value, expected) in [
-            (json!("NaN"), f64::NAN),
-            (json!("Infinity"), f64::INFINITY),
-            (json!("-Infinity"), f64::NEG_INFINITY),
-        ] {
-            let reply: InstantMetricsResponseJson =
-                serde_json::from_value(json!({"series":[{"value":value}]})).unwrap();
-            assert!(
-                reply.into_partial(0).unwrap().response.series[0].samples[0]
-                    .value
-                    .to_bits()
-                    == expected.to_bits()
-            );
-        }
         let omitted: InstantMetricsResponseJson =
             serde_json::from_value(json!({"series":[{}]})).unwrap();
         assert!(
@@ -145,5 +131,21 @@ mod tests {
                 serde_json::from_value(json!({"series":[{"value":value}]})).unwrap();
             assert!(reply.into_partial(0).is_err());
         }
+    }
+
+    #[yare::parameterized(
+        nan = { "NaN", f64::NAN },
+        positive_infinity = { "Infinity", f64::INFINITY },
+        negative_infinity = { "-Infinity", f64::NEG_INFINITY },
+    )]
+    fn nonfinite_values_roundtrip(token: &str, expected: f64) {
+        let reply: InstantMetricsResponseJson =
+            serde_json::from_value(json!({"series":[{"value":token}]})).unwrap();
+        ::core::assert_eq!(
+            reply.into_partial(0).unwrap().response.series[0].samples[0]
+                .value
+                .to_bits(),
+            expected.to_bits()
+        );
     }
 }

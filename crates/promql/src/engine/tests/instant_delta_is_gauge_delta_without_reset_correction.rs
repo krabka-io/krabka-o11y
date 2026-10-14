@@ -3,8 +3,8 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_delta_is_gauge_delta_without_reset_correction() {
     let store = SeriesFixture::new(labels(&[
-        ("__name__", "temperature_celsius"),
-        ("job", "api"),
+        crate::test_support::TestLabelPair::new("__name__", "temperature_celsius"),
+        crate::test_support::TestLabelPair::new("job", "api"),
     ]))
     .at(30_000_i64, 4.0)
     .at(60_000, 3.0)

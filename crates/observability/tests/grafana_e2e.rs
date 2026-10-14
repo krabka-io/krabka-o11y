@@ -36,13 +36,11 @@ use std::{
 
 use assert2::assert;
 use serde_json::{Value, json};
-use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt, core::IntoContainerPort, runners::AsyncRunner,
-};
+use testcontainers::core::IntoContainerPort;
 
 use self::grafana_loki::{
-    CONTAINER_START_TIMEOUT, GRAFANA_PORT, HttpBase, QueryPair, TENANT, TestResult, query_string,
-    serve_pushed, start_grafana,
+    GRAFANA_PORT, HttpBase, QueryPair, TENANT, TestResult, query_string, serve_pushed,
+    start_grafana,
 };
 
 /// How long a component gets to report itself ready.
@@ -164,7 +162,7 @@ async fn grafana_reads_the_same_answer_from_krabka_and_from_loki() -> TestResult
     let timeline = Timeline::new()?;
     let payload = dataset(&timeline);
 
-    let loki = start_loki().await?;
+    let loki = grafana_loki::start_loki(LOKI_CONFIG, LOKI_PORT).await?;
     let loki_port = loki.get_host_port_ipv4(LOKI_PORT.tcp()).await?;
     HttpBase {
         client: &client,
@@ -242,160 +240,239 @@ fn corpus(timeline: &Timeline) -> Vec<Case> {
 
 /// Log queries: selectors, line filters, parsers, label filters and
 /// formatters.
-const LOG_QUERIES: &[(&str, &str)] = &[
-    ("selector_eq", r#"{app="api"}"#),
-    ("selector_neq", r#"{app!="api",env="prod"}"#),
-    ("selector_re", r#"{app=~"a.*"}"#),
-    ("selector_nre", r#"{app!~"db",env="prod"}"#),
-    ("line_contains", r#"{app="api"} |= "error""#),
-    ("line_not_contains", r#"{app="api"} != "info""#),
-    ("line_regex", r#"{app="api"} |~ "50\\d""#),
-    ("line_not_regex", r#"{app="api"} !~ "200""#),
-    ("multi_line_filter", r#"{app="api"} |= "error" |~ "50\\d""#),
-    ("json_parser", r#"{app="api"} | json"#),
-    (
-        "json_field_filter_numeric",
-        r#"{app="api"} | json | status >= 500"#,
-    ),
-    (
-        "json_field_filter_equal",
-        r#"{app="api"} | json | method="POST""#,
-    ),
-    (
-        "logfmt_field_filter_duration",
-        r#"{app="web"} | logfmt | duration > 500ms"#,
-    ),
-    ("logfmt_parser", r#"{app="web"} | logfmt"#),
-    (
-        "logfmt_field_filter",
-        r#"{app="web"} | logfmt | status="502""#,
-    ),
-    (
-        "regexp_parser",
-        r#"{app="db"} | regexp "(?P<lvl>[A-Z]+) (?P<rest>.+)""#,
-    ),
-    ("keep_labels", r#"{app="api"} | json | keep method, status"#),
-    ("drop_labels", r#"{app="api"} | json | drop method"#),
-    (
-        "label_filter_and",
-        r#"{app="api"} | json | status>=500 and method="POST""#,
-    ),
-    (
-        "label_filter_or",
-        r#"{app="api"} | json | status=404 or status=503"#,
-    ),
-    (
-        "line_format",
-        r#"{app="api"} | json | line_format "{{.method}} {{.status}}""#,
-    ),
-    (
-        "label_format_rename",
-        r#"{app="api"} | label_format service=app"#,
-    ),
-    (
-        "label_format_template",
-        r#"{app="api"} | label_format combo="{{.app}}-{{.env}}""#,
-    ),
+struct QueryExample {
+    name: &'static str,
+    query: &'static str,
+}
+
+const LOG_QUERIES: &[QueryExample] = &[
+    QueryExample {
+        name: "selector_eq",
+        query: r#"{app="api"}"#,
+    },
+    QueryExample {
+        name: "selector_neq",
+        query: r#"{app!="api",env="prod"}"#,
+    },
+    QueryExample {
+        name: "selector_re",
+        query: r#"{app=~"a.*"}"#,
+    },
+    QueryExample {
+        name: "selector_nre",
+        query: r#"{app!~"db",env="prod"}"#,
+    },
+    QueryExample {
+        name: "line_contains",
+        query: r#"{app="api"} |= "error""#,
+    },
+    QueryExample {
+        name: "line_not_contains",
+        query: r#"{app="api"} != "info""#,
+    },
+    QueryExample {
+        name: "line_regex",
+        query: r#"{app="api"} |~ "50\\d""#,
+    },
+    QueryExample {
+        name: "line_not_regex",
+        query: r#"{app="api"} !~ "200""#,
+    },
+    QueryExample {
+        name: "multi_line_filter",
+        query: r#"{app="api"} |= "error" |~ "50\\d""#,
+    },
+    QueryExample {
+        name: "json_parser",
+        query: r#"{app="api"} | json"#,
+    },
+    QueryExample {
+        name: "json_field_filter_numeric",
+        query: r#"{app="api"} | json | status >= 500"#,
+    },
+    QueryExample {
+        name: "json_field_filter_equal",
+        query: r#"{app="api"} | json | method="POST""#,
+    },
+    QueryExample {
+        name: "logfmt_field_filter_duration",
+        query: r#"{app="web"} | logfmt | duration > 500ms"#,
+    },
+    QueryExample {
+        name: "logfmt_parser",
+        query: r#"{app="web"} | logfmt"#,
+    },
+    QueryExample {
+        name: "logfmt_field_filter",
+        query: r#"{app="web"} | logfmt | status="502""#,
+    },
+    QueryExample {
+        name: "regexp_parser",
+        query: r#"{app="db"} | regexp "(?P<lvl>[A-Z]+) (?P<rest>.+)""#,
+    },
+    QueryExample {
+        name: "keep_labels",
+        query: r#"{app="api"} | json | keep method, status"#,
+    },
+    QueryExample {
+        name: "drop_labels",
+        query: r#"{app="api"} | json | drop method"#,
+    },
+    QueryExample {
+        name: "label_filter_and",
+        query: r#"{app="api"} | json | status>=500 and method="POST""#,
+    },
+    QueryExample {
+        name: "label_filter_or",
+        query: r#"{app="api"} | json | status=404 or status=503"#,
+    },
+    QueryExample {
+        name: "line_format",
+        query: r#"{app="api"} | json | line_format "{{.method}} {{.status}}""#,
+    },
+    QueryExample {
+        name: "label_format_rename",
+        query: r#"{app="api"} | label_format service=app"#,
+    },
+    QueryExample {
+        name: "label_format_template",
+        query: r#"{app="api"} | label_format combo="{{.app}}-{{.env}}""#,
+    },
 ];
 
 /// Metric queries: range aggregations, vector aggregations, unwrap,
 /// binary operators, label functions and `offset`.
-const METRIC_QUERIES: &[(&str, &str)] = &[
-    ("count_over_time", r#"count_over_time({app="api"}[5m])"#),
-    (
-        "count_over_time_filtered",
-        r#"count_over_time({app="api"} |= "error" [5m])"#,
-    ),
-    ("rate", r#"rate({app="api"}[5m])"#),
-    ("bytes_over_time", r#"bytes_over_time({app="api"}[5m])"#),
-    ("bytes_rate", r#"bytes_rate({app="api"}[5m])"#),
-    (
-        "sum_by",
-        r#"sum by (app) (count_over_time({app=~".+"}[5m]))"#,
-    ),
-    (
-        "sum_without",
-        r#"sum without (env) (count_over_time({app="api"}[5m]))"#,
-    ),
-    ("avg", r#"avg(count_over_time({app=~".+"}[5m]))"#),
-    ("max", r#"max(count_over_time({app=~".+"}[5m]))"#),
-    ("min", r#"min(count_over_time({app=~".+"}[5m]))"#),
-    ("count_agg", r#"count(count_over_time({app=~".+"}[5m]))"#),
-    ("topk", r#"topk(2, count_over_time({app=~".+"}[5m]))"#),
-    ("bottomk", r#"bottomk(1, count_over_time({app=~".+"}[5m]))"#),
-    (
-        "quantile_over_time",
-        r#"quantile_over_time(0.95, {app="api"} | json | unwrap latency_ms [5m])"#,
-    ),
-    (
-        "avg_over_time_unwrap",
-        r#"avg_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
-    ),
-    (
-        "max_over_time_unwrap",
-        r#"max_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
-    ),
-    (
-        "min_over_time_unwrap",
-        r#"min_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
-    ),
-    (
-        "first_over_time_unwrap",
-        r#"first_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
-    ),
-    (
-        "last_over_time_unwrap",
-        r#"last_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
-    ),
-    (
-        "sum_over_time_unwrap",
-        r#"sum_over_time({app="api"} | json | unwrap resp_bytes [5m])"#,
-    ),
-    (
-        "stddev_over_time_unwrap",
-        r#"stddev_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
-    ),
-    (
-        "absent_over_time_present",
-        r#"absent_over_time({app="api"}[5m])"#,
-    ),
-    (
-        "absent_over_time_missing",
-        r#"absent_over_time({app="nope",env="prod"}[5m])"#,
-    ),
-    ("vector_scalar", r"vector(1)"),
-    (
-        "binary_scalar_div",
-        r#"sum(count_over_time({app="api"}[5m])) / 60"#,
-    ),
-    (
-        "binary_scalar_mul",
-        r#"100 * sum(count_over_time({app="api"}[5m]))"#,
-    ),
-    (
-        "binary_compare_bool",
-        r#"count_over_time({app="api"}[5m]) > bool 1"#,
-    ),
-    (
-        "label_replace",
-        r#"label_replace(count_over_time({app="api"}[5m]), "svc", "$1", "app", "(.*)")"#,
-    ),
-    (
-        "label_join",
-        r#"label_join(count_over_time({app="api"}[5m]), "combo", "-", "app", "env")"#,
-    ),
-    ("offset", r#"count_over_time({app="api"}[5m] offset 1m)"#),
+const METRIC_QUERIES: &[QueryExample] = &[
+    QueryExample {
+        name: "count_over_time",
+        query: r#"count_over_time({app="api"}[5m])"#,
+    },
+    QueryExample {
+        name: "count_over_time_filtered",
+        query: r#"count_over_time({app="api"} |= "error" [5m])"#,
+    },
+    QueryExample {
+        name: "rate",
+        query: r#"rate({app="api"}[5m])"#,
+    },
+    QueryExample {
+        name: "bytes_over_time",
+        query: r#"bytes_over_time({app="api"}[5m])"#,
+    },
+    QueryExample {
+        name: "bytes_rate",
+        query: r#"bytes_rate({app="api"}[5m])"#,
+    },
+    QueryExample {
+        name: "sum_by",
+        query: r#"sum by (app) (count_over_time({app=~".+"}[5m]))"#,
+    },
+    QueryExample {
+        name: "sum_without",
+        query: r#"sum without (env) (count_over_time({app="api"}[5m]))"#,
+    },
+    QueryExample {
+        name: "avg",
+        query: r#"avg(count_over_time({app=~".+"}[5m]))"#,
+    },
+    QueryExample {
+        name: "max",
+        query: r#"max(count_over_time({app=~".+"}[5m]))"#,
+    },
+    QueryExample {
+        name: "min",
+        query: r#"min(count_over_time({app=~".+"}[5m]))"#,
+    },
+    QueryExample {
+        name: "count_agg",
+        query: r#"count(count_over_time({app=~".+"}[5m]))"#,
+    },
+    QueryExample {
+        name: "topk",
+        query: r#"topk(2, count_over_time({app=~".+"}[5m]))"#,
+    },
+    QueryExample {
+        name: "bottomk",
+        query: r#"bottomk(1, count_over_time({app=~".+"}[5m]))"#,
+    },
+    QueryExample {
+        name: "quantile_over_time",
+        query: r#"quantile_over_time(0.95, {app="api"} | json | unwrap latency_ms [5m])"#,
+    },
+    QueryExample {
+        name: "avg_over_time_unwrap",
+        query: r#"avg_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
+    },
+    QueryExample {
+        name: "max_over_time_unwrap",
+        query: r#"max_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
+    },
+    QueryExample {
+        name: "min_over_time_unwrap",
+        query: r#"min_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
+    },
+    QueryExample {
+        name: "first_over_time_unwrap",
+        query: r#"first_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
+    },
+    QueryExample {
+        name: "last_over_time_unwrap",
+        query: r#"last_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
+    },
+    QueryExample {
+        name: "sum_over_time_unwrap",
+        query: r#"sum_over_time({app="api"} | json | unwrap resp_bytes [5m])"#,
+    },
+    QueryExample {
+        name: "stddev_over_time_unwrap",
+        query: r#"stddev_over_time({app="api"} | json | unwrap latency_ms [5m])"#,
+    },
+    QueryExample {
+        name: "absent_over_time_present",
+        query: r#"absent_over_time({app="api"}[5m])"#,
+    },
+    QueryExample {
+        name: "absent_over_time_missing",
+        query: r#"absent_over_time({app="nope",env="prod"}[5m])"#,
+    },
+    QueryExample {
+        name: "vector_scalar",
+        query: r"vector(1)",
+    },
+    QueryExample {
+        name: "binary_scalar_div",
+        query: r#"sum(count_over_time({app="api"}[5m])) / 60"#,
+    },
+    QueryExample {
+        name: "binary_scalar_mul",
+        query: r#"100 * sum(count_over_time({app="api"}[5m]))"#,
+    },
+    QueryExample {
+        name: "binary_compare_bool",
+        query: r#"count_over_time({app="api"}[5m]) > bool 1"#,
+    },
+    QueryExample {
+        name: "label_replace",
+        query: r#"label_replace(count_over_time({app="api"}[5m]), "svc", "$1", "app", "(.*)")"#,
+    },
+    QueryExample {
+        name: "label_join",
+        query: r#"label_join(count_over_time({app="api"}[5m]), "combo", "-", "app", "env")"#,
+    },
+    QueryExample {
+        name: "offset",
+        query: r#"count_over_time({app="api"}[5m] offset 1m)"#,
+    },
 ];
 
-fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) -> Vec<Case> {
+fn range_cases(timeline: &Timeline, queries: &[QueryExample]) -> Vec<Case> {
     queries
         .iter()
-        .copied()
-        .map(|(name, logql)| Case {
-            name,
+        .map(|example| Case {
+            name: example.name,
             path: "query_range".to_string(),
             query_pairs: vec![
-                QueryPair::new("query", logql),
+                QueryPair::new("query", example.query),
                 QueryPair::new("start", timeline.start),
                 QueryPair::new("end", timeline.end),
                 QueryPair::new("step", STEP_SECS),
@@ -407,6 +484,7 @@ fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) ->
 }
 
 /// The label and series endpoints Grafana's log browser drives.
+#[allow(clippy::items_after_statements)]
 fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
     let window = || {
         vec![
@@ -430,14 +508,27 @@ fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
             },
         },
     ];
-    for (name, label) in [
-        ("label_values_app", "app"),
-        ("label_values_env", "env"),
-        ("label_values_service_name", "service_name"),
+    struct LabelValuesRouteCase {
+        name: &'static str,
+        label: &'static str,
+    }
+    for route in [
+        LabelValuesRouteCase {
+            name: "label_values_app",
+            label: "app",
+        },
+        LabelValuesRouteCase {
+            name: "label_values_env",
+            label: "env",
+        },
+        LabelValuesRouteCase {
+            name: "label_values_service_name",
+            label: "service_name",
+        },
     ] {
         cases.push(Case {
-            name,
-            path: format!("label/{label}/values"),
+            name: route.name,
+            path: format!("label/{}/values", route.label),
             query_pairs: window(),
         });
     }
@@ -529,6 +620,7 @@ async fn probe(client: &reqwest::Client, base: &str, uid: &str, case: &Case) -> 
 /// `direction=forward`, and entry order is what a reader sees, so sorting them
 /// here would make a forward answer and a reverse answer compare equal. A side
 /// that ignored `direction` would then read as agreement.
+#[allow(clippy::items_after_statements)]
 fn normalize(body: &Value) -> Value {
     let data = &body["data"];
     let result_type = data["resultType"].as_str().unwrap_or_default();
@@ -549,7 +641,12 @@ fn normalize(body: &Value) -> Value {
         return json!({ "data": items });
     };
 
-    let mut entries: Vec<(String, Value)> = result
+    struct NormalizedEntry {
+        labels: String,
+        item: Value,
+    }
+
+    let mut entries: Vec<NormalizedEntry> = result
         .iter()
         .map(|item| {
             let is_stream = result_type == "streams";
@@ -568,28 +665,28 @@ fn normalize(body: &Value) -> Value {
             let mut entry = serde_json::Map::new();
             entry.insert(label_key.to_string(), item[label_key].clone());
             entry.insert("values".to_string(), Value::Array(values));
-            (labels, Value::Object(entry))
+            NormalizedEntry {
+                labels,
+                item: Value::Object(entry),
+            }
         })
         .collect();
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries.sort_by(|left, right| left.labels.cmp(&right.labels));
 
     json!({
         "resultType": result_type,
-        "result": entries.into_iter().map(|(_, item)| item).collect::<Vec<_>>(),
+        "result": entries.into_iter().map(|entry| entry.item).collect::<Vec<_>>(),
     })
 }
 
 /// A label set as one sorted string, so it can order a result list.
 fn canonical_labels(labels: &Value) -> String {
-    let ordered: BTreeMap<&str, &str> = labels
-        .as_object()
-        .map(|members| {
-            members
-                .iter()
-                .map(|(name, value)| (name.as_str(), value.as_str().unwrap_or_default()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut ordered = BTreeMap::new();
+    if let Some(members) = labels.as_object() {
+        for member in members {
+            ordered.insert(member.0.as_str(), member.1.as_str().unwrap_or_default());
+        }
+    }
     format!("{ordered:?}")
 }
 
@@ -651,33 +748,6 @@ fn summary(differences: &[String], healed: &[Divergence]) -> String {
 // ---------------------------------------------------------------------------
 // The two containers, and the Krabka process.
 // ---------------------------------------------------------------------------
-
-async fn start_loki() -> TestResult<ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_LOKI_IMAGE_TAG").expect(
-        "KRABKA_LOKI_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under cargo, set it to \
-         that image's tag in //bazel/images/images.bzl.",
-    );
-    Ok(tokio::time::timeout(
-        CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/loki".to_string(), tag)
-            .with_exposed_port(LOKI_PORT.tcp())
-            // No log-line wait condition: this config sets `log_level: warn`,
-            // and a healthy single-binary Loki says nothing at that level at
-            // all. `/ready` is polled instead.
-            .with_copy_to(
-                "/etc/loki/local-config.yaml",
-                LOKI_CONFIG.as_bytes().to_vec(),
-            )
-            .start(),
-    )
-    .await??)
-}
 
 async fn push_to_loki(client: &reqwest::Client, port: u16, payload: &Value) -> TestResult {
     let response = client

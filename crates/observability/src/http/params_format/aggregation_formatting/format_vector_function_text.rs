@@ -5,6 +5,6 @@ pub(crate) fn format_vector_function_text(query: &str) -> Option<String> {
         .chars()
         .filter(|ch| !ch.is_whitespace())
         .collect::<String>();
-    let (formatted, end) = parse_formatted_vector_function(&query, 0)?;
-    (end == query.len()).then_some(formatted)
+    let formatted = parse_formatted_vector_function(&query, 0)?;
+    (formatted.position == query.len()).then_some(formatted.value)
 }

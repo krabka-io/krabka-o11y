@@ -1,6 +1,7 @@
 #[cfg(test)]
 use super::MetricLabelJoin;
 use super::{Value, json};
+use crate::querier::metric_eval::for_each_loki_result_metric;
 
 #[cfg(test)]
 pub(crate) fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJoin) {
@@ -18,22 +19,12 @@ pub(crate) fn apply_label_join_fields(
     separator: &str,
     source_labels: &[String],
 ) {
-    let Some(results) = value
-        .pointer_mut("/data/result")
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-
-    for series in results {
-        let Some(metric) = series.get_mut("metric").and_then(Value::as_object_mut) else {
-            continue;
-        };
+    for_each_loki_result_metric(value, |metric| {
         let joined = source_labels
             .iter()
             .map(|label| metric.get(label).and_then(Value::as_str).unwrap_or(""))
             .collect::<Vec<_>>()
             .join(separator);
         metric.insert(destination_label.to_string(), json!(joined));
-    }
+    });
 }

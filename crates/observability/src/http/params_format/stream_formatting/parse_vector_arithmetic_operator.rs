@@ -1,17 +1,15 @@
+use crate::http::params_format::ParsedValueAt;
+
 pub(crate) fn parse_vector_arithmetic_operator(
     query: &str,
     position: usize,
-) -> Option<(&'static str, usize)> {
-    for (raw, formatted) in [
-        ("+", "+"),
-        ("-", "-"),
-        ("*", "*"),
-        ("/", "/"),
-        ("%", "%"),
-        ("^", "^"),
-    ] {
-        if query[position..].starts_with(raw) {
-            return Some((formatted, position + raw.len()));
+) -> Option<ParsedValueAt<&'static str>> {
+    for operator in ["+", "-", "*", "/", "%", "^"] {
+        if query[position..].starts_with(operator) {
+            return Some(ParsedValueAt {
+                value: operator,
+                position: position + operator.len(),
+            });
         }
     }
     None

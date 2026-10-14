@@ -20,7 +20,7 @@ pub(crate) fn clock_state_series(
                 projected_labels(
                     reading,
                     "krabka_clock_sync_state",
-                    &[("state", state.as_label())],
+                    &[krabka_blockstore::LabelPair::new("state", state.as_label())],
                 ),
                 Some(DecodedSample::new(
                     timestamp_ms,
@@ -35,7 +35,11 @@ pub(crate) fn clock_state_series(
     if let Some(current) = reading.gnss.and_then(|gnss| gnss.fix) {
         out.extend(GnssFix::ALL.iter().map(|fix| {
             decoded_series(
-                projected_labels(reading, "krabka_gnss_fix", &[("fix", fix.as_label())]),
+                projected_labels(
+                    reading,
+                    "krabka_gnss_fix",
+                    &[krabka_blockstore::LabelPair::new("fix", fix.as_label())],
+                ),
                 Some(DecodedSample::new(timestamp_ms, indicator(*fix == current))),
             )
         }));

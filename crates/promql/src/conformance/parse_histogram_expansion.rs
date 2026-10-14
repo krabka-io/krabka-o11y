@@ -1,15 +1,19 @@
-use super::{Line, NativeHistogram, Result, parse_error, parse_histogram_literal};
+use super::{HistogramExpansion, Line, Result, parse_error, parse_histogram_literal};
 
 pub(crate) fn parse_histogram_expansion(
     token: &str,
     line: Line<'_>,
-) -> Result<Option<(NativeHistogram, NativeHistogram, u32)>> {
-    let Some((base, count)) = token.rsplit_once('x') else {
+) -> Result<Option<HistogramExpansion>> {
+    let Some(separator) = token.rfind('x') else {
         return Ok(None);
     };
-    let Some((start, step)) = base.split_once("}}+{{") else {
+    let count = &token[separator + 1..];
+    let base = &token[..separator];
+    let Some(separator) = base.find("}}+{{") else {
         return Ok(None);
     };
+    let start = &base[..separator];
+    let step = &base[separator + "}}+{{".len()..];
     let count = count.parse::<u32>().map_err(|err| {
         parse_error(
             line,
@@ -22,5 +26,5 @@ pub(crate) fn parse_histogram_expansion(
     step_literal.push_str(step);
     let start = parse_histogram_literal(&start_literal, line)?;
     let step = parse_histogram_literal(&step_literal, line)?;
-    Ok(Some((start, step, count)))
+    Ok(Some(HistogramExpansion { start, step, count }))
 }

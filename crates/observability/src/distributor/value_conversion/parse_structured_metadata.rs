@@ -10,13 +10,13 @@ pub(crate) fn parse_structured_metadata(
         return Err(DistributorError::InvalidStructuredMetadata);
     };
 
-    metadata
-        .iter()
-        .map(|(name, value)| {
-            let value = value
-                .as_str()
-                .ok_or(DistributorError::InvalidStructuredMetadata)?;
-            Ok((name.clone(), value.to_string()))
-        })
-        .collect::<Result<BTreeMap<_, _>, DistributorError>>()
+    let mut parsed = BTreeMap::new();
+    for entry in metadata {
+        let value = entry
+            .1
+            .as_str()
+            .ok_or(DistributorError::InvalidStructuredMetadata)?;
+        parsed.insert(entry.0.clone(), value.to_string());
+    }
+    Ok(parsed)
 }

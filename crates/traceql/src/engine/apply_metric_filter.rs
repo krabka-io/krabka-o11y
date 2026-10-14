@@ -12,7 +12,7 @@ pub(crate) fn apply_metric_filter(
         .filter_map(|mut series| {
             series
                 .points
-                .retain(|(_, value)| !value.is_nan() && metric_filter_passes(*value, filter));
+                .retain(|point| !point.value.is_nan() && metric_filter_passes(point.value, filter));
             series.exemplars.retain(|exemplar| {
                 !exemplar.value.is_nan() && metric_filter_passes(exemplar.value, filter)
             });

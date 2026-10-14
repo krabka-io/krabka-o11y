@@ -6,6 +6,13 @@ use super::{
     touched_shard_ranges, trace_block_fingerprint,
 };
 
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+struct TraceRecordOrder {
+    max_ts: i64,
+    min_ts: i64,
+    fingerprint: u64,
+}
+
 /// How an oversized or unreadable trace-index snapshot names itself in errors.
 const SNAPSHOT_LABEL: &str = "trace index snapshot";
 
@@ -89,8 +96,9 @@ impl TraceIndex {
     pub fn compaction_candidates(&self) -> Vec<CompactionCandidate> {
         let mut candidates: Vec<CompactionCandidate> = self
             .tenants
-            .iter()
-            .flat_map(|(tenant, tenant_index)| {
+            .keys()
+            .flat_map(|tenant| {
+                let tenant_index = &self.tenants[tenant];
                 tenant_index
                     .blocks
                     .iter()
@@ -169,7 +177,8 @@ impl TraceIndex {
                 return true;
             }
             carried_tag_names.extend(block.tag_names.iter().cloned());
-            for (tag, values) in &block.tag_values {
+            for tag in block.tag_values.keys() {
+                let values = &block.tag_values[tag];
                 carried_tag_values
                     .entry(tag.clone())
                     .or_default()
@@ -224,21 +233,19 @@ impl TraceIndex {
     /// before they are. A removal that named only the object key would also
     /// drop a block another writer has since written under that key.
     fn retire_trace_blocks(&self, tenant: &str, dropped: &BTreeSet<&str>) {
-        let retired: Vec<(&str, PendingRemoval)> = self
+        let retired: Vec<crate::index_snapshot::PendingBlockRemoval> = self
             .tenants
             .get(tenant)
             .into_iter()
             .flat_map(|tenant_index| tenant_index.blocks.iter())
             .filter(|block| dropped.contains(block.object_key.as_str()))
-            .map(|block| {
-                (
-                    block.object_key.as_str(),
-                    PendingRemoval {
-                        fingerprint: trace_block_fingerprint(block),
-                        min_ts: block.min_ts,
-                        max_ts: block.max_ts,
-                    },
-                )
+            .map(|block| crate::index_snapshot::PendingBlockRemoval {
+                object_key: block.object_key.clone(),
+                removal: PendingRemoval {
+                    fingerprint: trace_block_fingerprint(block),
+                    min_ts: block.min_ts,
+                    max_ts: block.max_ts,
+                },
             })
             .collect();
         self.pending_removals.record(tenant, retired);
@@ -350,7 +357,7 @@ impl TraceIndex {
         let mut records: BTreeMap<IndexShardRange, Vec<TraceBlockStats>> = BTreeMap::new();
         let carried = merge
             .read_touched(&touched, |range, object_key, bytes| {
-                let (_, blocks) = decode_trace_shard(object_key, bytes)?;
+                let blocks = decode_trace_shard(object_key, bytes)?;
                 records.entry(range).or_default().extend(blocks);
                 Ok(())
             })
@@ -360,28 +367,34 @@ impl TraceIndex {
         // is not the one the base carries retires a block that is no
         // longer there, and publishing over it would either hide a live
         // block or double-count a retired one.
-        for (object_key, removal) in removed.into_iter().flatten() {
-            let unchanged = records
-                .values()
-                .flatten()
-                .find(|block| block.object_key == *object_key)
-                .is_some_and(|block| trace_block_fingerprint(block) == removal.fingerprint);
-            if !unchanged {
-                return Err(BlockStoreError::InvalidBlock(format!(
-                    "trace compaction input `{object_key}` changed before its replacement was published"
-                )));
+        if let Some(removed) = removed {
+            for object_key in removed.keys() {
+                let removal = &removed[object_key];
+                let unchanged = records
+                    .values()
+                    .flatten()
+                    .find(|block| block.object_key == *object_key)
+                    .is_some_and(|block| trace_block_fingerprint(block) == removal.fingerprint);
+                if !unchanged {
+                    return Err(BlockStoreError::InvalidBlock(format!(
+                        "trace compaction input `{object_key}` changed before its replacement was published"
+                    )));
+                }
             }
         }
 
-        for (object_key, removal) in removed.into_iter().flatten() {
-            // Only the record the removal pinned itself to is dropped. A
-            // block written under the same key since is a different block,
-            // and dropping it would hide an object nothing else names.
-            for blocks in records.values_mut() {
-                blocks.retain(|block| {
-                    block.object_key != *object_key
-                        || trace_block_fingerprint(block) != removal.fingerprint
-                });
+        if let Some(removed) = removed {
+            for object_key in removed.keys() {
+                let removal = &removed[object_key];
+                // Only the record the removal pinned itself to is dropped. A
+                // block written under the same key since is a different block,
+                // and dropping it would hide an object nothing else names.
+                for blocks in records.values_mut() {
+                    blocks.retain(|block| {
+                        block.object_key != *object_key
+                            || trace_block_fingerprint(block) != removal.fingerprint
+                    });
+                }
             }
         }
 
@@ -396,17 +409,25 @@ impl TraceIndex {
         }
 
         merge.carry(carried);
-        for (range, mut blocks) in records {
+        let ranges = records.keys().copied().collect::<Vec<_>>();
+        for range in ranges {
+            let Some(mut blocks) = records.remove(&range) else {
+                continue;
+            };
             if blocks.is_empty() {
                 // Nothing left in the slot, so the manifest stops naming
                 // it and the sweep reclaims what it named.
                 continue;
             }
             blocks.sort_by(|left, right| {
-                left.min_ts
-                    .cmp(&right.min_ts)
-                    .then_with(|| left.max_ts.cmp(&right.max_ts))
-                    .then_with(|| left.object_key.cmp(&right.object_key))
+                crate::compare_block_span(
+                    left.min_ts,
+                    left.max_ts,
+                    &left.object_key,
+                    right.min_ts,
+                    right.max_ts,
+                    &right.object_key,
+                )
             });
             let bytes = encode_trace_shard(tenant, &blocks);
             merge.publish(range, bytes).await?;
@@ -423,7 +444,7 @@ impl TraceIndex {
     /// A block whose span crosses a slot boundary arrives once per slot; the
     /// copies are folded together by [`Self::finish_load`].
     fn load_shard(&mut self, tenant: &str, object_key: &str, bytes: &[u8]) -> Result<()> {
-        let (_, blocks) = decode_trace_shard(object_key, bytes)?;
+        let blocks = decode_trace_shard(object_key, bytes)?;
         if !blocks.is_empty() {
             self.tenants
                 .entry(tenant.to_string())
@@ -465,12 +486,15 @@ impl TraceIndex {
 fn merge_record(records: &mut BTreeMap<String, TraceBlockStats>, incoming: TraceBlockStats) {
     match records.get(&incoming.object_key) {
         Some(held)
-            if (held.max_ts, held.min_ts, trace_block_fingerprint(held))
-                >= (
-                    incoming.max_ts,
-                    incoming.min_ts,
-                    trace_block_fingerprint(&incoming),
-                ) => {}
+            if (TraceRecordOrder {
+                max_ts: held.max_ts,
+                min_ts: held.min_ts,
+                fingerprint: trace_block_fingerprint(held),
+            }) >= (TraceRecordOrder {
+                max_ts: incoming.max_ts,
+                min_ts: incoming.min_ts,
+                fingerprint: trace_block_fingerprint(&incoming),
+            }) => {}
         _ => {
             records.insert(incoming.object_key.clone(), incoming);
         }

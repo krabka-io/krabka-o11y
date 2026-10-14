@@ -10,7 +10,7 @@ pub(crate) async fn a_read_that_repeats_its_tenant_reads_that_tenant() {
         EngineOpts::default(),
     ));
 
-    let (status, body) = org_query_body(
+    let response = org_query_body(
         state,
         OrgRequest {
             uri: "/api/v1/series?match[]=up&start=0&end=1",
@@ -19,6 +19,6 @@ pub(crate) async fn a_read_that_repeats_its_tenant_reads_that_tenant() {
     )
     .await;
 
-    assert2::assert!(status == StatusCode::OK);
-    assert2::check!(body["data"].as_array().map(Vec::len) == Some(2));
+    assert2::assert!(response.status == StatusCode::OK);
+    assert2::check!(response.body["data"].as_array().map(Vec::len) == Some(2));
 }

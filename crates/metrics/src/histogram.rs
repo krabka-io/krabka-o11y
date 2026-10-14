@@ -14,6 +14,7 @@ use arrow::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    NativeHistogramRow,
     arrow_codec::{require_non_null, schema_mismatch, typed_column},
     schema::{
         COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
@@ -68,18 +69,30 @@ mod tests {
         h3.schema = -53;
 
         let rows = vec![
-            (10_u64, 1000_i64, h1.clone()),
-            (20_u64, 2000_i64, h2.clone()),
-            (30_u64, 3000_i64, h3.clone()),
+            NativeHistogramRow {
+                fingerprint: 10,
+                timestamp_ms: 1000,
+                hist: h1.clone(),
+            },
+            NativeHistogramRow {
+                fingerprint: 20,
+                timestamp_ms: 2000,
+                hist: h2.clone(),
+            },
+            NativeHistogramRow {
+                fingerprint: 30,
+                timestamp_ms: 3000,
+                hist: h3.clone(),
+            },
         ];
         let batch = encode_native_histograms(&rows).unwrap();
         assert!(batch.num_rows() == 3);
 
         let back = decode_native_histograms(&batch).unwrap();
         assert!(back == rows);
-        check!(back[0].2.custom_values == None);
-        check!(back[1].2.custom_values == Some(vec![0.5, 1.0, 2.0]));
-        check!(back[2].2.custom_values == Some(vec![]));
+        check!(back[0].hist.custom_values == None);
+        check!(back[1].hist.custom_values == Some(vec![0.5, 1.0, 2.0]));
+        check!(back[2].hist.custom_values == Some(vec![]));
     }
 
     #[test]
@@ -90,7 +103,11 @@ mod tests {
             length: 5,
         }];
         bad.positive_counts = vec![1.0, 2.0];
-        let err = encode_native_histograms(&[(1, 1, bad)]);
+        let err = encode_native_histograms(&[NativeHistogramRow {
+            fingerprint: 1,
+            timestamp_ms: 1,
+            hist: bad,
+        }]);
         assert!(err.is_err());
     }
 
@@ -199,8 +216,12 @@ mod tests {
         encode_native_histograms(&sample_rows()).unwrap()
     }
 
-    fn sample_rows() -> Vec<(u64, i64, NativeHistogram)> {
-        vec![(7_u64, 99_i64, sample_histogram())]
+    fn sample_rows() -> Vec<NativeHistogramRow> {
+        vec![NativeHistogramRow {
+            fingerprint: 7,
+            timestamp_ms: 99,
+            hist: sample_histogram(),
+        }]
     }
 
     fn batch_with_column(
@@ -221,24 +242,21 @@ mod tests {
     }
 
     fn sample_histogram() -> NativeHistogram {
-        NativeHistogram {
-            schema: 2,
-            is_float: false,
-            reset_hint: ResetHint::No,
-            zero_threshold: 1e-128,
-            zero_count: 3.0,
-            count: 10.0,
-            sum: 42.5,
-            positive_spans: vec![BucketSpan {
+        NativeHistogram::builder()
+            .schema(2)
+            .reset_hint(ResetHint::No)
+            .zero_threshold(1e-128)
+            .zero_count(3.0)
+            .count(10.0)
+            .sum(42.5)
+            .positive_spans(vec![BucketSpan {
                 offset: 0,
                 length: 2,
-            }],
-            positive_counts: vec![4.0, 3.0],
-            negative_spans: vec![],
-            negative_counts: vec![],
-            custom_values: None,
-            start_timestamp_ms: None,
-        }
+            }])
+            .positive_counts(vec![4.0, 3.0])
+            .maybe_custom_values(None)
+            .maybe_start_timestamp_ms(None)
+            .build()
     }
 }
 
@@ -264,7 +282,9 @@ mod validate_span_count_consistency;
 use append_f64_list::append_f64_list;
 use append_spans::append_spans;
 pub use bucket_span::BucketSpan;
-pub use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
+pub use compact_spanned_histogram_counts::{
+    SpannedHistogramCounts, compact_spanned_histogram_counts,
+};
 pub use decode_native_histograms::decode_native_histograms;
 pub use encode_native_histograms::encode_native_histograms;
 use f64_list_field::f64_list_field;

@@ -8,7 +8,9 @@ pub(crate) fn parse_rules_params(raw_query: Option<&str>) -> Result<RulesParams,
     let Some(raw_query) = raw_query else {
         return Ok(params);
     };
-    for (name, value) in form_urlencoded::parse(raw_query.as_bytes()) {
+    for pair in form_urlencoded::parse(raw_query.as_bytes()) {
+        let name = pair.0;
+        let value = pair.1;
         match name.as_ref() {
             "type" => match value.to_ascii_lowercase().as_str() {
                 kind @ ("alert" | "record") => params.rule_type = Some(kind.to_string()),

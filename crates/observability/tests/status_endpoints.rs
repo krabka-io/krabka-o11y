@@ -9,13 +9,16 @@ mod support;
 use assert2::{assert, check};
 use axum::{Router, body::to_bytes, http::StatusCode};
 use krabka_observability::{
-    InMemoryWalSink, Role, ServiceConfig, ServiceDependencies, build_service_router,
-    distributor_router, loki_router,
+    InMemoryWalSink, Role, ServiceDependencies, build_service_router, distributor_router,
+    loki_router,
 };
 use serde_json::{Value, json};
-use support::{
-    Method, fixture, json_body, minimal_service_config, send_bare, test_service_config, text_body,
-};
+use support::{Method, fixture, json_body, send_bare, test_service_config, text_body};
+
+struct RingAliasCase {
+    app: Router,
+    path: &'static str,
+}
 
 async fn assert_ready(app: &Router) {
     let response = send_bare(app, Method::GET, "/ready").await;
@@ -86,8 +89,7 @@ async fn status_config_endpoint_returns_loki_yaml_placeholder() {
     let response = send_bare(&app, Method::GET, "/config").await;
 
     assert!(response.status() == StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body = std::str::from_utf8(&body).unwrap();
+    let body = text_body(response).await;
     assert!(body.contains("target: all"));
 }
 
@@ -198,13 +200,25 @@ async fn status_ring_aliases_return_loki_ring_pages() {
         compactor,
     } = RoleRouters::new().await;
 
-    for (app, path) in [
-        (querier.clone(), "/ring"),
-        (querier, "/scheduler/ring"),
-        (distributor, "/ring"),
-        (compactor, "/ring"),
+    for case in [
+        RingAliasCase {
+            app: querier.clone(),
+            path: "/ring",
+        },
+        RingAliasCase {
+            app: querier,
+            path: "/scheduler/ring",
+        },
+        RingAliasCase {
+            app: distributor,
+            path: "/ring",
+        },
+        RingAliasCase {
+            app: compactor,
+            path: "/ring",
+        },
     ] {
-        let response = send_bare(&app, Method::GET, path).await;
+        let response = send_bare(&case.app, Method::GET, case.path).await;
 
         check_active_ring_page(response).await;
     }
@@ -216,8 +230,7 @@ async fn check_metrics_page_for_component(app: &axum::Router, component: &str) {
     let response = send_bare(app, Method::GET, "/metrics").await;
 
     assert!(response.status() == StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body = std::str::from_utf8(&body).unwrap();
+    let body = text_body(response).await;
     let component_label = format!(r#"component="{component}""#);
     for needle in [
         "loki_build_info",
@@ -247,13 +260,7 @@ async fn status_metrics_endpoint_returns_prometheus_text_for_distributor_router(
 
 #[tokio::test]
 async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
-    let config = ServiceConfig {
-        index_prefix: Some("observability/logs".to_string()),
-        ..minimal_service_config(Role::BlockBuilder)
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let app = support::blockbuilder_service_router().await;
 
     let ready_response = send_bare(&app, Method::GET, "/ready").await;
     assert!(ready_response.status() == StatusCode::OK);
@@ -307,13 +314,13 @@ async fn distributor_ring_endpoint_returns_loki_status_page() {
 /// Checks the `/ready`, `/services` and `/ring` pages of a distributor that
 /// is serving.
 async fn check_serving_pages(app: &axum::Router) {
-    let (status, ready) = page(app, Method::GET, "/ready").await;
-    check!(status == StatusCode::OK);
-    check!(ready == "ready\n");
-    let (_, services) = page(app, Method::GET, "/services").await;
-    check!(services.contains("distributor => Running\n"));
-    let (_, ring) = page(app, Method::GET, "/ring").await;
-    check!(ring.contains("ACTIVE"));
+    let ready = page(app, Method::GET, "/ready").await;
+    check!(ready.status == StatusCode::OK);
+    check!(ready.body == "ready\n");
+    let services = page(app, Method::GET, "/services").await;
+    check!(services.body.contains("distributor => Running\n"));
+    let ring = page(app, Method::GET, "/ring").await;
+    check!(ring.body.contains("ACTIVE"));
 }
 
 async fn check_active_ring_page(response: axum::response::Response) {
@@ -330,10 +337,16 @@ async fn check_active_ring_page(response: axum::response::Response) {
     check!(body.contains("ACTIVE"));
 }
 
-async fn page(app: &axum::Router, method: Method, uri: &str) -> (StatusCode, String) {
+struct StatusPage {
+    status: StatusCode,
+    body: String,
+}
+
+async fn page(app: &axum::Router, method: Method, uri: &str) -> StatusPage {
     let response = send_bare(app, method, uri).await;
     let status = response.status();
-    (status, text_body(response).await)
+    let body = text_body(response).await;
+    StatusPage { status, body }
 }
 
 /// `/services` used to answer `Running` for every module from the moment the
@@ -347,23 +360,23 @@ async fn services_ring_and_ready_agree_across_a_drain() {
 
     check_serving_pages(&app).await;
 
-    let (status, _) = page(&app, Method::POST, "/ingester/prepare_shutdown").await;
-    check!(status == StatusCode::NO_CONTENT);
+    let response = page(&app, Method::POST, "/ingester/prepare_shutdown").await;
+    check!(response.status == StatusCode::NO_CONTENT);
 
-    let (status, ready) = page(&app, Method::GET, "/ready").await;
-    check!(status == StatusCode::SERVICE_UNAVAILABLE);
-    check!(ready == "not ready: accepting-writes\n");
-    let (_, services) = page(&app, Method::GET, "/services").await;
-    check!(services.contains("distributor => Stopping\n"));
+    let ready = page(&app, Method::GET, "/ready").await;
+    check!(ready.status == StatusCode::SERVICE_UNAVAILABLE);
+    check!(ready.body == "not ready: accepting-writes\n");
+    let services = page(&app, Method::GET, "/services").await;
+    check!(services.body.contains("distributor => Stopping\n"));
     // The listener answered this request, so it alone keeps running.
-    check!(services.contains("server => Running\n"));
-    check!(!services.contains("distributor => Running\n"));
-    let (_, ring) = page(&app, Method::GET, "/ring").await;
-    check!(ring.contains("JOINING"));
-    check!(!ring.contains("ACTIVE"));
+    check!(services.body.contains("server => Running\n"));
+    check!(!services.body.contains("distributor => Running\n"));
+    let ring = page(&app, Method::GET, "/ring").await;
+    check!(ring.body.contains("JOINING"));
+    check!(!ring.body.contains("ACTIVE"));
 
-    let (status, _) = page(&app, Method::DELETE, "/ingester/prepare_shutdown").await;
-    check!(status == StatusCode::NO_CONTENT);
+    let response = page(&app, Method::DELETE, "/ingester/prepare_shutdown").await;
+    check!(response.status == StatusCode::NO_CONTENT);
 
     check_serving_pages(&app).await;
 }

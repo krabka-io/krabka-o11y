@@ -10,7 +10,10 @@ pub(crate) async fn a_fill_modifier_is_refused_on_a_set_operator() {
     for name in ["a", "b"] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", name), ("job", "x")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", name),
+                crate::test_support::TestLabelPair::new("job", "x"),
+            ]),
             10_000,
             1.0,
         );

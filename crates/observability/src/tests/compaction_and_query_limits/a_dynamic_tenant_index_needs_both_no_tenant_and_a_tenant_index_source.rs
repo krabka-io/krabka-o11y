@@ -1,5 +1,11 @@
 use super::*;
 
+struct DynamicIndexCase {
+    tenant: Option<&'static str>,
+    source: QuerierIndexSource,
+    expected_dynamic: bool,
+}
+
 /// A dynamic tenant index is built only when the querier serves every
 /// tenant *and* was pointed at a tenant index source. Either condition
 /// alone leaves it reading its own index.
@@ -21,19 +27,31 @@ pub(crate) async fn a_dynamic_tenant_index_needs_both_no_tenant_and_a_tenant_ind
     )
     .await
     .expect("seed an empty tenant manifest");
-    for (tenant, source, dynamic) in [
-        (None, QuerierIndexSource::TenantObjectStoreManifest, true),
-        (None, QuerierIndexSource::TenantObjectStoreShards, true),
-        (None, QuerierIndexSource::LocalManifest, false),
-        (
-            Some("tenant-a"),
-            QuerierIndexSource::TenantObjectStoreManifest,
-            false,
-        ),
+    for case in [
+        DynamicIndexCase {
+            tenant: None,
+            source: QuerierIndexSource::TenantObjectStoreManifest,
+            expected_dynamic: true,
+        },
+        DynamicIndexCase {
+            tenant: None,
+            source: QuerierIndexSource::TenantObjectStoreShards,
+            expected_dynamic: true,
+        },
+        DynamicIndexCase {
+            tenant: None,
+            source: QuerierIndexSource::LocalManifest,
+            expected_dynamic: false,
+        },
+        DynamicIndexCase {
+            tenant: Some("tenant-a"),
+            source: QuerierIndexSource::TenantObjectStoreManifest,
+            expected_dynamic: false,
+        },
     ] {
         let config = ServiceConfig {
-            tenant: tenant.map(str::to_owned),
-            querier_index_source: source,
+            tenant: case.tenant.map(str::to_owned),
+            querier_index_source: case.source,
             index_prefix: Some("index".to_owned()),
             data_root: dir.path().to_path_buf(),
             ..ServiceConfig::default()
@@ -46,8 +64,10 @@ pub(crate) async fn a_dynamic_tenant_index_needs_both_no_tenant_and_a_tenant_ind
         .await
         .expect("the configuration is valid");
         check!(
-            state.dynamic_index.is_some() == dynamic,
-            "{tenant:?} with {source:?}"
+            state.dynamic_index.is_some() == case.expected_dynamic,
+            "{:?} with {:?}",
+            case.tenant,
+            case.source
         );
     }
 }

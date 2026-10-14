@@ -109,14 +109,14 @@ impl<S: MetricStore> PromqlEngine<S> {
         record_queryable_samples(rows.len());
         Ok(Some(
             rows.into_iter()
-                .filter_map(|(fp, ts_ms, value, start_timestamp_ms)| {
+                .filter_map(|row| {
                     Some(LabeledSeries {
-                        fp,
-                        labels: Arc::clone(labels.get(&fp)?),
+                        fp: row.fingerprint,
+                        labels: Arc::clone(labels.get(&row.fingerprint)?),
                         samples: vec![TimedValue {
-                            ts_ms,
-                            value,
-                            start_timestamp_ms,
+                            ts_ms: row.timestamp_ms,
+                            value: row.value,
+                            start_timestamp_ms: row.start_timestamp_ms,
                         }],
                     })
                 })
@@ -184,12 +184,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         } else {
             let mut out = BTreeMap::new();
             for matchers in matcher_sets {
-                out.extend(
-                    self.labels_by_fingerprint(tenant, matchers, start_ms, end_ms)
-                        .await?
-                        .iter()
-                        .map(|(fp, labels)| (*fp, Arc::clone(labels))),
-                );
+                let labels_by_fp = self
+                    .labels_by_fingerprint(tenant, matchers, start_ms, end_ms)
+                    .await?;
+                for entry in labels_by_fp.iter() {
+                    out.insert(*entry.0, Arc::clone(entry.1));
+                }
             }
             Arc::new(out)
         };
@@ -259,7 +259,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<(usize, Vec<FloatRow>)> {
+    ) -> Result<super::row_cache::FloatRowsWithCount> {
         let scan = self
             .scanned_rows(tenant, matchers, start_ms, end_ms)
             .await?;
@@ -274,15 +274,17 @@ impl<S: MetricStore> PromqlEngine<S> {
         let mut total = 0;
         let rows = window
             .series(start_ms, end_ms)
-            .filter_map(|(_, rows)| {
-                total += rows.len();
-                rows.iter()
+            .filter_map(|series| {
+                total += series.rows.len();
+                series
+                    .rows
+                    .iter()
                     .rev()
                     .find(|row| !is_stale_nan(row.value))
                     .copied()
             })
             .collect();
-        Ok((total, rows))
+        Ok(super::row_cache::FloatRowsWithCount { total, rows })
     }
 
     /// Every matcher set's float rows over `[start_ms, end_ms]`, flattened.
@@ -346,18 +348,19 @@ impl<S: MetricStore> PromqlEngine<S> {
             let window = self
                 .float_window(tenant, matchers, from_ms, through_ms)
                 .await?;
-            for (fp, rows) in window.series(from_ms, through_ms) {
+            for series in window.series(from_ms, through_ms) {
                 // The cap counts what the window holds, not what survives the
                 // label lookup and the staleness filter, which is what a scan of
                 // the same window would have returned.
-                total += rows.len();
+                total += series.rows.len();
                 if total > self.opts.max_samples {
                     return Err(samples_per_query_exceeded(self.opts.max_samples, total));
                 }
-                let Some(labels) = labels_by_fp.get(&fp) else {
+                let Some(labels) = labels_by_fp.get(&series.fingerprint) else {
                     continue;
                 };
-                let samples = rows
+                let samples = series
+                    .rows
                     .iter()
                     .filter(|row| !(drop_stale_nan && is_stale_nan(row.value)))
                     .map(|row| TimedValue {
@@ -370,7 +373,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     continue;
                 }
                 out.push(LabeledSeries {
-                    fp,
+                    fp: series.fingerprint,
                     labels: Arc::clone(labels),
                     samples,
                 });

@@ -1,6 +1,6 @@
 use super::{
     HttpQueryError, LOKI_DEFAULT_QUERY_RANGE, TimeExt, VolumeAggregateBy, VolumeParams,
-    current_unix_time_ns, decode_form_component, parse_loki_duration_query_param,
+    current_unix_time_ns, decode_query_pair, parse_loki_duration_query_param,
     parse_loki_timestamp_query_param, parse_usize_query_param, split_query_param_pairs,
 };
 
@@ -28,25 +28,25 @@ pub(crate) fn parse_volume_params(raw_query: Option<&str>) -> Result<VolumeParam
             "aggregateBy",
         ],
     ) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_form_component(key)?;
-        let value = decode_form_component(value)?;
+        let pair = decode_query_pair(pair)?;
 
-        match key.as_str() {
-            "query" if query.is_none() => query = Some(value),
+        match pair.key.as_str() {
+            "query" if query.is_none() => query = Some(pair.value),
             "start" if start.is_none() => {
-                start = Some(parse_loki_timestamp_query_param("start", &value)?);
+                start = Some(parse_loki_timestamp_query_param("start", &pair.value)?);
             }
             "end" if end.is_none() => {
-                end = Some(parse_loki_timestamp_query_param("end", &value)?);
+                end = Some(parse_loki_timestamp_query_param("end", &pair.value)?);
             }
             "step" if step.is_none() => {
-                step = Some(parse_loki_duration_query_param("step", &value)?);
+                step = Some(parse_loki_duration_query_param("step", &pair.value)?);
             }
-            "limit" if limit.is_none() => limit = Some(parse_usize_query_param("limit", &value)?),
+            "limit" if limit.is_none() => {
+                limit = Some(parse_usize_query_param("limit", &pair.value)?);
+            }
             "targetLabels" if target_labels.is_none() => {
                 target_labels = Some(
-                    value
+                    pair.value
                         .split(',')
                         .filter(|label| !label.is_empty())
                         .map(ToString::to_string)
@@ -54,7 +54,7 @@ pub(crate) fn parse_volume_params(raw_query: Option<&str>) -> Result<VolumeParam
                 );
             }
             "aggregateBy" if aggregate_by.is_none() => {
-                aggregate_by = Some(match value.as_str() {
+                aggregate_by = Some(match pair.value.as_str() {
                     "series" => VolumeAggregateBy::Series,
                     "labels" => VolumeAggregateBy::Labels,
                     _ => return Err(HttpQueryError::InvalidVolumeAggregation),

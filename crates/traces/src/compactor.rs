@@ -11,7 +11,6 @@ use arrow::{
         Array, ArrayRef, BooleanArray, FixedSizeBinaryArray, Float64Array, Int32Array, Int64Array,
         ListArray, StringArray, StructArray,
     },
-    compute::concat_batches,
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
@@ -48,6 +47,11 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../blockstore/tests/support/compaction_levels.rs"
+    ));
+
     use assert2::check;
     use krabka_blockstore::{BlockIndex, BlockLevel};
     use krabka_units::days;
@@ -55,10 +59,32 @@ mod tests {
 
     use super::*;
     use crate::span::{
-        AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode,
+        AttrValue, KeyValue, Span, SpanKind, StatusCode,
         batch::span_batch,
-        test_span::{api_server_span, string_attr},
+        test_span::{server_span_with_event_and_link, string_attr},
     };
+
+    fn int_column_values(batch: &RecordBatch, name: &str) -> Vec<i32> {
+        batch
+            .column_by_name(name)
+            .expect("the column is present")
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .expect("the column is i32")
+            .values()
+            .to_vec()
+    }
+
+    struct TagValueCase {
+        tag: &'static str,
+        expected: &'static str,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct SpanNumbering {
+        span_id_first_byte: u8,
+        left: i32,
+    }
 
     /// `recompute_nested_sets` renumbers a trace's spans as a nested set.
     /// The tree is deliberately lopsided -- three children under the root and
@@ -81,23 +107,14 @@ mod tests {
         .expect("the spans form a batch");
 
         let out = super::recompute_nested_sets(&batch).expect("the tree is numbered");
-        let ints = |name: &str| {
-            out.column_by_name(name)
-                .expect("the column is present")
-                .as_any()
-                .downcast_ref::<arrow::array::Int32Array>()
-                .expect("the column is i32")
-                .values()
-                .to_vec()
-        };
 
         // Pre-order: the root spans 1..10, its first child 2..5 with the sole
         // grandchild 3..4 inside it, then the remaining children in row order.
-        check!(ints(SCOL_NESTED_SET_LEFT) == vec![1, 2, 6, 8, 3]);
-        check!(ints(SCOL_NESTED_SET_RIGHT) == vec![10, 5, 7, 9, 4]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_LEFT) == vec![1, 2, 6, 8, 3]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_RIGHT) == vec![10, 5, 7, 9, 4]);
         // A root's nested-set parent is the -1 sentinel, not a row or a zero.
-        check!(ints(SCOL_PARENT_ID) == vec![-1, 1, 1, 1, 2]);
-        check!(ints(SCOL_CHILD_COUNT) == vec![3, 1, 0, 0, 0]);
+        check!(int_column_values(&out, SCOL_PARENT_ID) == vec![-1, 1, 1, 1, 2]);
+        check!(int_column_values(&out, SCOL_CHILD_COUNT) == vec![3, 1, 0, 0, 0]);
     }
 
     /// Two traces in one batch number their spans from the same counter, so a
@@ -215,23 +232,14 @@ mod tests {
             .expect("the span forms a batch");
 
         let out = super::recompute_nested_sets(&batch).expect("the self-parent is numbered");
-        let ints = |name: &str| {
-            out.column_by_name(name)
-                .expect("the column is present")
-                .as_any()
-                .downcast_ref::<arrow::array::Int32Array>()
-                .expect("the column is i32")
-                .values()
-                .to_vec()
-        };
 
-        check!(ints(SCOL_NESTED_SET_LEFT) == vec![1]);
-        check!(ints(SCOL_NESTED_SET_RIGHT) == vec![2]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_LEFT) == vec![1]);
+        check!(int_column_values(&out, SCOL_NESTED_SET_RIGHT) == vec![2]);
         check!(
-            ints(SCOL_PARENT_ID) == vec![-1],
+            int_column_values(&out, SCOL_PARENT_ID) == vec![-1],
             "a root, not a child of itself"
         );
-        check!(ints(SCOL_CHILD_COUNT) == vec![0]);
+        check!(int_column_values(&out, SCOL_CHILD_COUNT) == vec![0]);
     }
 
     /// `MetadataValueArray::string_value` renders one cell of an Arrow column
@@ -283,22 +291,13 @@ mod tests {
     }
 
     fn span() -> Span {
-        Span {
-            span_attrs: vec![string_attr("env", "prod")],
-            events: vec![EventRecord {
-                time_unix_nano: 1_050,
-                name: "exception".into(),
-                attrs: vec![string_attr("cache.key", "users")],
-            }],
-            links: vec![LinkRecord {
-                trace_id: [9; 16],
-                span_id: [8; 8],
-                attrs: vec![string_attr("link.kind", "retry")],
-            }],
-            instrumentation_scope: "otel-rust".into(),
-            instrumentation_version: "1.2.3".into(),
-            ..api_server_span()
-        }
+        server_span_with_event_and_link(
+            "GET /",
+            100,
+            vec![string_attr("env", "prod")],
+            1_050,
+            vec![string_attr("cache.key", "users")],
+        )
     }
 
     fn mk_span(
@@ -467,12 +466,9 @@ mod tests {
             }
             passes += 1;
             assert2::assert!(passes <= 4, "compaction did not converge");
-            levels.push(
-                pass.outputs
-                    .iter()
-                    .map(|meta| index.block_level(&meta.object_key))
-                    .collect::<Vec<_>>(),
-            );
+            levels.push(block_levels(&pass.outputs, |meta| {
+                index.block_level(&meta.object_key)
+            }));
         }
 
         // Four blocks pair into two at level 1, then into one at level 2,
@@ -521,42 +517,16 @@ mod tests {
     async fn compacted_block_recomputes_tag_metadata_from_rows() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
-        let batch = span_batch(&[span()]).unwrap();
-        let input = writer
-            .write_block_with_decl(
-                "tenant",
-                "input.parquet",
-                span_block_schema(),
-                &[batch],
-                &span_block_decl(),
-                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
-            )
-            .await
-            .unwrap();
-
-        let mut bloom = ShardedTraceBloom::with_tempo_defaults(1);
-        bloom.insert(&[1; 16]);
         let mut index = TraceIndex::new();
-        index.add_trace_block(
-            "tenant",
-            TraceBlockStats {
-                object_key: input.object_key.clone(),
-                min_ts: input.min_ts,
-                max_ts: input.max_ts,
-                bloom,
-                tag_names: BTreeSet::new(),
-                tag_values: BTreeMap::new(),
-                row_count: 0,
-                level: BlockLevel::INGESTED,
-            },
-        );
+        let input_key = "input.parquet".to_string();
+        write_indexed_block(&writer, &mut index, "tenant", &input_key).await;
 
         compact_block_keys(
             store,
             &writer,
             &mut index,
             "tenant",
-            std::slice::from_ref(&input.object_key),
+            std::slice::from_ref(&input_key),
             "compacted.parquet",
         )
         .await
@@ -576,18 +546,47 @@ mod tests {
         ] {
             check!(names.contains(&name.to_string()));
         }
-        for (tag, want) in [
-            ("service.name", "api"),
-            ("env", "prod"),
-            ("instrumentation:name", "otel-rust"),
-            ("event:name", "exception"),
-            ("event:timeSinceStart", "50"),
-            ("cache.key", "users"),
-            ("link:traceID", "09090909090909090909090909090909"),
-            ("link:spanID", "0808080808080808"),
-            ("link.kind", "retry"),
+        for case in [
+            TagValueCase {
+                tag: "service.name",
+                expected: "api",
+            },
+            TagValueCase {
+                tag: "env",
+                expected: "prod",
+            },
+            TagValueCase {
+                tag: "instrumentation:name",
+                expected: "otel-rust",
+            },
+            TagValueCase {
+                tag: "event:name",
+                expected: "exception",
+            },
+            TagValueCase {
+                tag: "event:timeSinceStart",
+                expected: "50",
+            },
+            TagValueCase {
+                tag: "cache.key",
+                expected: "users",
+            },
+            TagValueCase {
+                tag: "link:traceID",
+                expected: "09090909090909090909090909090909",
+            },
+            TagValueCase {
+                tag: "link:spanID",
+                expected: "0808080808080808",
+            },
+            TagValueCase {
+                tag: "link.kind",
+                expected: "retry",
+            },
         ] {
-            check!(index.tag_values("tenant", tag, 0, 2_000) == vec![want.to_string()]);
+            check!(
+                index.tag_values("tenant", case.tag, 0, 2_000) == vec![case.expected.to_string()]
+            );
         }
     }
 
@@ -732,11 +731,28 @@ mod tests {
             .downcast_ref::<Int32Array>()
             .expect("the column is i32");
         let numbering = (0..tied.num_rows())
-            .map(|row| (span_ids.value(row)[0], left.value(row)))
+            .map(|row| SpanNumbering {
+                span_id_first_byte: span_ids.value(row)[0],
+                left: left.value(row),
+            })
             .collect::<Vec<_>>();
 
         check!(
-            numbering == vec![(2, 1), (4, 2), (3, 4)],
+            numbering
+                == vec![
+                    SpanNumbering {
+                        span_id_first_byte: 2,
+                        left: 1
+                    },
+                    SpanNumbering {
+                        span_id_first_byte: 4,
+                        left: 2
+                    },
+                    SpanNumbering {
+                        span_id_first_byte: 3,
+                        left: 4
+                    },
+                ],
             "the root, then the tied sibling from the earlier block, then the later block's"
         );
     }
@@ -748,6 +764,7 @@ mod collect_attr_metadata;
 mod collect_event_metadata;
 mod collect_link_metadata;
 mod collect_nested_attrs;
+mod collect_nested_column_metadata;
 mod collect_nested_metadata;
 mod collect_string_column_metadata;
 mod compact_block_keys;
@@ -789,6 +806,7 @@ use collect_attr_metadata::collect_attr_metadata;
 use collect_event_metadata::collect_event_metadata;
 use collect_link_metadata::collect_link_metadata;
 use collect_nested_attrs::collect_nested_attrs;
+use collect_nested_column_metadata::collect_nested_column_metadata;
 use collect_nested_metadata::collect_nested_metadata;
 use collect_string_column_metadata::collect_string_column_metadata;
 pub use compact_block_keys::compact_block_keys;

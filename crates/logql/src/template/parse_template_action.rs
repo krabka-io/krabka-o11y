@@ -41,9 +41,15 @@ fn action_end(value: &str) -> Option<usize> {
     }
     let mut quote = None;
     let mut escaped = false;
-    for (offset, ch) in value.char_indices() {
+    let mut offset = 0;
+    while offset < value.len() {
+        let ch = value[offset..]
+            .chars()
+            .next()
+            .expect("index is within value");
         if escaped {
             escaped = false;
+            offset += ch.len_utf8();
             continue;
         }
         if let Some(delimiter) = quote {
@@ -57,6 +63,7 @@ fn action_end(value: &str) -> Option<usize> {
         } else if value[offset..].starts_with("}}") {
             return Some(offset);
         }
+        offset += ch.len_utf8();
     }
     None
 }

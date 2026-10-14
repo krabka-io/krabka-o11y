@@ -22,6 +22,13 @@ struct GetBarrier {
 }
 
 impl RecordingObjectStore {
+    fn record_list_prefix(&self, prefix: Option<&object_store::path::Path>) {
+        self.list_prefixes
+            .lock()
+            .unwrap()
+            .push(prefix.map_or_else(String::new, ToString::to_string));
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new(object_store::memory::InMemory::new()),
@@ -207,10 +214,7 @@ impl ObjectStore for RecordingObjectStore {
         prefix: Option<&object_store::path::Path>,
     ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
     {
-        self.list_prefixes
-            .lock()
-            .unwrap()
-            .push(prefix.map_or_else(String::new, ToString::to_string));
+        self.record_list_prefix(prefix);
         self.inner.list(prefix)
     }
 
@@ -220,10 +224,7 @@ impl ObjectStore for RecordingObjectStore {
         offset: &object_store::path::Path,
     ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
     {
-        self.list_prefixes
-            .lock()
-            .unwrap()
-            .push(prefix.map_or_else(String::new, ToString::to_string));
+        self.record_list_prefix(prefix);
         self.list_offsets.lock().unwrap().push(offset.to_string());
         self.inner.list_with_offset(prefix, offset)
     }

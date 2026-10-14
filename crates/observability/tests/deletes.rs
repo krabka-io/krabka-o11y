@@ -15,14 +15,14 @@ use krabka_blockstore::{
 };
 use krabka_observability::{
     InMemoryWalSink, LogWalSink, Role, ServiceConfig, ServiceDependencies, SharedLogDeleteRequests,
-    WalLogRecord, build_service_router,
+    build_service_router,
 };
 use krabka_units::convert::ByteSizeExt as _;
 use serde_json::{Value, json};
 use support::{
-    LokiStatsCounts, LokiSuccess, Method, Tenant, TenantDenyingQueryAuthorizer, assert_loki_error,
-    json_body, minimal_service_config, next_frame_within_two_seconds, open_tail, post_form,
-    test_service_config, text_body,
+    LokiStatsCounts, LokiSuccess, Method, Tenant, TenantDenyingQueryAuthorizer,
+    api_prod_wal_record, assert_loki_error, insert_api_series, json_body, minimal_service_config,
+    next_frame_within_two_seconds, open_tail, post_form, test_service_config, text_body,
 };
 use tower::ServiceExt as _;
 
@@ -77,13 +77,7 @@ async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() 
 
 #[tokio::test]
 async fn compactor_delete_endpoint_rejects_invalid_requests() {
-    let config = ServiceConfig {
-        index_prefix: Some("observability/logs".to_string()),
-        ..minimal_service_config(Role::BlockBuilder)
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let app = support::blockbuilder_service_router().await;
 
     let missing_tenant_response = app
         .clone()
@@ -144,16 +138,16 @@ async fn compactor_delete_requests_filter_querier_stream_results() {
 
 #[tokio::test]
 async fn compactor_delete_requests_persist_for_configured_querier() {
-    let (dir, block_bytes) = secret_lines_manifest();
+    let manifest = secret_lines_manifest();
 
-    let compactor_app = compactor_app_over(dir.clone()).await;
+    let compactor_app = compactor_app_over(manifest.dir.clone()).await;
     let delete_response = Tenant("tenant-a").send(&compactor_app, Method::POST, "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=14&end=16").await;
     assert!(delete_response.status() == StatusCode::NO_CONTENT);
 
-    let querier_app = querier_over(dir, ServiceDependencies::default()).await;
+    let querier_app = querier_over(manifest.dir, ServiceDependencies::default()).await;
     let response = Tenant("tenant-a").get(&querier_app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=14000000000&end=17000000001&direction=forward").await;
 
-    assert_secret_line_filtered(response, block_bytes).await;
+    assert_secret_line_filtered(response, manifest.block_bytes).await;
 }
 
 #[tokio::test]
@@ -196,32 +190,21 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
     let delete_requests = SharedLogDeleteRequests::default();
     create_delete_request_with(&block_builder_config(), &delete_requests).await;
 
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
+    let (dir, _) = support::manifest_with_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
 
     let hot_tail = InMemoryWalSink::default();
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 15_000_000_000,
-            line: "api secret".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(api_prod_wal_record(15_000_000_000, "api secret"))
         .await
         .unwrap();
     hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 17_000_000_000,
-            line: "api later secret".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
+        .append(api_prod_wal_record(17_000_000_000, "api later secret"))
         .await
         .unwrap();
 
@@ -239,13 +222,13 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
     )
     .await
     .unwrap();
-    let (mut socket, server) = open_tail(
+    let mut tail = open_tail(
         app,
         "/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=20000000000",
     )
     .await;
-    let frame = next_frame_within_two_seconds(&mut socket).await;
-    server.abort();
+    let frame = next_frame_within_two_seconds(&mut tail.socket).await;
+    tail.server.abort();
 
     assert!(
         frame
@@ -360,7 +343,7 @@ async fn delete_api_call_for_test(
     method: &str,
     uri: &str,
     tenant: &str,
-) -> (StatusCode, Value) {
+) -> DeleteApiResponse {
     let response = app
         .clone()
         .oneshot(
@@ -375,10 +358,15 @@ async fn delete_api_call_for_test(
         .unwrap();
     let status = response.status();
     let body = text_body(response).await;
-    (
+    DeleteApiResponse {
         status,
-        serde_json::from_str(&body).unwrap_or(Value::String(body)),
-    )
+        body: serde_json::from_str(&body).unwrap_or(Value::String(body)),
+    }
+}
+
+struct DeleteApiResponse {
+    status: StatusCode,
+    body: Value,
 }
 
 /// A delete request removes a tenant's logs for good, so the delete API asks
@@ -407,23 +395,42 @@ async fn a_refused_tenant_can_neither_create_nor_list_nor_cancel_delete_requests
     .unwrap();
     let create = "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D&start=1&end=2";
     let list = "/loki/api/v1/delete";
-    let (status, _) = delete_api_call_for_test(&allowed, "POST", create, "tenant-a").await;
-    assert!(status == StatusCode::NO_CONTENT);
-    let (_, before) = delete_api_call_for_test(&allowed, "GET", list, "tenant-a").await;
+    let response = delete_api_call_for_test(&allowed, "POST", create, "tenant-a").await;
+    assert!(response.status == StatusCode::NO_CONTENT);
+    let before_response = delete_api_call_for_test(&allowed, "GET", list, "tenant-a").await;
+    let before = before_response.body;
     assert!(before.as_array().map(Vec::len) == Some(1));
     let request_id = before[0]["request_id"].as_str().unwrap().to_string();
     let cancel = format!("/loki/api/v1/delete?request_id={request_id}");
 
-    for (method, uri) in [("POST", create), ("GET", list), ("DELETE", cancel.as_str())] {
-        let (status, body) = delete_api_call_for_test(&refusing, method, uri, "tenant-a").await;
-        check!(status == StatusCode::FORBIDDEN, "{method}");
-        assert_loki_error(&body, "forbidden", "tenant read ACL denied");
+    for case in [
+        DeleteApiCase {
+            method: "POST",
+            uri: create,
+        },
+        DeleteApiCase {
+            method: "GET",
+            uri: list,
+        },
+        DeleteApiCase {
+            method: "DELETE",
+            uri: cancel.as_str(),
+        },
+    ] {
+        let response = delete_api_call_for_test(&refusing, case.method, case.uri, "tenant-a").await;
+        check!(response.status == StatusCode::FORBIDDEN, "{}", case.method);
+        assert_loki_error(&response.body, "forbidden", "tenant read ACL denied");
     }
 
-    let (_, after) = delete_api_call_for_test(&allowed, "GET", list, "tenant-a").await;
-    check!(after == before);
-    let (status, _) = delete_api_call_for_test(&refusing, "POST", create, "tenant-b").await;
-    check!(status == StatusCode::NO_CONTENT);
+    let after_response = delete_api_call_for_test(&allowed, "GET", list, "tenant-a").await;
+    check!(after_response.body == before);
+    let response = delete_api_call_for_test(&refusing, "POST", create, "tenant-b").await;
+    check!(response.status == StatusCode::NO_CONTENT);
+}
+
+struct DeleteApiCase<'a> {
+    method: &'a str,
+    uri: &'a str,
 }
 
 async fn create_secret_delete_request(delete_requests: &SharedLogDeleteRequests) {
@@ -454,7 +461,10 @@ async fn secret_then_public_querier(lines: SecretThenPublic<'_>) -> axum::Router
 
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let block = write_log_block(
         &dir,
         &BlockKey::new(
@@ -492,10 +502,15 @@ fn block_builder_config() -> ServiceConfig {
 /// Writes a local manifest whose one tenant-a block holds three `api` lines
 /// at 14 s, 15 s and 17 s, the last two of which contain "secret". Returns
 /// the data root and the block's size in bytes.
-fn secret_lines_manifest() -> (std::path::PathBuf, u64) {
+struct SecretLinesManifest {
+    dir: std::path::PathBuf,
+    block_bytes: u64,
+}
+
+fn secret_lines_manifest() -> SecretLinesManifest {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = insert_api_series(&mut label_index, "tenant-a");
     let block = write_log_block(
         &dir,
         &BlockKey::new(
@@ -516,7 +531,7 @@ fn secret_lines_manifest() -> (std::path::PathBuf, u64) {
     let block_bytes = block.size.bytes_u64();
     block_index.insert(block);
     write_log_index_manifest(&dir, &label_index, &block_index).unwrap();
-    (dir, block_bytes)
+    SecretLinesManifest { dir, block_bytes }
 }
 
 /// The block-builder's router, which serves the delete API, over `data_root`.
@@ -545,15 +560,15 @@ impl SecretLinesQuerier {
         let delete_requests = SharedLogDeleteRequests::default();
         create_delete_request_with(&block_builder_config(), &delete_requests).await;
 
-        let (dir, block_bytes) = secret_lines_manifest();
+        let manifest = secret_lines_manifest();
         let querier_app = querier_over(
-            dir,
+            manifest.dir,
             ServiceDependencies::default().with_delete_requests(delete_requests),
         )
         .await;
         Self {
             querier_app,
-            block_bytes,
+            block_bytes: manifest.block_bytes,
         }
     }
 }

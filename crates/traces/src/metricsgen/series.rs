@@ -10,17 +10,17 @@ mod tests {
     #[test]
     fn sorted_labels_orders_by_name_then_value() {
         let labels = sorted_labels(vec![
-            ("service".into(), "checkout".into()),
-            ("span_kind".into(), "server".into()),
-            ("service".into(), "api".into()),
+            krabka_traceql::MetricLabel::new("service", "checkout"),
+            krabka_traceql::MetricLabel::new("span_kind", "server"),
+            krabka_traceql::MetricLabel::new("service", "api"),
         ]);
 
         assert2::assert!(
             labels
                 == vec![
-                    ("service".into(), "api".into()),
-                    ("service".into(), "checkout".into()),
-                    ("span_kind".into(), "server".into()),
+                    krabka_traceql::MetricLabel::new("service", "api"),
+                    krabka_traceql::MetricLabel::new("service", "checkout"),
+                    krabka_traceql::MetricLabel::new("span_kind", "server"),
                 ]
         );
     }
@@ -31,7 +31,9 @@ mod tests {
             tenant: "acme".into(),
             series: vec![Series {
                 name: "traces_spanmetrics_latency".into(),
-                labels: sorted_labels(vec![("service".into(), "checkout".into())]),
+                labels: sorted_labels(vec![krabka_traceql::MetricLabel::new(
+                    "service", "checkout",
+                )]),
                 sample: SeriesSample::NativeHistogram(NativeHistogram {
                     schema: 8,
                     zero_threshold: 0.0,
@@ -43,7 +45,7 @@ mod tests {
                 }),
                 exemplars: vec![Exemplar {
                     value: 0.25,
-                    labels: sorted_labels(vec![("trace_id".into(), "01".into())]),
+                    labels: sorted_labels(vec![krabka_traceql::MetricLabel::new("trace_id", "01")]),
                     timestamp_ms: 123,
                 }],
                 timestamp_ms: 123,
@@ -63,6 +65,6 @@ mod sorted_labels;
 
 pub use exemplar::Exemplar;
 pub use series_payload::SeriesPayload;
-pub use series_sample::SeriesSample;
+pub use series_sample::{HistogramBucket, HistogramSummary, SeriesSample};
 pub use series_type::Series;
 pub use sorted_labels::sorted_labels;

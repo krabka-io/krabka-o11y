@@ -1,3 +1,8 @@
 use super::Labels;
 
-pub(crate) type FormattedMetricSeries = Vec<(Labels, Vec<[String; 2]>)>;
+pub(crate) struct FormattedMetricSeriesEntry {
+    pub(crate) labels: Labels,
+    pub(crate) values: Vec<[String; 2]>,
+}
+
+pub(crate) type FormattedMetricSeries = Vec<FormattedMetricSeriesEntry>;

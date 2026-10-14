@@ -8,8 +8,11 @@ pub(crate) async fn survives_datafusion_projection_as_a_column() {
 
     let values = Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0, 4.0])) as ArrayRef;
     let timestamps = Arc::new(Int64Array::from(vec![0_i64, 15, 30, 45])) as ArrayRef;
-    let value_ra = RangeArray::from_ranges(values, [(0_u32, 2_u32), (1, 3)]).unwrap();
-    let ts_ra = RangeArray::from_ranges(timestamps, [(0_u32, 2_u32), (1, 3)]).unwrap();
+    let value_ra =
+        RangeArray::from_ranges(values, [RangeWindow::new(0, 2), RangeWindow::new(1, 3)]).unwrap();
+    let ts_ra =
+        RangeArray::from_ranges(timestamps, [RangeWindow::new(0, 2), RangeWindow::new(1, 3)])
+            .unwrap();
 
     let value_col: ArrayRef = Arc::new(value_ra.clone().into_dict_array().unwrap());
     let ts_col: ArrayRef = Arc::new(ts_ra.clone().into_dict_array().unwrap());

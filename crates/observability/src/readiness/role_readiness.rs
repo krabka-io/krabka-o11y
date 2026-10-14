@@ -49,6 +49,31 @@ impl RoleReadiness {
         Self::default()
     }
 
+    /// Tracks the WAL and object-store health represented by one metrics bundle.
+    #[must_use]
+    pub fn from_metrics(
+        wal_consumer: Option<WalConsumerMetrics>,
+        object_store: ObjectStoreMetrics,
+    ) -> Self {
+        let readiness = Self::new();
+        if let Some(wal_consumer) = wal_consumer {
+            readiness.track_wal_consumer(wal_consumer);
+        }
+        readiness.track_object_store(object_store);
+        readiness
+    }
+
+    /// Tracks the metrics active for a single role, omitting WAL readiness in
+    /// all-in-one mode where the process manages its role gates separately.
+    #[must_use]
+    pub fn from_target_metrics(
+        single_role: bool,
+        wal_consumer: WalConsumerMetrics,
+        object_store: ObjectStoreMetrics,
+    ) -> Self {
+        Self::from_metrics(single_role.then_some(wal_consumer), object_store)
+    }
+
     /// A view onto the same preconditions that names `role` in front of every
     /// gate it registers.
     ///

@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Debug, PartialEq)]
+struct SelectedTopkValue {
+    series: String,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn frontend_range_execution_reduces_sharded_topk_from_rank_candidates() {
     let cache = QueryFrontendCache::default();
@@ -31,11 +37,26 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_topk_from_rank_cand
     let selected = series
         .iter()
         .map(|series| {
-            let SampleValue::Float(value) = series.samples[0].1 else {
+            let SampleValue::Float(value) = &series.samples[0].value else {
                 panic!("topk float sample");
             };
-            (series.labels.get("series").unwrap().to_string(), value)
+            SelectedTopkValue {
+                series: series.labels.get("series").unwrap().to_string(),
+                value: *value,
+            }
         })
         .collect::<Vec<_>>();
-    assert2::assert!(selected == vec![("a".to_string(), 10.0), ("c".to_string(), 9.0)]);
+    assert2::assert!(
+        selected
+            == vec![
+                SelectedTopkValue {
+                    series: "a".to_string(),
+                    value: 10.0
+                },
+                SelectedTopkValue {
+                    series: "c".to_string(),
+                    value: 9.0
+                },
+            ]
+    );
 }

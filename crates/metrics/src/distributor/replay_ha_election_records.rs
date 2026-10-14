@@ -38,7 +38,10 @@ pub fn replay_ha_election_records(
         replayed_records,
         committed_offsets: committed_offsets
             .into_iter()
-            .map(|(partition, offset)| HaElectionPartitionOffset { partition, offset })
+            .map(|entry| HaElectionPartitionOffset {
+                partition: entry.0,
+                offset: entry.1,
+            })
             .collect(),
     })
 }

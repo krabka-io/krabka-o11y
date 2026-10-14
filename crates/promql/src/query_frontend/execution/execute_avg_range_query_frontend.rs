@@ -19,7 +19,9 @@ where
         cache,
         request,
     };
-    let ([sums, counts], annotations) = run.summed_partials([sum_query, count_query]).await?;
+    let partials = run.summed_partials([sum_query, count_query]).await?;
+    let [sums, counts] = partials.results;
+    let annotations = partials.annotations;
     Ok(AnnotatedQueryResult {
         result: divide_range_query_results(sums, counts)?,
         annotations,

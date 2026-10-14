@@ -4,7 +4,7 @@ use super::IngestFormat;
 pub struct IngestQuery {
     pub name: String,
     pub profile_type_suffix: Option<String>,
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<krabka_blockstore::LabelPair>,
     pub format: IngestFormat,
     pub sample_rate: u32,
     pub units: String,

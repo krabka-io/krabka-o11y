@@ -134,7 +134,9 @@ impl KrabkaServer {
         let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
         let distributor = Arc::new(DistributorState::new(sink));
         let router = query_router.merge(krabka_metrics::distributor::router(distributor));
-        let (tx, rx) = oneshot::channel();
+        let channel = oneshot::channel();
+        let tx = channel.0;
+        let rx = channel.1;
         let bound = krabka_metrics_service::serve_prometheus_router(
             addr,
             router,

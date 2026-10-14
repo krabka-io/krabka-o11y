@@ -9,11 +9,14 @@ pub(crate) fn parse_range_vector_directive(
     let Some(rest) = directive.trim().strip_prefix("range vector from ") else {
         return Ok(None);
     };
-    let (start, rest) = split_once_whitespace(rest.trim(), line)?;
+    let parts = split_once_whitespace(rest.trim(), line)?;
+    let start = parts.head;
+    let rest = parts.tail;
     let rest = rest
         .strip_prefix("to ")
         .ok_or_else(|| parse_error(line, "expected `to` in expect range vector"))?;
-    let (_end, rest) = split_once_whitespace(rest.trim(), line)?;
+    let parts = split_once_whitespace(rest.trim(), line)?;
+    let rest = parts.tail;
     let rest = rest
         .strip_prefix("step ")
         .ok_or_else(|| parse_error(line, "expected `step` in expect range vector"))?;

@@ -23,13 +23,18 @@ pub(crate) async fn range_bare_selector_lookback_boundary_matches_prometheus() {
     //   - step t=240000:   window (−60000, 240000], sample at 0 in-window -> value.
     store.push_float(
         "t",
-        labels(&[("__name__", "m"), ("job", "boundary")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "m"),
+            crate::test_support::TestLabelPair::new("job", "boundary"),
+        ]),
         0,
         7.0,
     );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    let (start, end, step) = (0_i64, lookback, millis(60_000));
+    let start = 0_i64;
+    let end = lookback;
+    let step = millis(60_000);
 
     // (1) the gate routes the bare selector through the planner.
     {
@@ -58,7 +63,11 @@ pub(crate) async fn range_bare_selector_lookback_boundary_matches_prometheus() {
         panic!("expected range matrix");
     };
     assert2::assert!(series.len() == 1);
-    let times: Vec<i64> = series[0].samples.iter().map(|(t, _)| *t).collect();
+    let times: Vec<i64> = series[0]
+        .samples
+        .iter()
+        .map(|sample| sample.timestamp_ms)
+        .collect();
     assert2::assert!(times == vec![0, 60_000, 120_000, 180_000, 240_000]);
 
     // (4) cross-check the interpreter's INSTANT path and the operator both

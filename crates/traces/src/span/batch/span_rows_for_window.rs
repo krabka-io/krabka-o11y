@@ -16,37 +16,42 @@ pub(crate) fn span_rows_for_window(
     // whole trace, so they come from `trace_spans`.
     let nested = assign_nested_set(row_spans);
     let child_counts = child_counts(&nested);
-    let (root_service_name, root_span_name, trace_start, trace_duration) = root_info(trace_spans);
+    let root = root_info(trace_spans);
     row_spans
         .iter()
         .map(Borrow::borrow)
         .zip(nested)
         .zip(child_counts)
-        .map(|((span, nested_set), child_count)| SpanRow {
-            trace_id: span.trace_id,
-            span_id: span.span_id,
-            parent_span_id: span.parent_span_id,
-            nested_set: BlockNestedSet {
-                nested_set_left: nested_set.left,
-                nested_set_right: nested_set.right,
-                parent_id: nested_set.parent_id,
-            },
-            child_count,
-            root_service_name: Some(root_service_name.clone()),
-            root_span_name: Some(root_span_name.clone()),
-            trace_start_unix_nano: trace_start,
-            trace_duration,
-            name: Some(span.name.clone()),
-            kind: block_kind(span.kind),
-            start_unix_nano: span.start_ns,
-            duration: Time::from_nanos(span.duration_ns),
-            status_code: block_status(span.status),
-            status_message: Some(span.status_message.clone()),
-            instrumentation_name: Some(span.instrumentation_scope.clone()),
-            instrumentation_version: Some(span.instrumentation_version.clone()),
-            attrs: span_attrs(span),
-            events: span_events(span),
-            links: span_links(span),
+        .map(|entry| {
+            let span = entry.0.0;
+            let nested_set = entry.0.1;
+            let child_count = entry.1;
+            SpanRow {
+                trace_id: span.trace_id,
+                span_id: span.span_id,
+                parent_span_id: span.parent_span_id,
+                nested_set: BlockNestedSet {
+                    nested_set_left: nested_set.left,
+                    nested_set_right: nested_set.right,
+                    parent_id: nested_set.parent_id,
+                },
+                child_count,
+                root_service_name: Some(root.service_name.clone()),
+                root_span_name: Some(root.span_name.clone()),
+                trace_start_unix_nano: root.start_ns,
+                trace_duration: root.duration,
+                name: Some(span.name.clone()),
+                kind: block_kind(span.kind),
+                start_unix_nano: span.start_ns,
+                duration: Time::from_nanos(span.duration_ns),
+                status_code: block_status(span.status),
+                status_message: Some(span.status_message.clone()),
+                instrumentation_name: Some(span.instrumentation_scope.clone()),
+                instrumentation_version: Some(span.instrumentation_version.clone()),
+                attrs: span_attrs(span),
+                events: span_events(span),
+                links: span_links(span),
+            }
         })
         .collect()
 }

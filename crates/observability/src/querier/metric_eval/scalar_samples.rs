@@ -32,7 +32,8 @@ pub(crate) use format_loki_query_length::format_loki_query_length;
 pub(crate) use gcd_signed::gcd_signed;
 pub(crate) use parse_scalar_sample::parse_scalar_sample;
 pub(crate) use rational_arithmetic::{
-    Rational, decimal_scaled_numerator, impl_rational_division_ops, rational_to_f64,
+    Rational, decimal_scaled_numerator, impl_rational_division_ops, impl_rational_float_conversion,
+    rational_to_f64,
 };
 pub(crate) use resolved_range_step::resolved_range_step;
 pub(crate) use scalar_sample::ScalarSample;
@@ -42,3 +43,26 @@ pub(crate) use validate_loki_volume_query_range_limit::validate_loki_volume_quer
 pub(crate) use validate_query_entries_limit::validate_query_entries_limit;
 pub(crate) use validate_query_range_limit::validate_query_range_limit;
 pub(crate) use validate_query_string_bytes_limit::validate_query_string_bytes_limit;
+
+pub(crate) fn validate_approximate_topk(
+    state: &QuerierState,
+    kind: QueryKind,
+) -> Result<(), HttpQueryError> {
+    validate_approximate_topk_enabled(&state.limits.shard_aggregations, kind)
+}
+
+pub(crate) fn validate_approximate_topk_enabled(
+    enabled_aggregations: &[String],
+    kind: QueryKind,
+) -> Result<(), HttpQueryError> {
+    if !enabled_aggregations
+        .iter()
+        .any(|name| name == "approx_topk")
+    {
+        return Err(HttpQueryError::ApproxTopKDisabled);
+    }
+    if matches!(kind, QueryKind::Range) {
+        return Err(HttpQueryError::ApproxTopKRangeQuery);
+    }
+    Ok(())
+}

@@ -66,12 +66,17 @@ async fn body_text(response: axum::response::Response) -> String {
     String::from_utf8(bytes.to_vec()).expect("utf-8 body")
 }
 
+struct PageResponse {
+    status: StatusCode,
+    body: String,
+}
+
 async fn page(
     app: &axum::Router,
     method: &str,
     uri: &str,
     form_body: Option<&str>,
-) -> (StatusCode, String) {
+) -> PageResponse {
     let mut request = Request::builder().method(method).uri(uri);
     if form_body.is_some() {
         request = request.header("content-type", "application/x-www-form-urlencoded");
@@ -83,7 +88,8 @@ async fn page(
         .await
         .expect("response");
     let status = response.status();
-    (status, body_text(response).await)
+    let body = body_text(response).await;
+    PageResponse { status, body }
 }
 
 #[tokio::test]
@@ -92,36 +98,36 @@ async fn the_log_level_endpoint_reports_and_moves_the_process_filter() {
     // `RUST_LOG` would outrank the default filter, and this suite is about
     // what the endpoint does to that filter, not what the shell did before.
     temp_env::with_var("RUST_LOG", None::<&str>, || {
-        let (layer, control) = json_logging_layer("info", captured.clone());
-        Registry::default().with(layer).init();
-        LogLevelControl::install_process(control);
+        let logging = json_logging_layer("info", captured.clone());
+        Registry::default().with(logging.layer).init();
+        LogLevelControl::install_process(logging.control);
     });
 
     let app = distributor_router(InMemoryWalSink::default());
 
     // The level the process started at, reported rather than assumed.
-    let (status, body) = page(&app, "GET", "/log_level", None).await;
-    check!(status == StatusCode::OK);
-    check!(body.contains("Current log level is info"));
+    let response = page(&app, "GET", "/log_level", None).await;
+    check!(response.status == StatusCode::OK);
+    check!(response.body.contains("Current log level is info"));
 
     tracing::debug!("before-the-change");
     check!(!captured.text().contains("before-the-change"));
 
     // A level in the query string.
-    let (status, body) = page(&app, "POST", "/log_level?log_level=debug", None).await;
-    check!(status == StatusCode::OK);
-    check!(body == r#"{"status":"success","message":"Log level set to debug"}"#);
+    let response = page(&app, "POST", "/log_level?log_level=debug", None).await;
+    check!(response.status == StatusCode::OK);
+    check!(response.body == r#"{"status":"success","message":"Log level set to debug"}"#);
 
     tracing::debug!("after-the-change");
     check!(captured.text().contains("after-the-change"));
 
-    let (_, body) = page(&app, "GET", "/log_level", None).await;
-    check!(body.contains("Current log level is debug"));
+    let response = page(&app, "GET", "/log_level", None).await;
+    check!(response.body.contains("Current log level is debug"));
 
     // A level in a form body.
-    let (status, body) = page(&app, "POST", "/log_level", Some("log_level=warn")).await;
-    check!(status == StatusCode::OK);
-    check!(body == r#"{"status":"success","message":"Log level set to warn"}"#);
+    let response = page(&app, "POST", "/log_level", Some("log_level=warn")).await;
+    check!(response.status == StatusCode::OK);
+    check!(response.body == r#"{"status":"success","message":"Log level set to warn"}"#);
 
     tracing::debug!("after-the-form-body");
     check!(!captured.text().contains("after-the-form-body"));
@@ -129,15 +135,15 @@ async fn the_log_level_endpoint_reports_and_moves_the_process_filter() {
     // A form body outranks the query string, as Loki's does -- and the level
     // that wins is the one the filter ends up at, not only the one the reply
     // names.
-    let (status, body) = page(
+    let response = page(
         &app,
         "POST",
         "/log_level?log_level=debug",
         Some("log_level=error"),
     )
     .await;
-    check!(status == StatusCode::OK);
-    check!(body == r#"{"status":"success","message":"Log level set to error"}"#);
+    check!(response.status == StatusCode::OK);
+    check!(response.body == r#"{"status":"success","message":"Log level set to error"}"#);
 
     tracing::warn!("after-the-body-won");
     check!(!captured.text().contains("after-the-body-won"));

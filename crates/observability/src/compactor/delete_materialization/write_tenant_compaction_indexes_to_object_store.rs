@@ -58,6 +58,10 @@ pub(crate) async fn write_tenant_compaction_indexes_to_object_store(
     if !shard_ranges.contains(&new_descriptor.key.time_range) {
         shard_ranges.push(new_descriptor.key.time_range);
     }
-    shard_ranges.sort_by_key(|range| (range.start_ns, range.end_ns));
+    shard_ranges.sort_by(|left, right| {
+        left.start_ns
+            .cmp(&right.start_ns)
+            .then_with(|| left.end_ns.cmp(&right.end_ns))
+    });
     write_tenant_log_index_shard_catalog_to_object_store(store, prefix, tenant, &shard_ranges).await
 }

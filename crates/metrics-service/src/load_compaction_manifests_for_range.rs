@@ -1,5 +1,5 @@
 use super::{
-    Arc, CompactionIndexManifest, MetricsServiceError, ObjectStore,
+    Arc, CompactionIndexManifest, ManifestTimeRange, MetricsServiceError, ObjectStore,
     load_compaction_manifests_filtered,
 };
 
@@ -12,5 +12,10 @@ pub async fn load_compaction_manifests_for_range(
     start_ms: i64,
     end_ms: i64,
 ) -> Result<Vec<CompactionIndexManifest>, MetricsServiceError> {
-    load_compaction_manifests_filtered(store, manifest_prefix, Some((start_ms, end_ms))).await
+    load_compaction_manifests_filtered(
+        store,
+        manifest_prefix,
+        Some(ManifestTimeRange { start_ms, end_ms }),
+    )
+    .await
 }

@@ -27,6 +27,8 @@ crate_tests(
     # them here puts them at that same relative path inside the sandbox.
     extra_srcs = {
         "backup_restore": ["//crates/metrics:tests/support/tsdb_fixture.rs"],
+        "logs_to_traces_trace_id": ["tests/json_response.rs"],
+        "traces_to_profiles_span_profiles": ["tests/json_response.rs"],
         "soak_envelope": ["//crates/observability:tests/support/minio_store.rs"],
     },
     lib = "integration",

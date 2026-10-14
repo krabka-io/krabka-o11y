@@ -20,10 +20,8 @@ pub fn exponential_histogram_to_native(
         ));
     }
     let schema = point.scale.min(MAX_NATIVE_HISTOGRAM_SCHEMA);
-    let (positive_spans, positive_counts) =
-        downscaled_spans(point.positive.as_ref(), point.scale, schema)?;
-    let (negative_spans, negative_counts) =
-        downscaled_spans(point.negative.as_ref(), point.scale, schema)?;
+    let positive = downscaled_spans(point.positive.as_ref(), point.scale, schema)?;
+    let negative = downscaled_spans(point.negative.as_ref(), point.scale, schema)?;
 
     Ok(NativeHistogram {
         schema: i8::try_from(schema).map_err(|_| {
@@ -38,10 +36,10 @@ pub fn exponential_histogram_to_native(
         zero_count: point.zero_count.to_f64().unwrap_or(f64::MAX),
         count: point.count.to_f64().unwrap_or(f64::MAX),
         sum: point.sum.unwrap_or(0.0),
-        positive_spans,
-        positive_counts,
-        negative_spans,
-        negative_counts,
+        positive_spans: positive.spans,
+        positive_counts: positive.counts,
+        negative_spans: negative.spans,
+        negative_counts: negative.counts,
         custom_values: None,
         start_timestamp_ms: (point.start_time_unix_nano != 0)
             .then_some(nanos_to_millis(point.start_time_unix_nano)),

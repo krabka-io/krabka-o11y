@@ -25,15 +25,17 @@ pub(crate) async fn metadata_label_sets_bound_the_hot_tail_to_the_window_and_the
         }
     }
 
-    let record = |tenant: &str, app: &str, timestamp_ns: i64| super::super::prelude::WalLogRecord {
-        tenant: tenant.to_string(),
-        labels: [("app".to_string(), app.to_string())]
-            .into_iter()
-            .collect::<Labels>(),
-        timestamp_ns,
-        line: "line".to_string(),
-        structured_metadata: std::collections::BTreeMap::new(),
-        position: None,
+    let record = |tenant: &str, app: &str, timestamp_ns: i64| {
+        let mut labels = Labels::new();
+        labels.insert("app".to_string(), app.to_string());
+        super::super::prelude::WalLogRecord {
+            tenant: tenant.to_string(),
+            labels,
+            timestamp_ns,
+            line: "line".to_string(),
+            structured_metadata: std::collections::BTreeMap::new(),
+            position: None,
+        }
     };
     let sink = CoarseHotTail(vec![
         record("t", "on_the_start", 100),

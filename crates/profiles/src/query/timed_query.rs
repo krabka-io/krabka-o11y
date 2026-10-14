@@ -20,3 +20,28 @@ pub(crate) async fn timed_query<T>(
     });
     result
 }
+
+pub(crate) async fn timed_connect_query<S, Request, Response, Handler, HandlerFuture>(
+    state: Extension<Arc<QuerierState<S>>>,
+    principal: Extension<Principal>,
+    headers: HeaderMap,
+    request: ConnectRequest<Request>,
+    route: &str,
+    handler: Handler,
+) -> Result<ConnectResponse<Response>, ConnectError>
+where
+    S: ProfileStore,
+    Handler: FnOnce(QuerierRequestParts<S>, ConnectRequest<Request>) -> HandlerFuture,
+    HandlerFuture: Future<Output = Result<ConnectResponse<Response>, ConnectError>>,
+{
+    let metrics = state.0.metrics.clone();
+    timed_query(
+        &metrics,
+        route,
+        handler(
+            QuerierRequestParts::from_extensions(state, principal, headers),
+            request,
+        ),
+    )
+    .await
+}

@@ -3,9 +3,9 @@ use krabka_units::convert::ByteSizeExt;
 use tracing::Instrument;
 
 use crate::{
-    AllowAllIngestLimiter, Arc, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DRAINING_GATE, Deserialize,
-    Extension, HeaderMap, Instant, Labels, Limits, LogIngestLimiter, LogWalSink, LogsService,
-    LogsServiceServer, OverridesProvider, ProtoExportLogsServiceRequest,
+    AllowAllIngestLimiter, Arc, ByteSize, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DRAINING_GATE,
+    Deserialize, Extension, HeaderMap, Instant, Labels, Limits, LogIngestLimiter, LogWalSink,
+    LogsService, LogsServiceServer, OverridesProvider, ProtoExportLogsServiceRequest,
     ProtoExportLogsServiceResponse, ReadinessGate, RequestSecurity, Response, RoleReadiness,
     Router, ServiceMetrics, State, StatusCode, TenantErrorSurface, TenantId, Time, Value,
     append_distributor_wal_records, build_info, distributor_error_to_grpc_status,
@@ -85,3 +85,15 @@ pub(crate) use push_otlp_logs::push_otlp_logs;
 pub(crate) use querier_ops::QUERIER_OPS;
 pub(crate) use role_ops::RoleOps;
 pub(crate) use with_role_ops_routes::with_role_ops_routes;
+
+fn logs_ingest_span(tenant: &TenantId, body_size: ByteSize) -> tracing::Span {
+    tracing::info_span!(
+        "logs_ingest",
+        otel.kind = "server",
+        messaging.system = "kafka",
+        messaging.destination.name = "__krabka_observability_logs_wal",
+        krabka.tenant = %tenant,
+        krabka.ingest.lines = tracing::field::Empty,
+        krabka.ingest.bytes = body_size.bytes_u64(),
+    )
+}

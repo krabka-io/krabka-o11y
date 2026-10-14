@@ -27,6 +27,15 @@ use super::{
 
 static NEXT_SILENCE_ID: AtomicU64 = AtomicU64::new(1);
 
+macro_rules! tenant_or_return {
+    ($caller:expr) => {
+        match tenant(&$caller) {
+            Ok(tenant) => tenant,
+            Err(response) => return *response,
+        }
+    };
+}
+
 #[derive(Deserialize)]
 struct AlertmanagerConfig {
     #[serde(default)]
@@ -72,23 +81,21 @@ async fn get_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     match state.alertmanager_configs.read() {
         Ok(configs) => match configs.get(&tenant) {
-            Some(config) => (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/yaml")],
-                config.clone(),
-            )
-                .into_response(),
-            None => (
+            Some(config) => {
+                let mut response = super::response_with_status(StatusCode::OK, config.clone());
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("application/yaml"),
+                );
+                response
+            }
+            None => super::response_with_status(
                 StatusCode::NOT_FOUND,
                 "alertmanager storage object not found\n",
-            )
-                .into_response(),
+            ),
         },
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -99,24 +106,27 @@ async fn set_config<S: MetricStore>(
     caller: RequestCaller,
     body: Bytes,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let body = match String::from_utf8(body.to_vec()) {
         Ok(body) => body,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => {
+            return super::response_with_status(StatusCode::BAD_REQUEST, error.to_string());
+        }
     };
     let config: AlertmanagerConfig = match serde_yaml::from_str(&body) {
         Ok(config) => config,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => {
+            return super::response_with_status(StatusCode::BAD_REQUEST, error.to_string());
+        }
     };
     let parsed = match serde_yaml::from_str::<serde_yaml::Value>(&config.alertmanager_config) {
         Ok(parsed) => parsed,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => {
+            return super::response_with_status(StatusCode::BAD_REQUEST, error.to_string());
+        }
     };
     if let Err(error) = validate_alertmanager_config(&parsed, &config.template_files) {
-        return (StatusCode::BAD_REQUEST, error).into_response();
+        return super::response_with_status(StatusCode::BAD_REQUEST, error);
     }
     let stored = match state.alertmanager_configs.write() {
         Ok(mut configs) => {
@@ -130,7 +140,7 @@ async fn set_config<S: MetricStore>(
     }
     match state.persist_alertmanager_config(&tenant).await {
         Ok(()) => StatusCode::CREATED.into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -138,10 +148,7 @@ async fn delete_config<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let deleted = match state.alertmanager_configs.write() {
         Ok(mut configs) => {
             configs.remove(&tenant);
@@ -154,7 +161,7 @@ async fn delete_config<S: MetricStore>(
     }
     match state.persist_alertmanager_config(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -162,10 +169,7 @@ async fn status<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let config = state
         .alertmanager_configs
         .read()
@@ -179,10 +183,7 @@ async fn receivers<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
     caller: RequestCaller,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let names = alertmanager_config_yaml(&state, &tenant)
         .and_then(|config| {
             config
@@ -207,12 +208,28 @@ async fn alerts<S: MetricStore>(
     caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
-    let alerts = filtered_tenant_alerts(&state, &tenant, query.as_deref());
-    no_store(Json(alerts).into_response())
+    alert_query_response(&state, &caller, query.as_deref(), |alerts| alerts)
+}
+
+fn requested_alerts<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    caller: &RequestCaller,
+    query: Option<&str>,
+) -> Result<Vec<Value>, Box<Response>> {
+    let tenant = tenant(caller)?;
+    Ok(filtered_tenant_alerts(state, &tenant, query))
+}
+
+fn alert_query_response<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    caller: &RequestCaller,
+    query: Option<&str>,
+    transform: impl FnOnce(Vec<Value>) -> Vec<Value>,
+) -> Response {
+    match requested_alerts(state, caller, query) {
+        Ok(alerts) => no_store(Json(transform(alerts)).into_response()),
+        Err(response) => *response,
+    }
 }
 
 /// The tenant's stored alerts that match the `filter` matchers in `query`.
@@ -237,10 +254,7 @@ async fn set_alerts<S: MetricStore>(
     caller: RequestCaller,
     Json(mut new_alerts): Json<Vec<Value>>,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let receiver = default_receiver(&state, &tenant);
     for alert in &mut new_alerts {
         enrich_alert(alert, receiver.as_deref());
@@ -268,7 +282,7 @@ async fn set_alerts<S: MetricStore>(
     }
     match state.persist_alertmanager_alerts(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -277,12 +291,12 @@ async fn alert_groups<S: MetricStore>(
     caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    alert_query_response(&state, &caller, query.as_deref(), grouped_alerts)
+}
+
+fn grouped_alerts(alerts: Vec<Value>) -> Vec<Value> {
     let mut groups = std::collections::BTreeMap::<String, Vec<Value>>::new();
-    for alert in filtered_tenant_alerts(&state, &tenant, query.as_deref()) {
+    for alert in alerts {
         let receiver = alert
             .pointer("/receivers/0/name")
             .and_then(Value::as_str)
@@ -290,7 +304,10 @@ async fn alert_groups<S: MetricStore>(
             .to_owned();
         groups.entry(receiver).or_default().push(alert);
     }
-    no_store(Json(groups.into_iter().map(|(receiver, alerts)| json!({"labels":{},"receiver":{"name":receiver},"alerts":alerts})).collect::<Vec<_>>()).into_response())
+    groups
+        .into_iter()
+        .map(|entry| json!({"labels":{},"receiver":{"name":entry.0},"alerts":entry.1}))
+        .collect()
 }
 
 async fn silences<S: MetricStore>(
@@ -298,10 +315,7 @@ async fn silences<S: MetricStore>(
     caller: RequestCaller,
     RawQuery(query): RawQuery,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let silences = state
         .alertmanager_silences
         .read()
@@ -324,10 +338,7 @@ async fn set_silence<S: MetricStore>(
     caller: RequestCaller,
     Json(mut silence): Json<Value>,
 ) -> Response {
-    let tenant = match tenant(&caller) {
-        Ok(tenant) => tenant,
-        Err(response) => return *response,
-    };
+    let tenant = tenant_or_return!(caller);
     let id = silence
         .get("id")
         .and_then(Value::as_str)
@@ -352,7 +363,7 @@ async fn set_silence<S: MetricStore>(
     }
     match state.persist_alertmanager_silences(&tenant).await {
         Ok(()) => Json(json!({"silenceID":id})).into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -397,7 +408,7 @@ async fn delete_silence<S: MetricStore>(
     }
     match state.persist_alertmanager_silences(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => super::response_with_status(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -475,13 +486,16 @@ fn enrich_alert(alert: &mut Value, receiver: Option<&str>) {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let canonical = labels
-        .iter()
-        .fold(String::new(), |mut output, (name, value)| {
-            writeln!(output, "{name}={}", value.as_str().unwrap_or_default())
-                .expect("writing to a String cannot fail");
-            output
-        });
+    let canonical = labels.iter().fold(String::new(), |mut output, entry| {
+        writeln!(
+            output,
+            "{}={}",
+            entry.0,
+            entry.1.as_str().unwrap_or_default()
+        )
+        .expect("writing to a String cannot fail");
+        output
+    });
     object.insert(
         "fingerprint".into(),
         Value::String(format!("{:016x}", xxh64(canonical.as_bytes(), 0))),
@@ -502,8 +516,10 @@ fn matches_filters(value: &Value, query: Option<&str>) -> bool {
         return true;
     };
     url::form_urlencoded::parse(query.as_bytes())
-        .filter(|(name, _)| name == "filter" || name == "receiver")
-        .all(|(kind, filter)| {
+        .filter(|pair| pair.0 == "filter" || pair.0 == "receiver")
+        .all(|pair| {
+            let kind = pair.0;
+            let filter = pair.1;
             if kind == "receiver" {
                 return value
                     .get("receivers")
@@ -515,34 +531,49 @@ fn matches_filters(value: &Value, query: Option<&str>) -> bool {
                     });
             }
             let filter = filter.trim_matches(|character| character == '{' || character == '}');
-            let Some((name, operator, expected)) = parse_filter_matcher(filter) else {
+            let Some(matcher) = parse_filter_matcher(filter) else {
                 return true;
             };
             let actual = value
                 .get("labels")
-                .and_then(|labels| labels.get(name.trim()))
+                .and_then(|labels| labels.get(matcher.name.trim()))
                 .and_then(Value::as_str)
                 .or_else(|| {
                     value
                         .get("matchers")
                         .and_then(Value::as_array)
                         .and_then(|matchers| {
-                            matchers.iter().find_map(|matcher| {
-                                (matcher.get("name").and_then(Value::as_str) == Some(name.trim()))
-                                    .then(|| matcher.get("value").and_then(Value::as_str))
-                                    .flatten()
+                            matchers.iter().find_map(|candidate| {
+                                (candidate.get("name").and_then(Value::as_str)
+                                    == Some(matcher.name.trim()))
+                                .then(|| candidate.get("value").and_then(Value::as_str))
+                                .flatten()
                             })
                         })
                 });
-            matches_filter_value(actual, operator, expected.trim().trim_matches('"'))
+            matches_filter_value(
+                actual,
+                matcher.operator,
+                matcher.expected.trim().trim_matches('"'),
+            )
         })
 }
 
-fn parse_filter_matcher(filter: &str) -> Option<(&str, &str, &str)> {
+struct ParsedFilterMatcher<'a> {
+    name: &'a str,
+    operator: &'a str,
+    expected: &'a str,
+}
+
+fn parse_filter_matcher(filter: &str) -> Option<ParsedFilterMatcher<'_>> {
     ["!=", "=~", "!~", "="].into_iter().find_map(|operator| {
         filter
             .split_once(operator)
-            .map(|(name, value)| (name, operator, value))
+            .map(|parts| ParsedFilterMatcher {
+                name: parts.0,
+                operator,
+                expected: parts.1,
+            })
     })
 }
 

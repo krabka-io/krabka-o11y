@@ -8,6 +8,26 @@ pub(crate) struct ZonedQueueDepth<'a> {
     pub(crate) depth: f64,
 }
 
+pub(crate) fn standard_zoned_queue_depth_series() -> [ZonedQueueDepth<'static>; 3] {
+    [
+        ZonedQueueDepth {
+            instance: "api-b",
+            zone: "us-west-2b",
+            depth: 3.0,
+        },
+        ZonedQueueDepth {
+            instance: "api-a",
+            zone: "us-east-1a",
+            depth: 1.0,
+        },
+        ZonedQueueDepth {
+            instance: "api-c",
+            zone: "us-east-1a",
+            depth: 2.0,
+        },
+    ]
+}
+
 /// An engine over one `queue_depth` series per entry of `series`, at 10s.
 pub(crate) fn zoned_queue_depth_engine(
     series: &[ZonedQueueDepth<'_>],
@@ -17,9 +37,9 @@ pub(crate) fn zoned_queue_depth_engine(
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "queue_depth"),
-                ("instance", entry.instance),
-                ("zone", entry.zone),
+                crate::test_support::TestLabelPair::new("__name__", "queue_depth"),
+                crate::test_support::TestLabelPair::new("instance", entry.instance),
+                crate::test_support::TestLabelPair::new("zone", entry.zone),
             ]),
             10_000,
             entry.depth,

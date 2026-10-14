@@ -1,5 +1,10 @@
 use super::{ConfigFileError, FsPath};
 
+struct ConfigExpansion {
+    name: String,
+    default: Option<String>,
+}
+
 /// Substitutes `${VAR}` and `${VAR:default}` from the environment.
 ///
 /// `--config.expand-env` turns this on, as Loki's `-config.expand-env` does.
@@ -21,18 +26,27 @@ pub(crate) fn expand_config_env(
             .ok_or_else(|| ConfigFileError::UnterminatedExpansion {
                 path: path.to_path_buf(),
             })?;
-        let (name, default) = match tail[..close].split_once(':') {
-            // `${VAR:default}` is Loki's spelling and `${VAR:-default}` is the
-            // shell's. Both reach the same place, so a config file copied from
-            // either habit behaves the way it reads.
-            Some((name, default)) => (name, Some(default.strip_prefix('-').unwrap_or(default))),
-            None => (&tail[..close], None),
+        // `${VAR:default}` is Loki's spelling and `${VAR:-default}` is the
+        // shell's. Both reach the same place, so a config file copied from
+        // either habit behaves the way it reads.
+        let variable = &tail[..close];
+        let expansion = if let Some(separator) = variable.find(':') {
+            let default = &variable[separator + 1..];
+            ConfigExpansion {
+                name: variable[..separator].to_string(),
+                default: Some(default.strip_prefix('-').unwrap_or(default).to_string()),
+            }
+        } else {
+            ConfigExpansion {
+                name: variable.to_string(),
+                default: None,
+            }
         };
-        let value = lookup(name)
-            .or_else(|| default.map(str::to_owned))
+        let value = lookup(&expansion.name)
+            .or(expansion.default)
             .ok_or_else(|| ConfigFileError::UndefinedVariable {
                 path: path.to_path_buf(),
-                name: name.to_owned(),
+                name: expansion.name,
             })?;
         expanded.push_str(&value);
         rest = &tail[close + 1..];

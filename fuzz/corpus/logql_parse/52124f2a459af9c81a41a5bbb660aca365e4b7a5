@@ -1,1 +1,0 @@
-variants(count_over_time({app="api"}[1m])) of ({app="api"}[1m])

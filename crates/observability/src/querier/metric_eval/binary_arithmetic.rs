@@ -40,3 +40,19 @@ pub(crate) use metric_binary_operations::{
 };
 pub(crate) use metric_binary_sample_timestamp_ns_candidates::metric_binary_sample_timestamp_ns_candidates;
 pub(crate) use metric_binary_sample_timestamps_match::metric_binary_sample_timestamps_match;
+
+fn output_sample_scalar_operands<'a>(
+    output_sample: &'a mut Value,
+    operands: SampleOperands<'_>,
+) -> Option<(&'a mut Vec<Value>, ScalarOperands)> {
+    let output_values = output_sample.as_array_mut()?;
+    let values = metric_binary_operand_values(operands)?;
+    Some((
+        output_values,
+        ScalarOperands {
+            sample: values.left,
+            scalar: values.right,
+            scalar_side: ScalarSide::Right,
+        },
+    ))
+}

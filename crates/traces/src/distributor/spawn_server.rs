@@ -1,6 +1,9 @@
-use std::{fmt::Display, future::Future};
+use std::{
+    fmt::Display,
+    future::{Future, IntoFuture},
+};
 
-use super::{ServerListener, ServerSecurity, SocketAddr};
+use super::{RunningServer, ServerListener, ServerSecurity, SocketAddr};
 
 /// Bind a listener on `addr` that serves as `security` says.
 pub(crate) async fn bind_listener(
@@ -20,5 +23,25 @@ pub(crate) fn spawn_server<E: Display>(
         if let Err(err) = server.await {
             tracing::error!(error = %err, "{name} stopped");
         }
+    })
+}
+
+pub(crate) async fn bind_and_spawn_server<B, F, E>(
+    addr: SocketAddr,
+    security: &ServerSecurity,
+    build: B,
+    name: &'static str,
+) -> std::io::Result<RunningServer>
+where
+    B: FnOnce(ServerListener) -> F,
+    F: IntoFuture<Output = Result<(), E>>,
+    F::IntoFuture: Send + 'static,
+    E: Display,
+{
+    let listener = bind_listener(addr, security).await?;
+    let bound = listener.local_addr();
+    Ok(RunningServer {
+        bound_addr: bound,
+        task: spawn_server(build(listener).into_future(), name),
     })
 }

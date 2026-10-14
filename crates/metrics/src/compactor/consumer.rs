@@ -33,8 +33,21 @@ pub struct WalAssignmentConsumer {
 struct WalDrain {
     config: super::MetricsCompactorConfig,
     security: Option<krabka_client_core::ClientSecurity>,
-    frontier: Option<HashMap<(String, i32), i64>>,
+    frontier: Option<HashMap<WalPartition, i64>>,
     query: Option<Consumer>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct WalPartition {
+    topic: String,
+    partition: i32,
+}
+
+fn drain_partitions(frontier: &HashMap<WalPartition, i64>) -> Vec<(String, i32)> {
+    frontier
+        .keys()
+        .map(|partition| (partition.topic.clone(), partition.partition))
+        .collect()
 }
 
 impl WalDrain {
@@ -94,7 +107,17 @@ impl WalDrain {
                         )));
                     }
                 }
-                Ok(end)
+                let mut frontier = HashMap::new();
+                for entry in end {
+                    frontier.insert(
+                        WalPartition {
+                            topic: entry.0.0,
+                            partition: entry.0.1,
+                        },
+                        entry.1,
+                    );
+                }
+                Ok(frontier)
             }
             .await;
             match captured {
@@ -115,8 +138,8 @@ impl WalDrain {
         &self,
         consumer: &Consumer,
     ) -> Result<(), CompactionConsumerPollError> {
-        let frontier = self.frontier.as_ref().expect("drain boundary was captured");
-        let partitions = frontier.keys().cloned().collect::<Vec<_>>();
+        let partitions =
+            drain_partitions(self.frontier.as_ref().expect("drain boundary was captured"));
         let begin = self
             .query
             .as_ref()
@@ -228,7 +251,7 @@ impl CompactionConsumerPoll for WalAssignmentConsumer {
             .frontier
             .as_ref()
             .expect("drain boundary was captured");
-        let partitions = frontier.keys().cloned().collect::<Vec<_>>();
+        let partitions = drain_partitions(frontier);
         let committed = self
             .consumer
             .committed(&partitions)
@@ -238,7 +261,9 @@ impl CompactionConsumerPoll for WalAssignmentConsumer {
         // skipped transaction/control records using the consumer's actual
         // positions, never the target end offsets.
         let mut applied = HashMap::new();
-        for (topic, partition) in self.consumer.assignment().await {
+        for assignment in self.consumer.assignment().await {
+            let topic = assignment.0;
+            let partition = assignment.1;
             if topic == drain.config.wal_topic {
                 let position = self
                     .consumer
@@ -269,12 +294,12 @@ impl CompactionConsumerPoll for WalAssignmentConsumer {
         // All partitions count, including ones another group member owns.
         // Later producers cannot move this boundary. No empty poll or readiness
         // flag can stand in for durable block/index writes and their commits.
-        Ok(frontier.iter().all(|(part, end)| {
-            *end == 0
+        Ok(frontier.iter().all(|entry| {
+            *entry.1 == 0
                 || committed
-                    .get(part)
+                    .get(&(entry.0.topic.clone(), entry.0.partition))
                     .and_then(Option::as_ref)
-                    .is_some_and(|offset| offset.offset >= *end)
+                    .is_some_and(|offset| offset.offset >= *entry.1)
         }))
     }
 

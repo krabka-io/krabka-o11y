@@ -163,44 +163,43 @@ fn arb_number() -> impl Strategy<Value = String> {
 /// than a round-trip failure, and
 /// `repeated_matchers_on_one_label_reorder_but_survive` below pins it.
 fn arb_bare_selector() -> impl Strategy<Value = String> {
-    (
-        prop::sample::select(METRICS),
-        prop::sample::subsequence(LABELS.to_vec(), 0..4),
-        prop::collection::vec(
-            (
-                prop::sample::select(&["=", "!=", "=~", "!~"]),
-                prop::sample::select(&["api", "5..", "", "a|b"]),
-            ),
-            LABELS.len(),
-        ),
-    )
-        .prop_map(|(metric, labels, specs)| {
-            let mut out = String::from(metric);
-            if !labels.is_empty() {
-                let rendered: Vec<String> = labels
-                    .iter()
-                    .zip(specs)
-                    .map(|(label, (op, value))| format!("{label}{op}\"{value}\""))
-                    .collect();
-                out.push('{');
-                out.push_str(&rendered.join(", "));
-                out.push('}');
-            }
-            out
-        })
+    any::<[u8; 13]>().prop_map(render_bare_selector)
+}
+
+fn render_bare_selector(entropy: [u8; 13]) -> String {
+    let operations = ["=", "!=", "=~", "!~"];
+    let values = ["api", "5..", "", "a|b"];
+    let mut out = String::from(METRICS[usize::from(entropy[0]) % METRICS.len()]);
+    let mut rendered = Vec::new();
+    for label_index in 0..LABELS.len() {
+        if entropy[label_index + 1] & 1 == 0 {
+            continue;
+        }
+        let operation = operations[usize::from(entropy[label_index + 5]) % operations.len()];
+        let value = values[usize::from(entropy[label_index + 9]) % values.len()];
+        rendered.push(format!("{}{operation}\"{value}\"", LABELS[label_index]));
+    }
+    if !rendered.is_empty() {
+        out.push('{');
+        out.push_str(&rendered.join(", "));
+        out.push('}');
+    }
+    out
 }
 
 /// An instant-vector selector, optionally with an `offset` or `@` modifier.
 fn arb_selector() -> impl Strategy<Value = String> {
-    (
-        arb_bare_selector(),
-        prop::option::of(prop::sample::select(&[
-            " offset 5m",
-            " offset -5m",
-            " @ 1609746000",
-        ])),
-    )
-        .prop_map(|(selector, modifier)| format!("{selector}{}", modifier.unwrap_or("")))
+    any::<[u8; 14]>().prop_map(|entropy| {
+        let mut selector = render_bare_selector(entropy[..13].try_into().expect("13 bytes"));
+        let modifier = match entropy[13] % 4 {
+            0 => "",
+            1 => " offset 5m",
+            2 => " offset -5m",
+            _ => " @ 1609746000",
+        };
+        selector.push_str(modifier);
+        selector
+    })
 }
 
 /// A vector-matching clause, and the group modifier that only a non-set
@@ -228,8 +227,7 @@ fn arb_matching(allow_group: bool) -> impl Strategy<Value = String> {
         )
             .prop_map(|(kind, labels, group_kind)| {
                 let group = group_kind
-                    .map(|group| format!(" {group} ({})", labels[1]))
-                    .unwrap_or_default();
+                    .map_or_else(Default::default, |group| format!(" {group} ({})", labels[1]));
                 format!(" {kind} ({}){group}", labels[0])
             })
             .boxed(),
@@ -400,17 +398,27 @@ fn arb_matrix(vector: impl Strategy<Value = String> + 'static) -> BoxedStrategy<
 /// the round-trip property can compare ASTs exactly.
 #[test]
 fn the_formatter_sorts_a_selectors_matchers() {
-    for (query, want) in [
-        (r#"up{job="api", job="5.."}"#, r#"up{job="5..",job="api"}"#),
-        (
-            r#"up{job="api", instance="a"}"#,
-            r#"up{instance="a",job="api"}"#,
-        ),
-    ] {
-        let rendered = parse_promql(query).expect("the query parses").to_string();
+    struct SelectorFormatCase {
+        query: &'static str,
+        expected: &'static str,
+    }
+    let cases = [
+        SelectorFormatCase {
+            query: r#"up{job="api", job="5.."}"#,
+            expected: r#"up{job="5..",job="api"}"#,
+        },
+        SelectorFormatCase {
+            query: r#"up{job="api", instance="a"}"#,
+            expected: r#"up{instance="a",job="api"}"#,
+        },
+    ];
+    for case in &cases {
+        let rendered = parse_promql(case.query)
+            .expect("the query parses")
+            .to_string();
         let reparsed = parse_promql(&rendered).expect("the rendered form parses");
 
-        assert2::assert!(rendered == want);
+        assert2::assert!(rendered == case.expected);
         assert2::assert!(reparsed.to_string() == rendered);
     }
 }

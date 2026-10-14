@@ -80,15 +80,15 @@ async fn a_pushed_profile_lands_in_a_queryable_block() {
     check!(
         wal_record.labels
             == vec![
-                ("__name__".to_string(), PROFILE_NAME.to_string()),
-                ("__period_type__".to_string(), "cpu".to_string()),
-                ("__period_unit__".to_string(), "nanoseconds".to_string()),
-                ("__profile_id__".to_string(), PROFILE_ID.to_string()),
-                ("__profile_type__".to_string(), PROFILE_TYPE.to_string()),
-                ("__service_name__".to_string(), SERVICE.to_string()),
-                ("__type__".to_string(), "cpu".to_string()),
-                ("__unit__".to_string(), "nanoseconds".to_string()),
-                ("service_name".to_string(), SERVICE.to_string()),
+                krabka_blockstore::LabelPair::new("__name__", PROFILE_NAME),
+                krabka_blockstore::LabelPair::new("__period_type__", "cpu"),
+                krabka_blockstore::LabelPair::new("__period_unit__", "nanoseconds"),
+                krabka_blockstore::LabelPair::new("__profile_id__", PROFILE_ID),
+                krabka_blockstore::LabelPair::new("__profile_type__", PROFILE_TYPE),
+                krabka_blockstore::LabelPair::new("__service_name__", SERVICE),
+                krabka_blockstore::LabelPair::new("__type__", "cpu"),
+                krabka_blockstore::LabelPair::new("__unit__", "nanoseconds"),
+                krabka_blockstore::LabelPair::new("service_name", SERVICE),
             ]
     );
     // Leaf-first location refs, one per pprof sample, and the values the

@@ -1,7 +1,6 @@
 use super::{
-    AuditOutcome, CompactorDeleteState, HttpQueryError, OPERATION_DELETE_REQUEST_CANCEL,
-    RESOURCE_DELETE_REQUEST, RESOURCE_TENANT, RequestSecurity, TenantId,
-    parse_cancel_delete_request_params, resource,
+    CompactorDeleteState, HttpQueryError, OPERATION_DELETE_REQUEST_CANCEL, RequestSecurity,
+    TenantId, parse_cancel_delete_request_params,
 };
 
 /// Removes the delete request `request_id` of `tenant`.
@@ -26,17 +25,12 @@ pub(crate) fn execute_cancel_delete_request(
         .retain(|request| request.tenant != tenant.as_str() || request.request_id != request_id);
     let persisted = state.delete_requests.persist(&requests);
     drop(requests);
-    security.admin_operation(
+    super::audit_delete_request_write(
+        security,
         OPERATION_DELETE_REQUEST_CANCEL,
-        vec![
-            resource(RESOURCE_TENANT, tenant.as_str()),
-            resource(RESOURCE_DELETE_REQUEST, request_id),
-        ],
-        if persisted.is_ok() {
-            AuditOutcome::Success
-        } else {
-            AuditOutcome::Failure
-        },
+        tenant,
+        &request_id,
+        &persisted,
     );
     persisted?;
     Ok(())

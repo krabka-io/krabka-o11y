@@ -3,11 +3,20 @@ use std::collections::BTreeMap;
 use super::{PromqlError, Result};
 use crate::PromqlString;
 
+pub(crate) struct NormalizedUtf8Strings {
+    pub(crate) query: String,
+    pub(crate) byte_strings: BTreeMap<String, PromqlString>,
+}
+
+struct DecodedLiteral {
+    start: usize,
+    end: usize,
+    value: PromqlString,
+}
+
 // Go string byte escapes form UTF-8 sequences; the dependency decodes each
 // escaped byte as a separate Unicode character. Normalize before parsing.
-pub(crate) fn normalize_utf8_strings(
-    query: &str,
-) -> Result<(String, BTreeMap<String, PromqlString>)> {
+pub(crate) fn normalize_utf8_strings(query: &str) -> Result<NormalizedUtf8Strings> {
     let bytes = query.as_bytes();
     let mut literals = Vec::new();
     let mut index = 0;
@@ -48,7 +57,11 @@ pub(crate) fn normalize_utf8_strings(
         if decoded.utf8().is_none() && query[index..].trim_start().starts_with(['=', '!']) {
             return Err(PromqlError::Parse("invalid UTF-8 label name".to_owned()));
         }
-        literals.push((start, index, decoded));
+        literals.push(DecodedLiteral {
+            start,
+            end: index,
+            value: decoded,
+        });
     }
     // Markers exist only while the dependency parses its UTF-8 StringLiteral.
     // They are restored to typed byte nodes before evaluation or formatting.
@@ -56,8 +69,9 @@ pub(crate) fn normalize_utf8_strings(
     // genuine query literal that spells the same bytes via escapes.
     let mut prefix = "__krabka_byte_literal_".to_owned();
     while query.contains(&prefix)
-        || literals.iter().any(|(_, _, value)| {
-            value
+        || literals.iter().any(|literal| {
+            literal
+                .value
                 .as_bytes()
                 .windows(prefix.len())
                 .any(|window| window == prefix.as_bytes())
@@ -68,20 +82,23 @@ pub(crate) fn normalize_utf8_strings(
     let mut output = String::new();
     let mut values = BTreeMap::new();
     let mut copied = 0;
-    for (start, end, value) in literals {
-        output.push_str(&query[copied..start]);
-        if let Some(utf8) = value.utf8() {
+    for literal in literals {
+        output.push_str(&query[copied..literal.start]);
+        if let Some(utf8) = literal.value.utf8() {
             output.push_str(&serde_json::to_string(utf8).expect("string serialization succeeds"));
         } else {
             let marker = format!("{prefix}{}", values.len());
             output
                 .push_str(&serde_json::to_string(&marker).expect("string serialization succeeds"));
-            values.insert(marker, value);
+            values.insert(marker, literal.value);
         }
-        copied = end;
+        copied = literal.end;
     }
     output.push_str(&query[copied..]);
-    Ok((output, values))
+    Ok(NormalizedUtf8Strings {
+        query: output,
+        byte_strings: values,
+    })
 }
 
 fn decode(raw: &str) -> std::result::Result<Vec<u8>, String> {
@@ -147,7 +164,7 @@ mod tests {
         let query =
             normalize_utf8_strings(r#"label_replace(up, "\xc3\xa9", "", "src", "(.*)")"#).unwrap();
         let promql_parser::parser::Expr::Call(call) =
-            promql_parser::parser::parse(&query.0).unwrap()
+            promql_parser::parser::parse(&query.query).unwrap()
         else {
             panic!("call expected")
         };
@@ -158,7 +175,7 @@ mod tests {
         assert2::assert!(
             normalize_utf8_strings(r#"count_values("\xff", up)"#)
                 .unwrap()
-                .1
+                .byte_strings
                 .values()
                 .next()
                 .unwrap()
@@ -168,7 +185,7 @@ mod tests {
         assert2::assert!(
             normalize_utf8_strings(r#"count_values("\\xff", up)"#)
                 .unwrap()
-                .0
+                .query
                 == r#"count_values("\\xff", up)"#
         );
     }

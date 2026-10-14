@@ -7,6 +7,13 @@ use super::*;
 /// keep it.
 #[test]
 pub(crate) fn evaluating_one_alert_rule_leaves_the_other_rules_states_alone() {
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct AlertIdentity {
+        tenant: String,
+        alert_name: String,
+        query: String,
+    }
+
     let states = super::super::prelude::SharedPrometheusAlertStates::default();
     let fields: serde_yaml::Mapping =
         serde_yaml::from_str("severity: page\n").expect("the rule fields parse");
@@ -24,12 +31,10 @@ pub(crate) fn evaluating_one_alert_rule_leaves_the_other_rules_states_alone() {
             .lock()
             .expect("the alert states lock is not poisoned")
             .keys()
-            .map(|key| {
-                (
-                    key.tenant.clone(),
-                    key.alert_name.clone(),
-                    key.query.clone(),
-                )
+            .map(|key| AlertIdentity {
+                tenant: key.tenant.clone(),
+                alert_name: key.alert_name.clone(),
+                query: key.query.clone(),
             })
             .collect::<Vec<_>>()
     };
@@ -47,10 +52,26 @@ pub(crate) fn evaluating_one_alert_rule_leaves_the_other_rules_states_alone() {
     keys.sort();
     check!(
         keys == vec![
-            ("t1".to_string(), "A".to_string(), "down".to_string()),
-            ("t1".to_string(), "A".to_string(), "up".to_string()),
-            ("t1".to_string(), "B".to_string(), "up".to_string()),
-            ("t2".to_string(), "A".to_string(), "up".to_string()),
+            AlertIdentity {
+                tenant: "t1".to_string(),
+                alert_name: "A".to_string(),
+                query: "down".to_string()
+            },
+            AlertIdentity {
+                tenant: "t1".to_string(),
+                alert_name: "A".to_string(),
+                query: "up".to_string()
+            },
+            AlertIdentity {
+                tenant: "t1".to_string(),
+                alert_name: "B".to_string(),
+                query: "up".to_string()
+            },
+            AlertIdentity {
+                tenant: "t2".to_string(),
+                alert_name: "A".to_string(),
+                query: "up".to_string()
+            },
         ],
         "got {keys:?}"
     );

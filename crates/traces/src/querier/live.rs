@@ -241,23 +241,26 @@ mod tests {
 
         let found_hex = hex::encode(found);
         let absent_hex = hex::encode(absent);
+        fn response(status: StatusCode, body: Body) -> Response {
+            Response::builder()
+                .status(status)
+                .body(body)
+                .expect("the response builds")
+        }
         let app = Router::new().route(
             "/api/traces/{id}",
             get(move |Path(id): Path<String>| {
                 let body = body.clone();
-                let (found_hex, absent_hex) = (found_hex.clone(), absent_hex.clone());
+                let found_hex = found_hex.clone();
+                let absent_hex = absent_hex.clone();
                 async move {
-                    let (status, payload) = if id == found_hex {
-                        (StatusCode::OK, Body::from(body))
+                    if id == found_hex {
+                        response(StatusCode::OK, Body::from(body))
                     } else if id == absent_hex {
-                        (StatusCode::NOT_FOUND, Body::empty())
+                        response(StatusCode::NOT_FOUND, Body::empty())
                     } else {
-                        (StatusCode::INTERNAL_SERVER_ERROR, Body::empty())
-                    };
-                    Response::builder()
-                        .status(status)
-                        .body(payload)
-                        .expect("the response builds")
+                        response(StatusCode::INTERNAL_SERVER_ERROR, Body::empty())
+                    }
                 }
             }),
         );
@@ -401,7 +404,7 @@ mod tests {
         let span = |name: &str, id: u8, parent: Option<u8>| OtlpSpan {
             trace_id: vec![7; 16],
             span_id: vec![id; 8],
-            parent_span_id: parent.map(|p| vec![p; 8]).unwrap_or_default(),
+            parent_span_id: parent.map_or_else(Default::default, |p| vec![p; 8]),
             name: name.to_string(),
             start_time_unix_nano: 1_000,
             end_time_unix_nano: 1_200,
@@ -602,7 +605,9 @@ mod tests {
 
     use arrow::record_batch::RecordBatch;
     use assert2::check;
-    use krabka_traceql::{AttrValue, ScopedTag, SpanRef, TagScope, TraceSpans, TypedValue};
+    use krabka_traceql::{
+        AttrValue, Attribute, ScopedTag, SpanRef, TagScope, TraceSpans, TypedValue,
+    };
     use krabka_units::nanos;
 
     use super::*;
@@ -668,7 +673,7 @@ mod tests {
             trace_id: [1; 16],
             root_service_name: "api".into(),
             root_trace_name: "GET /".into(),
-            resource_attributes: vec![("service.name".into(), AttrValue::Str("api".into()))],
+            resource_attributes: vec![Attribute::new("service.name", AttrValue::Str("api".into()))],
             spans: vec![SpanRef {
                 span_id: [2; 8],
                 parent_span_id: None,
@@ -683,8 +688,11 @@ mod tests {
                 status_message: String::new(),
                 instrumentation_name: String::new(),
                 instrumentation_version: String::new(),
-                resource_attributes: vec![("service.name".into(), AttrValue::Str("api".into()))],
-                attributes: vec![("svc".into(), AttrValue::Str("api".into()))],
+                resource_attributes: vec![Attribute::new(
+                    "service.name",
+                    AttrValue::Str("api".into()),
+                )],
+                attributes: vec![Attribute::new("svc", AttrValue::Str("api".into()))],
                 events: Vec::new(),
                 links: Vec::new(),
             }],

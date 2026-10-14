@@ -1,6 +1,4 @@
-use super::{
-    Arc, ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, NativeResolver,
-};
+use super::{ChainedResolver, DebuginfodConfig, configured_debuginfod_resolvers};
 
 /// Resolver used by the persistent symbolizer. Unlike the query fallback it
 /// leaves misses unresolved so a later debuginfo upload can fill them.
@@ -11,11 +9,7 @@ pub fn offline_resolver_from_debuginfod_config(
     urls: Vec<String>,
     config: DebuginfodConfig,
 ) -> Result<ChainedResolver, crate::ProfilesError> {
-    let mut resolvers: Vec<Arc<dyn NativeResolver>> = vec![Arc::new(FileSystemResolver::default())];
-    if !urls.is_empty() {
-        resolvers.push(Arc::new(
-            DebuginfodResolver::with_config(urls, config).map_err(crate::ProfilesError::Block)?,
-        ));
-    }
-    Ok(ChainedResolver::new(resolvers))
+    Ok(ChainedResolver::new(configured_debuginfod_resolvers(
+        urls, config, false,
+    )?))
 }

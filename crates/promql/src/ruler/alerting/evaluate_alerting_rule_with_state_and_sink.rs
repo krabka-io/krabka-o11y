@@ -1,15 +1,21 @@
 use super::{
     AlertStateKey, AlertmanagerAlert, AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine,
     PromqlError, QueryResult, RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord,
-    RulerStateSink, SamplePayload, TenantId, TimeExt, WalRecord, alert_template_variables,
+    RulerStateSink, TenantId, TimeExt, WalRecord, alert_template_variables,
     expand_alert_label_map_async, labels_to_map, yaml_duration, yaml_optional_string,
     yaml_required_string, yaml_string_map,
 };
 
+struct PreparedAlert {
+    storage_labels: crate::PromqlLabels,
+    labels: crate::PromqlLabels,
+    value: super::SampleValue,
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn evaluate_alerting_rule_with_state_and_sink<S, W, A, R>(
     engine: &PromqlEngine<S>,
-    sinks: (&W, &A, &R),
+    sinks: super::super::RulerSinks<'_, W, A, R>,
     state: &mut RulerAlertState,
     tenant: &TenantId,
     rule: &serde_yaml::Value,
@@ -21,7 +27,9 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let (wal_sink, sink, state_sink) = sinks;
+    let wal_sink = sinks.wal;
+    let sink = sinks.alertmanager;
+    let state_sink = sinks.ruler_state;
     let Some(alert_name) = yaml_optional_string(rule, "alert") else {
         return Ok(0);
     };
@@ -55,11 +63,11 @@ where
             &external_labels,
             &external_url,
         );
-        for (name, value) in
+        let expanded_labels =
             expand_alert_label_map_async(engine, tenant, &rule_labels, &variables, eval_time_ms)
-                .await
-        {
-            labels.insert(name, value);
+                .await;
+        for name in expanded_labels.keys() {
+            labels.insert(name.clone(), expanded_labels[name].clone());
         }
         labels.insert("alertname", alert_name.as_str());
         if !identities.insert(labels.clone()) {
@@ -68,9 +76,16 @@ where
                     .to_owned(),
             ));
         }
-        prepared.push((storage_labels, labels, value));
+        prepared.push(PreparedAlert {
+            storage_labels,
+            labels,
+            value,
+        });
     }
-    for (storage_labels, labels, value) in prepared {
+    for prepared_alert in prepared {
+        let storage_labels = prepared_alert.storage_labels;
+        let labels = prepared_alert.labels;
+        let value = prepared_alert.value;
         let key = AlertStateKey {
             tenant: tenant.to_string(),
             rule_id: rule_id.clone(),
@@ -138,12 +153,13 @@ where
         let annotations =
             expand_alert_label_map_async(engine, tenant, &annotations, &variables, eval_time_ms)
                 .await;
+        let mut annotation_values = BTreeMap::new();
+        for name in annotations.keys() {
+            annotation_values.insert(name.clone(), annotations[name].as_str().to_owned());
+        }
         alerts.push(AlertmanagerAlert {
             labels: labels_to_map(&labels),
-            annotations: annotations
-                .into_iter()
-                .map(|(name, value)| (name, value.as_str().to_owned()))
-                .collect(),
+            annotations: annotation_values,
             starts_at_ms,
             ends_at_ms: None,
             generator_url: external_url.clone(),
@@ -208,13 +224,7 @@ where
                     .copied()
                     .unwrap_or(eval_time_ms);
                 state.keep_firing_until_ms.remove(&key);
-                cleared_records.push(RulerAlertStateRecord {
-                    tenant: key.tenant.clone(),
-                    rule_id: key.rule_id.clone(),
-                    labels: key.labels.clone(),
-                    active_since_ms: None,
-                    keep_firing_until_ms: None,
-                });
+                cleared_records.push(cleared_alert_state_record(&key));
                 synthetic_records.extend(stale_alert_records(
                     tenant,
                     &key.labels,
@@ -231,13 +241,7 @@ where
             }
             // Only ever pending: drop silently, no notification.
             None => {
-                cleared_records.push(RulerAlertStateRecord {
-                    tenant: key.tenant.clone(),
-                    rule_id: key.rule_id.clone(),
-                    labels: key.labels.clone(),
-                    active_since_ms: None,
-                    keep_firing_until_ms: None,
-                });
+                cleared_records.push(cleared_alert_state_record(&key));
                 synthetic_records.extend(stale_alert_records(
                     tenant,
                     &key.labels,
@@ -266,6 +270,16 @@ where
         sink.dispatch_alerts_for_tenant(tenant, alerts).await?;
     }
     Ok(count)
+}
+
+fn cleared_alert_state_record(key: &AlertStateKey) -> RulerAlertStateRecord {
+    RulerAlertStateRecord {
+        tenant: key.tenant.clone(),
+        rule_id: key.rule_id.clone(),
+        labels: key.labels.clone(),
+        active_since_ms: None,
+        keep_firing_until_ms: None,
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -305,7 +319,7 @@ fn alerts_record(
     let mut labels = labels.clone();
     labels.insert("__name__", "ALERTS");
     labels.insert("alertstate", alert_state);
-    wal_record(tenant, labels, value, eval_time_ms)
+    wal_record(tenant, &labels, value, eval_time_ms)
 }
 
 fn alert_for_state_record(
@@ -317,25 +331,23 @@ fn alert_for_state_record(
     let mut labels = labels.clone();
     labels.insert("__name__", "ALERTS_FOR_STATE");
     labels.remove("alertstate");
-    wal_record(tenant, labels, value, eval_time_ms)
+    wal_record(tenant, &labels, value, eval_time_ms)
 }
 
 fn wal_record(
     tenant: &TenantId,
-    labels: crate::PromqlLabels,
+    labels: &crate::PromqlLabels,
     value: f64,
     eval_time_ms: i64,
 ) -> WalRecord {
-    WalRecord {
-        tenant: tenant.to_string(),
-        labels: labels.into_iter().collect(),
-        payload: SamplePayload::Float {
-            timestamp_ms: eval_time_ms,
-            value,
-            start_timestamp_ms: None,
-        },
-        exemplars: Vec::new(),
-    }
+    crate::wal_record::float_wal_record(
+        tenant,
+        labels
+            .iter()
+            .map(|pair| (pair.name.to_owned(), pair.value.clone())),
+        eval_time_ms,
+        value,
+    )
 }
 
 fn stale_nan() -> f64 {

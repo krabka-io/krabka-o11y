@@ -2,14 +2,16 @@
 // reads them, for suites that query what a distributor accepted.
 
 use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, EventRef, InMemorySpanStore, InputSpan, LinkRef,
+    AttrValue as TraceqlAttrValue, Attribute, EventRef, InMemorySpanStore, InputSpan, LinkRef,
 };
 use krabka_traces::{AttrValue, Span, SpanRecord, group_by_trace_in_record_order};
 use krabka_units::{Time, convert::TimeExt as _};
 
 pub fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
     let mut store = InMemorySpanStore::new();
-    for ((tenant, _), spans) in group_by_trace_in_record_order(records) {
+    for group in group_by_trace_in_record_order(records) {
+        let identity = group.0;
+        let spans = group.1;
         let root = spans
             .iter()
             .find(|span| span.parent_span_id.is_none())
@@ -19,7 +21,7 @@ pub fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
             .to_string();
         let root_name = root.name.clone();
         store.push_trace(
-            &tenant,
+            &identity.tenant,
             &root_service,
             &root_name,
             spans.into_iter().map(input_span).collect(),
@@ -45,7 +47,7 @@ fn input_span(span: Span) -> InputSpan {
         instrumentation_version: span.instrumentation_version,
         attrs: attrs
             .into_iter()
-            .filter_map(|attr| Some((attr.key, traceql_attr(&attr.value)?)))
+            .filter_map(|attr| Some(Attribute::new(attr.key, traceql_attr(&attr.value)?)))
             .collect(),
         events: span
             .events
@@ -56,7 +58,7 @@ fn input_span(span: Span) -> InputSpan {
                 attributes: event
                     .attrs
                     .into_iter()
-                    .filter_map(|attr| Some((attr.key, traceql_attr(&attr.value)?)))
+                    .filter_map(|attr| Some(Attribute::new(attr.key, traceql_attr(&attr.value)?)))
                     .collect(),
             })
             .collect(),
@@ -69,7 +71,7 @@ fn input_span(span: Span) -> InputSpan {
                 attributes: link
                     .attrs
                     .into_iter()
-                    .filter_map(|attr| Some((attr.key, traceql_attr(&attr.value)?)))
+                    .filter_map(|attr| Some(Attribute::new(attr.key, traceql_attr(&attr.value)?)))
                     .collect(),
             })
             .collect(),

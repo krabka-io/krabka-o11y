@@ -5,7 +5,10 @@ pub(crate) async fn tsdb_stats_ignore_empty_side_min_time() {
     let mut hot_only = InMemoryMetricStore::new();
     hot_only.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         40_000,
         1.0,
     );
@@ -16,7 +19,10 @@ pub(crate) async fn tsdb_stats_ignore_empty_side_min_time() {
     let mut cold_only = InMemoryMetricStore::new();
     cold_only.push_float(
         "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         50_000,
         1.0,
     );

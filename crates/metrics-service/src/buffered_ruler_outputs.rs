@@ -11,9 +11,14 @@ use super::{
 #[derive(Default)]
 pub struct RulerOutputBatch {
     pub wal: Vec<WalRecord>,
-    pub alerts: Vec<(Option<TenantId>, Vec<AlertmanagerAlert>)>,
+    pub alerts: Vec<TenantAlertBatch>,
     pub groups: Vec<RulerGroupStateRecord>,
     pub alert_states: Vec<RulerAlertStateRecord>,
+}
+
+pub struct TenantAlertBatch {
+    pub tenant: Option<TenantId>,
+    pub alerts: Vec<AlertmanagerAlert>,
 }
 
 impl RulerOutputBatch {
@@ -76,7 +81,10 @@ impl<A: AlertmanagerSink> AlertmanagerSink for BufferedRulerOutputs<'_, A> {
             .lock()
             .map_err(|_| RulerWalError::Append("ruler output buffer poisoned".to_owned()))?
             .alerts
-            .push((None, alerts));
+            .push(TenantAlertBatch {
+                tenant: None,
+                alerts,
+            });
         Ok(())
     }
 
@@ -89,7 +97,10 @@ impl<A: AlertmanagerSink> AlertmanagerSink for BufferedRulerOutputs<'_, A> {
             .lock()
             .map_err(|_| RulerWalError::Append("ruler output buffer poisoned".to_owned()))?
             .alerts
-            .push((Some(tenant.clone()), alerts));
+            .push(TenantAlertBatch {
+                tenant: Some(tenant.clone()),
+                alerts,
+            });
         Ok(())
     }
 }

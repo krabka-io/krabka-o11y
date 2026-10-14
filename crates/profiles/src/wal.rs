@@ -1,7 +1,7 @@
 //! Profiles WAL topic record contract.
 
 use bytes::Bytes;
-use krabka_blockstore::Labels;
+use krabka_blockstore::{LabelPair, Labels};
 use serde::{Deserialize, Serialize};
 use serde_wincode::SerdeCompat;
 use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
@@ -26,7 +26,10 @@ mod tests {
             locations: vec![WalLocation {
                 address: 0x40,
                 mapping_id: 0,
-                lines: vec![(0, 12)],
+                lines: vec![WalLine {
+                    function_id: 0,
+                    line: 12,
+                }],
             }],
             mappings: vec![WalMapping {
                 memory_start: 0,
@@ -46,8 +49,8 @@ mod tests {
         ProfileRecord {
             tenant: "t1".to_string(),
             labels: vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("service_name".to_string(), "api".to_string()),
+                LabelPair::new("__name__", "process_cpu"),
+                LabelPair::new("service_name", "api"),
             ],
             profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".to_string(),
             samples: vec![WalSample {
@@ -74,8 +77,8 @@ mod tests {
         let a = record();
         let mut b = a.clone();
         b.labels = vec![
-            ("service_name".to_string(), "api".to_string()),
-            ("__name__".to_string(), "process_cpu".to_string()),
+            LabelPair::new("service_name", "api"),
+            LabelPair::new("__name__", "process_cpu"),
         ];
         assert!(a.series_fingerprint() == b.series_fingerprint());
     }
@@ -108,7 +111,7 @@ pub use profile_record::ProfileRecord;
 pub use profiles_wal_topic::PROFILES_WAL_TOPIC;
 pub use wal_flag::WalFlag;
 pub use wal_function::WalFunction;
-pub use wal_location::WalLocation;
+pub use wal_location::{WalLine, WalLocation};
 pub use wal_mapping::WalMapping;
 pub(crate) use wal_position::WalPosition;
 pub use wal_sample::WalSample;

@@ -3,13 +3,13 @@
 
 use std::{
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 use async_trait::async_trait;
 use krabka_blockstore::{
     BlockIndex as _, BlockLevel, BlockTimestampUnit, CompactionPolicy, DEFAULT_INDEX_SNAPSHOT_MAX,
-    IndexSnapshotRetain, Labels, ObjectStoreMetrics, ProfileIndex,
+    IndexSnapshotRetain, LabelPair, Labels, ObjectStoreMetrics, OffsetRange, ProfileIndex,
 };
 use krabka_pprof::{EngineOpts, FlameEngine};
 use krabka_profiles::{
@@ -23,7 +23,7 @@ use krabka_units::hours;
 use serde_json::{Value, json};
 use tokio::sync::Mutex as AsyncMutex;
 
-use super::{Batch, Signal, Stores, WriteOutcome, config::mix, due, err, now_ms};
+use super::{Batch, Signal, Stores, WriteOutcome, config::mix, err, now_ms};
 
 const PROFILE_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 const INDEX_KEY: &str = "index/profiles.json";
@@ -32,7 +32,7 @@ const SELECTOR: &str = r#"{service_name="api"}"#;
 pub struct ProfilesSignal {
     stores: Stores,
     seed: u64,
-    reader: AsyncMutex<Option<(Instant, Arc<FlameEngine<ColdProfileStore>>)>>,
+    reader: AsyncMutex<Option<super::CachedEngine<FlameEngine<ColdProfileStore>>>>,
     /// Serializes lifecycle passes, as the compactor's one loop does.
     compactor: AsyncMutex<()>,
 }
@@ -58,18 +58,16 @@ impl ProfilesSignal {
     }
 
     async fn engine(&self, fresh: bool) -> Result<Arc<FlameEngine<ColdProfileStore>>, String> {
-        let mut reader = self.reader.lock().await;
-        if let Some((at, engine)) = reader.as_ref()
-            && !due(Some(*at), fresh)
-        {
-            return Ok(Arc::clone(engine));
-        }
-        let index = Self::load(&self.stores.read).await?;
-        let cold = ColdProfileStore::new(Arc::clone(&self.stores.read), Arc::new(index))
-            .with_index_snapshot(INDEX_KEY.to_string(), DEFAULT_INDEX_SNAPSHOT_MAX);
-        let engine = Arc::new(FlameEngine::new(Arc::new(cold), EngineOpts::default()));
-        *reader = Some((Instant::now(), Arc::clone(&engine)));
-        Ok(engine)
+        super::cached_engine(&self.reader, fresh, || async {
+            let index = Self::load(&self.stores.read).await?;
+            let cold = ColdProfileStore::new(Arc::clone(&self.stores.read), Arc::new(index))
+                .with_index_snapshot(INDEX_KEY.to_string(), DEFAULT_INDEX_SNAPSHOT_MAX);
+            Ok(Arc::new(FlameEngine::new(
+                Arc::new(cold),
+                EngineOpts::default(),
+            )))
+        })
+        .await
     }
 
     async fn lifecycle(&self, overrides: &OverridesProvider, merge: bool) -> Result<Value, String> {
@@ -128,10 +126,10 @@ impl Signal for ProfilesSignal {
             let record = ProfileRecord {
                 tenant: tenant.to_string(),
                 labels: vec![
-                    ("__name__".into(), "process_cpu".into()),
-                    ("__profile_type__".into(), PROFILE_TYPE.into()),
-                    ("service_name".into(), "api".into()),
-                    ("series".into(), series.to_string()),
+                    LabelPair::new("__name__", "process_cpu"),
+                    LabelPair::new("__profile_type__", PROFILE_TYPE),
+                    LabelPair::new("service_name", "api"),
+                    LabelPair::new("series", series.to_string()),
                 ],
                 profile_type: PROFILE_TYPE.into(),
                 samples: (0..batch.samples)
@@ -147,7 +145,12 @@ impl Signal for ProfilesSignal {
                     .collect(),
                 symbols: WalSymbolSet::single_frame(function),
             };
-            let labels = Labels::from_pairs(record.labels.iter().cloned());
+            let labels = Labels::from_pairs(
+                record
+                    .labels
+                    .iter()
+                    .map(|pair| LabelPair::new(pair.name.clone(), pair.value.clone())),
+            );
             index
                 .add_series(tenant, labels.fingerprint(), &labels)
                 .map_err(err)?;
@@ -160,7 +163,7 @@ impl Signal for ProfilesSignal {
             tenant,
             0,
             &records,
-            (batch.seq, batch.seq),
+            OffsetRange::new(batch.seq, batch.seq),
             &ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -177,14 +180,18 @@ impl Signal for ProfilesSignal {
     }
 
     async fn query(&self, tenant: &str, window: Duration, fresh: bool) -> Result<u64, String> {
-        let engine = self.engine(fresh).await?;
-        let end = now_ms();
-        let start = end - i64::try_from(window.as_millis()).map_err(err)?;
-        let graph = engine
-            .select_merge_stacktraces(tenant, PROFILE_TYPE, SELECTOR, start, end, 0)
-            .await
-            .map_err(err)?;
-        u64::try_from(graph.total).map_err(err)
+        crate::query_signal_engine!(
+            self.engine(fresh).await?,
+            now_ms(),
+            end - i64::try_from(window.as_millis()).map_err(err)?,
+            |engine, end, start| {
+                let graph = engine
+                    .select_merge_stacktraces(tenant, PROFILE_TYPE, SELECTOR, start, end, 0)
+                    .await
+                    .map_err(err)?;
+                u64::try_from(graph.total).map_err(err)
+            }
+        )
     }
 
     async fn compact(&self) -> Result<Value, String> {

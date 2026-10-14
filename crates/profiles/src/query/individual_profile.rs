@@ -3,5 +3,5 @@
 #[derive(Clone, Copy)]
 pub(crate) struct IndividualProfile<'a> {
     pub(crate) profile_id: &'a str,
-    pub(crate) labels: &'a [(String, String)],
+    pub(crate) labels: &'a [krabka_pprof::ProfileLabel],
 }

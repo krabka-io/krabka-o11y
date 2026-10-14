@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use assert2::{assert, check};
 use async_trait::async_trait;
@@ -16,14 +16,14 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures_util::StreamExt as _;
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TenantId, TimeRange, labels,
-    write_log_block, write_log_block_to_object_store,
+    write_log_block, write_log_block_to_object_store, write_log_index_manifest,
     write_tenant_log_index_shards_to_object_store,
 };
 use krabka_observability::{
     IngestLimitError, KafkaWalHeader, KafkaWalRecord, LogIngestLimiter, LogQueryAuthorizer,
     LogWalSink, Offset, PartitionIndex, QuerierIndexSource, QuerierState, QueryAuthorizationError,
-    Role, ServiceConfig, WalLogRecord, WalSinkError, build_kafka_wal_record, build_querier_state,
-    loki_router,
+    Role, ServiceConfig, ServiceDependencies, WalLogRecord, WalSinkError, build_kafka_wal_record,
+    build_querier_state, build_service_router, loki_router,
 };
 use krabka_units::convert::ByteSizeExt as _;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
@@ -37,6 +37,16 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tower::ServiceExt as _;
+
+pub async fn blockbuilder_service_router() -> Router {
+    let config = ServiceConfig {
+        index_prefix: Some("observability/logs".to_string()),
+        ..minimal_service_config(Role::BlockBuilder)
+    };
+    build_service_router(&config, ServiceDependencies::default(), None)
+        .await
+        .unwrap()
+}
 
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LokiProtoPushRequest {
@@ -196,11 +206,17 @@ fn fixture_with_time_scale(scale: i64) -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let blocks = api_and_worker_blocks(&mut label_index, scale);
-    label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
+    label_index.insert_series(
+        "tenant-b",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
 
     let mut block_index = BlockIndex::default();
-    for (key, rows) in blocks {
-        block_index.insert(write_log_block(&dir, &key, rows).unwrap());
+    for block in blocks {
+        block_index.insert(write_log_block(&dir, &block.key, block.rows).unwrap());
     }
 
     QuerierState::new(dir, label_index, block_index)
@@ -209,56 +225,89 @@ fn fixture_with_time_scale(scale: i64) -> QuerierState {
 /// Adds tenant-a's `api` and `worker` series to `label_index`, and returns
 /// the key and rows of an `api` block at 10-19 and a `worker` block at 20-29,
 /// both in units of `scale` nanoseconds.
-fn api_and_worker_blocks(label_index: &mut LabelIndex, scale: i64) -> [(BlockKey, Vec<LogRow>); 2] {
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+struct BlockFixture {
+    key: BlockKey,
+    rows: Vec<LogRow>,
+}
+
+fn api_and_worker_blocks(label_index: &mut LabelIndex, scale: i64) -> [BlockFixture; 2] {
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    let worker = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     [
-        (
-            BlockKey::new(
+        BlockFixture {
+            key: BlockKey::new(
                 "tenant-a",
                 0,
                 10 * scale,
                 19 * scale,
                 TimeRange::new(10 * scale, 19 * scale).unwrap(),
             ),
-            vec![
+            rows: vec![
                 LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
                 LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
             ],
-        ),
-        (
-            BlockKey::new(
+        },
+        BlockFixture {
+            key: BlockKey::new(
                 "tenant-a",
                 1,
                 20 * scale,
                 29 * scale,
                 TimeRange::new(20 * scale, 29 * scale).unwrap(),
             ),
-            vec![LogRow::new(
+            rows: vec![LogRow::new(
                 worker,
                 25 * scale,
                 "worker error",
                 BTreeMap::new(),
             )],
-        ),
+        },
     ]
 }
 
-pub fn multi_tenant_fixture() -> (QuerierState, u64, u64) {
+pub struct MultiTenantFixture {
+    pub state: QuerierState,
+    pub prod_block_bytes: u64,
+    pub stage_block_bytes: u64,
+}
+
+pub fn multi_tenant_fixture() -> MultiTenantFixture {
     multi_tenant_fixture_with_time_scale(1)
 }
 
-pub fn loki_forwarded_multi_tenant_fixture() -> (QuerierState, u64, u64) {
+pub fn loki_forwarded_multi_tenant_fixture() -> MultiTenantFixture {
     multi_tenant_fixture_with_time_scale(1_000_000_000)
 }
 
-fn multi_tenant_fixture_with_time_scale(scale: i64) -> (QuerierState, u64, u64) {
+fn multi_tenant_fixture_with_time_scale(scale: i64) -> MultiTenantFixture {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let prod_api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let stage_api =
-        label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "stage")]));
+    let prod_api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    let stage_api = label_index.insert_series(
+        "tenant-b",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "stage"),
+        ]),
+    );
 
     let prod_block = write_log_block(
         &dir,
@@ -301,43 +350,59 @@ fn multi_tenant_fixture_with_time_scale(scale: i64) -> (QuerierState, u64, u64) 
     block_index.insert(prod_block);
     block_index.insert(stage_block);
 
-    (
-        QuerierState::new(dir, label_index, block_index),
-        prod_bytes,
-        stage_bytes,
-    )
+    MultiTenantFixture {
+        state: QuerierState::new(dir, label_index, block_index),
+        prod_block_bytes: prod_bytes,
+        stage_block_bytes: stage_bytes,
+    }
 }
 
-pub async fn tenant_object_store_shard_catalog_config_fixture() -> (QuerierState, std::path::PathBuf)
-{
-    let (config, store, dir) =
-        tenant_object_store_shard_catalog_service_fixture_with_time_scale(1_000_000_000).await;
-    let state = build_querier_state(&config, Some(&store)).await.unwrap();
+pub struct TenantObjectStoreShardCatalogFixture {
+    pub state: QuerierState,
+    pub dir: std::path::PathBuf,
+}
 
-    (state, dir)
+pub async fn tenant_object_store_shard_catalog_config_fixture()
+-> TenantObjectStoreShardCatalogFixture {
+    let fixture =
+        tenant_object_store_shard_catalog_service_fixture_with_time_scale(1_000_000_000).await;
+    let state = build_querier_state(&fixture.config, Some(&fixture.store))
+        .await
+        .unwrap();
+
+    TenantObjectStoreShardCatalogFixture {
+        state,
+        dir: fixture.dir,
+    }
+}
+
+pub struct TenantObjectStoreShardCatalogServiceFixture {
+    pub config: ServiceConfig,
+    pub store: LocalFileSystem,
+    pub dir: std::path::PathBuf,
 }
 
 pub async fn tenant_object_store_shard_catalog_service_fixture()
--> (ServiceConfig, LocalFileSystem, std::path::PathBuf) {
+-> TenantObjectStoreShardCatalogServiceFixture {
     tenant_object_store_shard_catalog_service_fixture_with_time_scale(1).await
 }
 
 pub async fn loki_forwarded_tenant_object_store_shard_catalog_service_fixture()
--> (ServiceConfig, LocalFileSystem, std::path::PathBuf) {
+-> TenantObjectStoreShardCatalogServiceFixture {
     tenant_object_store_shard_catalog_service_fixture_with_time_scale(1_000_000_000).await
 }
 
 async fn tenant_object_store_shard_catalog_service_fixture_with_time_scale(
     scale: i64,
-) -> (ServiceConfig, LocalFileSystem, std::path::PathBuf) {
+) -> TenantObjectStoreShardCatalogServiceFixture {
     let dir = tempfile::tempdir().unwrap().keep();
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
     let mut label_index = LabelIndex::default();
     let mut block_index = BlockIndex::default();
-    for (key, rows) in api_and_worker_blocks(&mut label_index, scale) {
-        let block = write_log_block(&dir, &key, rows.clone()).unwrap();
-        write_log_block_to_object_store(&store, &prefix, &block.key, rows)
+    for fixture in api_and_worker_blocks(&mut label_index, scale) {
+        let block = write_log_block(&dir, &fixture.key, fixture.rows.clone()).unwrap();
+        write_log_block_to_object_store(&store, &prefix, &block.key, fixture.rows)
             .await
             .unwrap();
         block_index.insert(block);
@@ -378,7 +443,7 @@ async fn tenant_object_store_shard_catalog_service_fixture_with_time_scale(
         ..ServiceConfig::default()
     };
 
-    (config, store, dir)
+    TenantObjectStoreShardCatalogServiceFixture { config, store, dir }
 }
 
 pub fn proto_key_value(key: &str, value: any_value::Value) -> KeyValue {
@@ -513,16 +578,16 @@ pub type TailSocket =
 
 /// Serves `app` on a loopback listener, and builds a tenant-a websocket
 /// request for `path_and_query` against it.
-pub async fn serve_for_websocket(
-    app: Router,
-    path_and_query: &str,
-) -> (
-    tokio_tungstenite::tungstenite::handshake::client::Request,
-    tokio::task::JoinHandle<()>,
-) {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .unwrap();
+pub struct ServedWebsocket {
+    pub request: tokio_tungstenite::tungstenite::handshake::client::Request,
+    pub server: tokio::task::JoinHandle<()>,
+}
+
+pub async fn serve_for_websocket(app: Router, path_and_query: &str) -> ServedWebsocket {
+    let listener =
+        tokio::net::TcpListener::bind(std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), 0))
+            .await
+            .unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -533,18 +598,28 @@ pub async fn serve_for_websocket(
     request
         .headers_mut()
         .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
-    (request, server)
+    ServedWebsocket { request, server }
 }
 
 /// Serves `app` and opens a tenant-a tail websocket at `path_and_query`.
-pub async fn open_tail(
-    app: Router,
-    path_and_query: &str,
-) -> (TailSocket, tokio::task::JoinHandle<()>) {
-    let (request, server) = serve_for_websocket(app, path_and_query).await;
-    let (socket, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+pub struct OpenTail {
+    pub socket: TailSocket,
+    pub server: tokio::task::JoinHandle<()>,
+}
+
+pub async fn open_tail(app: Router, path_and_query: &str) -> OpenTail {
+    let served = serve_for_websocket(app, path_and_query).await;
+    let server_task = served.server;
+    let connection = tokio_tungstenite::connect_async(served.request)
+        .await
+        .unwrap();
+    let socket = connection.0;
+    let response = connection.1;
     assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
-    (socket, server)
+    OpenTail {
+        socket,
+        server: server_task,
+    }
 }
 
 /// The next text frame on `socket`, parsed as JSON.
@@ -568,6 +643,11 @@ pub async fn next_frame_within_two_seconds(socket: &mut TailSocket) -> Value {
 #[derive(Clone, Copy)]
 pub struct Tenant<'a>(pub &'a str);
 
+pub struct TenantJsonResponse {
+    pub status: StatusCode,
+    pub body: Value,
+}
+
 impl Tenant<'_> {
     /// A bodiless request with `method` to `uri` for this tenant.
     pub fn request(self, method: Method, uri: &str) -> Request<Body> {
@@ -590,9 +670,11 @@ impl Tenant<'_> {
     }
 
     /// Sends this tenant's GET of `uri`, and reads back its status and JSON.
-    pub async fn get_json(self, app: &Router, uri: &str) -> (StatusCode, Value) {
+    pub async fn get_json(self, app: &Router, uri: &str) -> TenantJsonResponse {
         let response = self.get(app, uri).await;
-        (response.status(), json_body(response).await)
+        let status = response.status();
+        let body = json_body(response).await;
+        TenantJsonResponse { status, body }
     }
 }
 
@@ -719,12 +801,39 @@ fn expected_api_error_at_with_stats(timestamp_ns: &str, stats: &Value) -> Value 
 pub fn api_prod_wal_record(timestamp_ns: i64, line: &str) -> WalLogRecord {
     WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         timestamp_ns,
         line: line.to_string(),
         structured_metadata: BTreeMap::new(),
         position: None,
     }
+}
+
+pub fn insert_api_series(
+    label_index: &mut LabelIndex,
+    tenant: &str,
+) -> krabka_blockstore::SeriesFingerprint {
+    label_index.insert_series(
+        tenant,
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    )
+}
+
+pub fn manifest_with_series(
+    tenant: &str,
+    series_labels: BTreeMap<String, String>,
+) -> (PathBuf, LabelIndex) {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    label_index.insert_series(tenant, series_labels);
+    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
+    (dir, label_index)
 }
 
 /// A streams result that holds one `{app="api", env="prod"}` stream.
@@ -736,10 +845,21 @@ pub fn api_prod_streams(values: Value) -> Value {
 
 /// A querier over one tenant-a block that holds `api ok` at 10 s and
 /// `api error` at 19 s. Returns the router and the block's size in bytes.
-pub fn api_seconds_block_app() -> (Router, u64) {
+pub struct ApiSecondsBlockApp {
+    pub router: Router,
+    pub block_bytes: u64,
+}
+
+pub fn api_seconds_block_app() -> ApiSecondsBlockApp {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let api_block = write_log_block(
         &dir,
         &BlockKey::new(
@@ -758,10 +878,10 @@ pub fn api_seconds_block_app() -> (Router, u64) {
     let bytes = api_block.size.bytes_u64();
     let mut block_index = BlockIndex::default();
     block_index.insert(api_block);
-    (
-        loki_router(QuerierState::new(dir, label_index, block_index)),
-        bytes,
-    )
+    ApiSecondsBlockApp {
+        router: loki_router(QuerierState::new(dir, label_index, block_index)),
+        block_bytes: bytes,
+    }
 }
 
 /// Checks the stats of a query that read one line from one stored block of

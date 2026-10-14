@@ -243,26 +243,35 @@ async fn run(cli: Cli) -> Result<(), String> {
 }
 
 /// Parses an object-store URL into its store and the path prefix it names.
-fn parse_store_url(raw: &str) -> Result<(Box<dyn ObjectStore>, ObjectPath), String> {
+struct ParsedObjectStoreUrl {
+    store: Box<dyn ObjectStore>,
+    prefix: ObjectPath,
+}
+
+fn parse_store_url(raw: &str) -> Result<ParsedObjectStoreUrl, String> {
     let url = Url::parse(raw).map_err(|error| format!("invalid object-store URL: {error}"))?;
     parse_url_opts(&url, std::env::vars())
+        .map(|parsed| ParsedObjectStoreUrl {
+            store: parsed.0,
+            prefix: parsed.1,
+        })
         .map_err(|error| format!("object-store configuration failed: {error}"))
 }
 
 fn root_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    let (store, prefix) = parse_store_url(raw)?;
-    if prefix.as_ref().is_empty() {
-        return Ok(Arc::from(store));
+    let parsed = parse_store_url(raw)?;
+    if parsed.prefix.as_ref().is_empty() {
+        return Ok(Arc::from(parsed.store));
     }
-    Ok(Arc::new(PrefixStore::new(store, prefix)))
+    Ok(Arc::new(PrefixStore::new(parsed.store, parsed.prefix)))
 }
 
 fn scoped_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    let (store, prefix) = parse_store_url(raw)?;
-    if prefix.as_ref().is_empty() {
+    let parsed = parse_store_url(raw)?;
+    if parsed.prefix.as_ref().is_empty() {
         return Err("object-store URL must include a dedicated prefix".into());
     }
-    Ok(Arc::new(PrefixStore::new(store, prefix)))
+    Ok(Arc::new(PrefixStore::new(parsed.store, parsed.prefix)))
 }
 
 fn parse_wal_offset(raw: &str) -> Result<WalOffset, String> {

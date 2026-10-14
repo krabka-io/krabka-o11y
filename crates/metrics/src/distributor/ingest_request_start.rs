@@ -1,6 +1,10 @@
+use std::future::Future;
+
+use tracing::Instrument as _;
+
 use super::{
     BodyBytes, ByteSize, ByteSizeExt as _, DistributorState, HeaderMap, IntoResponse, Principal,
-    PushError, PushSuccess, Response, StdDurationExt as _, TenantAccessError, TenantId,
+    PushError, Response, StdDurationExt as _, TenantAccessError, TenantId,
     authorized_tenant_from_headers, ingest_span, record_ingest_outcome,
 };
 
@@ -32,12 +36,30 @@ impl IngestRequestStart {
         ingest_span(self.tenant.as_ref().ok(), self.body_size)
     }
 
+    /// Runs one format-specific push under the request's ingest span.
+    pub(crate) async fn run<'a, Outcome, Operation, OperationFuture>(
+        &'a self,
+        state: &'a DistributorState,
+        headers: &'a HeaderMap,
+        body: &'a [u8],
+        operation: Operation,
+    ) -> Result<Outcome, PushError>
+    where
+        Operation:
+            FnOnce(&'a DistributorState, &'a TenantId, &'a HeaderMap, &'a [u8]) -> OperationFuture,
+        OperationFuture: Future<Output = Result<Outcome, PushError>>,
+    {
+        async { operation(state, self.authorized_tenant()?, headers, body).await }
+            .instrument(self.span())
+            .await
+    }
+
     /// Records the outcome of a push that counts its decoded series, and
     /// answers with the push's response.
     pub(crate) fn respond(
         &self,
         state: &DistributorState,
-        result: Result<(PushSuccess, u64), PushError>,
+        result: Result<super::PushOutcome, PushError>,
     ) -> Response {
         record_ingest_outcome(
             state,
@@ -46,7 +68,7 @@ impl IngestRequestStart {
             self.started.elapsed().as_time(),
         );
         match result {
-            Ok((success, _items)) => success.into_response(),
+            Ok(outcome) => outcome.success.into_response(),
             Err(error) => error.into_response(),
         }
     }

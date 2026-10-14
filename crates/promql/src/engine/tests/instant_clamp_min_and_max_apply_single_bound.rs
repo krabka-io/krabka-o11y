@@ -1,14 +1,27 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct ClampSeries {
+    name: &'static str,
+    value: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn instant_clamp_min_and_max_apply_single_bound() {
     let mut store = InMemoryMetricStore::new();
-    for (metric, value) in [("below", -5.0), ("inside", 7.0), ("above", 20.0)] {
+    for series in [
+        ClampSeries::builder().name("below").value(-5.0).build(),
+        ClampSeries::builder().name("inside").value(7.0).build(),
+        ClampSeries::builder().name("above").value(20.0).build(),
+    ] {
         store.push_float(
             "tenant-a",
-            labels(&[("__name__", "temperature_celsius"), ("case", metric)]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "temperature_celsius"),
+                crate::test_support::TestLabelPair::new("case", series.name),
+            ]),
             10_000,
-            value,
+            series.value,
         );
     }
 

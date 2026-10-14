@@ -30,7 +30,10 @@ pub(crate) fn count_loki_metric_result_hot_tail_samples_returns_zero_when_nothin
         &absent_query,
         &[],
         &frontier,
-        (eval_range, step_ns),
+        MetricEvaluationWindow {
+            range: eval_range,
+            step_ns,
+        },
         &[],
     );
     check!(absent == 0);
@@ -44,7 +47,10 @@ pub(crate) fn count_loki_metric_result_hot_tail_samples_returns_zero_when_nothin
         &count_query,
         &[],
         &frontier,
-        (eval_range, step_ns),
+        MetricEvaluationWindow {
+            range: eval_range,
+            step_ns,
+        },
         &[],
     );
     check!(none == 0);

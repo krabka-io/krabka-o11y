@@ -1,9 +1,9 @@
-use super::{AttrValue, Map, Value, attrs_json, json};
+use super::{Map, Value, attrs_json, json};
 
 pub(crate) fn instrumentation_scope_json(
     name: &str,
     version: &str,
-    attributes: &[(String, AttrValue)],
+    attributes: &[krabka_traceql::Attribute],
 ) -> Value {
     let mut scope = Map::new();
     if !name.is_empty() {

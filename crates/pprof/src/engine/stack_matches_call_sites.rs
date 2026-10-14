@@ -4,11 +4,8 @@ use super::Frame;
 #[must_use]
 pub fn stack_matches_call_sites(frames: &[Frame], call_sites: &[String]) -> bool {
     call_sites.len() <= frames.len()
-        && frames
-            .iter()
-            .rev()
-            .zip(call_sites)
-            .all(|(frame, site)| frame.function == *site)
+        && (0..call_sites.len())
+            .all(|index| frames[frames.len() - index - 1].function == call_sites[index])
 }
 
 #[cfg(test)]

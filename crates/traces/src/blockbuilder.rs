@@ -7,9 +7,9 @@ use std::{
 
 use arrow::{compute::concat_batches, record_batch::RecordBatch};
 use krabka_blockstore::{
-    BlockMeta, BlockWriter, IndexSnapshotRetain, ObjectStoreRetryPolicy, PromotedSpanAttr,
-    RetryingObjectStore, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SummaryColumns,
-    TraceBlockStats, TraceIndex, escape_object_path_segment, span_block_decl,
+    BlockMeta, BlockWriter, IndexSnapshotRetain, ObjectStoreRetryPolicy, OffsetRange,
+    PromotedSpanAttr, RetryingObjectStore, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom,
+    SummaryColumns, TraceBlockStats, TraceIndex, escape_object_path_segment, span_block_decl,
     span_block_schema_with_promoted_attrs,
 };
 use krabka_client_consumer::{Consumer, ConsumerRecord};
@@ -33,6 +33,10 @@ use crate::{
 };
 
 #[cfg(test)]
+#[path = "../../observability/tests/support/recording_trace_subscriber.rs"]
+mod recording_trace_subscriber;
+
+#[cfg(test)]
 mod tests {
 
     use super::*;
@@ -50,22 +54,10 @@ mod tests {
     /// is observable.
     #[test]
     fn set_remote_parent_from_records_reparents_into_header_trace() {
-        use opentelemetry::trace::{TraceContextExt as _, TraceId, TracerProvider as _};
-        use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+        use opentelemetry::trace::{TraceContextExt as _, TraceId};
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        use tracing_subscriber::prelude::*;
 
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
-        let provider = SdkTracerProvider::builder()
-            .with_sampler(Sampler::AlwaysOn)
-            .build();
-        let tracer = provider.tracer("blockbuilder-test");
-        let subscriber =
-            tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
-
-        tracing::subscriber::with_default(subscriber, || {
+        super::recording_trace_subscriber::with_recording_trace("blockbuilder-test", || {
             fn record(headers: Vec<krabka_client_consumer::Header>) -> ConsumerRecord {
                 ConsumerRecord {
                     topic: "wal".into(),
@@ -162,16 +154,13 @@ mod tests {
 
         collect_tags(&[span], &mut tag_names, &mut tag_values);
 
-        let expected_values = SPAN_TAGS
-            .iter()
-            .chain(extra_tags)
-            .map(|indexed| {
-                (
-                    indexed.tag.to_string(),
-                    BTreeSet::from([indexed.value.to_string()]),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+        let mut expected_values = BTreeMap::new();
+        for indexed in SPAN_TAGS.iter().chain(extra_tags) {
+            expected_values.insert(
+                indexed.tag.to_string(),
+                BTreeSet::from([indexed.value.to_string()]),
+            );
+        }
         let expected_names = expected_values.keys().cloned().collect::<BTreeSet<_>>();
         assert2::assert!(tag_names == expected_names);
         assert2::assert!(tag_values == expected_values);
@@ -274,7 +263,7 @@ pub use default_flush_max_records::DEFAULT_FLUSH_MAX_RECORDS;
 pub use flush_accumulator::FlushAccumulator;
 use flush_and_commit::flush_and_commit;
 pub use flush_partition_windows::flush_partition_windows;
-pub use group_by_trace::{group_by_trace, group_by_trace_in_record_order};
+pub use group_by_trace::{TraceIdentity, group_by_trace, group_by_trace_in_record_order};
 pub use object_key::object_key;
 pub use partition_window::PartitionWindow;
 pub use prefixed_object_key::prefixed_object_key;

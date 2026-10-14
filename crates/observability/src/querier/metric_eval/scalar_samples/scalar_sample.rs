@@ -1,10 +1,11 @@
 use super::{
-    METRIC_DECIMAL_SCALE, Rational, ScalarComparisonOp, decimal_scaled_numerator, gcd_signed,
-    impl_rational_division_ops, rational_to_f64,
+    Rational, ScalarComparisonOp, gcd_signed, impl_rational_division_ops,
+    impl_rational_float_conversion,
 };
 use crate::{MetricValue, format_metric_value};
 
 impl_rational_division_ops!(ScalarSample);
+impl_rational_float_conversion!(ScalarSample);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ScalarSample {
@@ -67,17 +68,6 @@ impl ScalarSample {
             ScalarComparisonOp::Less => left < right,
             ScalarComparisonOp::LessOrEqual => left <= right,
         })
-    }
-
-    pub(crate) fn to_f64(self) -> Option<f64> {
-        rational_to_f64(self.numerator, self.denominator)
-    }
-
-    pub(crate) fn from_f64(value: f64) -> Option<Self> {
-        Some(Self::new(
-            decimal_scaled_numerator(value)?,
-            METRIC_DECIMAL_SCALE,
-        ))
     }
 
     pub(crate) fn format(self) -> String {

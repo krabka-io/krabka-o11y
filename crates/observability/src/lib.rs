@@ -1,8 +1,12 @@
 //! Role-selectable service skeleton for Krabka observability.
 
+#![recursion_limit = "256"]
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
 pub mod ids;
 pub mod metrics;
 pub mod persisted_format;
+pub mod tenant_overrides;
 
 use std::{
     cmp::Ordering,
@@ -83,7 +87,6 @@ use datafusion::{
         record_batch::RecordBatch,
     },
     error::DataFusionError,
-    prelude::SessionContext,
 };
 use flate2::read::{DeflateDecoder, GzDecoder};
 pub use ids::{Offset, PartitionIndex};
@@ -195,7 +198,8 @@ pub use compactor::{
     compact_kafka_wal_records_to_object_store, compact_log_block_to_object_store,
     compact_next_kafka_wal_batch_to_object_store, compact_wal_records_to_object_store,
     read_compaction_frontier_from_object_store, run_compactor_once, run_compactor_until_idle,
-    run_compactor_until_shutdown, write_compaction_frontier_to_object_store,
+    run_compactor_until_shutdown, set_remote_parent_from_kafka_headers,
+    write_compaction_frontier_to_object_store,
 };
 pub use config::{
     QuerierIndexSource, Role, ServiceConfig, ServiceConfigError, ServiceRuntimeError,
@@ -216,6 +220,15 @@ pub use distributor::{
 };
 pub use error::QueryError;
 pub use http::loki_router;
+/// Deserializes a human-readable time cap and rejects negative values.
+///
+/// # Errors
+/// Returns the deserializer's error when the input is invalid or negative.
+pub fn deserialize_non_negative_time<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<krabka_units::Time, D::Error> {
+    limits::non_negative_time::deserialize(deserializer)
+}
 pub use limits::{
     Limits, OtlpAttributeAction, OtlpAttributesConfig, OtlpConfig, OtlpResourceAttributesConfig,
     OverridesError, OverridesProvider,
@@ -226,7 +239,7 @@ pub use log_level::{
 };
 pub use panic_containment::{PanicSafeShared, contain_handler_panics};
 pub use querier::{
-    QuerierState, build_querier_state, execute_metric_query,
+    MetricEvaluationRange, QuerierState, build_querier_state, execute_metric_query,
     execute_metric_query_from_object_store, execute_metric_query_range,
     execute_metric_query_range_from_object_store, execute_metric_query_range_with_hot_tail,
     execute_metric_query_range_with_hot_tail_frontier, execute_metric_query_with_hot_tail,
@@ -266,8 +279,9 @@ pub(crate) use self::{
             validate_compactor_policy,
         },
         delete_materialization::{
-            LogCompactionIndexOutput, TenantCompactionIndexCache, active_log_delete_tenants,
-            compact_log_block_to_object_store_with_index_output, insert_descriptor_labels,
+            LogCompactionIndexOutput, TenantCompactionIndexCache, TenantLogIndexes,
+            active_log_delete_tenants, compact_log_block_to_object_store_with_index_output,
+            insert_descriptor_labels,
             materialize_delete_requests_in_existing_local_manifest_blocks,
             materialize_delete_requests_in_existing_object_store_blocks,
             poll_accumulated_log_compaction_records, wal_compaction_chunks, wal_record_time_range,
@@ -357,9 +371,9 @@ pub(crate) use self::{
                 DecodedQueryPair, LOKI_DEFAULT_QUERY_RANGE, LOKI_DEFAULT_TAIL_LIMIT,
                 LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS, LOKI_MAX_TAIL_DELAY,
                 LOKI_METADATA_DEFAULT_INDEX_RANGE, LokiDirection, QueryKind, authorized_tenant,
-                authorized_tenants, current_unix_time_ns, decode_form_component, decode_query_pair,
-                loki_direction, optional_start_end_range, parse_decimal_seconds_timestamp,
-                parse_usize_query_param, start_or_since, time_range,
+                authorized_tenants, current_unix_time_ns, decode_query_pair, loki_direction,
+                optional_start_end_range, parse_decimal_seconds_timestamp, parse_usize_query_param,
+                start_or_since, time_range,
             },
         },
         params_format::{
@@ -389,7 +403,6 @@ pub(crate) use self::{
                 execute_format_query, form_body_query, format_metric_vector_arithmetic_expression,
                 format_metric_vector_binary_expression, parse_posted_series_params,
                 post_query_params, post_query_params_body_first,
-                split_leading_vector_binary_modifiers,
             },
             stream_formatting::{
                 format_stream_query, parse_formatted_vector_function,
@@ -408,7 +421,7 @@ pub(crate) use self::{
                 wants_loki_parquet,
             },
             parquet_responses::{
-                add_loki_query_stats, add_loki_query_stats_for_metric_plan,
+                MetricEvaluationWindow, add_loki_query_stats, add_loki_query_stats_for_metric_plan,
                 add_loki_query_stats_for_metric_plan_with_hot_tail,
                 add_loki_query_stats_for_stream_blocks_with_hot_tail,
                 add_loki_query_stats_for_stream_plan,
@@ -440,14 +453,15 @@ pub(crate) use self::{
                 parse_metric_sample_value, sort_loki_stream_values,
             },
             sample_windows::{
-                FormattedMetricSeries, METRIC_DECIMAL_SCALE, MetricSamples, MetricValue,
-                MetricWindow, apply_absent_over_time, format_metric_samples,
-                is_unwrapped_metric_query, merge_metric_samples, metric_samples_from_batches,
+                FormattedMetricSeries, FormattedMetricSeriesEntry, METRIC_DECIMAL_SCALE,
+                MetricSamples, MetricValue, MetricWindow, apply_absent_over_time,
+                format_metric_samples, is_unwrapped_metric_query, merge_metric_samples,
+                metric_samples_from_batches,
             },
         },
         analytics::{
             detected_fields::{
-                AnalyticsQuery, PlannedRead, RangeEnd, VolumeRangeLimit, collect_detected_fields,
+                AnalyticsQuery, RangeEnd, VolumeRangeLimit, collect_detected_fields,
                 execute_index_volume_query, plan_analytics_query, reads_planned_row,
                 sample_time_bucket,
             },
@@ -496,10 +510,11 @@ pub(crate) use self::{
             scalar_samples::{
                 HttpMetricQuery, Rational, ScalarSample, decimal_scaled_numerator,
                 execute_http_metric_query, gcd_signed, impl_rational_division_ops,
-                parse_scalar_sample, rational_to_f64, resolved_range_step,
-                validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
-                validate_loki_volume_query_range_limit, validate_query_entries_limit,
-                validate_query_range_limit, validate_query_string_bytes_limit,
+                impl_rational_float_conversion, parse_scalar_sample, rational_to_f64,
+                resolved_range_step, validate_loki_query_range_resolution,
+                validate_loki_range_query_range_limit, validate_loki_volume_query_range_limit,
+                validate_query_entries_limit, validate_query_range_limit,
+                validate_query_string_bytes_limit,
             },
             validation::{
                 LabelReplaceArguments, VectorScalarExpressionParser, apply_label_join_fields,

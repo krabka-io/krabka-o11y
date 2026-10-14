@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn store_cardinality_and_tsdb_stats_include_float_and_hist_series() {
-    let (store, _) = store_with_float_and_hist_series();
+    let fixture = store_with_float_and_hist_series();
+    let store = fixture.store;
 
     check!(
         store.cardinality_label_names("tenant-a").await.unwrap()

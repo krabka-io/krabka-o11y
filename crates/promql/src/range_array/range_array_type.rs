@@ -4,10 +4,30 @@ use super::{
 };
 
 /// A view over `values` partitioned into `(offset, len)` windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RangeWindow {
+    pub offset: u32,
+    pub len: u32,
+}
+
+impl RangeWindow {
+    #[must_use]
+    pub const fn new(offset: u32, len: u32) -> Self {
+        Self { offset, len }
+    }
+}
+
+/// The value and timestamp arrays sharing one set of windows.
+#[derive(Clone, Debug)]
+pub struct PairedRangeArrays {
+    pub values: RangeArray,
+    pub timestamps: RangeArray,
+}
+
 #[derive(Clone, Debug)]
 pub struct RangeArray {
     pub(crate) values: ArrayRef,
-    pub(crate) ranges: Vec<(u32, u32)>,
+    pub(crate) ranges: Vec<RangeWindow>,
 }
 
 impl RangeArray {
@@ -22,11 +42,12 @@ impl RangeArray {
     /// Returns an error if the backing WAL, block store, or remote endpoint fails.
     pub fn from_ranges(
         values: ArrayRef,
-        ranges: impl IntoIterator<Item = (u32, u32)>,
+        ranges: impl IntoIterator<Item = RangeWindow>,
     ) -> Result<Self, ArrowError> {
         let ranges = ranges.into_iter().collect::<Vec<_>>();
         let total = values.len();
-        for &(offset, len) in &ranges {
+        for range in &ranges {
+            let RangeWindow { offset, len } = *range;
             let end = offset as usize + len as usize;
             if end > total {
                 return Err(ArrowError::InvalidArgumentError(format!(
@@ -53,15 +74,15 @@ impl RangeArray {
     }
 
     #[must_use]
-    pub fn ranges(&self) -> &[(u32, u32)] {
+    pub fn ranges(&self) -> &[RangeWindow] {
         &self.ranges
     }
 
     /// Returns the windowed slice for cell `index`, or `None` if `index` is out of bounds.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<ArrayRef> {
-        let &(offset, len) = self.ranges.get(index)?;
-        Some(self.values.slice(offset as usize, len as usize))
+        let range = self.ranges.get(index)?;
+        Some(self.values.slice(range.offset as usize, range.len as usize))
     }
 
     /// Builds a paired value and timestamp `RangeArray` from one set of windows.
@@ -84,8 +105,8 @@ impl RangeArray {
     pub fn from_paired_ranges(
         values: Float64Array,
         timestamps: Int64Array,
-        ranges: impl IntoIterator<Item = (u32, u32)>,
-    ) -> Result<(Self, Self), ArrowError> {
+        ranges: impl IntoIterator<Item = RangeWindow>,
+    ) -> Result<PairedRangeArrays, ArrowError> {
         if values.len() != timestamps.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "paired value/timestamp backing arrays differ in length: {} != {}",
@@ -96,13 +117,16 @@ impl RangeArray {
         let ranges = ranges.into_iter().collect::<Vec<_>>();
         let value_ranges = Self::from_ranges(Arc::new(values) as ArrayRef, ranges.iter().copied())?;
         let timestamp_ranges = Self::from_ranges(Arc::new(timestamps) as ArrayRef, ranges)?;
-        Ok((value_ranges, timestamp_ranges))
+        Ok(PairedRangeArrays {
+            values: value_ranges,
+            timestamps: timestamp_ranges,
+        })
     }
 
     /// Returns the number of samples in cell `index`, or `None` if `index` is out of bounds.
     #[must_use]
     pub fn cell_len(&self, index: usize) -> Option<usize> {
-        self.ranges.get(index).map(|&(_, len)| len as usize)
+        self.ranges.get(index).map(|range| range.len as usize)
     }
 
     /// Returns cell `index` as a contiguous `&[f64]`.
@@ -111,10 +135,10 @@ impl RangeArray {
     /// `Float64`. An empty cell returns `&[]`.
     #[must_use]
     pub fn value_slice(&self, index: usize) -> Option<&[f64]> {
-        let &(offset, len) = self.ranges.get(index)?;
+        let range = self.ranges.get(index)?;
         let floats = self.values.as_any().downcast_ref::<Float64Array>()?;
-        let start = offset as usize;
-        Some(&floats.values()[start..start + len as usize])
+        let start = range.offset as usize;
+        Some(&floats.values()[start..start + range.len as usize])
     }
 
     /// Returns cell `index` as a contiguous `&[i64]`.
@@ -123,10 +147,10 @@ impl RangeArray {
     /// `Int64`. An empty cell returns `&[]`.
     #[must_use]
     pub fn timestamp_slice(&self, index: usize) -> Option<&[i64]> {
-        let &(offset, len) = self.ranges.get(index)?;
+        let range = self.ranges.get(index)?;
         let ints = self.values.as_any().downcast_ref::<Int64Array>()?;
-        let start = offset as usize;
-        Some(&ints.values()[start..start + len as usize])
+        let start = range.offset as usize;
+        Some(&ints.values()[start..start + range.len as usize])
     }
 
     /// Returns the native-histogram cell `index`.
@@ -135,9 +159,9 @@ impl RangeArray {
     /// match the native histogram `StructArray` layout of `krabka-metrics`.
     #[must_use]
     pub fn histogram_cell(&self, index: usize) -> Option<HistogramView<'_>> {
-        let &(offset, len) = self.ranges.get(index)?;
+        let range = self.ranges.get(index)?;
         let columns = HistogramColumns::parse(self.values.as_ref())?;
-        Some(columns.cell(offset, len))
+        Some(columns.cell(range.offset, range.len))
     }
 
     /// Returns an iterator over every cell as a `&[f64]`.
@@ -148,9 +172,9 @@ impl RangeArray {
     pub fn iter_value_slices(&self) -> Option<impl Iterator<Item = &[f64]>> {
         let floats = self.values.as_any().downcast_ref::<Float64Array>()?;
         let backing = floats.values();
-        Some(self.ranges.iter().map(move |&(offset, len)| {
-            let start = offset as usize;
-            &backing[start..start + len as usize]
+        Some(self.ranges.iter().map(move |range| {
+            let start = range.offset as usize;
+            &backing[start..start + range.len as usize]
         }))
     }
 
@@ -162,9 +186,9 @@ impl RangeArray {
     pub fn iter_timestamp_slices(&self) -> Option<impl Iterator<Item = &[i64]>> {
         let ints = self.values.as_any().downcast_ref::<Int64Array>()?;
         let backing = ints.values();
-        Some(self.ranges.iter().map(move |&(offset, len)| {
-            let start = offset as usize;
-            &backing[start..start + len as usize]
+        Some(self.ranges.iter().map(move |range| {
+            let start = range.offset as usize;
+            &backing[start..start + range.len as usize]
         }))
     }
 
@@ -185,7 +209,8 @@ impl RangeArray {
         offsets.push(0_i32);
         let mut slices = Vec::with_capacity(self.ranges.len());
         let mut total = 0_i32;
-        for &(offset, len) in &self.ranges {
+        for range in &self.ranges {
+            let RangeWindow { offset, len } = *range;
             let len_i32 = i32::try_from(len).map_err(|_| {
                 ArrowError::InvalidArgumentError(format!("range length {len} exceeds i32::MAX"))
             })?;
@@ -246,7 +271,7 @@ impl RangeArray {
         let mut next_offset = 0_u32;
         for row in 0..dict.len() {
             if dict.is_null(row) {
-                ranges.push((next_offset, 0));
+                ranges.push(RangeWindow::new(next_offset, 0));
                 continue;
             }
             let key = usize::try_from(dict.keys().value(row)).map_err(|_| {
@@ -265,7 +290,7 @@ impl RangeArray {
                     list_value.len()
                 ))
             })?;
-            ranges.push((next_offset, len));
+            ranges.push(RangeWindow::new(next_offset, len));
             next_offset = next_offset.checked_add(len).ok_or_else(|| {
                 ArrowError::InvalidArgumentError("range offsets exceed u32::MAX".to_string())
             })?;

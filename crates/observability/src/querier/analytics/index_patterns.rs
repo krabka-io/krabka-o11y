@@ -1,13 +1,13 @@
 use krabka_units::convert::ByteSizeExt;
 
 use crate::{
-    AnalyticsQuery, BTreeMap, BTreeSet, HeaderMap, HttpQueryError, PlannedRead, QuerierState,
-    RangeEnd, RequestSecurity, SeriesParams, StreamPlan, TenantErrorSurface, TimeRange, Value,
-    VolumeRangeLimit, active_log_delete_filters, authorized_tenant, collect_detected_fields, json,
-    loki_success_value, parse_detected_fields_params, parse_detected_labels_params,
-    parse_patterns_params, parse_query_params, plan_analytics_query, planned_block_bytes,
-    read_planned_log_block, reads_planned_row, sample_time_bucket, series_data,
-    validate_loki_volume_query_range_limit, validate_query_string_bytes_limit,
+    AnalyticsQuery, BTreeMap, BTreeSet, HeaderMap, HttpQueryError, QuerierState, RangeEnd,
+    RequestSecurity, SeriesParams, StreamPlan, TenantErrorSurface, TimeRange, Value,
+    VolumeRangeLimit, authorized_tenant, collect_detected_fields, json, loki_success_value,
+    parse_detected_fields_params, parse_detected_labels_params, parse_patterns_params,
+    parse_query_params, plan_analytics_query, planned_block_bytes, read_planned_log_block,
+    reads_planned_row, sample_time_bucket, series_data, validate_loki_volume_query_range_limit,
+    validate_query_string_bytes_limit,
 };
 
 mod count_index_stats_entries;
@@ -25,6 +25,23 @@ mod log_line_pattern;
 mod log_pattern_token;
 mod pattern_value_is_variable;
 mod templatize_text;
+
+struct DetectedFieldsQuery {
+    limit: usize,
+    fields: BTreeMap<String, crate::DetectedFieldStats>,
+}
+
+async fn detected_fields_query(
+    state: &QuerierState,
+    security: &RequestSecurity,
+    headers: &HeaderMap,
+    raw_query: Option<&str>,
+) -> Result<DetectedFieldsQuery, HttpQueryError> {
+    let params = parse_detected_fields_params(raw_query)?;
+    let limit = params.limit;
+    let fields = collect_detected_fields(state, security, headers, &params).await?;
+    Ok(DetectedFieldsQuery { limit, fields })
+}
 
 pub(crate) use count_index_stats_entries::count_index_stats_entries;
 pub(crate) use execute_detected_field_values_query::execute_detected_field_values_query;

@@ -5,25 +5,37 @@ pub(crate) async fn scan_filters_histograms_by_matcher_tenant_and_time() {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "t",
-        lbls(&[("__name__", "latency_seconds"), ("job", "api")]),
+        lbls(&[
+            crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         1_000,
         count_two_sum_three_histogram(),
     );
     store.push_histogram(
         "t",
-        lbls(&[("__name__", "latency_seconds"), ("job", "api")]),
+        lbls(&[
+            crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         5_000,
         count_two_sum_three_histogram(),
     );
     store.push_histogram(
         "t",
-        lbls(&[("__name__", "latency_seconds"), ("job", "worker")]),
+        lbls(&[
+            crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+            crate::test_support::TestLabelPair::new("job", "worker"),
+        ]),
         1_000,
         count_two_sum_three_histogram(),
     );
     store.push_histogram(
         "other",
-        lbls(&[("__name__", "latency_seconds"), ("job", "api")]),
+        lbls(&[
+            crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         1_000,
         count_two_sum_three_histogram(),
     );

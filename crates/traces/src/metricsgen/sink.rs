@@ -23,7 +23,7 @@ mod tests {
     use super::*;
     use crate::{
         metricsgen::{
-            contract::{SpanKind, SpanRecord, StatusCode},
+            contract::{SpanAttribute, SpanKind, SpanRecord, StatusCode},
             series::{Series, SeriesPayload, SeriesSample},
         },
         span::{AttrValue, KeyValue, Span},
@@ -44,7 +44,7 @@ mod tests {
             tenant: "t".into(),
             series: vec![Series {
                 name: "traces_spanmetrics_calls_total".into(),
-                labels: vec![("service".into(), "api".into())],
+                labels: vec![krabka_traceql::MetricLabel::new("service", "api")],
                 sample: SeriesSample::Counter(1.0),
                 exemplars: vec![],
                 timestamp_ms: 1_000,
@@ -146,8 +146,8 @@ mod tests {
                     status: StatusCode::Ok,
                     status_message: String::new(),
                     service_name: "checkout".into(),
-                    attributes: vec![("http.status_code".into(), "200".into()),],
-                    resource_attributes: vec![("db.system".into(), "postgresql".into())],
+                    attributes: vec![SpanAttribute::new("http.status_code", "200")],
+                    resource_attributes: vec![SpanAttribute::new("db.system", "postgresql")],
                     size: ByteSize::from_bytes(123),
                 }
         );

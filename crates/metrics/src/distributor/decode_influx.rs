@@ -2,6 +2,16 @@ use krabka_blockstore::Labels;
 
 use super::{DecodedSample, DecodedSeries, WireError};
 
+struct InfluxPair<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+struct FieldsAndTimestamp<'a> {
+    fields: &'a str,
+    timestamp: Option<&'a str>,
+}
+
 pub(crate) fn decode_influx(
     body: &[u8],
     raw_query: Option<&str>,
@@ -10,15 +20,17 @@ pub(crate) fn decode_influx(
     let precision = raw_query
         .and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
-                .find(|(name, _)| name == "precision")
-                .map(|(_, value)| value.into_owned())
+                .find(|entry| entry.0 == "precision")
+                .map(|entry| entry.1.into_owned())
         })
         .unwrap_or_else(|| "ns".into());
     let scale = timestamp_scale(&precision)?;
     let input = std::str::from_utf8(body)
         .map_err(|error| WireError::Invalid(format!("Influx body is not UTF-8: {error}")))?;
     let mut output = Vec::new();
-    for (line_number, line) in input.lines().enumerate() {
+    for line_entry in input.lines().enumerate() {
+        let line_number = line_entry.0;
+        let line = line_entry.1;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -54,9 +66,18 @@ fn parse_line(
     let series = &line[..first_space];
     let rest = line[first_space + 1..].trim_start();
     let second_space = find_unescaped(rest, ' ', true);
-    let (fields, timestamp) = second_space.map_or((rest, None), |index| {
-        (&rest[..index], Some(rest[index + 1..].trim()))
-    });
+    let split = second_space.map_or(
+        FieldsAndTimestamp {
+            fields: rest,
+            timestamp: None,
+        },
+        |index| FieldsAndTimestamp {
+            fields: &rest[..index],
+            timestamp: Some(rest[index + 1..].trim()),
+        },
+    );
+    let fields = split.fields;
+    let timestamp = split.timestamp;
     let timestamp_ms = timestamp.map_or(Ok(now_ms), |timestamp| {
         let timestamp = timestamp
             .parse::<i64>()
@@ -77,22 +98,22 @@ fn parse_line(
     let mut base_labels = Labels::new();
     base_labels.insert("__proxy_source__", "influx");
     for tag in series_parts {
-        let (name, value) =
+        let pair =
             split_pair(tag, '=', false).ok_or_else(|| invalid_line(line_number, "invalid tag"))?;
-        let name = sanitize_name(&unescape(name));
+        let name = sanitize_name(&unescape(pair.name));
         if matches!(name.as_str(), "__name__" | "__proxy_source__") {
             continue;
         }
-        base_labels.insert(name, unescape(value));
+        base_labels.insert(name, unescape(pair.value));
     }
 
     for field in split_unescaped(fields, ',', true) {
-        let (name, value) = split_pair(field, '=', true)
+        let pair = split_pair(field, '=', true)
             .ok_or_else(|| invalid_line(line_number, "invalid field"))?;
-        let Some(value) = field_value(value, line_number)? else {
+        let Some(value) = field_value(pair.value, line_number)? else {
             continue;
         };
-        let field = sanitize_name(&unescape(name));
+        let field = sanitize_name(&unescape(pair.name));
         let metric = if field == "value" {
             measurement.clone()
         } else {
@@ -172,8 +193,11 @@ fn unescape(value: &str) -> String {
     output
 }
 
-fn split_pair(value: &str, delimiter: char, quotes: bool) -> Option<(&str, &str)> {
-    find_unescaped(value, delimiter, quotes).map(|index| (&value[..index], &value[index + 1..]))
+fn split_pair(value: &str, delimiter: char, quotes: bool) -> Option<InfluxPair<'_>> {
+    find_unescaped(value, delimiter, quotes).map(|index| InfluxPair {
+        name: &value[..index],
+        value: &value[index + 1..],
+    })
 }
 
 fn split_unescaped(value: &str, delimiter: char, quotes: bool) -> SplitUnescaped<'_> {
@@ -187,7 +211,9 @@ fn split_unescaped(value: &str, delimiter: char, quotes: bool) -> SplitUnescaped
 fn find_unescaped(value: &str, delimiter: char, honor_quotes: bool) -> Option<usize> {
     let mut escaped = false;
     let mut quoted = false;
-    for (index, character) in value.char_indices() {
+    for character_entry in value.char_indices() {
+        let index = character_entry.0;
+        let character = character_entry.1;
         if escaped {
             escaped = false;
         } else if character == '\\' {

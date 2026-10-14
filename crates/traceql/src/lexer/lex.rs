@@ -36,38 +36,27 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
         // leading-dot fractional number, lexed as a single `Token::Float` so
         // leading zeros survive. A `.` followed by an identifier (e.g.
         // `.service`) remains a `Dot` for attribute-scope syntax.
-        if ch == '.'
+        let leading_dot_number = ch == '.'
             && rest[1..]
                 .chars()
                 .next()
-                .is_some_and(|next| next.is_ascii_digit())
-        {
-            let (tok, len) = scan_number_or_duration(rest)?;
-            tokens.push(tok);
-            let next = advance(input, i, len)?;
-            if next <= i {
-                return Err(no_progress(i));
-            }
-            i = next;
-            after_dot = false;
-            continue;
-        }
+                .is_some_and(|next| next.is_ascii_digit());
 
-        if let Some((tok, len)) = op_token(rest) {
-            let next = advance(input, i, len)?;
+        if !leading_dot_number && let Some(scanned) = op_token(rest) {
+            let next = advance(input, i, scanned.consumed)?;
             if next <= i {
                 return Err(no_progress(i));
             }
             i = next;
-            after_dot = tok == Token::Dot;
-            tokens.push(tok);
+            after_dot = scanned.value == Token::Dot;
+            tokens.push(scanned.value);
             continue;
         }
 
         if ch == '"' {
-            let (s, len) = scan_string(rest)?;
-            tokens.push(Token::Str(s));
-            let next = advance(input, i, len)?;
+            let scanned = scan_string(rest)?;
+            tokens.push(Token::Str(scanned.value));
+            let next = advance(input, i, scanned.consumed)?;
             if next <= i {
                 return Err(no_progress(i));
             }
@@ -76,10 +65,10 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
             continue;
         }
 
-        if ch.is_ascii_digit() {
-            let (tok, len) = scan_number_or_duration(rest)?;
-            tokens.push(tok);
-            let next = advance(input, i, len)?;
+        if ch.is_ascii_digit() || leading_dot_number {
+            let scanned = scan_number_or_duration(rest)?;
+            tokens.push(scanned.value);
+            let next = advance(input, i, scanned.consumed)?;
             if next <= i {
                 return Err(no_progress(i));
             }
@@ -90,9 +79,9 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
 
         if is_ident_start(ch) {
             let allow_dots = after_dot;
-            let (ident, len) = scan_ident(rest, allow_dots);
-            tokens.push(keyword_or_ident(ident));
-            let next = advance(input, i, len)?;
+            let scanned = scan_ident(rest, allow_dots);
+            tokens.push(keyword_or_ident(scanned.value));
+            let next = advance(input, i, scanned.consumed)?;
             if next <= i {
                 return Err(no_progress(i));
             }

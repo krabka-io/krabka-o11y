@@ -7,10 +7,10 @@ use super::*;
 pub(crate) async fn repeated_checks_inside_the_ttl_ask_the_broker_once() {
     let tenant = tenant_for_test("tenant-a");
 
-    let source = Arc::new(CountingBrokerAccess::answering(Ok(
-        AclSet::SecurityDisabled,
-    )));
-    let (access, connected, _) = broker_access_for_test(&source, 8);
+    let source = security_disabled_broker_access();
+    let fixture = broker_access_for_test(&source, 8);
+    let access = fixture.cache;
+    let connected = fixture.connected;
     let authorizer = BrokerBackedQueryAuthorizer { access };
     for _ in 0..100 {
         check!(
@@ -20,13 +20,13 @@ pub(crate) async fn repeated_checks_inside_the_ttl_ask_the_broker_once() {
                 .is_ok()
         );
     }
-    check!(source.lookups() == (1, 0));
+    check!(source.lookups() == BrokerLookups { acl: 1, quota: 0 });
     check!(connected.load(AtomicOrdering::SeqCst));
 
-    let source = Arc::new(CountingBrokerAccess::answering(Ok(
-        AclSet::SecurityDisabled,
-    )));
-    let (access, _, clock) = broker_access_for_test(&source, 8);
+    let source = security_disabled_broker_access();
+    let fixture = broker_access_for_test(&source, 8);
+    let access = fixture.cache;
+    let clock = fixture.clock;
     let limiter = BrokerBackedIngestLimiter::with_access(access, secs(1));
     for _ in 0..100 {
         check!(
@@ -36,7 +36,7 @@ pub(crate) async fn repeated_checks_inside_the_ttl_ask_the_broker_once() {
                 .is_ok()
         );
     }
-    check!(source.lookups() == (1, 1));
+    check!(source.lookups() == BrokerLookups { acl: 1, quota: 1 });
 
     // One TTL later, the next check asks again, once.
     clock.advance(secs(10));
@@ -52,5 +52,5 @@ pub(crate) async fn repeated_checks_inside_the_ttl_ask_the_broker_once() {
             .await
             .is_ok()
     );
-    check!(source.lookups() == (2, 2));
+    check!(source.lookups() == BrokerLookups { acl: 2, quota: 2 });
 }

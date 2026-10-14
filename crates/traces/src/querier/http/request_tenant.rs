@@ -1,6 +1,6 @@
 use super::{
     HeaderMap, HeaderValue, IntoResponse, Principal, Response, StatusCode, TENANT_HEADER, TenantId,
-    TenantPolicy, authorize_tenant,
+    TenantPolicy, authorize_tenant, status_text_response,
 };
 
 /// Resolves the tenant a query names and checks that `principal` may read it, or gives the response that rejects the query.
@@ -19,7 +19,12 @@ pub(crate) fn request_tenant(
         headers.get(TENANT_HEADER).map(HeaderValue::as_bytes),
         policy,
     )
-    .map_err(|err| Box::new((StatusCode::BAD_REQUEST, err.to_string()).into_response()))?;
+    .map_err(|err| {
+        Box::new(status_text_response(
+            StatusCode::BAD_REQUEST,
+            err.to_string(),
+        ))
+    })?;
     authorize_tenant(principal, &tenant).map_err(|denied| Box::new(denied.into_response()))?;
     Ok(tenant)
 }

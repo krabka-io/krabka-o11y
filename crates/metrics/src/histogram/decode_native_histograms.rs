@@ -3,16 +3,17 @@ use super::{
     COL_NH_NEG_COUNTS, COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT,
     COL_NH_SCHEMA, COL_NH_START_TS, COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD,
     COL_TIMESTAMP, Float64Array, HistogramCodecError, Int8Array, Int64Array, ListArray,
-    NativeHistogram, RecordBatch, ResetHint, UInt64Array, read_f64_list, read_spans,
-    require_non_null, typed_column, validate_span_count_consistency,
+    NativeHistogram, NativeHistogramRow, RecordBatch, ResetHint, UInt64Array, read_f64_list,
+    read_spans, require_non_null, typed_column, validate_span_count_consistency,
 };
+use crate::arrow_codec::decode_rows_with_identity;
 
 /// Decodes a `RecordBatch` that [`crate::encode_native_histograms`] produced.
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
 pub fn decode_native_histograms(
     batch: &RecordBatch,
-) -> Result<Vec<(u64, i64, NativeHistogram)>, HistogramCodecError> {
+) -> Result<Vec<NativeHistogramRow>, HistogramCodecError> {
     let fingerprints = typed_column::<UInt64Array>(batch, COL_FINGERPRINT)?;
     let timestamps = typed_column::<Int64Array>(batch, COL_TIMESTAMP)?;
     let schemas = typed_column::<Int8Array>(batch, COL_NH_SCHEMA)?;
@@ -29,10 +30,7 @@ pub fn decode_native_histograms(
     let custom_values = typed_column::<ListArray>(batch, COL_NH_CUSTOM_VALUES)?;
     let start_timestamps = typed_column::<Int64Array>(batch, COL_NH_START_TS)?;
 
-    let mut rows = Vec::with_capacity(batch.num_rows());
-    for row in 0..batch.num_rows() {
-        require_non_null(fingerprints, row, COL_FINGERPRINT)?;
-        require_non_null(timestamps, row, COL_TIMESTAMP)?;
+    decode_rows_with_identity(batch, fingerprints, timestamps, |identity, row| {
         require_non_null(schemas, row, COL_NH_SCHEMA)?;
         require_non_null(is_floats, row, COL_NH_IS_FLOAT)?;
         require_non_null(reset_hints, row, COL_NH_RESET_HINT)?;
@@ -49,10 +47,10 @@ pub fn decode_native_histograms(
         validate_span_count_consistency(&positive_spans, &positive_counts)?;
         validate_span_count_consistency(&negative_spans, &negative_counts)?;
 
-        rows.push((
-            fingerprints.value(row),
-            timestamps.value(row),
-            NativeHistogram {
+        Ok(NativeHistogramRow {
+            fingerprint: identity.fingerprint,
+            timestamp_ms: identity.timestamp_ms,
+            hist: NativeHistogram {
                 schema: schemas.value(row),
                 is_float: is_floats.value(row),
                 reset_hint: ResetHint::from_i8(reset_hints.value(row)),
@@ -75,8 +73,6 @@ pub fn decode_native_histograms(
                     Some(start_timestamps.value(row))
                 },
             },
-        ));
-    }
-
-    Ok(rows)
+        })
+    })
 }

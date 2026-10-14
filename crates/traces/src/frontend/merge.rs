@@ -200,6 +200,14 @@ mod tests {
         }
     }
 
+    fn span_count(response: &SearchResponseJson) -> usize {
+        response.traces[0]
+            .span_sets
+            .iter()
+            .map(|span_set| span_set.spans.len())
+            .sum()
+    }
+
     #[test]
     fn same_trace_across_blocks_reunions_spans() {
         let p0 = partial(
@@ -243,11 +251,7 @@ mod tests {
         let p0 = partial(vec![trace("01", "s", 10, vec![span("07", 10, 5)])], 50);
         let p1 = partial(vec![trace("01", "s", 10, vec![span("07", 10, 5)])], 50);
         let resp = merge_search(vec![p0, p1], 20, 10);
-        let total_spans: usize = resp.traces[0]
-            .span_sets
-            .iter()
-            .map(|ss| ss.spans.len())
-            .sum();
+        let total_spans = span_count(&resp);
         assert2::assert!(total_spans == 1);
     }
 
@@ -274,11 +278,7 @@ mod tests {
             50,
         );
         let resp = merge_search(vec![p0, p1], 20, 10);
-        let total_spans: usize = resp.traces[0]
-            .span_sets
-            .iter()
-            .map(|ss| ss.spans.len())
-            .sum();
+        let total_spans = span_count(&resp);
         assert2::assert!(total_spans == 3);
         assert2::assert!(resp.traces[0].span_sets[0].matched == 3);
     }
@@ -384,9 +384,9 @@ mod tests {
         let p1 = by_id_partial(TraceByIdResponseJson::default(), 5);
         assert2::assert!(
             assemble_trace(vec![p0, p1], bytes(1_000_000))
-                == (
-                    None,
-                    Metrics {
+                == AssembledTrace {
+                    trace: None,
+                    metrics: Metrics {
                         total_jobs: 0,
                         completed_jobs: 2,
                         total_blocks: 0,
@@ -394,8 +394,8 @@ mod tests {
                         inspected_bytes: 10,
                         inspected_spans: 0,
                     },
-                    TraceStatus::Complete,
-                )
+                    status: TraceStatus::Complete,
+                }
         );
     }
 
@@ -404,11 +404,11 @@ mod tests {
         // querier A holds spans 1,2; querier B holds spans 2,3 (2 overlaps).
         let p0 = by_id_partial(by_id_body(&["01", "02"], "COMPLETE"), 100);
         let p1 = by_id_partial(by_id_body(&["02", "03"], "COMPLETE"), 100);
-        let (trace, metrics, status) = assemble_trace(vec![p0, p1], bytes(1_000_000));
-        let trace = trace.unwrap();
+        let assembled = assemble_trace(vec![p0, p1], bytes(1_000_000));
+        let trace = assembled.trace.unwrap();
         check!(assembled_span_count(&trace) == 3);
         check!(
-            metrics
+            assembled.metrics
                 == Metrics {
                     total_jobs: 0,
                     completed_jobs: 2,
@@ -418,22 +418,22 @@ mod tests {
                     inspected_spans: 0,
                 }
         );
-        check!(status == TraceStatus::Complete);
+        check!(assembled.status == TraceStatus::Complete);
     }
 
     #[test]
     fn assemble_flags_partial_over_byte_budget() {
         let p0 = by_id_partial(by_id_body(&["01", "02", "03"], "COMPLETE"), 100);
-        let (trace, _m, status) = assemble_trace(vec![p0], bytes(1));
-        assert2::assert!(trace.is_some());
-        assert2::assert!(matches!(status, TraceStatus::Partial));
+        let assembled = assemble_trace(vec![p0], bytes(1));
+        assert2::assert!(assembled.trace.is_some());
+        assert2::assert!(matches!(assembled.status, TraceStatus::Partial));
     }
 
     #[test]
     fn assemble_propagates_querier_partial_status() {
         let p0 = by_id_partial(by_id_body(&["01"], "PARTIAL"), 100);
-        let (_t, _m, status) = assemble_trace(vec![p0], bytes(1_000_000));
-        assert2::assert!(matches!(status, TraceStatus::Partial));
+        let assembled = assemble_trace(vec![p0], bytes(1_000_000));
+        assert2::assert!(matches!(assembled.status, TraceStatus::Partial));
     }
 
     fn tag_metrics(bytes: u64) -> Metrics {
@@ -463,12 +463,12 @@ mod tests {
         };
         assert2::assert!(
             merge_tag_names(vec![a, b])
-                == (
-                    vec![ScopedTag {
+                == MergedTagNames {
+                    tags: vec![ScopedTag {
                         scope: TagScope::Span,
                         tags: vec!["http.method".to_string(), "http.status_code".to_string()],
                     }],
-                    Metrics {
+                    metrics: Metrics {
                         total_jobs: 2,
                         completed_jobs: 2,
                         total_blocks: 0,
@@ -476,7 +476,7 @@ mod tests {
                         inspected_bytes: 30,
                         inspected_spans: 0,
                     },
-                )
+                }
         );
     }
 
@@ -502,7 +502,7 @@ mod tests {
             ],
             metrics: tag_metrics(1),
         };
-        let (merged, _) = merge_tag_values(vec![a, b]);
+        let merged = merge_tag_values(vec![a, b]).values;
         // sorted by (type, value).
         assert2::assert!(
             merged
@@ -536,16 +536,16 @@ mod trace_status;
 mod union_trace_bodies;
 
 use apply_search_limits::apply_search_limits;
-pub use assemble_trace::assemble_trace;
+pub use assemble_trace::{AssembledTrace, assemble_trace};
 pub use assembled_span_count::assembled_span_count;
 use merge_scope_spans::merge_scope_spans;
 pub use merge_search::merge_search;
 use merge_span_sets::merge_span_sets;
-pub use merge_tag_names::merge_tag_names;
-pub use merge_tag_values::merge_tag_values;
+pub use merge_tag_names::{MergedTagNames, merge_tag_names};
+pub use merge_tag_values::{MergedTagValues, merge_tag_values};
 use merge_trace::merge_trace;
 use parse_nanos::parse_nanos;
-use scope_key::scope_key;
+pub(crate) use scope_key::scope_key;
 use seed_seen::seed_seen;
 pub use trace_status::TraceStatus;
 use union_trace_bodies::union_trace_bodies;

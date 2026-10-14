@@ -26,7 +26,8 @@ mod tests {
         let mut fields = BTreeMap::new();
         detect_entry_fields(&mut fields, "plain error=none", &Labels::new());
         assert!(!fields.contains_key("detected_level"));
-        let metadata = Labels::from([("detected_level".into(), "debug".into())]);
+        let mut metadata = Labels::new();
+        metadata.insert("detected_level".into(), "debug".into());
         detect_entry_fields(&mut fields, "level=debug error=none", &metadata);
         assert!(
             fields["detected_level"]

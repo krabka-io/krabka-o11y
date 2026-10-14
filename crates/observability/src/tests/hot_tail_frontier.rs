@@ -33,3 +33,26 @@ mod the_frontier_refresher_hands_back_a_handle_that_carries_its_panic;
 mod the_shard_catalog_lists_each_compacted_range_exactly_once;
 
 mod query_source_labels;
+
+async fn absent_dynamic_index_is_an_empty_block_index(use_shards: bool) {
+    use object_store::memory::InMemory;
+
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let prefix = ObjectPath::default();
+    let state = QuerierState::new(".", LabelIndex::default(), BlockIndex::default());
+    let state = if use_shards {
+        state.with_dynamic_tenant_object_store_shards(store, prefix)
+    } else {
+        state.with_dynamic_tenant_object_store_manifest(store, prefix)
+    };
+    let query_range = TimeRange::new(0, 1).unwrap();
+    let result = state
+        .with_request_tenant_index("test-tenant", query_range)
+        .await;
+    assert!(
+        result.is_ok(),
+        "expected Ok for absent cold index, got: {:?}",
+        result.err()
+    );
+    assert_eq!(result.unwrap().block_index.blocks().len(), 0);
+}

@@ -10,27 +10,43 @@ mod tests {
     use super::*;
     use crate::PromqlLabels as Labels;
 
+    struct ResultTypeCase {
+        result: QueryResult,
+        expected: &'static str,
+    }
+
+    struct EmptyAnnotationCase {
+        annotations: Annotations,
+        expected_empty: bool,
+    }
+
     #[test]
     fn result_type_strings_match_prometheus() {
-        for (result, want) in [
-            (
-                QueryResult::Scalar {
+        for case in [
+            ResultTypeCase {
+                result: QueryResult::Scalar {
                     ts_ms: 0,
                     value: 1.0,
                 },
-                "scalar",
-            ),
-            (QueryResult::InstantVector(vec![]), "vector"),
-            (QueryResult::RangeMatrix(vec![]), "matrix"),
-            (
-                QueryResult::Str {
+                expected: "scalar",
+            },
+            ResultTypeCase {
+                result: QueryResult::InstantVector(vec![]),
+                expected: "vector",
+            },
+            ResultTypeCase {
+                result: QueryResult::RangeMatrix(vec![]),
+                expected: "matrix",
+            },
+            ResultTypeCase {
+                result: QueryResult::Str {
                     ts_ms: 0,
                     value: "x".into(),
                 },
-                "string",
-            ),
+                expected: "string",
+            },
         ] {
-            assert2::assert!(result.result_type() == want);
+            assert2::assert!(case.result.result_type() == case.expected);
         }
     }
 
@@ -84,18 +100,28 @@ mod tests {
         let mut infos = Annotations::new();
         infos.info("info");
 
-        for (_case, annotations, want) in [
-            ("new", Annotations::new(), true),
-            ("warn", warnings, false),
-            ("info", infos, false),
+        for case in [
+            EmptyAnnotationCase {
+                annotations: Annotations::new(),
+                expected_empty: true,
+            },
+            EmptyAnnotationCase {
+                annotations: warnings,
+                expected_empty: false,
+            },
+            EmptyAnnotationCase {
+                annotations: infos,
+                expected_empty: false,
+            },
         ] {
-            assert2::assert!(annotations.is_empty() == want);
+            assert2::assert!(case.annotations.is_empty() == case.expected_empty);
         }
     }
 }
 
 mod annotated_query_result;
 mod annotations;
+mod float_sample;
 mod histogram_quantile_repair;
 mod instant_sample;
 mod query_result;
@@ -104,8 +130,9 @@ mod sample_value;
 
 pub use annotated_query_result::AnnotatedQueryResult;
 pub use annotations::Annotations;
+pub use float_sample::FloatSample;
 pub use histogram_quantile_repair::HistogramQuantileRepair;
 pub use instant_sample::InstantSample;
 pub use query_result::QueryResult;
-pub use range_series::RangeSeries;
+pub use range_series::{RangeSeries, RangeSeriesSample};
 pub use sample_value::SampleValue;

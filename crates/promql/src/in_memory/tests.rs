@@ -61,8 +61,60 @@ use expected_label_pair_stats::expected_label_pair_stats;
 use expected_label_value_cardinality::expected_label_value_cardinality;
 use expected_label_value_count_stats::expected_label_value_count_stats;
 use expected_metric_name_stats::expected_metric_name_stats;
-use float_record::float_record;
+use float_record::{float_record, float_sample_row};
+use interned_series_labels::{SummaryLedger, SummaryLedgerEntry};
 use lbls::lbls;
 use store_with_float_and_hist_series::store_with_float_and_hist_series;
 
 use crate::testkit::count_two_sum_three_histogram;
+
+pub(crate) struct HeadWithUpSeries {
+    pub(crate) head: WalHead,
+    pub(crate) series: Labels,
+}
+
+pub(crate) fn up_series() -> Labels {
+    lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ])
+}
+
+pub(crate) async fn assert_up_query_value<S: MetricStore + 'static>(store: S) {
+    let engine = PromqlEngine::new(std::sync::Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant(&tenant_id("tenant-a"), "up", 10_000)
+        .await
+        .expect("query");
+    let QueryResult::InstantVector(vector) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(vector[0].value == SampleValue::Float(1.0));
+}
+
+pub(crate) fn head_with_initial_up_sample() -> HeadWithUpSeries {
+    let head = WalHead::new();
+    let series = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
+    head.apply_wal_record(&float_record("t", &series, 1_000, 1.0));
+    HeadWithUpSeries { head, series }
+}
+
+pub(crate) fn push_up_sample(
+    store: &mut InMemoryMetricStore,
+    job: &str,
+    timestamp_ms: i64,
+    value: f64,
+) {
+    store.push_float(
+        "t",
+        lbls(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+            crate::test_support::TestLabelPair::new("job", job),
+        ]),
+        timestamp_ms,
+        value,
+    );
+}

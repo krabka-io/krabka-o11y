@@ -15,15 +15,15 @@ pub(crate) fn otlp_value_to_string(value: &OtlpAnyValue) -> String {
                 .collect::<Vec<_>>(),
         )
         .expect("OTLP array values serialize to JSON"),
-        OtlpAnyValue::Kvlist(value) => serde_json::to_string(
-            &value
-                .values
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .map(|attribute| (attribute.key.clone(), otlp_value_to_json(&attribute.value)))
-                .collect::<BTreeMap<_, _>>(),
-        )
-        .expect("OTLP key-value lists serialize to JSON"),
+        OtlpAnyValue::Kvlist(value) => {
+            serde_json::to_string(&value.values.as_deref().unwrap_or_default().iter().fold(
+                BTreeMap::new(),
+                |mut values, attribute| {
+                    values.insert(attribute.key.clone(), otlp_value_to_json(&attribute.value));
+                    values
+                },
+            ))
+            .expect("OTLP key-value lists serialize to JSON")
+        }
     }
 }

@@ -12,23 +12,20 @@ mod tests {
     use super::*;
 
     fn sample_pprof() -> crate::proto::Profile {
-        crate::proto::Profile {
-            sample_type: vec![crate::proto::ValueType { r#type: 1, unit: 2 }],
-            period_type: Some(crate::proto::ValueType { r#type: 3, unit: 4 }),
-            sample: vec![crate::proto::Sample {
-                location_id: vec![1],
-                value: vec![42],
-                label: Vec::new(),
-            }],
-            string_table: vec![
-                String::new(),
-                "cpu".to_string(),
-                "nanoseconds".to_string(),
-                "wall".to_string(),
-                "milliseconds".to_string(),
-            ],
+        let mut profile = crate::proto::Profile::default();
+        profile
+            .sample_type
+            .push(crate::proto::ValueType { r#type: 1, unit: 2 });
+        profile.period_type = Some(crate::proto::ValueType { r#type: 3, unit: 4 });
+        profile.sample.push(crate::proto::Sample {
+            location_id: vec![1],
+            value: vec![42],
             ..Default::default()
-        }
+        });
+        profile.string_table = ["", "cpu", "nanoseconds", "wall", "milliseconds"]
+            .map(str::to_string)
+            .to_vec();
+        profile
     }
 
     #[test]
@@ -65,8 +62,20 @@ mod tests {
         check!(profile.string(1) == Some("cpu"));
         check!(profile.string(-1).is_none());
         check!(profile.string(99).is_none());
-        check!(profile.sample_types() == vec![("cpu".to_string(), "nanoseconds".to_string())]);
-        check!(profile.period_type_strings() == ("wall".to_string(), "milliseconds".to_string()));
+        check!(
+            profile.sample_types()
+                == vec![SampleType {
+                    name: "cpu".to_string(),
+                    unit: "nanoseconds".to_string(),
+                }]
+        );
+        check!(
+            profile.period_type_strings()
+                == SampleType {
+                    name: "wall".to_string(),
+                    unit: "milliseconds".to_string(),
+                }
+        );
         check!(
             profile.samples()
                 == vec![crate::proto::Sample {
@@ -82,4 +91,4 @@ mod tests {
 mod pprof_profile;
 mod profile;
 
-pub use pprof_profile::PprofProfile;
+pub use pprof_profile::{PprofProfile, SampleType};

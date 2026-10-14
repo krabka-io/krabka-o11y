@@ -1,7 +1,7 @@
 use super::{
     BlockWriter, CompactionConsumerPoll, CompactionIndexSink, CompactionOffsetCommitter,
-    CompactionPollError, CompactionPollResult, ServiceMetrics, Time,
-    compaction_wal_records_from_consumer_records, process_compaction_record_batch,
+    CompactionPollError, CompactionPollResult, ServiceMetrics, Time, poll_compaction_wal_records,
+    process_compaction_record_batch,
 };
 
 /// Polls the metrics WAL consumer once, compacts the returned records, and
@@ -22,19 +22,18 @@ where
     S: CompactionIndexSink + ?Sized,
     C: CompactionOffsetCommitter + ?Sized,
 {
-    let records = poller
-        .poll(timeout)
-        .await
-        .inspect_err(|_| metrics.wal_consumer.record_poll_failure())?;
-    metrics.wal_consumer.record_poll(&records);
-    let polled_records = records.len();
-    let wal_records = compaction_wal_records_from_consumer_records(wal_topic, &records)?;
-    let compacted_records = wal_records.len();
-    let batch =
-        process_compaction_record_batch(block_writer, index_sink, committer, &wal_records).await?;
+    let poll_result = poll_compaction_wal_records(poller, wal_topic, timeout, metrics).await?;
+    let compacted_records = poll_result.wal_records.len();
+    let batch = process_compaction_record_batch(
+        block_writer,
+        index_sink,
+        committer,
+        &poll_result.wal_records,
+    )
+    .await?;
 
     Ok(CompactionPollResult {
-        polled_records,
+        polled_records: poll_result.polled_records,
         compacted_records,
         batch,
     })

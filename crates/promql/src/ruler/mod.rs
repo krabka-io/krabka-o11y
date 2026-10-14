@@ -25,6 +25,8 @@ pub use alerting::{
 };
 #[cfg(test)]
 use config::parse_duration;
+#[cfg(test)]
+pub(crate) use evaluation::RulerRuleSetEvaluationRequest;
 pub use evaluation::{
     evaluate_and_persist_ruler_rule_group, evaluate_and_persist_ruler_rule_set,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
@@ -39,6 +41,53 @@ pub use schedule::{
     RulerShard, filter_ruler_rule_set_due_for_eval, filter_ruler_rule_set_for_shard,
     filter_ruler_rule_set_for_shard_due_for_eval,
 };
+
+/// The sinks used while evaluating and persisting ruler rules.
+pub struct RulerSinks<'a, W, A, R> {
+    pub wal: &'a W,
+    pub alertmanager: &'a A,
+    pub ruler_state: &'a R,
+}
+
+impl<'a, W, A, R> RulerSinks<'a, W, A, R> {
+    #[must_use]
+    pub const fn new(wal: &'a W, alertmanager: &'a A, ruler_state: &'a R) -> Self {
+        Self {
+            wal,
+            alertmanager,
+            ruler_state,
+        }
+    }
+}
+
+/// The due-time context for evaluating one shard of ruler groups.
+pub struct RulerEvaluationSchedule<'a> {
+    pub group_state: &'a mut RulerGroupState,
+    pub shard: RulerShard,
+    pub eval_time_ms: i64,
+}
+
+/// Recovered alert and scheduling state used by the next ruler evaluation pass.
+#[derive(Clone, Debug, Default)]
+pub struct RulerEvaluationState {
+    pub alert_state: RulerAlertState,
+    pub group_state: RulerGroupState,
+}
+
+impl<'a> RulerEvaluationSchedule<'a> {
+    #[must_use]
+    pub const fn new(
+        group_state: &'a mut RulerGroupState,
+        shard: RulerShard,
+        eval_time_ms: i64,
+    ) -> Self {
+        Self {
+            group_state,
+            shard,
+            eval_time_ms,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests;

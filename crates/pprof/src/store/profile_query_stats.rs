@@ -1,5 +1,12 @@
 use std::collections::BTreeSet;
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProfileInstanceKey {
+    pub fingerprint: u64,
+    pub profile_type: String,
+    pub timestamp_ms: i64,
+}
+
 /// Storage metadata used to estimate the cost of a profile query.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProfileQueryStats {
@@ -7,7 +14,7 @@ pub struct ProfileQueryStats {
     /// Selector-matching public series identities, excluding `__profile_id__`.
     pub fingerprints: BTreeSet<u64>,
     /// Identities in the physical plan, used to detect overlapping replicas.
-    pub profiles: BTreeSet<(u64, String, i64)>,
+    pub profiles: BTreeSet<ProfileInstanceKey>,
     pub profile_count: u64,
     pub sample_count: u64,
     pub scopes: Vec<ProfileQueryScope>,

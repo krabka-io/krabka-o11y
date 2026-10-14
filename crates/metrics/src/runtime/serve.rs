@@ -17,20 +17,30 @@ use super::{
 /// required background task stops unexpectedly.
 pub fn serve(
     cli: Cli,
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    security: ServerSecurity,
-    wal_security: Option<ClientSecurity>,
-    stopping: CancellationToken,
+    runtime: WriterRuntime,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
     serve_writer(
-        (cli.target, cli.writer),
-        metrics,
-        readiness,
-        security,
-        wal_security,
-        stopping,
+        WriterLaunch {
+            target: cli.target,
+            config: cli.writer,
+        },
+        runtime,
     )
+}
+
+/// The target and configuration needed to start one writer role.
+pub struct WriterLaunch {
+    pub target: Target,
+    pub config: WriterConfig,
+}
+
+/// Process controls shared by the writer role runners.
+pub struct WriterRuntime {
+    pub metrics: ServiceMetrics,
+    pub readiness: RoleReadiness,
+    pub security: ServerSecurity,
+    pub wal_security: Option<ClientSecurity>,
+    pub stopping: CancellationToken,
 }
 
 /// Runs an embedded writer role with its caller's process controls.
@@ -38,13 +48,20 @@ pub fn serve(
 /// # Errors
 /// Returns a topic, startup, I/O or supervision error.
 pub fn serve_writer(
-    (target, cli): (Target, WriterConfig),
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    security: ServerSecurity,
-    wal_security: Option<ClientSecurity>,
-    stopping: CancellationToken,
+    launch: WriterLaunch,
+    runtime: WriterRuntime,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
+    let WriterRuntime {
+        metrics,
+        readiness,
+        security,
+        wal_security,
+        stopping,
+    } = runtime;
+    let WriterLaunch {
+        target,
+        config: cli,
+    } = launch;
     let startup = readiness.gate("startup");
     // Register sources in role order before tasks start. The shared recovery
     // report can then identify the durable writer even before its first commit.

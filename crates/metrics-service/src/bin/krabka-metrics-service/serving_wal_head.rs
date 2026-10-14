@@ -8,8 +8,13 @@ pub(crate) struct ServingWalHead {
     pub(crate) head: WalHead,
     /// The head and the readiness gate it opens, when the role is configured
     /// to read the WAL.
-    pub(crate) status: Option<(WalHead, ReadinessGate)>,
+    pub(crate) status: Option<ServingWalHeadStatus>,
     consumer: Option<ServingWalConsumer>,
+}
+
+pub(crate) struct ServingWalHeadStatus {
+    pub(crate) head: WalHead,
+    pub(crate) readiness: ReadinessGate,
 }
 
 /// What the role's WAL head consumer reads from and reports to, when the role
@@ -43,9 +48,10 @@ impl ServingWalHead {
                     readiness,
                 ),
             });
-        let status = consumer
-            .as_ref()
-            .map(|consumer| (head.clone(), consumer.gate.clone()));
+        let status = consumer.as_ref().map(|consumer| ServingWalHeadStatus {
+            head: head.clone(),
+            readiness: consumer.gate.clone(),
+        });
         Self {
             head,
             status,

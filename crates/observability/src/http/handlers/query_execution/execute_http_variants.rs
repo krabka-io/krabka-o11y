@@ -28,6 +28,16 @@ pub(crate) struct VariantsDefinition<'a> {
     pub(crate) offset_ns: OffsetNanos,
 }
 
+struct VariantMetric {
+    query: krabka_logql::MetricQuery,
+    aggregation: Option<VectorAggregation>,
+}
+
+struct VariantSample {
+    timestamp: f64,
+    identity: String,
+}
+
 // Boundaries and extractor composition follow Loki 3.7.7's
 // DefaultEvaluator.NewVariantsStepEvaluator and MultiVariantExpr.extractor.
 pub(crate) async fn execute_http_variants(
@@ -56,8 +66,13 @@ pub(crate) async fn execute_http_variants(
     }}));
     let mut results = Vec::new();
     let mut warnings = Vec::new();
-    for (index, expression) in variants.iter().enumerate() {
-        let (mut query, mut aggregation) = variant_metric(expression)?;
+    for entry in variants.iter().enumerate() {
+        let index = entry.0;
+        let expression = entry.1;
+        let VariantMetric {
+            mut query,
+            mut aggregation,
+        } = variant_metric(expression)?;
         let absent_labels = matches!(query.aggregation, crate::RangeAggregation::AbsentOverTime)
             .then(|| absent_metric_labels(&query));
         let mut pipeline = stream.pipeline.clone();
@@ -150,17 +165,10 @@ fn apply_variant_aggregation(
     }
     match &aggregation.op {
         VectorAggregationOp::ApproxTopK(limit) => {
-            if !state
-                .limits
-                .shard_aggregations
-                .iter()
-                .any(|name| name == "approx_topk")
-            {
-                return Err(HttpQueryError::ApproxTopKDisabled);
-            }
-            if matches!(kind, QueryKind::Range) {
-                return Err(HttpQueryError::ApproxTopKRangeQuery);
-            }
+            crate::querier::metric_eval::scalar_samples::validate_approximate_topk_enabled(
+                &state.limits.shard_aggregations,
+                kind,
+            )?;
             apply_approx_metric_selection(
                 value,
                 usize::try_from(*limit).unwrap_or(usize::MAX),
@@ -175,14 +183,12 @@ fn apply_variant_aggregation(
     Ok(())
 }
 
-fn variant_metric(
-    expression: &LogqlExpr,
-) -> Result<(krabka_logql::MetricQuery, Option<VectorAggregation>), HttpQueryError> {
+fn variant_metric(expression: &LogqlExpr) -> Result<VariantMetric, HttpQueryError> {
     match expression {
         LogqlExpr::Metric { query, .. } => {
             let mut query = query.clone();
             let aggregation = query.vector_aggregation.take();
-            Ok((query, aggregation))
+            Ok(VariantMetric { query, aggregation })
         }
         LogqlExpr::Aggregation {
             expr, aggregation, ..
@@ -190,7 +196,10 @@ fn variant_metric(
             if let LogqlExpr::Metric { query, .. } = expr.as_ref()
                 && query.vector_aggregation.is_none()
             {
-                return Ok((query.clone(), Some(aggregation.clone())));
+                return Ok(VariantMetric {
+                    query: query.clone(),
+                    aggregation: Some(aggregation.clone()),
+                });
             }
             Err(HttpQueryError::VariantUnsupported(
                 "expected range aggregation expression".to_string(),
@@ -214,23 +223,29 @@ fn variant_series_limit_exceeded(rows: &[Value], maximum: usize) -> bool {
         let identity = row["metric"].to_string();
         if let Some(points) = row["values"].as_array() {
             for point in points {
-                samples.push((point[0].as_f64().unwrap_or_default(), identity.clone()));
+                samples.push(VariantSample {
+                    timestamp: point[0].as_f64().unwrap_or_default(),
+                    identity: identity.clone(),
+                });
             }
         } else if let Some(point) = row["value"].as_array() {
-            samples.push((point[0].as_f64().unwrap_or_default(), identity));
+            samples.push(VariantSample {
+                timestamp: point[0].as_f64().unwrap_or_default(),
+                identity,
+            });
         }
     }
     samples.sort_by(|left, right| {
-        left.0
-            .total_cmp(&right.0)
-            .then_with(|| left.1.cmp(&right.1))
+        left.timestamp
+            .total_cmp(&right.timestamp)
+            .then_with(|| left.identity.cmp(&right.identity))
     });
     let mut seen = BTreeSet::new();
-    for (_, identity) in samples {
+    for sample in samples {
         if seen.len() >= maximum {
             return true;
         }
-        seen.insert(identity);
+        seen.insert(sample.identity);
     }
     false
 }

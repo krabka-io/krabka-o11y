@@ -163,9 +163,12 @@ pub async fn run_with_config(
         {
             krabka_telemetry::propagation::set_remote_parent(
                 &build_span,
-                rec.headers
-                    .iter()
-                    .map(|h| (h.key.as_str(), h.value.as_deref().unwrap_or(&[][..]))),
+                rec.headers.iter().map(|header| {
+                    (
+                        header.key.as_str(),
+                        header.value.as_deref().unwrap_or(&[][..]),
+                    )
+                }),
             );
         }
         async {

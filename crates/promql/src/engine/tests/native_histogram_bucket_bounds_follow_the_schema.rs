@@ -9,7 +9,7 @@ pub(crate) async fn native_histogram_bucket_bounds_follow_the_schema() {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "h")]),
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "h")]),
         10_000,
         NativeHistogram {
             schema: 1,

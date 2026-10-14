@@ -19,10 +19,11 @@ where
     let mut summary = HaElectionConsumerLoopSummary::default();
     loop {
         let result = poll_ha_election_consumer_once(consumer, tracker, ha_topic, timeout).await?;
-        summary.polls += 1;
-        summary.polled_records += result.polled_records;
-        summary.replayed_records += result.replayed_records;
-        summary.committed_offsets.extend(result.committed_offsets);
+        summary.record_poll(
+            result.polled_records,
+            result.replayed_records,
+            result.committed_offsets,
+        );
 
         if should_stop(&summary) {
             break;

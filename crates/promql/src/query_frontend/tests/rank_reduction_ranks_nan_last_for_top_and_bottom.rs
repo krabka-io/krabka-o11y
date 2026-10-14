@@ -1,5 +1,17 @@
 use super::*;
 
+#[derive(Debug, PartialEq)]
+struct SelectedValue {
+    series: String,
+    value: Option<f64>,
+}
+
+struct RankCase {
+    reduction: RankReduction,
+    k: usize,
+    expected: Vec<SelectedValue>,
+}
+
 /// A `NaN` is neither a top value nor a bottom value. The sharded rank
 /// reduction therefore drops it before it drops any number, which is what the
 /// unsharded engine path does. A `topk` answered from shards then selects what
@@ -7,35 +19,50 @@ use super::*;
 /// in the table below, because no float compares equal to a `NaN`.
 #[test]
 fn rank_reduction_ranks_nan_last_for_top_and_bottom() {
-    let series = |name: &str, value: f64| RangeSeries {
-        drop_name: false,
-        start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[("__name__", "up"), ("series", name)]).into(),
-        samples: vec![(0, SampleValue::Float(value))],
+    use super::rank_recording_executor::ranked_series as series;
+    let selected = |series: &str, value| SelectedValue {
+        series: series.to_string(),
+        value,
     };
-    for (kind, k, expected) in [
-        (RankReduction::Top, 1, vec![("a", Some(10.0))]),
-        (RankReduction::Bottom, 1, vec![("b", Some(2.0))]),
-        (
-            RankReduction::Top,
-            3,
-            vec![("a", Some(10.0)), ("b", Some(2.0)), ("c", Some(9.0))],
-        ),
-        (
-            RankReduction::Bottom,
-            3,
-            vec![("a", Some(10.0)), ("b", Some(2.0)), ("c", Some(9.0))],
-        ),
-        (
-            RankReduction::Top,
-            4,
-            vec![
-                ("a", Some(10.0)),
-                ("b", Some(2.0)),
-                ("c", Some(9.0)),
-                ("n", None),
+    for case in [
+        RankCase {
+            reduction: RankReduction::Top,
+            k: 1,
+            expected: vec![selected("a", Some(10.0))],
+        },
+        RankCase {
+            reduction: RankReduction::Bottom,
+            k: 1,
+            expected: vec![selected("b", Some(2.0))],
+        },
+        RankCase {
+            reduction: RankReduction::Top,
+            k: 3,
+            expected: vec![
+                selected("a", Some(10.0)),
+                selected("b", Some(2.0)),
+                selected("c", Some(9.0)),
             ],
-        ),
+        },
+        RankCase {
+            reduction: RankReduction::Bottom,
+            k: 3,
+            expected: vec![
+                selected("a", Some(10.0)),
+                selected("b", Some(2.0)),
+                selected("c", Some(9.0)),
+            ],
+        },
+        RankCase {
+            reduction: RankReduction::Top,
+            k: 4,
+            expected: vec![
+                selected("a", Some(10.0)),
+                selected("b", Some(2.0)),
+                selected("c", Some(9.0)),
+                selected("n", None),
+            ],
+        },
     ] {
         let result = reduce_rank_range_query_results(
             QueryResult::RangeMatrix(vec![
@@ -44,8 +71,8 @@ fn rank_reduction_ranks_nan_last_for_top_and_bottom() {
                 series("c", 9.0),
                 series("n", f64::NAN),
             ]),
-            k,
-            kind,
+            case.k,
+            case.reduction,
             None,
         )
         .unwrap();
@@ -56,15 +83,15 @@ fn rank_reduction_ranks_nan_last_for_top_and_bottom() {
         let selected = kept
             .iter()
             .map(|series| {
-                let SampleValue::Float(value) = series.samples[0].1 else {
+                let SampleValue::Float(value) = &series.samples[0].value else {
                     panic!("rank reduction float sample");
                 };
-                (
-                    series.labels.get("series").unwrap(),
-                    (!value.is_nan()).then_some(value),
-                )
+                SelectedValue {
+                    series: series.labels.get("series").unwrap().to_owned(),
+                    value: (!value.is_nan()).then_some(*value),
+                }
             })
             .collect::<Vec<_>>();
-        assert2::assert!(selected == expected);
+        assert2::assert!(selected == case.expected);
     }
 }

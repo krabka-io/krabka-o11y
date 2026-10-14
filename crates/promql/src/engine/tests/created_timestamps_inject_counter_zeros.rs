@@ -7,10 +7,16 @@ pub(crate) async fn created_timestamps_inject_counter_zeros_in_planner_and_inter
     use crate::{DurationExprContext, parse_promql_with_duration_context};
 
     let mut store = InMemoryMetricStore::new();
-    let new_counter = labels(&[("__name__", "http_requests_total"), ("job", "new")]);
+    let new_counter = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+        crate::test_support::TestLabelPair::new("job", "new"),
+    ]);
     store.push_float_with_start_timestamp("t", new_counter, 240_000, 6.0, Some(180_000));
 
-    let reset_counter = labels(&[("__name__", "http_requests_total"), ("job", "reset")]);
+    let reset_counter = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+        crate::test_support::TestLabelPair::new("job", "reset"),
+    ]);
     store.push_float_with_start_timestamp("t", reset_counter.clone(), 100_000, 5.0, Some(50_000));
     // The value rose across the restart, so value-only reset detection cannot
     // see it. The changed start timestamp marks a reset without changing the sample spacing.
@@ -26,16 +32,16 @@ pub(crate) async fn created_timestamps_inject_counter_zeros_in_planner_and_inter
         let Expr::Call(call) = &expr else {
             panic!("expected call");
         };
-        let (selector, kind) = match_rate_range_call(&expr).unwrap();
+        let rate_call = match_rate_range_call(&expr).unwrap();
         let interpreter = engine.eval_instant_call("t", call, 300_000).await.unwrap();
         let planner = engine
             .eval_rate_range_via_planner(
                 "t",
                 MatrixSelectorAt {
-                    selector,
+                    selector: rate_call.selector,
                     time_ms: 300_000,
                 },
-                kind,
+                rate_call.kind,
             )
             .await
             .unwrap();

@@ -81,7 +81,9 @@ pub fn serve_until_shutdown(
     listener: tokio::net::TcpListener,
     app: Router,
 ) -> tokio::sync::oneshot::Sender<()> {
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let shutdown_channel = tokio::sync::oneshot::channel();
+    let tx = shutdown_channel.0;
+    let rx = shutdown_channel.1;
     tokio::spawn(async move {
         let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async move {

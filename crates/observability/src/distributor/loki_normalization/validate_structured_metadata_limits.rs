@@ -18,7 +18,7 @@ pub(crate) fn validate_structured_metadata_limits(
     }
     let observed_size = metadata
         .iter()
-        .map(|(name, value)| name.len() + value.len())
+        .map(|entry| entry.0.len() + entry.1.len())
         .sum();
     if limits.max_structured_metadata_size > ByteSize::ZERO
         && observed_size > limits.max_structured_metadata_size.bytes_usize()
@@ -38,8 +38,11 @@ mod tests {
 
     #[test]
     fn metadata_count_and_byte_caps_are_enforced() {
-        let labels = Labels::from([("app".into(), "api".into())]);
-        let metadata = Labels::from([("a".into(), "bc".into()), ("d".into(), "ef".into())]);
+        let mut labels = Labels::new();
+        labels.insert("app".into(), "api".into());
+        let mut metadata = Labels::new();
+        metadata.insert("a".into(), "bc".into());
+        metadata.insert("d".into(), "ef".into());
         let mut limits = Limits::unenforced();
         limits.max_structured_metadata_entries_count = 1;
         assert!(matches!(

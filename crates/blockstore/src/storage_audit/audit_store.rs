@@ -37,5 +37,5 @@ pub async fn audit_store(
 ) -> Result<StorageAuditReport, StorageAuditError> {
     audit_inventory(store, options)
         .await
-        .map(|(report, _)| report)
+        .map(|result| result.report)
 }

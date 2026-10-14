@@ -1,9 +1,13 @@
-use super::{AttrValue, SpanRef};
+use super::SpanRef;
 
-pub(crate) fn span_attributes(span: &SpanRef) -> Vec<(String, AttrValue)> {
+pub(crate) fn span_attributes(span: &SpanRef) -> Vec<krabka_traceql::Attribute> {
     span.attributes
         .iter()
-        .filter(|(key, _)| !key.starts_with(krabka_traceql::INSTRUMENTATION_ATTR_PREFIX))
+        .filter(|attribute| {
+            !attribute
+                .key
+                .starts_with(krabka_traceql::INSTRUMENTATION_ATTR_PREFIX)
+        })
         .cloned()
         .collect()
 }

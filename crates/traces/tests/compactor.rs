@@ -11,8 +11,8 @@ use arrow::{
 };
 use assert2::check;
 use krabka_blockstore::{
-    BlockLevel, BlockMeta, BlockWriter, CompactionJob, PromotedSpanAttr, SCOL_START_NANO,
-    SCOL_TRACE_ID, TraceIndex, level_above, read_block,
+    BlockLevel, BlockMeta, BlockWriter, CompactionJob, OffsetRange, PromotedSpanAttr,
+    SCOL_START_NANO, SCOL_TRACE_ID, TraceIndex, level_above, read_block,
 };
 use krabka_traces::{
     AttrValue, KeyValue, SpanRecord,
@@ -26,6 +26,23 @@ use self::{
     tenant_key_check::{TenantKeyCase, check_tenant_key_round_trips},
 };
 
+struct PlannedJobKeys {
+    inputs: Vec<String>,
+    output: String,
+}
+
+struct CompactedPair {
+    output_key: String,
+    metadata: BlockMeta,
+}
+
+struct RootAndLateChildCompaction {
+    store: Arc<dyn ObjectStore>,
+    index: TraceIndex,
+    output_key: String,
+    metadata: BlockMeta,
+}
+
 /// The input keys and the output key of the compaction production would plan
 /// over `inputs`.
 ///
@@ -34,7 +51,7 @@ use self::{
 /// range cannot mint the same key and clobber each other's object in the store.
 /// Deriving the key any other way here would let these tests pass on a key
 /// shape production never writes.
-fn planned_job_keys(tenant: &str, inputs: &[&BlockMeta]) -> (Vec<String>, String) {
+fn planned_job_keys(tenant: &str, inputs: &[&BlockMeta]) -> PlannedJobKeys {
     let job = CompactionJob {
         tenant: tenant.to_string(),
         input_keys: inputs.iter().map(|meta| meta.object_key.clone()).collect(),
@@ -52,7 +69,27 @@ fn planned_job_keys(tenant: &str, inputs: &[&BlockMeta]) -> (Vec<String>, String
         row_count: inputs.iter().map(|meta| meta.row_count).sum(),
     };
     let output_key = planned_compacted_object_key(&job);
-    (job.input_keys, output_key)
+    PlannedJobKeys {
+        inputs: job.input_keys,
+        output: output_key,
+    }
+}
+
+async fn compact_pair(
+    store: Arc<dyn ObjectStore>,
+    writer: &BlockWriter,
+    index: &mut TraceIndex,
+    first: &BlockMeta,
+    late: &BlockMeta,
+) -> CompactedPair {
+    let keys = planned_job_keys("tenant-a", &[first, late]);
+    let meta = compact_block_keys(store, writer, index, "tenant-a", &keys.inputs, &keys.output)
+        .await
+        .expect("the fixture blocks compact");
+    CompactedPair {
+        output_key: keys.output,
+        metadata: meta,
+    }
 }
 
 /// The compacted key escapes its tenant as the block-builder key does. Each
@@ -60,16 +97,38 @@ fn planned_job_keys(tenant: &str, inputs: &[&BlockMeta]) -> (Vec<String>, String
 /// read back as the tenant the job named.
 #[test]
 fn a_compacted_key_escapes_the_tenant_into_one_segment_that_reads_back() {
+    #[derive(bon::Builder)]
+    struct CompactedKeyCase {
+        name: &'static str,
+        tenant: &'static str,
+        segment: &'static str,
+    }
     let cases = [
-        ("plain", "tenant-a", "tenant-a"),
-        ("star", "a*b", "a!2Ab"),
-        ("escape marker", "a!b", "a!21b"),
-        ("quote", "a'b", "a!27b"),
+        CompactedKeyCase::builder()
+            .name("plain")
+            .tenant("tenant-a")
+            .segment("tenant-a")
+            .build(),
+        CompactedKeyCase::builder()
+            .name("star")
+            .tenant("a*b")
+            .segment("a!2Ab")
+            .build(),
+        CompactedKeyCase::builder()
+            .name("escape marker")
+            .tenant("a!b")
+            .segment("a!21b")
+            .build(),
+        CompactedKeyCase::builder()
+            .name("quote")
+            .tenant("a'b")
+            .segment("a!27b")
+            .build(),
     ];
 
-    for (name, tenant, segment) in cases {
+    for case in cases {
         let key = planned_compacted_object_key(&CompactionJob {
-            tenant: tenant.to_string(),
+            tenant: case.tenant.to_string(),
             input_keys: vec!["in-1".into(), "in-2".into()],
             output_level: BlockLevel::INGESTED.next(),
             min_ts: 10,
@@ -77,17 +136,24 @@ fn a_compacted_key_escapes_the_tenant_into_one_segment_that_reads_back() {
             row_count: 2,
         });
         check!(
-            key.starts_with(&format!("traces/{segment}/compacted/l1-10-20-")),
-            "{name}: {key}"
+            key.starts_with(&format!("traces/{}/compacted/l1-10-20-", case.segment)),
+            "{}: {key}",
+            case.name
         );
-        check_tenant_key_round_trips(&key, TenantKeyCase { name, tenant });
+        check_tenant_key_round_trips(
+            &key,
+            TenantKeyCase {
+                name: case.name,
+                tenant: case.tenant,
+            },
+        );
     }
 }
 
 // Write a root span's block and then a block of its late child, and compact
 // the two. Returns the store, the index after the compaction, the planned
 // output key, and the output block's metadata.
-async fn compact_root_and_late_child() -> (Arc<dyn ObjectStore>, TraceIndex, String, BlockMeta) {
+async fn compact_root_and_late_child() -> RootAndLateChildCompaction {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
@@ -104,7 +170,7 @@ async fn compact_root_and_late_child() -> (Arc<dyn ObjectStore>, TraceIndex, Str
             start_ns: 100,
         }
         .record("tenant-a")],
-        (10, 10),
+        OffsetRange::new(10, 10),
     )
     .await
     .unwrap();
@@ -120,28 +186,28 @@ async fn compact_root_and_late_child() -> (Arc<dyn ObjectStore>, TraceIndex, Str
             start_ns: 200,
         }
         .record("tenant-a")],
-        (20, 20),
+        OffsetRange::new(20, 20),
     )
     .await
     .unwrap();
-    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
-
-    let meta = compact_block_keys(
-        store.clone(),
-        &writer,
-        &mut index,
-        "tenant-a",
-        &input_keys,
-        &output_key,
-    )
-    .await
-    .unwrap();
-    (store, index, output_key, meta)
+    let compacted = compact_pair(store.clone(), &writer, &mut index, &first[0], &late[0]).await;
+    RootAndLateChildCompaction {
+        store,
+        index,
+        output_key: compacted.output_key,
+        metadata: compacted.metadata,
+    }
 }
 
 #[tokio::test]
 async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
-    let (store, index, output_key, meta) = compact_root_and_late_child().await;
+    let compacted = compact_root_and_late_child().await;
+    let RootAndLateChildCompaction {
+        store,
+        index,
+        output_key,
+        metadata: meta,
+    } = compacted;
 
     check!((meta.row_count, meta.min_ts, meta.max_ts) == (2, 100, 200));
     check!(
@@ -170,7 +236,11 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
 
 #[tokio::test]
 async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
-    let (store, _, _, meta) = compact_root_and_late_child().await;
+    let RootAndLateChildCompaction {
+        store,
+        metadata: meta,
+        ..
+    } = compact_root_and_late_child().await;
 
     let batches = read_block(store, &meta.object_key).await.unwrap();
     let batch = &batches[0];
@@ -218,6 +288,30 @@ fn rec_with_method(span: FixtureSpan, method: &str) -> SpanRecord {
         value: AttrValue::Str(method.into()),
     }];
     record
+}
+
+fn get_request_record() -> SpanRecord {
+    rec_with_method(
+        FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 1,
+            parent: None,
+            start_ns: 100,
+        },
+        "GET",
+    )
+}
+
+fn post_child_record() -> SpanRecord {
+    rec_with_method(
+        FixtureSpan {
+            trace_id: [1; 16],
+            span_id: 2,
+            parent: Some(1),
+            start_ns: 200,
+        },
+        "POST",
+    )
 }
 
 /// Read a promoted string column, which the write path dictionary-encodes.
@@ -278,6 +372,23 @@ fn trace_ids(batch: &RecordBatch) -> Vec<Vec<u8>> {
     (0..ids.len()).map(|row| ids.value(row).to_vec()).collect()
 }
 
+struct CompactionStore {
+    store: Arc<dyn ObjectStore>,
+    writer: BlockWriter,
+    index: TraceIndex,
+}
+
+fn compaction_store() -> CompactionStore {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let index = TraceIndex::new();
+    CompactionStore {
+        store,
+        writer,
+        index,
+    }
+}
+
 /// Promoted attribute columns are an operator-configurable ingest feature, and
 /// a block written with them has a schema strictly wider than the base one.
 /// Compaction used to rebuild the base schema at this point, so the first
@@ -285,63 +396,43 @@ fn trace_ids(batch: &RecordBatch) -> Vec<Vec<u8>> {
 /// -- and with it the late-span merge -- without any signal.
 #[tokio::test]
 async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
+    let mut compaction = compaction_store();
     let promoted = [PromotedSpanAttr::string("http.method")];
 
     let first = build_blocks_with_promoted_attrs(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
-        &[rec_with_method(
-            FixtureSpan {
-                trace_id: [1; 16],
-                span_id: 1,
-                parent: None,
-                start_ns: 100,
-            },
-            "GET",
-        )],
-        (10, 10),
+        &[get_request_record()],
+        OffsetRange::new(10, 10),
         &promoted,
     )
     .await
     .unwrap();
     let late = build_blocks_with_promoted_attrs(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
-        &[rec_with_method(
-            FixtureSpan {
-                trace_id: [1; 16],
-                span_id: 2,
-                parent: Some(1),
-                start_ns: 200,
-            },
-            "POST",
-        )],
-        (20, 20),
+        &[post_child_record()],
+        OffsetRange::new(20, 20),
         &promoted,
     )
     .await
     .unwrap();
 
-    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
-    let meta = compact_block_keys(
-        store.clone(),
-        &writer,
-        &mut index,
-        "tenant-a",
-        &input_keys,
-        &output_key,
+    let compacted = compact_pair(
+        compaction.store.clone(),
+        &compaction.writer,
+        &mut compaction.index,
+        &first[0],
+        &late[0],
     )
-    .await
-    .expect("a promoted block compacts");
+    .await;
+    let meta = compacted.metadata;
 
-    assert_get_then_post_methods(store, &meta.object_key).await;
+    assert_get_then_post_methods(compaction.store, &meta.object_key).await;
 }
 
 /// An operator can add `--promote-span-attr` between two flushes, and the
@@ -352,61 +443,43 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
 /// carry it.
 #[tokio::test]
 async fn compacting_inputs_written_under_different_promotion_flags_fills_the_column() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
+    let mut compaction = compaction_store();
 
     let before = build_blocks(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
-        &[rec_with_method(
-            FixtureSpan {
-                trace_id: [1; 16],
-                span_id: 1,
-                parent: None,
-                start_ns: 100,
-            },
-            "GET",
-        )],
-        (10, 10),
+        &[get_request_record()],
+        OffsetRange::new(10, 10),
     )
     .await
     .unwrap();
     let after = build_blocks_with_promoted_attrs(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
-        &[rec_with_method(
-            FixtureSpan {
-                trace_id: [1; 16],
-                span_id: 2,
-                parent: Some(1),
-                start_ns: 200,
-            },
-            "POST",
-        )],
-        (20, 20),
+        &[post_child_record()],
+        OffsetRange::new(20, 20),
         &[PromotedSpanAttr::string("http.method")],
     )
     .await
     .unwrap();
 
-    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&before[0], &after[0]]);
+    let keys = planned_job_keys("tenant-a", &[&before[0], &after[0]]);
     let meta = compact_block_keys(
-        store.clone(),
-        &writer,
-        &mut index,
+        compaction.store.clone(),
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
-        &input_keys,
-        &output_key,
+        &keys.inputs,
+        &keys.output,
     )
     .await
     .expect("mixed inputs compact");
 
-    assert_get_then_post_methods(store, &meta.object_key).await;
+    assert_get_then_post_methods(compaction.store, &meta.object_key).await;
 }
 
 /// The span block declares `[trace_id, start_unix_nano]` as its sort key, and
@@ -442,7 +515,7 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
             }
             .record("tenant-a"),
         ],
-        (10, 10),
+        OffsetRange::new(10, 10),
     )
     .await
     .unwrap();
@@ -467,19 +540,19 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
             }
             .record("tenant-a"),
         ],
-        (20, 20),
+        OffsetRange::new(20, 20),
     )
     .await
     .unwrap();
 
-    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &second[0]]);
+    let keys = planned_job_keys("tenant-a", &[&first[0], &second[0]]);
     let meta = compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
         "tenant-a",
-        &input_keys,
-        &output_key,
+        &keys.inputs,
+        &keys.output,
     )
     .await
     .unwrap();

@@ -36,7 +36,6 @@ use num_traits::ToPrimitive as _;
 use prost::Message;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
-use tokio::net::TcpListener;
 
 use crate::{
     ids::{DefaultMs, EndMs, MaxValue, MinValue, NowMs, StartMs},
@@ -47,15 +46,135 @@ use crate::{
     wire::pb,
 };
 
+pub(super) struct ConnectQueryRequest<S: ProfileStore, R> {
+    pub state: Extension<Arc<QuerierState<S>>>,
+    pub principal: Extension<Principal>,
+    pub headers: HeaderMap,
+    pub request: ConnectRequest<R>,
+}
+
+impl<S: ProfileStore, R> ConnectQueryRequest<S, R> {
+    pub fn new(
+        state: Extension<Arc<QuerierState<S>>>,
+        principal: Extension<Principal>,
+        headers: HeaderMap,
+        request: ConnectRequest<R>,
+    ) -> Self {
+        Self {
+            state,
+            principal,
+            headers,
+            request,
+        }
+    }
+
+    pub fn authorized_tenant(&self) -> Result<TenantId, ConnectError> {
+        authorized_connect_tenant(
+            &self.headers,
+            &self.principal.0,
+            &self.state.0.tenant_policy,
+        )
+    }
+}
+
+async fn bind_profile_listener(
+    addr: SocketAddr,
+    security: &ServerSecurity,
+) -> std::io::Result<(ServerListener, SocketAddr)> {
+    let listener = ServerListener::bind(tokio::net::TcpListener::bind(addr).await?, security)
+        .map_err(std::io::Error::other)?;
+    let bound = listener.local_addr();
+    Ok((listener, bound))
+}
+
+fn authorized_connect_tenant(
+    headers: &HeaderMap,
+    principal: &Principal,
+    policy: &TenantPolicy,
+) -> Result<TenantId, ConnectError> {
+    let tenant =
+        tenant_from_headers(headers, policy).map_err(|error| tenant_connect_error(&error))?;
+    authorize_tenant(principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    Ok(tenant)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use assert2::{assert, check};
     use base64::Engine;
-    use krabka_pprof::{FunctionRec, LineRec, LocationRec};
+    use krabka_pprof::{
+        FunctionRec, LineRec, LocationRec, ProfileIdentity, ProfileLabel, SampleValues,
+        StacktraceIdentity,
+    };
     use krabka_units::secs;
     use object_store::ObjectStoreExt as _;
+
+    struct ProfileIdValue {
+        profile_id: &'static str,
+        value: i64,
+    }
+
+    struct NamedBooleanCase {
+        name: &'static str,
+        expected: bool,
+    }
+
+    struct TimestampValue {
+        timestamp: i64,
+        value: i64,
+    }
+
+    struct QueryCountCase {
+        query: &'static str,
+        count: i64,
+    }
+
+    struct QueryStatusCase {
+        selector: &'static str,
+        expected: reqwest::StatusCode,
+    }
+
+    struct QueryArchitectureCase {
+        architecture: super::PyroscopeQueryArchitecture,
+        enabled: bool,
+        concurrency: usize,
+        expected: reqwest::StatusCode,
+    }
+
+    struct FieldCountCase {
+        field: &'static str,
+        expected: i64,
+    }
+
+    struct AnalyzeRangeCase {
+        start: i64,
+        end: i64,
+        selector: &'static str,
+        expected: i64,
+    }
+
+    struct OptionalTimeCase {
+        input: Option<&'static str>,
+        expected: i64,
+    }
+
+    struct StringTimeCase {
+        input: &'static str,
+        expected: i64,
+    }
+
+    struct TenantResolveCase {
+        error: TenantResolveError,
+        message: String,
+    }
+
+    struct TenantPolicyCase {
+        policy: TenantPolicy,
+        expected_status: StatusCode,
+        expect_frame: bool,
+    }
 
     /// Converting a heatmap to its wire form derives a step from the time
     /// span and stamps each slot with its own *end*. The span is `end - start`
@@ -141,11 +260,26 @@ mod tests {
     #[test]
     fn query_params_are_read_by_name_and_must_parse() {
         let params = [
-            ("limit".to_string(), "10".to_string()),
-            ("offset".to_string(), "20".to_string()),
-            ("limit".to_string(), "30".to_string()),
-            ("depth".to_string(), "-4".to_string()),
-            ("junk".to_string(), "not a number".to_string()),
+            QueryParameter {
+                key: "limit".to_string(),
+                value: "10".to_string(),
+            },
+            QueryParameter {
+                key: "offset".to_string(),
+                value: "20".to_string(),
+            },
+            QueryParameter {
+                key: "limit".to_string(),
+                value: "30".to_string(),
+            },
+            QueryParameter {
+                key: "depth".to_string(),
+                value: "-4".to_string(),
+            },
+            QueryParameter {
+                key: "junk".to_string(),
+                value: "not a number".to_string(),
+            },
         ];
         let get = |name| super::query_param_i64(&params, name);
 
@@ -273,7 +407,10 @@ mod tests {
 
         // The unit is the last character and the count is everything before it.
         let err = parse("1w").unwrap_err().to_string();
-        check!(err.contains("duration unit \"w\""), "got: {err}");
+        check!(
+            err.contains("invalid render relative duration unit 'w'"),
+            "got: {err}"
+        );
         let err = parse("s").unwrap_err().to_string();
         check!(
             err.contains("invalid render relative duration"),
@@ -301,8 +438,8 @@ mod tests {
     #[test]
     fn label_pairs_keep_their_names_with_their_values() {
         let pairs = super::types_label_pairs(vec![
-            ("service".to_string(), "api".to_string()),
-            ("env".to_string(), "prod".to_string()),
+            ProfileLabel::new("service", "api"),
+            ProfileLabel::new("env", "prod"),
         ]);
         check!(
             pairs
@@ -426,7 +563,7 @@ mod tests {
 
     async fn serve_on_loopback<S: ProfileStore + 'static>(
         state: Arc<QuerierState<S>>,
-    ) -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+    ) -> crate::test_support::BoundTestServer {
         serve_on_loopback_with(async |addr, security, shutdown| {
             serve(addr, state, security, shutdown).await
         })
@@ -454,7 +591,7 @@ mod tests {
 
     /// Serves a querier over two leaf frames, `hot.path` worth 7 and
     /// `cold.path` worth 10, on loopback.
-    async fn serve_hot_and_cold_paths() -> (SocketAddr, tokio::sync::oneshot::Sender<()>) {
+    async fn serve_hot_and_cold_paths() -> crate::test_support::BoundTestServer {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
             LeafSample {
                 frame: "hot.path",
@@ -472,7 +609,9 @@ mod tests {
     /// answered by a querier whose one frame is `main.work`.
     async fn main_work_merge_stacktraces(format: &str) -> serde_json::Value {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         post_querier(
             bound,
             "SelectMergeStacktraces",
@@ -543,9 +682,9 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let stacktrace = intern_leaf_stacktrace(&mut store, name);
         store.push_sample(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, stacktrace),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, stacktrace),
             7,
             10,
         );
@@ -559,15 +698,15 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         store.push_sample(
-            ("tenant-a", PT),
+            ProfileIdentity::new("tenant-a", PT),
             vec![
-                ("service_name".to_string(), "api".to_string()),
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("env".to_string(), "pprofdiff".to_string()),
-                ("service.name".to_string(), "api".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
+                ProfileLabel::new("service_name", "api"),
+                ProfileLabel::new("__name__", "process_cpu"),
+                ProfileLabel::new("env", "pprofdiff"),
+                ProfileLabel::new("service.name", "api"),
+                ProfileLabel::new("__profile_type__", PT),
             ],
-            (0, stacktrace),
+            StacktraceIdentity::new(0, stacktrace),
             7,
             10,
         );
@@ -579,12 +718,12 @@ mod tests {
         let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         for profile_type in [PT, "memory:alloc_space:bytes:space:bytes"] {
             store.push_sample(
-                ("tenant-a", profile_type),
+                ProfileIdentity::new("tenant-a", profile_type),
                 vec![
-                    ("service_name".to_string(), "api".to_string()),
-                    ("__profile_type__".to_string(), profile_type.to_string()),
+                    ProfileLabel::new("service_name", "api"),
+                    ProfileLabel::new("__profile_type__", profile_type),
                 ],
-                (0, stacktrace),
+                StacktraceIdentity::new(0, stacktrace),
                 7,
                 10,
             );
@@ -619,10 +758,10 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let stacktrace = intern_leaf_stacktrace(&mut store, name);
         store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, stacktrace),
-            (7, 7),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, stacktrace),
+            SampleValues::new(7, 7),
             10,
             span_id,
         );
@@ -647,10 +786,10 @@ mod tests {
         {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_span(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
-                (*value, *value),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
+                SampleValues::new(*value, *value),
                 10,
                 *span_id,
             );
@@ -678,12 +817,12 @@ mod tests {
         {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_associations(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
-                (*value, *value),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
+                SampleValues::new(*value, *value),
                 10,
-                (Some(*span_id), Some(trace_id.to_vec())),
+                krabka_pprof::SampleAssociations::new(Some(*span_id), Some(trace_id.to_vec())),
             );
         }
         store
@@ -704,9 +843,9 @@ mod tests {
         } in samples
         {
             store.push_sample(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 *timestamp,
             );
@@ -731,12 +870,12 @@ mod tests {
         } in samples
         {
             store.push_sample(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("service_name".to_string(), (*service).to_string()),
-                    ("env".to_string(), (*env).to_string()),
+                    ProfileLabel::new("service_name", *service),
+                    ProfileLabel::new("env", *env),
                 ],
-                (0, stacktrace),
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 10,
             );
@@ -755,9 +894,9 @@ mod tests {
         for LeafSample { frame: name, value } in frames {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 10,
             );
@@ -768,15 +907,24 @@ mod tests {
     fn store_with_profile_ids() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
-        for (profile_id, value) in [("profile-a", 5), ("profile-b", 7)] {
+        for sample in [
+            ProfileIdValue {
+                profile_id: "profile-a",
+                value: 5,
+            },
+            ProfileIdValue {
+                profile_id: "profile-b",
+                value: 7,
+            },
+        ] {
             store.push_sample(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("service_name".to_string(), "api".to_string()),
-                    ("__profile_id__".to_string(), profile_id.to_string()),
+                    ProfileLabel::new("service_name", "api"),
+                    ProfileLabel::new("__profile_id__", sample.profile_id),
                 ],
-                (0, stacktrace),
-                value,
+                StacktraceIdentity::new(0, stacktrace),
+                sample.value,
                 10,
             );
         }
@@ -803,12 +951,12 @@ mod tests {
         {
             let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("service_name".to_string(), "api".to_string()),
-                    ("__profile_id__".to_string(), (*profile_id).to_string()),
+                    ProfileLabel::new("service_name", "api"),
+                    ProfileLabel::new("__profile_id__", *profile_id),
                 ],
-                (0, stacktrace),
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 10,
             );
@@ -858,9 +1006,9 @@ mod tests {
         let mut store = InMemoryProfileStore::new();
         let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         store.push_sample(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, stacktrace),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, stacktrace),
             7,
             5_000, // non-zero ingest timestamp
         );
@@ -898,11 +1046,11 @@ mod tests {
 
         let err = state
             .select_series(
-                (&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
+                super::QueryTarget::new(&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
-                (0, 2_000),
+                QueryRange::new(0, 2_000),
                 &[],
             )
             .await
@@ -927,22 +1075,22 @@ overrides:
 
         let tenant_a_err = state
             .select_series(
-                (&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
+                super::QueryTarget::new(&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
-                (0, 2_000),
+                QueryRange::new(0, 2_000),
                 &[],
             )
             .await
             .unwrap_err();
         let tenant_b_series = state
             .select_series(
-                (&tenant("tenant-b"), PT, r#"{service_name="api"}"#),
+                super::QueryTarget::new(&tenant("tenant-b"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
-                (0, 2_000),
+                QueryRange::new(0, 2_000),
                 &[],
             )
             .await
@@ -969,7 +1117,9 @@ overrides:
                 value: 10,
             },
         ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectSeries",
@@ -1043,15 +1193,30 @@ overrides:
             .await
             .unwrap();
 
-        for (name, want) in [("other", true), ("warm.path", false), ("cold.path", false)] {
-            check!(flamegraph.names.iter().any(|frame| frame == name) == want);
+        for case in [
+            NamedBooleanCase {
+                name: "other",
+                expected: true,
+            },
+            NamedBooleanCase {
+                name: "warm.path",
+                expected: false,
+            },
+            NamedBooleanCase {
+                name: "cold.path",
+                expected: false,
+            },
+        ] {
+            check!(flamegraph.names.iter().any(|frame| frame == case.name) == case.expected);
         }
     }
 
     #[tokio::test]
     async fn render_format_dot_returns_dot_graph() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("from", "0")
@@ -1088,7 +1253,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(Arc::clone(&admin_store)),
         );
-        let (bound, shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
 
         let resp = client
@@ -1138,7 +1305,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(admin_store),
         );
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
 
         let persisted = get_settings(bound, "tenant-a").await;
         assert!(
@@ -1191,7 +1360,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(admin_store),
         );
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
         let connect = |path: &str, tenant: &str, body: serde_json::Value| {
             client
@@ -1652,7 +1823,9 @@ overrides:
                 value: 7,
             },
         ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", &format!(r#"{PT}{{env="prod"}}"#))
             .append_pair("from", "0")
@@ -1692,7 +1865,9 @@ overrides:
     #[tokio::test]
     async fn render_diff_flamebearer_includes_legacy_ticks_and_max_self() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("leftQuery", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("rightQuery", &format!(r#"{PT}{{service_name="api"}}"#))
@@ -1746,7 +1921,9 @@ overrides:
                 },
             ],
         ))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("leftQuery", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("leftFrom", "1700000000000")
@@ -1834,7 +2011,9 @@ overrides:
                 },
             ]),
         )));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
         let url = format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces");
         let request = |extra: serde_json::Value| {
@@ -1964,7 +2143,9 @@ overrides:
             "main.work",
             111,
         ))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectMergeSpanProfile",
@@ -1988,7 +2169,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_query_architecture(super::PyroscopeQueryArchitecture::V2),
         );
-        let (bound, shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
         // The sample at 10 ms belongs to the 1000 ms endpoint with a
         // one-second step. Verify the fixture produces data before exercising
         // the populated v2 SPAN error.
@@ -2023,14 +2206,20 @@ overrides:
                     exemplars: Vec::new(),
                 }]
         );
-        for (selector, status) in [
-            (r#"{service_name="missing"}"#, reqwest::StatusCode::OK),
-            ("{}", reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+        for case in [
+            QueryStatusCase {
+                selector: r#"{service_name="missing"}"#,
+                expected: reqwest::StatusCode::OK,
+            },
+            QueryStatusCase {
+                selector: "{}",
+                expected: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            },
         ] {
-            let response = client.post(&url).header("x-scope-orgid","tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":selector,"start":0,"end":1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_SPAN"})).send().await.unwrap();
-            check!(response.status() == status);
+            let response = client.post(&url).header("x-scope-orgid","tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":case.selector,"start":0,"end":1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_SPAN"})).send().await.unwrap();
+            check!(response.status() == case.expected);
             let response: serde_json::Value = response.json().await.unwrap();
-            if status == reqwest::StatusCode::OK {
+            if case.expected == reqwest::StatusCode::OK {
                 check!(response == json!({}));
             } else {
                 check!(response["code"] == "unknown");
@@ -2041,52 +2230,54 @@ overrides:
 
     #[tokio::test]
     async fn query_architecture_binds_async_without_changing_v1() {
-        for (architecture, enabled, concurrency, status) in [
-            (
-                super::PyroscopeQueryArchitecture::V1,
-                true,
-                5,
-                reqwest::StatusCode::OK,
-            ),
-            (
-                super::PyroscopeQueryArchitecture::V2,
-                false,
-                5,
-                reqwest::StatusCode::OK,
-            ),
-            (
-                super::PyroscopeQueryArchitecture::V2,
-                true,
-                0,
-                reqwest::StatusCode::TOO_MANY_REQUESTS,
-            ),
-            (
-                super::PyroscopeQueryArchitecture::V2,
-                true,
-                5,
-                reqwest::StatusCode::OK,
-            ),
+        for case in [
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V1,
+                enabled: true,
+                concurrency: 5,
+                expected: reqwest::StatusCode::OK,
+            },
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V2,
+                enabled: false,
+                concurrency: 5,
+                expected: reqwest::StatusCode::OK,
+            },
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V2,
+                enabled: true,
+                concurrency: 0,
+                expected: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            },
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V2,
+                enabled: true,
+                concurrency: 5,
+                expected: reqwest::StatusCode::OK,
+            },
         ] {
             let state = Arc::new(
                 QuerierState::new_with_limits(
                     Arc::new(store_with_frame("main.work")),
                     Limits {
-                        max_async_query_concurrency: concurrency,
+                        max_async_query_concurrency: case.concurrency,
                         ..Default::default()
                     },
                 )
-                .with_query_architecture(architecture)
-                .with_async_queries_enabled(enabled),
+                .with_query_architecture(case.architecture)
+                .with_async_queries_enabled(case.enabled),
             );
-            let (bound, shutdown_tx) = serve_on_loopback(state).await;
+            let server = serve_on_loopback(state).await;
+            let bound = server.address;
+            let shutdown_tx = server.shutdown;
             let response = reqwest::Client::new().post(format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"))
                 .header("x-scope-orgid", "tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":"{}","start":0,"end":100,"async":{"type":"ASYNC_QUERY_TYPE_FORCE"}})).send().await.unwrap();
-            check!(response.status() == status);
+            check!(response.status() == case.expected);
             let response: serde_json::Value = response.json().await.unwrap();
-            if architecture == super::PyroscopeQueryArchitecture::V1 || !enabled {
+            if case.architecture == super::PyroscopeQueryArchitecture::V1 || !case.enabled {
                 check!(response.get("async").is_none());
                 check!(response["flamegraph"]["total"].as_str() == Some("7"));
-            } else if concurrency > 0 {
+            } else if case.concurrency > 0 {
                 check!(response["async"]["status"] == "ASYNC_QUERY_STATUS_IN_PROGRESS");
                 check!(response.get("flamegraph").is_none());
             } else {
@@ -2099,7 +2290,9 @@ overrides:
     #[tokio::test]
     async fn select_merge_stacktraces_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectMergeStacktraces",
@@ -2123,7 +2316,9 @@ overrides:
     #[tokio::test]
     async fn select_merge_profile_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectMergeProfile",
@@ -2144,7 +2339,9 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_profile_stack_trace_selector_filters_call_sites() {
-        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectMergeProfile",
@@ -2209,7 +2406,9 @@ overrides:
                 value: 10,
             },
         ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectMergeProfile",
@@ -2258,7 +2457,9 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_stacktraces_stack_trace_selector_filters_call_sites() {
-        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectMergeStacktraces",
@@ -2283,7 +2484,9 @@ overrides:
 
     #[tokio::test]
     async fn diff_honors_embedded_stack_trace_selectors() {
-        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "Diff",
@@ -2326,7 +2529,9 @@ overrides:
     #[tokio::test]
     async fn profile_types_without_time_range_returns_ingested_types() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
         let profile_types = response
@@ -2350,7 +2555,9 @@ overrides:
     async fn assert_health_probe_lists_profile_types<S: ProfileStore + 'static>(
         state: Arc<QuerierState<S>>,
     ) {
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
         assert!(
@@ -2391,7 +2598,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_two_profile_types()))
                 .with_query_analysis_series_enabled(true),
         );
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         post_querier(
             bound,
             "AnalyzeQuery",
@@ -2418,7 +2627,9 @@ overrides:
 
     #[tokio::test]
     async fn select_series_stack_trace_selector_filters_call_sites() {
-        let (bound, _shutdown_tx) = serve_hot_and_cold_paths().await;
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(bound, "SelectSeries", hot_path_select_series()).await;
 
         let points: Vec<pb::querier::v1::Point> =
@@ -2444,7 +2655,9 @@ overrides:
     #[tokio::test]
     async fn series_emits_label_sets_sorted_by_name() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_unsorted_labels())));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
 
         let series_labels = |body: serde_json::Value, allow_utf8: bool| {
             let url = format!("http://{bound}/querier.v1.QuerierService/Series");
@@ -2539,7 +2752,9 @@ overrides:
                 value: 7,
             }]),
         )));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectSeries",
@@ -2594,7 +2809,9 @@ overrides:
                 value: 7,
             },
         ]))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectSeries",
@@ -2618,7 +2835,9 @@ overrides:
     #[tokio::test]
     async fn select_series_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectSeries",
@@ -2664,7 +2883,9 @@ overrides:
                 },
             ]),
         )));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectSeries",
@@ -2701,31 +2922,60 @@ overrides:
         let mut store = InMemoryProfileStore::new();
         // The request includes the first step's lookback. The timestamps at
         // 2012 and 2500 are in range but belong to the omitted 3011 endpoint.
-        for (timestamp, value) in [
-            (10, 100),
-            (11, 1),
-            (12, 2),
-            (1_011, 3),
-            (1_012, 5),
-            (2_011, 7),
-            (2_012, 200),
-            (2_500, 300),
-            (2_501, 400),
+        for point in [
+            TimestampValue {
+                timestamp: 10,
+                value: 100,
+            },
+            TimestampValue {
+                timestamp: 11,
+                value: 1,
+            },
+            TimestampValue {
+                timestamp: 12,
+                value: 2,
+            },
+            TimestampValue {
+                timestamp: 1_011,
+                value: 3,
+            },
+            TimestampValue {
+                timestamp: 1_012,
+                value: 5,
+            },
+            TimestampValue {
+                timestamp: 2_011,
+                value: 7,
+            },
+            TimestampValue {
+                timestamp: 2_012,
+                value: 200,
+            },
+            TimestampValue {
+                timestamp: 2_500,
+                value: 300,
+            },
+            TimestampValue {
+                timestamp: 2_501,
+                value: 400,
+            },
         ] {
             store.push_sample_with_total_and_associations(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("__profile_id__".to_string(), "profile-a".to_string()),
-                    ("service_name".to_string(), "api".to_string()),
+                    ProfileLabel::new("__profile_id__", "profile-a"),
+                    ProfileLabel::new("service_name", "api"),
                 ],
-                (0, 1),
-                (value, value),
-                timestamp,
-                (Some(0x2a), Some(vec![0xab; 16])),
+                StacktraceIdentity::new(0, 1),
+                SampleValues::new(point.value, point.value),
+                point.timestamp,
+                krabka_pprof::SampleAssociations::new(Some(0x2a), Some(vec![0xab; 16])),
             );
         }
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
         let labels = vec![pb::querier::v1::LabelPair {
             name: "service_name".to_string(),
@@ -2800,21 +3050,23 @@ overrides:
     async fn select_heatmap_group_by_returns_labeled_series() {
         let mut store = InMemoryProfileStore::new();
         store.push_sample_with_total(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, 1),
-            (4, 4),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, 1),
+            SampleValues::new(4, 4),
             0,
         );
         store.push_sample_with_total(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "worker".to_string())],
-            (0, 2),
-            (9, 9),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "worker")],
+            StacktraceIdentity::new(0, 2),
+            SampleValues::new(9, 9),
             0,
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectHeatmap",
@@ -2856,7 +3108,9 @@ overrides:
             "span.path",
             0x2a,
         ))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectHeatmap",
@@ -2889,7 +3143,9 @@ overrides:
     #[tokio::test]
     async fn select_heatmap_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectHeatmap",
@@ -2926,22 +3182,24 @@ overrides:
     async fn select_heatmap_span_query_type_counts_only_span_profiles() {
         let mut store = InMemoryProfileStore::new();
         store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, 1),
-            (7, 7),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, 1),
+            SampleValues::new(7, 7),
             10,
             0x2a,
         );
         store.push_sample_with_total(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, 2),
-            (11, 11),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, 2),
+            SampleValues::new(11, 11),
             20,
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "SelectHeatmap",
@@ -2974,17 +3232,31 @@ overrides:
             QuerierState::new(Arc::new(store_with_two_profile_types()))
                 .with_query_analysis_series_enabled(true),
         );
-        let (bound, shutdown_tx) = serve_on_loopback(state).await;
-        for (query, count) in [
-            ("", 2),
-            ("{}", 2),
-            ("{service_name=\"api\"}", 2),
-            ("{service_name=\"missing\"}", 0),
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
+        for case in [
+            QueryCountCase {
+                query: "",
+                count: 2,
+            },
+            QueryCountCase {
+                query: "{}",
+                count: 2,
+            },
+            QueryCountCase {
+                query: "{service_name=\"api\"}",
+                count: 2,
+            },
+            QueryCountCase {
+                query: "{service_name=\"missing\"}",
+                count: 0,
+            },
         ] {
             let response = post_querier(
                 bound,
                 "AnalyzeQuery",
-                json!({"start":1,"end":100,"query":query}),
+                json!({"start":1,"end":100,"query":case.query}),
             )
             .await;
             check!(
@@ -2992,7 +3264,7 @@ overrides:
                     .pointer("/queryImpact/totalQueriedSeries")
                     .and_then(json_i64)
                     .unwrap_or_default()
-                    == count
+                    == case.count
             );
             check!(
                 response
@@ -3014,7 +3286,9 @@ overrides:
     #[tokio::test]
     async fn disabled_query_analysis_ignores_selector_and_preserves_physical_cost() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_two_profile_types())));
-        let (bound, shutdown_tx) = serve_on_loopback(state).await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
         let response = post_querier(
             bound,
             "AnalyzeQuery",
@@ -3070,12 +3344,25 @@ overrides:
                 == Some(2),
             "{response}"
         );
-        for (field, value) in [("blockCount", 1), ("profileCount", 2), ("sampleCount", 2)] {
+        for case in [
+            FieldCountCase {
+                field: "blockCount",
+                expected: 1,
+            },
+            FieldCountCase {
+                field: "profileCount",
+                expected: 2,
+            },
+            FieldCountCase {
+                field: "sampleCount",
+                expected: 2,
+            },
+        ] {
             check!(
                 response
-                    .pointer(&format!("/queryScopes/0/{field}"))
+                    .pointer(&format!("/queryScopes/0/{}", case.field))
                     .and_then(json_i64)
-                    == Some(value),
+                    == Some(case.expected),
                 "{response}"
             );
         }
@@ -3085,27 +3372,44 @@ overrides:
     async fn analyze_query_counts_series_in_overlapping_head_but_not_outside_it() {
         let mut store = store_with_two_profile_types();
         store.push_sample(
-            ("tenant-a", PT),
+            ProfileIdentity::new("tenant-a", PT),
             vec![
-                ("service_name".to_string(), "api".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
+                ProfileLabel::new("service_name", "api"),
+                ProfileLabel::new("__profile_type__", PT),
             ],
-            (0, 0),
+            StacktraceIdentity::new(0, 0),
             5,
             100,
         );
         let state =
             Arc::new(QuerierState::new(Arc::new(store)).with_query_analysis_series_enabled(true));
-        let (bound, shutdown_tx) = serve_on_loopback(state).await;
-        for (start, end, selector, expected) in [
-            (25, 75, "{}", 1),
-            (200, 300, "{}", 0),
-            (25, 75, r#"{service_name="missing"}"#, 0),
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
+        for case in [
+            AnalyzeRangeCase {
+                start: 25,
+                end: 75,
+                selector: "{}",
+                expected: 1,
+            },
+            AnalyzeRangeCase {
+                start: 200,
+                end: 300,
+                selector: "{}",
+                expected: 0,
+            },
+            AnalyzeRangeCase {
+                start: 25,
+                end: 75,
+                selector: r#"{service_name="missing"}"#,
+                expected: 0,
+            },
         ] {
             let response = post_querier(
                 bound,
                 "AnalyzeQuery",
-                json!({"start":start,"end":end,"query":format!("{PT}{selector}")}),
+                json!({"start":case.start,"end":case.end,"query":format!("{PT}{}", case.selector)}),
             )
             .await;
             check!(
@@ -3113,7 +3417,7 @@ overrides:
                     .pointer("/queryImpact/totalQueriedSeries")
                     .and_then(json_i64)
                     .unwrap_or_default()
-                    == expected,
+                    == case.expected,
                 "{response}"
             );
         }
@@ -3135,22 +3439,21 @@ overrides:
 
     #[test]
     fn render_query_splits_profile_type_and_selector() {
-        let (profile_type, selector) = parse_render_query(
+        let parsed = parse_render_query(
             r#"process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name="api"}"#,
         )
         .unwrap();
 
-        assert!(profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
-        assert!(selector == r#"{service_name="api"}"#);
+        assert!(parsed.profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
+        assert!(parsed.selector == r#"{service_name="api"}"#);
     }
 
     #[test]
     fn render_query_allows_profile_type_only() {
-        let (profile_type, selector) =
-            parse_render_query("process_cpu:cpu:nanoseconds:cpu:nanoseconds").unwrap();
+        let parsed = parse_render_query("process_cpu:cpu:nanoseconds:cpu:nanoseconds").unwrap();
 
-        assert!(profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
-        assert!(selector == "{}");
+        assert!(parsed.profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
+        assert!(parsed.selector == "{}");
     }
 
     #[test]
@@ -3217,13 +3520,27 @@ overrides:
     fn render_time_params_accept_now_offsets() {
         let now_ms = NowMs(1_700_000_000_000);
 
-        for (input, want) in [
-            (None, 0),
-            (Some("now"), now_ms.0),
-            (Some("now-1h"), now_ms.0 - 3_600_000),
-            (Some("now-15m"), now_ms.0 - 15 * 60_000),
+        for case in [
+            OptionalTimeCase {
+                input: None,
+                expected: 0,
+            },
+            OptionalTimeCase {
+                input: Some("now"),
+                expected: now_ms.0,
+            },
+            OptionalTimeCase {
+                input: Some("now-1h"),
+                expected: now_ms.0 - 3_600_000,
+            },
+            OptionalTimeCase {
+                input: Some("now-15m"),
+                expected: now_ms.0 - 15 * 60_000,
+            },
         ] {
-            check!(parse_render_time_param(input, now_ms, DefaultMs(0)).unwrap() == want);
+            check!(
+                parse_render_time_param(case.input, now_ms, DefaultMs(0)).unwrap() == case.expected
+            );
         }
     }
 
@@ -3231,12 +3548,24 @@ overrides:
     fn render_time_params_accept_unix_seconds_and_millis() {
         let now_ms = NowMs(1_700_000_000_000);
 
-        for (input, want) in [
-            ("123", 123_000),
-            ("1700000000", 1_700_000_000_000),
-            ("1700000000000", 1_700_000_000_000),
+        for case in [
+            StringTimeCase {
+                input: "123",
+                expected: 123_000,
+            },
+            StringTimeCase {
+                input: "1700000000",
+                expected: 1_700_000_000_000,
+            },
+            StringTimeCase {
+                input: "1700000000000",
+                expected: 1_700_000_000_000,
+            },
         ] {
-            check!(parse_render_time_param(Some(input), now_ms, DefaultMs(0)).unwrap() == want);
+            check!(
+                parse_render_time_param(Some(case.input), now_ms, DefaultMs(0)).unwrap()
+                    == case.expected
+            );
         }
     }
 
@@ -3262,30 +3591,33 @@ overrides:
     #[tokio::test]
     async fn a_tenant_that_does_not_resolve_maps_to_a_client_fault_with_upstreams_message() {
         let cases = [
-            (TenantResolveError::Missing, "no org id".to_string()),
-            (
-                TenantResolveError::Invalid(
+            TenantResolveCase {
+                error: TenantResolveError::Missing,
+                message: "no org id".to_string(),
+            },
+            TenantResolveCase {
+                error: TenantResolveError::Invalid(
                     krabka_blockstore::TenantIdError::UnsupportedCharacter {
                         tenant: "a/b".into(),
                         character: '/',
                     },
                 ),
-                "tenant ID 'a/b' contains unsupported character '/'".to_string(),
-            ),
-            (
-                TenantResolveError::Invalid(krabka_blockstore::TenantIdError::TooLong),
-                "tenant ID is too long: max 150 characters".to_string(),
-            ),
+                message: "tenant ID 'a/b' contains unsupported character '/'".to_string(),
+            },
+            TenantResolveCase {
+                error: TenantResolveError::Invalid(krabka_blockstore::TenantIdError::TooLong),
+                message: "tenant ID is too long: max 150 characters".to_string(),
+            },
         ];
 
-        for (error, message) in cases {
-            let connect = tenant_connect_error(&error);
+        for case in cases {
+            let connect = tenant_connect_error(&case.error);
             check!(
-                (connect.code(), connect.message())
-                    == (Code::InvalidArgument, Some(message.as_str()))
+                connect.code() == Code::InvalidArgument
+                    && connect.message() == Some(case.message.as_str())
             );
 
-            let response = tenant_error_response(&error);
+            let response = tenant_error_response(&case.error);
             let status = response.status();
             let content_type = response
                 .headers()
@@ -3295,17 +3627,9 @@ overrides:
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            check!(
-                (
-                    status,
-                    content_type,
-                    String::from_utf8(body.to_vec()).unwrap()
-                ) == (
-                    StatusCode::BAD_REQUEST,
-                    Some("text/plain; charset=utf-8".to_string()),
-                    message
-                )
-            );
+            check!(status == StatusCode::BAD_REQUEST);
+            check!(content_type.as_deref() == Some("text/plain; charset=utf-8"));
+            check!(String::from_utf8(body.to_vec()).unwrap() == case.message);
         }
     }
 
@@ -3316,13 +3640,23 @@ overrides:
     async fn the_querier_resolves_a_request_without_a_tenant_under_the_state_policy() {
         let fallback = TenantPolicy::Fallback(tenant("tenant-a"));
         let required = TenantPolicy::Required;
-        for (policy, want_status, want_frame) in [
-            (fallback, StatusCode::OK, true),
-            (required, StatusCode::BAD_REQUEST, false),
+        for case in [
+            TenantPolicyCase {
+                policy: fallback,
+                expected_status: StatusCode::OK,
+                expect_frame: true,
+            },
+            TenantPolicyCase {
+                policy: required,
+                expected_status: StatusCode::BAD_REQUEST,
+                expect_frame: false,
+            },
         ] {
             let mut state = QuerierState::new(Arc::new(store_with_frame("main.work")));
-            state.tenant_policy = policy.clone();
-            let (bound, _shutdown_tx) = serve_on_loopback(Arc::new(state)).await;
+            state.tenant_policy = case.policy.clone();
+            let server = serve_on_loopback(Arc::new(state)).await;
+            let bound = server.address;
+            let _shutdown_tx = server.shutdown;
             let client = reqwest::Client::new();
             let query = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("query", &format!(r#"{PT}{{service_name="api"}}"#))
@@ -3337,10 +3671,15 @@ overrides:
                 .unwrap();
             let render_status = render.status();
             let render_body = render.text().await.unwrap();
-            check!(render_status == want_status, "{policy:?}: {render_body}");
             check!(
-                render_body.contains("main.work") == want_frame,
-                "{policy:?}: {render_body}"
+                render_status == case.expected_status,
+                "{:?}: {render_body}",
+                case.policy
+            );
+            check!(
+                render_body.contains("main.work") == case.expect_frame,
+                "{:?}: {render_body}",
+                case.policy
             );
 
             let types = client
@@ -3353,19 +3692,25 @@ overrides:
                 .unwrap();
             let types_status = types.status();
             let types_body: serde_json::Value = types.json().await.unwrap();
-            check!(types_status == want_status, "{policy:?}: {types_body}");
-            if want_frame {
+            check!(
+                types_status == case.expected_status,
+                "{:?}: {types_body}",
+                case.policy
+            );
+            if case.expect_frame {
                 check!(
                     types_body
                         .pointer("/profileTypes/0/ID")
                         .and_then(serde_json::Value::as_str)
                         == Some(PT),
-                    "{policy:?}: {types_body}"
+                    "{:?}: {types_body}",
+                    case.policy
                 );
             } else {
                 check!(
                     types_body == json!({"code": "invalid_argument", "message": "no org id"}),
-                    "{policy:?}"
+                    "{:?}",
+                    case.policy
                 );
                 check!(render_body == "no org id");
             }
@@ -3680,7 +4025,7 @@ use merge_label_matcher::merge_label_matcher;
 use merge_profile_id_selector::merge_profile_id_selector;
 use merge_profile_type_selector::merge_profile_type_selector;
 use metadata_range::MetadataRange;
-use metadata_scope::{MetadataRequest, MetadataScope, metadata_scope};
+use metadata_scope::{MetadataRequest, MetadataScope, metadata_scope, metadata_scope_for_request};
 use normalize_render_unix_time::normalize_render_unix_time;
 use parse_matchers::parse_matchers;
 use parse_render_offset::parse_render_offset;
@@ -3698,9 +4043,9 @@ pub use pyroscope_query_architecture::PyroscopeQueryArchitecture;
 use querier_request_parts::QuerierRequestParts;
 pub use querier_state::QuerierState;
 use query_execution::QueryExecution;
-use query_param_i64::query_param_i64;
+use query_param_i64::{QueryParameter, query_param_i64};
 use query_param_render_time::query_param_render_time;
-use query_range::QueryRange;
+pub(crate) use query_range::QueryRange;
 use query_target::QueryTarget;
 use reject_negative_render_time::reject_negative_render_time;
 use render_diff_handler::render_diff_handler;
@@ -3741,7 +4086,7 @@ use tenant_services::{
     set_settings_handler, should_initiate_upload_handler, upload_adhoc_handler,
     upload_debuginfo_handler, upload_finished_handler, upsert_recording_rule_handler,
 };
-use timed_query::timed_query;
+use timed_query::{timed_connect_query, timed_query};
 use timed_query_response::timed_query_response;
 use types_label_pairs::types_label_pairs;
 use unix_now_ms::unix_now_ms;

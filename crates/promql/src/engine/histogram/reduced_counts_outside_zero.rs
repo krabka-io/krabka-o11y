@@ -13,7 +13,9 @@ pub(crate) fn reduced_counts_outside_zero(
         u32::try_from(i16::from(histogram.schema) - i16::from(target_schema)).unwrap_or_default();
     let divisor = 1_i32.checked_shl(schema_delta).unwrap_or(i32::MAX);
     let mut out = BTreeMap::new();
-    for (index, count) in spanned_histogram_counts(spans, counts) {
+    for entry in spanned_histogram_counts(spans, counts) {
+        let index = entry.0;
+        let count = entry.1;
         if standard_histogram_bound(index - 1, histogram.schema) < zero_threshold {
             continue;
         }

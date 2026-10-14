@@ -7,7 +7,12 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn abusive_subquery_resolution_errors_before_looping() {
     let mut store = InMemoryMetricStore::new();
-    store.push_float("t", labels(&[("__name__", "up")]), 0, 1.0);
+    store.push_float(
+        "t",
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "up")]),
+        0,
+        1.0,
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     // `last_over_time(up[1000d:1ms])` would walk ~8.6e10 sub-steps; the

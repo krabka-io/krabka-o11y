@@ -1,5 +1,24 @@
 use super::*;
 
+fn assert_recorded_job_sample(records: &[WalRecord], job: &str, value: f64) {
+    check!(records.iter().any(|record| record.labels
+        == vec![
+            krabka_metrics::MetricLabelPair::new(
+                "__name__",
+                "job:http_requests:sum".to_string().into(),
+            ),
+            krabka_metrics::MetricLabelPair::new("job", job.to_string().into()),
+        ]
+        && matches!(
+            record.payload,
+            SamplePayload::Float {
+                timestamp_ms: 60_000,
+                value: actual,
+                start_timestamp_ms: None,
+            } if actual == value
+        )));
+}
+
 #[tokio::test]
 pub(crate) async fn recording_rule_evaluation_materializes_float_samples_as_wal_records() {
     let mut store = InMemoryMetricStore::new();
@@ -31,36 +50,6 @@ pub(crate) async fn recording_rule_evaluation_materializes_float_samples_as_wal_
 
     check!(records.len() == 2);
     check!(records.iter().all(|record| record.tenant == "tenant-a"));
-    check!(records.iter().any(|record| record.labels
-        == vec![
-            (
-                "__name__".to_string(),
-                "job:http_requests:sum".to_string().into()
-            ),
-            ("job".to_string(), "api".to_string().into()),
-        ]
-        && matches!(
-            record.payload,
-            SamplePayload::Float {
-                timestamp_ms: 60_000,
-                value: 7.0,
-                start_timestamp_ms: None,
-            }
-        )));
-    check!(records.iter().any(|record| record.labels
-        == vec![
-            (
-                "__name__".to_string(),
-                "job:http_requests:sum".to_string().into()
-            ),
-            ("job".to_string(), "web".to_string().into()),
-        ]
-        && matches!(
-            record.payload,
-            SamplePayload::Float {
-                timestamp_ms: 60_000,
-                value: 11.0,
-                start_timestamp_ms: None,
-            }
-        )));
+    assert_recorded_job_sample(&records, "api", 7.0);
+    assert_recorded_job_sample(&records, "web", 11.0);
 }

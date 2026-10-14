@@ -19,7 +19,7 @@ pub async fn read_tenant_log_index_shards_from_object_store(
     prefix: &ObjectPath,
     tenant: &str,
     query_range: TimeRange,
-) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
+) -> Result<LogIndexes, BlockStoreError> {
     let mut shard_ranges = list_tenant_log_index_shard_ranges_overlapping_query_from_object_store(
         store,
         prefix,
@@ -39,7 +39,7 @@ pub async fn read_tenant_log_index_shards_from_object_store(
         .into_iter()
         .filter(|shard_range| shard_range.overlaps(query_range))
     {
-        let (label_index, block_index) =
+        let indexes =
             match read_tenant_log_index_shard_from_object_store(store, prefix, tenant, shard_range)
                 .await
             {
@@ -48,12 +48,13 @@ pub async fn read_tenant_log_index_shards_from_object_store(
                 Err(error) => return Err(error),
             };
 
-        for (series_tenant, series) in label_index.series {
-            for (_, labels) in series {
+        let LogIndexes { labels, blocks } = indexes;
+        for (series_tenant, series) in labels.series {
+            for labels in series.into_values() {
                 merged_labels.insert_series(series_tenant.clone(), labels);
             }
         }
-        for block in block_index.blocks {
+        for block in blocks.blocks {
             merged_blocks.entry(block.key.object_key()).or_insert(block);
         }
     }
@@ -63,5 +64,8 @@ pub async fn read_tenant_log_index_shards_from_object_store(
         block_index.insert(block);
     }
 
-    Ok((merged_labels, block_index))
+    Ok(LogIndexes {
+        labels: merged_labels,
+        blocks: block_index,
+    })
 }

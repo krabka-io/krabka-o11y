@@ -12,9 +12,9 @@ pub(crate) fn natural_chunks(value: &[u8]) -> Vec<&[u8]> {
             .iter()
             .position(|byte| byte.is_ascii_digit() != digits)
             .unwrap_or(rest.len());
-        let (chunk, tail) = rest.split_at(end);
-        chunks.push(chunk);
-        rest = tail;
+        let split = rest.split_at(end);
+        chunks.push(split.0);
+        rest = split.1;
     }
     chunks
 }

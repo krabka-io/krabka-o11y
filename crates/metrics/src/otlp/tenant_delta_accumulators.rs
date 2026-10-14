@@ -58,19 +58,11 @@ impl TenantDeltaAccumulators {
     /// map is already at capacity. `max_tenants` bounds the linear scan, and
     /// the scan never runs on the steady-state hot path.
     fn evict_if_over_cap(&self) {
-        while self.accumulators.len() > self.max_tenants {
-            let oldest = self
-                .accumulators
-                .iter()
-                .min_by_key(|entry| entry.value().last_touch.load(Ordering::Relaxed))
-                .map(|entry| entry.key().clone());
-            match oldest {
-                Some(key) => {
-                    self.accumulators.remove(&key);
-                }
-                None => break,
-            }
-        }
+        crate::least_recently_touched::evict_until_within_cap(
+            &self.accumulators,
+            self.max_tenants,
+            |accumulator| accumulator.last_touch.load(Ordering::Relaxed),
+        );
     }
 
     #[cfg(test)]

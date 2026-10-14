@@ -26,6 +26,11 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 
+struct PrometheusEndpoint<'a> {
+    base: &'a str,
+    tenant: Option<&'a str>,
+}
+
 // `seed_dataset` is the small hand-written dataset that `grafana_integration`
 // asserts against; this suite reuses it for the plain remote-write smoke test
 // below, and reuses `normalize` through `promql_corpus`. The rest of the module
@@ -217,6 +222,7 @@ async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
 
 #[tokio::test]
 #[ignore = "requires Docker and the pinned Prometheus compliance executable"]
+#[allow(clippy::too_many_lines)]
 async fn upstream_promql_http_compliance_matches_krabka() -> TestResult {
     let executable = std::env::var_os("KRABKA_PROMQL_COMPLIANCE_BIN")
         .ok_or("KRABKA_PROMQL_COMPLIANCE_BIN is required")?;
@@ -253,11 +259,20 @@ async fn upstream_promql_http_compliance_matches_krabka() -> TestResult {
         )
         .await?;
     }
-    for (base, tenant) in [(&prometheus_base, None), (&krabka.base_url, Some(TENANT))] {
+    for endpoint in [
+        PrometheusEndpoint {
+            base: &prometheus_base,
+            tenant: None,
+        },
+        PrometheusEndpoint {
+            base: &krabka.base_url,
+            tenant: Some(TENANT),
+        },
+    ] {
         PromApi {
-            base,
+            base: endpoint.base,
             prefix: "",
-            tenant,
+            tenant: endpoint.tenant,
         }
         .wait_for_query_ready(
             &client,

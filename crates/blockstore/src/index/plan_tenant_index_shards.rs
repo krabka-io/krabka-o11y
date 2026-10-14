@@ -2,6 +2,11 @@ use krabka_o11y_verified::shard_range;
 
 use super::{BTreeMap, BTreeSet, IndexShardRange, TenantIndex, index_shard_width_for_span};
 
+pub(crate) struct PlannedIndexShard {
+    pub range: IndexShardRange,
+    pub ordinals: BTreeSet<u32>,
+}
+
 /// Assigns a tenant's live blocks to shards on a grid.
 ///
 /// A block belongs to every shard its own span crosses. A block that crosses a
@@ -13,7 +18,7 @@ use super::{BTreeMap, BTreeSet, IndexShardRange, TenantIndex, index_shard_width_
 pub(crate) fn plan_tenant_index_shards(
     tenant_index: &TenantIndex,
     requested_width: i64,
-) -> Vec<(IndexShardRange, BTreeSet<u32>)> {
+) -> Vec<PlannedIndexShard> {
     let ordinals = tenant_index.blocks.ordinals_overlapping(i64::MIN, i64::MAX);
     if ordinals.is_empty() {
         return Vec::new();
@@ -41,8 +46,11 @@ pub(crate) fn plan_tenant_index_shards(
     shards
         .into_iter()
         .map(|(slot, ordinals)| {
-            let (start, end) = shard_range(slot, width);
-            (IndexShardRange::new(start, end), ordinals)
+            let range = shard_range(slot, width);
+            PlannedIndexShard {
+                range: IndexShardRange::new(range.start, range.end),
+                ordinals,
+            }
         })
         .collect()
 }

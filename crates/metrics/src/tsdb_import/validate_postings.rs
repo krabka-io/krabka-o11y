@@ -1,5 +1,11 @@
 use super::{BTreeMap, ByteReader, IndexSeries, IndexToc, TsdbImportError, checked_section};
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PostingLabelIdentity<'a> {
+    name: &'a str,
+    value: &'a [u8],
+}
+
 /// Checks the postings offset table and every postings list against the
 /// series section.
 ///
@@ -14,7 +20,7 @@ pub fn validate_postings(
     toc: &IndexToc,
     series: &[IndexSeries],
 ) -> Result<(), TsdbImportError> {
-    let mut expected = BTreeMap::<(&str, &[u8]), Vec<u32>>::new();
+    let mut expected = BTreeMap::<PostingLabelIdentity<'_>, Vec<u32>>::new();
     for entry in series {
         let reference = u32::try_from(entry.reference).map_err(|_| {
             TsdbImportError::InvalidIndex(format!(
@@ -23,12 +29,18 @@ pub fn validate_postings(
             ))
         })?;
         expected
-            .entry(("", b"".as_slice()))
+            .entry(PostingLabelIdentity {
+                name: "",
+                value: b"",
+            })
             .or_default()
             .push(reference);
-        for (name, value) in &entry.labels {
+        for label in &entry.labels {
             expected
-                .entry((name.as_str(), value.as_bytes()))
+                .entry(PostingLabelIdentity {
+                    name: label.name.as_str(),
+                    value: label.value.as_bytes(),
+                })
                 .or_default()
                 .push(reference);
         }
@@ -43,7 +55,9 @@ pub fn validate_postings(
             expected.len()
         )));
     }
-    for ((name, value), references) in &expected {
+    for posting in &expected {
+        let identity = posting.0;
+        let references = posting.1;
         if reader.uvarint()? != 2 {
             return Err(TsdbImportError::InvalidIndex(
                 "postings offset table entry does not hold a label pair".to_owned(),
@@ -51,13 +65,21 @@ pub fn validate_postings(
         }
         let found_name = reader.uvarint_bytes()?;
         let found_value = reader.uvarint_bytes()?;
-        if found_name != name.as_bytes() || found_value != *value {
+        if found_name != identity.name.as_bytes() || found_value != identity.value {
             return Err(TsdbImportError::InvalidIndex(format!(
-                "postings offset table does not list {name}={value:?} in order"
+                "postings offset table does not list {}={:?} in order",
+                identity.name, identity.value
             )));
         }
         let offset = reader.uvarint()?;
-        check_list(index, toc, offset, name, value, references)?;
+        check_list(
+            index,
+            toc,
+            offset,
+            identity.name,
+            identity.value,
+            references,
+        )?;
     }
     if reader.remaining() != 0 {
         return Err(TsdbImportError::InvalidIndex(

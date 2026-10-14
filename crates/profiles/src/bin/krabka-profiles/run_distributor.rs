@@ -36,7 +36,7 @@ pub(crate) async fn run_distributor(
         return Ok(());
     };
     let mut tasks = SupervisedTasks::new(shutdown.clone());
-    let (bound, server) = serve_supervised(
+    let server = serve_supervised(
         cli.listen,
         state,
         readiness,
@@ -44,7 +44,8 @@ pub(crate) async fn run_distributor(
         shutdown.clone(),
     )
     .await?;
-    tasks.adopt("profiles distributor HTTP", server);
+    let bound = server.address;
+    tasks.adopt("profiles distributor HTTP", server.task);
     tracing::info!(%bound, "profiles distributor listening");
     supervise_until_shutdown(tasks, &shutdown).await
 }

@@ -11,9 +11,9 @@ pub(crate) async fn instant_avg_aggregate_does_not_overflow() {
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "huge"),
-                ("job", "api"),
-                ("instance", &instance.to_string()),
+                crate::test_support::TestLabelPair::new("__name__", "huge"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+                crate::test_support::TestLabelPair::new("instance", &instance.to_string()),
             ]),
             10_000,
             f64::MAX,

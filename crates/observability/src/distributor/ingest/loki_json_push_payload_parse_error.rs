@@ -4,7 +4,7 @@ pub(crate) fn loki_json_push_payload_parse_error(body: &[u8]) -> String {
     let body = String::from_utf8_lossy(body);
     let value_start = body
         .char_indices()
-        .find_map(|(index, char)| (!char.is_whitespace()).then_some(index))
+        .find_map(|entry| (!entry.1.is_whitespace()).then_some(entry.0))
         .unwrap_or(body.len());
     let found = body[value_start..].chars().next().unwrap_or('\0');
     let context_start = previous_char_boundary(&body, value_start);

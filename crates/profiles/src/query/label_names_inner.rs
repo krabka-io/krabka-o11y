@@ -1,7 +1,7 @@
 use super::{
-    ConnectError, ConnectRequest, ConnectResponse, MetadataRequest, MetadataScope, ProfileStore,
+    ConnectError, ConnectRequest, ConnectResponse, MetadataScope, ProfileStore,
     QuerierRequestParts, client_allows_utf8_label_names, connect_error, is_internal_label,
-    is_legacy_label_name, metadata_scope, pb,
+    is_legacy_label_name, metadata_scope_for_request, pb,
 };
 
 pub(crate) async fn label_names_inner<S>(
@@ -19,15 +19,13 @@ where
         tenant,
         matchers,
         range,
-    } = metadata_scope(
+    } = metadata_scope_for_request(
         &state,
-        MetadataRequest {
-            principal: &principal,
-            headers: &headers,
-            matchers: &req.0.matchers,
-            start_ms: req.0.start,
-            end_ms: req.0.end,
-        },
+        &principal,
+        &headers,
+        &req.0.matchers,
+        req.0.start,
+        req.0.end,
     )?;
     let mut names = state
         .store

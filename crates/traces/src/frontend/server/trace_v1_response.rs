@@ -1,4 +1,3 @@
-use axum::http::header;
 use base64::Engine as _;
 use opentelemetry_proto::tonic::{
     common::v1::KeyValue,
@@ -8,7 +7,10 @@ use prost::Message as _;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::{HeaderMap, IntoResponse, Json, Response, StatusCode};
+use super::{
+    HeaderMap, IntoResponse, Json, Response, StatusCode, status_bytes_response,
+    status_text_response,
+};
 use crate::{frontend::wire::TraceByIdResponseJson, querier::http::wants_json};
 
 /// Tempo's v1 trace-by-id answer, for `/api/traces/{id}`.
@@ -22,14 +24,14 @@ pub(crate) fn trace_v1_response(
     trace: Option<TraceByIdResponseJson>,
 ) -> Response {
     let Some(trace) = trace else {
-        return (StatusCode::NOT_FOUND, "trace not found").into_response();
+        return status_text_response(StatusCode::NOT_FOUND, "trace not found");
     };
     if wants_json(headers) {
         return Json(trace.trace).into_response();
     }
     match trace_protobuf(trace.trace) {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "application/protobuf")], bytes).into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Ok(bytes) => status_bytes_response(StatusCode::OK, "application/protobuf", bytes),
+        Err(error) => status_text_response(StatusCode::INTERNAL_SERVER_ERROR, error),
     }
 }
 
@@ -49,7 +51,9 @@ fn trace_protobuf(trace: crate::frontend::wire::TraceEnvelopeJson) -> Result<Vec
 fn ids_to_hex(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
-            for (name, value) in object {
+            for entry in object {
+                let name = entry.0;
+                let value = entry.1;
                 if matches!(name.as_str(), "traceId" | "spanId" | "parentSpanId")
                     && let Some(encoded) = value.as_str()
                     && let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded)

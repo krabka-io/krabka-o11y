@@ -64,6 +64,12 @@ const INDEX_PREFIX: &str = "observability/logs";
 /// That is a retry, not a failure; this bounds the retrying.
 const BROKER_DEADLINE: Duration = Duration::from_secs(30);
 
+fn assert_first_block(descriptors: &[BlockDescriptor]) {
+    assert!(descriptors.len() == 1);
+    check!(descriptors[0].key.first_offset == 0);
+    check!(descriptors[0].key.last_offset == 0);
+}
+
 // ---------------------------------------------------------------------------
 // The raw sink and consumer pair.
 // ---------------------------------------------------------------------------
@@ -78,20 +84,10 @@ const BROKER_DEADLINE: Duration = Duration::from_secs(30);
 async fn the_kafka_wal_sink_and_consumer_agree_on_a_live_record() {
     let live = LiveBroker::start("__krabka_observability_logs_wal_live").await;
 
-    let record = WalLogRecord {
-        tenant: TENANT.to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
-        timestamp_ns: 20_000_000,
-        line: "api live wal error".to_string(),
-        structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc123".to_string())]),
-        position: None,
-    };
-    KafkaLogWalSink::connect(live.bootstrap.clone(), live.topic.clone())
-        .await
-        .expect("wal sink")
-        .append(record.clone())
-        .await
-        .expect("append wal record");
+    let mut structured_metadata = BTreeMap::new();
+    structured_metadata.insert("trace_id".to_string(), "abc123".to_string());
+    let record = live_record(20_000_000, "api live wal error", structured_metadata);
+    live.append(record.clone(), "append wal record").await;
 
     let mut consumer = live.wal_consumer("live").await;
     let hot_tail = BufferedLogHotTail::default();
@@ -151,19 +147,11 @@ async fn a_broker_producer_byte_rate_quota_refuses_a_push_before_the_wal_append(
     // that is what makes the poll after the refused push mean anything.
     let mut consumer = live.wal_consumer("quota").await;
     let hot_tail = BufferedLogHotTail::default();
-    KafkaLogWalSink::connect(live.bootstrap.clone(), live.topic.clone())
-        .await
-        .expect("wal sink")
-        .append(WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 10_000_000,
-            line: "api quota sentinel".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .expect("append the sentinel record");
+    live.append(
+        live_record(10_000_000, "api quota sentinel", BTreeMap::new()),
+        "append the sentinel record",
+    )
+    .await;
     assert!(poll_until_decoded(&mut consumer, &hot_tail).await == 1);
 
     let data_root = TempDir::new().expect("data root");
@@ -214,23 +202,21 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
     let data_root = TempDir::new().expect("data root");
 
     let mut label_index = LabelIndex::default();
-    label_index.insert_series(TENANT, labels([("app", "api"), ("env", "prod")]));
+    label_index.insert_series(
+        TENANT,
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     write_log_index_manifest(data_root.path(), &label_index, &BlockIndex::default())
         .expect("write the manifest");
 
-    KafkaLogWalSink::connect(live.bootstrap.clone(), live.topic.clone())
-        .await
-        .expect("wal sink")
-        .append(WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 20_000_000_000,
-            line: "api live tail error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .expect("append the wal record");
+    live.append(
+        live_record(20_000_000_000, "api live tail error", BTreeMap::new()),
+        "append the wal record",
+    )
+    .await;
 
     let querier = live.router(live.config(Role::Querier, &data_root)).await;
     let body = query_until_values(
@@ -285,7 +271,9 @@ async fn a_websocket_tail_on_a_served_listener_streams_the_live_wal() {
 
     let mut querier_config = live.config(Role::Querier, &data_root);
     querier_config.wal_group_id = "krabka-observability-wal-tail-listener-querier".to_string();
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+    let listener = TcpListener::bind("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .expect("bind");
     let addr = listener.local_addr().expect("listener address");
     let server = tokio::spawn(async move {
         let dependencies = dependencies(&querier_config).await;
@@ -305,7 +293,9 @@ async fn a_websocket_tail_on_a_served_listener_streams_the_live_wal() {
     request
         .headers_mut()
         .insert("X-Scope-OrgID", TENANT.parse().expect("tenant header"));
-    let (mut socket, response) = connect_async(request).await.expect("tail websocket");
+    let connected = connect_async(request).await.expect("tail websocket");
+    let mut socket = connected.0;
+    let response = connected.1;
     assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
 
     push_log(
@@ -377,19 +367,19 @@ async fn an_otlp_log_reaches_a_query_answer_through_the_live_wal_and_a_block() {
     assert!(response.status() == StatusCode::NO_CONTENT);
 
     let descriptors = live.compact(&data_root, &object_root, "otlp-loop").await;
-    assert!(descriptors.len() == 1);
-    check!(descriptors[0].key.first_offset == 0);
-    check!(descriptors[0].key.last_offset == 0);
+    assert_first_block(&descriptors);
 
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "otlp-loop"))
         .await;
-    let (start, end) = fixture_window(&timestamp, &timestamp);
+    let window = fixture_window(&timestamp, &timestamp);
     let body = query_until_values(
         &querier,
         TENANT,
         &format!(
-            "/loki/api/v1/query_range?query=%7Bservice_name%3D%22checkout%22%7D&start={start}&end={end}&direction=forward"
+            "/loki/api/v1/query_range?query=%7Bservice_name%3D%22checkout%22%7D&start={}&end={}&direction=forward",
+            window.start,
+            window.end
         ),
         1,
     )
@@ -421,6 +411,7 @@ async fn an_otlp_log_reaches_a_query_answer_through_the_live_wal_and_a_block() {
 /// a property of the block builder's per-tenant block keys and of the
 /// querier's tenant filter, not of the storage layout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::items_after_statements)]
 async fn two_tenants_sharing_one_wal_topic_never_read_each_other_lines() {
     let live = LiveBroker::start("__krabka_observability_logs_wal_tenant_loop").await;
     let data_root = TempDir::new().expect("data root");
@@ -429,20 +420,25 @@ async fn two_tenants_sharing_one_wal_topic_never_read_each_other_lines() {
     let distributor = live
         .router(live.config(Role::Distributor, &data_root))
         .await;
+    struct TenantWalLine {
+        tenant: &'static str,
+        timestamp: String,
+        line: &'static str,
+    }
     let seeded = [
-        (
-            "tenant-a",
-            fixture_timestamp_ns(20_000_000),
-            "tenant a shared wal error",
-        ),
-        (
-            "tenant-b",
-            fixture_timestamp_ns(21_000_000),
-            "tenant b shared wal error",
-        ),
+        TenantWalLine {
+            tenant: "tenant-a",
+            timestamp: fixture_timestamp_ns(20_000_000),
+            line: "tenant a shared wal error",
+        },
+        TenantWalLine {
+            tenant: "tenant-b",
+            timestamp: fixture_timestamp_ns(21_000_000),
+            line: "tenant b shared wal error",
+        },
     ];
-    for (tenant, timestamp, line) in &seeded {
-        push_log(&distributor, tenant, timestamp, line).await;
+    for entry in &seeded {
+        push_log(&distributor, entry.tenant, &entry.timestamp, entry.line).await;
     }
 
     let descriptors = live.compact(&data_root, &object_root, "tenant-loop").await;
@@ -451,27 +447,33 @@ async fn two_tenants_sharing_one_wal_topic_never_read_each_other_lines() {
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "tenant-loop"))
         .await;
-    let (start, end) = fixture_window(&seeded[0].1, &seeded[1].1);
-    for (tenant, timestamp, line) in &seeded {
+    let window = fixture_window(&seeded[0].timestamp, &seeded[1].timestamp);
+    for entry in &seeded {
         let body = query_until_values(
             &querier,
-            tenant,
+            entry.tenant,
             &format!(
-                "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={start}&end={end}&direction=forward"
+                "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={}&end={}&direction=forward",
+                window.start,
+                window.end
             ),
             1,
         )
         .await;
         check!(
-            body.pointer("/data/result/0/values") == Some(&json!([[timestamp, line]])),
-            "{tenant}"
+            body.pointer("/data/result/0/values") == Some(&json!([[entry.timestamp, entry.line]])),
+            "{}",
+            entry.tenant
         );
-        let other = seeded.iter().find(|(name, _, _)| name != tenant);
+        let other = seeded
+            .iter()
+            .find(|candidate| candidate.tenant != entry.tenant);
         check!(
             !body
                 .to_string()
-                .contains(other.expect("the other tenant").2),
-            "{tenant} read the other tenant's line"
+                .contains(other.expect("the other tenant").line),
+            "{} read the other tenant's line",
+            entry.tenant
         );
     }
 
@@ -498,9 +500,7 @@ async fn the_querier_merges_a_compacted_block_with_the_uncompacted_live_tail() {
     push_log(&distributor, TENANT, &compacted, "api compacted error").await;
 
     let descriptors = live.compact(&data_root, &object_root, "hot-cold").await;
-    assert!(descriptors.len() == 1);
-    check!(descriptors[0].key.first_offset == 0);
-    check!(descriptors[0].key.last_offset == 0);
+    assert_first_block(&descriptors);
 
     push_log(&distributor, TENANT, &live_line, "api live tail error").await;
 
@@ -511,12 +511,14 @@ async fn the_querier_merges_a_compacted_block_with_the_uncompacted_live_tail() {
     // querier's WAL consumer is still connecting, so a retry that stopped at
     // the first non-empty answer would return the compacted line alone and
     // fail the assertion below before the live record ever arrived.
-    let (start, end) = fixture_window(&compacted, &live_line);
+    let window = fixture_window(&compacted, &live_line);
     let body = query_until_values(
         &querier,
         TENANT,
         &format!(
-            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={start}&end={end}&direction=forward"
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={}&end={}&direction=forward",
+            window.start,
+            window.end
         ),
         2,
     )
@@ -566,12 +568,14 @@ async fn a_restarted_block_builder_resumes_from_the_committed_wal_offset() {
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "restart"))
         .await;
-    let (start, end) = fixture_window(&first, &second);
+    let window = fixture_window(&first, &second);
     let body = query_until_values(
         &querier,
         TENANT,
         &format!(
-            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={start}&end={end}&direction=forward"
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={}&end={}&direction=forward",
+            window.start,
+            window.end
         ),
         2,
     )
@@ -602,9 +606,7 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
     produce_native_kafka_log(&live, "20000000000", "api native kafka error").await;
 
     let descriptors = live.compact(&data_root, &object_root, "native-loop").await;
-    assert!(descriptors.len() == 1);
-    check!(descriptors[0].key.first_offset == 0);
-    check!(descriptors[0].key.last_offset == 0);
+    assert_first_block(&descriptors);
 
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "native-loop"))
@@ -689,6 +691,15 @@ impl LiveBroker {
         )
         .await
         .expect("wal consumer")
+    }
+
+    async fn append(&self, record: WalLogRecord, context: &str) {
+        KafkaLogWalSink::connect(self.bootstrap.clone(), self.topic.clone())
+            .await
+            .expect("wal sink")
+            .append(record)
+            .await
+            .expect(context);
     }
 
     /// A role's configuration, pointed at this broker and this topic.
@@ -920,10 +931,18 @@ fn entry_count(body: &Value) -> usize {
 /// window wider than `Limits::default().max_query_length`, which is `Loki`'s
 /// 721 hours. That refusal is a 400, so a case written that way never reaches
 /// its data at all.
-fn fixture_window(first_ns: &str, last_ns: &str) -> (i64, i64) {
+struct FixtureWindow {
+    start: i64,
+    end: i64,
+}
+
+fn fixture_window(first_ns: &str, last_ns: &str) -> FixtureWindow {
     let first = first_ns.parse::<i64>().expect("fixture timestamp");
     let last = last_ns.parse::<i64>().expect("fixture timestamp");
-    (first - 60_000_000_000, last + 10_000_000)
+    FixtureWindow {
+        start: first - 60_000_000_000,
+        end: last + 10_000_000,
+    }
 }
 
 /// Polls `/ready` over TCP until the service reports ready.
@@ -961,6 +980,24 @@ async fn poll_until_decoded(
             .expect("poll the live wal");
     }
     decoded
+}
+
+fn live_record(
+    timestamp_ns: i64,
+    line: &str,
+    structured_metadata: BTreeMap<String, String>,
+) -> WalLogRecord {
+    WalLogRecord {
+        tenant: TENANT.to_string(),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+        timestamp_ns,
+        line: line.to_string(),
+        structured_metadata,
+        position: None,
+    }
 }
 
 async fn json_body(response: axum::response::Response) -> Value {

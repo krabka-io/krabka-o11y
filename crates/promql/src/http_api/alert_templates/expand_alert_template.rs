@@ -12,7 +12,8 @@ pub(crate) fn expand_alert_template_with_external(
     external_labels: &Labels,
     external_url: &str,
 ) -> String {
-    let map = BTreeMap::from([("expanded".to_owned(), tmpl.to_owned())]);
+    let mut map = BTreeMap::new();
+    map.insert("expanded".to_owned(), tmpl.to_owned());
     crate::ruler::expand_alert_label_map(
         &map,
         value,

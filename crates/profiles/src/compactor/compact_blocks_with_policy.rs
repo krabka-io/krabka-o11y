@@ -39,19 +39,23 @@ pub async fn compact_blocks_with_policy(
     let mut input_versions = Vec::with_capacity(input_keys.len());
     let mut runs = Vec::with_capacity(input_keys.len());
 
-    for (block_idx, block_key) in input_keys.iter().enumerate() {
+    for block_entry in input_keys.iter().enumerate() {
+        let block_idx = block_entry.0;
+        let block_key = block_entry.1;
         let source_partitions = source_partitions(index, block_key);
         let partition_map = destination_partitions(block_idx, &source_partitions)?;
-        let (symdb_meta, symdb) = load_symdb(store, block_key).await?;
+        let loaded_symdb = load_symdb(store, block_key).await?;
+        let symdb_meta = loaded_symdb.metadata;
+        let symdb = loaded_symdb.symbols;
         input_versions.push(symdb_meta);
-        for (source, dest) in &partition_map {
+        for partition_entry in &partition_map {
             out_symbols
-                .copy_partition_from(&symdb, *source, *dest)
+                .copy_partition_from(&symdb, *partition_entry.0, *partition_entry.1)
                 .map_err(|err| ProfilesError::Block(err.to_string()))?;
-            out_partitions.insert(*dest);
+            out_partitions.insert(*partition_entry.1);
         }
 
-        let (meta, block_schema, batches) = open_block_stream(
+        let block_stream = open_block_stream(
             Arc::clone(store),
             block_key,
             DEFAULT_BLOCK_READ_MAX,
@@ -59,10 +63,11 @@ pub async fn compact_blocks_with_policy(
         )
         .await
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
-        input_versions.push(meta);
-        validate_compaction_schema(&mut schema, block_schema, block_key)?;
+        input_versions.push(block_stream.meta);
+        validate_compaction_schema(&mut schema, block_stream.schema, block_key)?;
         runs.push(
-            batches
+            block_stream
+                .batches
                 .map(move |batch| {
                     remap_partitions(&batch?, &partition_map)
                         .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
@@ -141,7 +146,10 @@ pub async fn compact_blocks_with_policy(
     meta.level = index.replace_profile_blocks(
         tenant,
         input_keys,
-        &[(meta.clone(), out_partitions.into_iter().collect())],
+        &[krabka_blockstore::ProfileBlockRegistration {
+            meta: meta.clone(),
+            partitions: out_partitions.into_iter().collect(),
+        }],
     );
     Ok(meta)
 }

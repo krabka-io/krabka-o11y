@@ -10,10 +10,10 @@ pub(crate) fn json_log_pattern(line: &str) -> Option<String> {
     let Value::Object(map) = serde_json::from_str::<Value>(line.trim()).ok()? else {
         return None;
     };
-    let templatized = Value::Object(
-        map.iter()
-            .map(|(key, value)| (key.clone(), json_value_pattern(value)))
-            .collect(),
-    );
+    let mut templatized_map = serde_json::Map::new();
+    for entry in &map {
+        templatized_map.insert(entry.0.clone(), json_value_pattern(entry.1));
+    }
+    let templatized = Value::Object(templatized_map);
     serde_json::to_string(&templatized).ok()
 }

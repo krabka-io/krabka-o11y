@@ -1,9 +1,9 @@
 use std::{sync::atomic::AtomicUsize, time::Duration};
 
 use super::prelude::{
-    AclEntry, AclEntryFilter, AclOperation, AclSet, AdminError, Arc, AtomicBool, AtomicOrdering,
-    AuthMethod, BTreeMap, BrokerAccessCache, BrokerAccessPolicy, BrokerAccessSource,
-    BrokerBackedIngestLimiter, BrokerBackedQueryAuthorizer, CachedLookup, CachedLookupDecision,
+    AclEntry, AclOperation, AclSet, AdminError, Arc, AtomicBool, AtomicOrdering, AuthMethod,
+    BTreeMap, BrokerAccessCache, BrokerAccessPolicy, BrokerAccessSource, BrokerBackedIngestLimiter,
+    BrokerBackedQueryAuthorizer, CachedFailure, CachedLookup, CachedLookupDecision, CachedSnapshot,
     CancellationToken, IngestLimitError, Instant, LogIngestLimiter, LogQueryAuthorizer, Mutex,
     NonZeroUsize, PatternType, PermissionType, Principal, QueryAuthorizationError, ResourceType,
     SecurityEventSink, ServiceConfig, ServiceConfigError, TenantGrant, TenantId, TenantLru, Time,
@@ -25,5 +25,7 @@ mod the_tenant_lru_removes_the_least_recently_used_tenant;
 mod the_wal_topic_acl_filters_cover_the_topic_the_wildcard_and_every_prefix;
 mod the_wal_topic_acls_decide_by_their_state_and_the_principal_kind;
 
-pub(crate) use broker_access_for_test::{broker_access_for_test, policy_for_test, tenant_for_test};
-pub(crate) use counting_broker_access::CountingBrokerAccess;
+pub(crate) use broker_access_for_test::{
+    broker_access_for_test, policy_for_test, security_disabled_broker_access, tenant_for_test,
+};
+pub(crate) use counting_broker_access::{BrokerLookups, CountingBrokerAccess};

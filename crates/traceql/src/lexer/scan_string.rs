@@ -1,9 +1,11 @@
-use super::{Result, TraceqlError};
+use super::{Result, ScanResult, TraceqlError};
 
-pub(crate) fn scan_string(s: &str) -> Result<(String, usize)> {
+pub(crate) fn scan_string(s: &str) -> Result<ScanResult<String>> {
     let mut out = String::new();
     let mut escaped = false;
-    for (idx, ch) in s.char_indices().skip(1) {
+    for entry in s.char_indices().skip(1) {
+        let idx = entry.0;
+        let ch = entry.1;
         if escaped {
             out.push(match ch {
                 '"' => '"',
@@ -17,7 +19,10 @@ pub(crate) fn scan_string(s: &str) -> Result<(String, usize)> {
         } else if ch == '\\' {
             escaped = true;
         } else if ch == '"' {
-            return Ok((out, idx + ch.len_utf8()));
+            return Ok(ScanResult {
+                value: out,
+                consumed: idx + ch.len_utf8(),
+            });
         } else {
             out.push(ch);
         }

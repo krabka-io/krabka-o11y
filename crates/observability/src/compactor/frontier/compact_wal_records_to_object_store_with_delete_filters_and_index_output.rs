@@ -5,6 +5,11 @@ use super::{
     compact_log_block_to_object_store_with_index_output, is_deleted_log_entry,
 };
 
+pub(crate) struct CompactionWriteOptions<'a> {
+    pub(crate) delete_filters: &'a [ActiveLogDeleteFilter],
+    pub(crate) index_output: LogCompactionIndexOutput,
+}
+
 pub(crate) async fn compact_wal_records_to_object_store_with_delete_filters_and_index_output(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
@@ -12,9 +17,10 @@ pub(crate) async fn compact_wal_records_to_object_store_with_delete_filters_and_
     block_index: &mut BlockIndex,
     committer: &mut impl CompactionOffsetCommitter,
     records: Vec<WalLogRecord>,
-    output: (&[ActiveLogDeleteFilter], LogCompactionIndexOutput),
+    output: CompactionWriteOptions<'_>,
 ) -> Result<Option<BlockDescriptor>, CompactionError> {
-    let (delete_filters, index_output) = output;
+    let delete_filters = output.delete_filters;
+    let index_output = output.index_output;
     let first = records.first().ok_or(CompactionError::EmptyWalBatch)?;
     let tenant = first.tenant.clone();
     let first_position = first.position.ok_or(CompactionError::MissingWalPosition {

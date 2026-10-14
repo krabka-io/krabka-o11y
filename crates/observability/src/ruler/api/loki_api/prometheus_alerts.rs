@@ -1,6 +1,6 @@
 use super::{
-    HeaderMap, IntoResponse, PrometheusRulerInputs, PrometheusRulerRequest, QuerierState, RawQuery,
-    RequestSecurity, Response, State, StatusCode, json, json_response, prometheus_alerts_response,
+    HeaderMap, IntoResponse, PrometheusRulerRequest, QuerierState, RawQuery, RequestSecurity,
+    Response, State, json, prometheus_alerts_response, prometheus_ruler_success,
 };
 
 pub(crate) async fn prometheus_alerts(
@@ -14,14 +14,8 @@ pub(crate) async fn prometheus_alerts(
         filters: _,
         evaluation_time,
         namespaces,
-    } = match (PrometheusRulerInputs {
-        state: &state,
-        security: &security,
-        headers: &headers,
-        raw_query: raw_query.as_deref(),
-    })
-    .resolve()
-    .await
+    } = match super::prometheus_ruler_request(&state, &security, &headers, raw_query.as_deref())
+        .await
     {
         Ok(request) => request,
         Err(response) => return *response,
@@ -35,15 +29,5 @@ pub(crate) async fn prometheus_alerts(
         }
         None => Vec::new(),
     };
-    json_response(
-        StatusCode::OK,
-        &json!({
-            "status": "success",
-            "data": {
-                "alerts": alerts
-            },
-            "errorType": "",
-            "error": "",
-        }),
-    )
+    prometheus_ruler_success(&json!({ "alerts": alerts }))
 }

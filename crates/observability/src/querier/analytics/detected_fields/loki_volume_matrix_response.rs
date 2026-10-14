@@ -14,18 +14,19 @@ pub(crate) fn loki_volume_matrix_response(
 ) -> Value {
     let result = limit_volume_series(volumes, limit)
         .into_iter()
-        .map(|(metric, samples)| {
-            let values = samples
+        .map(|series| {
+            let values = series
+                .samples
                 .into_iter()
-                .map(|(timestamp_ns, bytes)| {
+                .map(|sample| {
                     json!([
-                        unix_ns_string_to_loki_seconds(&timestamp_ns.to_string()),
-                        bytes.to_string()
+                        unix_ns_string_to_loki_seconds(&sample.0.to_string()),
+                        sample.1.to_string()
                     ])
                 })
                 .collect::<Vec<_>>();
             json!({
-                "metric": metric,
+                "metric": series.labels,
                 "values": values,
             })
         })

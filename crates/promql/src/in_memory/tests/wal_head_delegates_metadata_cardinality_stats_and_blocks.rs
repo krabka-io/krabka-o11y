@@ -2,12 +2,14 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn wal_head_delegates_metadata_cardinality_stats_and_blocks() {
-    let (mut store, up_api) = store_with_float_and_hist_series();
+    let fixture = store_with_float_and_hist_series();
+    let mut store = fixture.store;
+    let up_api = fixture.up_api;
     store.set_retention(millis(12_345));
     store.push_exemplar(
         "tenant-a",
         up_api.clone(),
-        lbls(&[("trace_id", "abc")]),
+        lbls(&[crate::test_support::TestLabelPair::new("trace_id", "abc")]),
         1_500,
         1.5,
     );
@@ -43,7 +45,7 @@ pub(crate) async fn wal_head_delegates_metadata_cardinality_stats_and_blocks() {
             .unwrap()
             .exemplars[0]
             .labels
-            == lbls(&[("trace_id", "abc")])
+            == lbls(&[crate::test_support::TestLabelPair::new("trace_id", "abc")])
     );
     check!(
         head.metadata("tenant-a", Some("up"))

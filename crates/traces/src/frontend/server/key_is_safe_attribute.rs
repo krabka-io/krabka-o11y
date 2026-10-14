@@ -5,9 +5,4 @@
 /// whitespace, could inject query structure once it is interpolated unquoted
 /// into the generated `TraceQL`. This stays in sync with the querier's
 /// `key_is_safe_attribute`.
-pub(crate) fn key_is_safe_attribute(key: &str) -> bool {
-    !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
-}
+pub(crate) use krabka_traceql::key_is_safe_attribute;

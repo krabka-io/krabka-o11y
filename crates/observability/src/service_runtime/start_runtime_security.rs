@@ -1,6 +1,6 @@
 use super::{
-    Arc, AuditService, CancellationToken, RuntimeSecurity, ServiceConfig, ServiceDependencies,
-    ServiceRuntimeError, krabka_product,
+    Arc, AuditService, AuditServiceParts, CancellationToken, RuntimeSecurity, ServiceConfig,
+    ServiceDependencies, ServiceRuntimeError, krabka_product,
 };
 
 /// Loads the data-port security of a role and starts its audit layer.
@@ -28,8 +28,11 @@ pub(crate) async fn start_runtime_security(
         None => config.server_security.load()?,
     };
     let audit_stop = CancellationToken::new();
-    let (audit, audit_writer) = match &dependencies.audit {
-        Some(audit) => (audit.clone(), None),
+    let audit_parts = match &dependencies.audit {
+        Some(audit) => AuditServiceParts {
+            handle: audit.clone(),
+            writer: None,
+        },
         None => AuditService::start(
             &config.audit,
             krabka_product(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
@@ -40,6 +43,8 @@ pub(crate) async fn start_runtime_security(
         .await?
         .into_parts(),
     };
+    let audit = audit_parts.handle;
+    let audit_writer = audit_parts.writer;
     Ok(RuntimeSecurity {
         server: server.with_security_events(Arc::new(audit.clone())),
         audit,

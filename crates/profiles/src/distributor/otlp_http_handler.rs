@@ -1,5 +1,30 @@
 use super::*;
 
+struct EncodedOtlpBody {
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+#[cfg(test)]
+struct ErrorWireFormatCase {
+    json: bool,
+    content_type: &'static str,
+}
+
+fn response_with_content_type(
+    status: StatusCode,
+    content_type: &'static str,
+    body: Bytes,
+) -> Response {
+    let mut response = body.into_response();
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static(content_type),
+    );
+    response
+}
+
 pub(crate) async fn otlp_http_handler(
     IngestRequestParts {
         state,
@@ -36,10 +61,16 @@ pub(crate) async fn otlp_http_handler(
         };
         if json {
             serde_json::to_vec(&response)
-                .map(|body| ("application/json", body))
+                .map(|body| EncodedOtlpBody {
+                    content_type: "application/json",
+                    body,
+                })
                 .map_err(|err| ProfilesError::Internal(format!("OTLP profiles JSON encode: {err}")))
         } else {
-            Ok(("application/x-protobuf", response.encode_to_vec()))
+            Ok(EncodedOtlpBody {
+                content_type: "application/x-protobuf",
+                body: response.encode_to_vec(),
+            })
         }
     }
     .instrument(ingest_span.clone())
@@ -57,12 +88,11 @@ pub(crate) async fn otlp_http_handler(
         },
     );
     match result {
-        Ok((content_type, body)) => (
+        Ok(encoded) => response_with_content_type(
             StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, content_type)],
-            Bytes::from(body),
-        )
-            .into_response(),
+            encoded.content_type,
+            Bytes::from(encoded.body),
+        ),
         Err(err) => otlp_error_response(&err, response_is_json),
     }
 }
@@ -154,20 +184,18 @@ fn otlp_error_response(err: &ProfilesError, json: bool) -> Response {
         code,
         message: client_facing_message(err),
     };
-    let (content_type, body) = if json {
-        (
-            "application/json",
-            serde_json::to_vec(&envelope).unwrap_or_default(),
-        )
+    let encoded = if json {
+        EncodedOtlpBody {
+            content_type: "application/json",
+            body: serde_json::to_vec(&envelope).unwrap_or_default(),
+        }
     } else {
-        ("application/x-protobuf", envelope.encode_to_vec())
+        EncodedOtlpBody {
+            content_type: "application/x-protobuf",
+            body: envelope.encode_to_vec(),
+        }
     };
-    (
-        status,
-        [(axum::http::header::CONTENT_TYPE, content_type)],
-        body,
-    )
-        .into_response()
+    response_with_content_type(status, encoded.content_type, Bytes::from(encoded.body))
 }
 
 fn is_json(headers: &HeaderMap) -> Result<bool, ProfilesError> {
@@ -248,18 +276,26 @@ mod tests {
 
     #[tokio::test]
     async fn errors_use_google_status_in_the_request_wire_format() {
-        for (json, content_type) in [
-            (true, "application/json"),
-            (false, "application/x-protobuf"),
+        for case in [
+            ErrorWireFormatCase {
+                json: true,
+                content_type: "application/json",
+            },
+            ErrorWireFormatCase {
+                json: false,
+                content_type: "application/x-protobuf",
+            },
         ] {
             let error = ProfilesError::Decode("bad payload".into());
-            let response = otlp_error_response(&error, json);
+            let response = otlp_error_response(&error, case.json);
             assert2::check!(response.status() == StatusCode::BAD_REQUEST);
-            assert2::check!(response.headers()[axum::http::header::CONTENT_TYPE] == content_type);
+            assert2::check!(
+                response.headers()[axum::http::header::CONTENT_TYPE] == case.content_type
+            );
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            let status = if json {
+            let status = if case.json {
                 let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
                 OtlpStatus {
                     code: i32::try_from(value["code"].as_i64().unwrap()).unwrap(),

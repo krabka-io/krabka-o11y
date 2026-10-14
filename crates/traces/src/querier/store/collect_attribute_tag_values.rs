@@ -14,11 +14,12 @@ pub(crate) struct RequestedTag<'a> {
 pub(crate) fn collect_attribute_tag_values(
     batch: &RecordBatch,
     requested: RequestedTag<'_>,
-    values: &mut BTreeSet<(String, String)>,
+    values: &mut BTreeSet<super::TypedValue>,
 ) -> Result<(), TraceqlError> {
     let RequestedTag { tag, index_tag } = requested;
     for row in 0..batch.num_rows() {
-        for (key, value) in attr_values_with_resource(batch, row, ResourceAttrs::Include)? {
+        for attribute in attr_values_with_resource(batch, row, ResourceAttrs::Include)? {
+            let key = attribute.key;
             let matches = if let Some(key) = key.strip_prefix(RESOURCE_ATTR_PREFIX) {
                 [tag, index_tag].contains(&key)
             } else if let Some(key) = key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {
@@ -31,20 +32,20 @@ pub(crate) fn collect_attribute_tag_values(
                 [tag, index_tag].contains(&key.as_str())
             };
             if matches {
-                values.extend(typed_value_parts(&value));
+                values.extend(typed_value_parts(&attribute.value));
             }
         }
         for event in event_values(batch, row)? {
-            for (key, value) in event.attributes {
-                if key == tag || key == index_tag {
-                    values.extend(typed_value_parts(&value));
+            for attribute in event.attributes {
+                if attribute.key == tag || attribute.key == index_tag {
+                    values.extend(typed_value_parts(&attribute.value));
                 }
             }
         }
         for link in link_values(batch, row)? {
-            for (key, value) in link.attributes {
-                if key == tag || key == index_tag {
-                    values.extend(typed_value_parts(&value));
+            for attribute in link.attributes {
+                if attribute.key == tag || attribute.key == index_tag {
+                    values.extend(typed_value_parts(&attribute.value));
                 }
             }
         }

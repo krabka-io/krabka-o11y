@@ -35,7 +35,9 @@ impl<S: Send + Sync> FromRequest<S> for PostedQueryRequest {
     type Rejection = Response;
 
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let (mut parts, body) = request.into_parts();
+        let request_parts = request.into_parts();
+        let mut parts = request_parts.0;
+        let body = request_parts.1;
         let security = RequestSecurity::from_request_parts(&mut parts, state)
             .await
             .map_err(IntoResponse::into_response)?;

@@ -10,7 +10,8 @@ use arrow::{
     datatypes::{Int64Type, UInt64Type},
     record_batch::RecordBatch,
 };
-use datafusion::catalog::MemTable;
+#[cfg(test)]
+use krabka_blockstore::OffsetRange;
 use krabka_blockstore::{LabelMatcher, ProfileIndex, SeriesFingerprint};
 use krabka_pprof::{
     ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, Frame,
@@ -33,7 +34,10 @@ mod tests {
 
     use assert2::{assert, check};
     use krabka_blockstore::{BlockIndex, Labels, MatchOp};
-    use krabka_pprof::{DebuginfodConfig, EngineOpts, FlameEngine};
+    use krabka_pprof::{
+        DebuginfodConfig, EngineOpts, FlameEngine, ProfileIdentity, ProfileLabel,
+        StacktraceIdentity,
+    };
     use krabka_units::{mebibytes, millis, secs};
     use object_store::{ObjectStore, memory::InMemory};
 
@@ -51,8 +55,7 @@ mod tests {
         // their identity as keys but are renumbered densely as values.
         let first: u64 = 1 << 32;
         check!(
-            map(0, &[7, 3, 9])
-                == std::collections::BTreeMap::from([(3, first), (7, first + 1), (9, first + 2),]),
+            map(0, &[7, 3, 9]) == maplit::btreemap! { 3 => first, 7 => first + 1, 9 => first + 2 },
             "sorted by stored id, numbered from zero"
         );
 
@@ -61,21 +64,14 @@ mod tests {
         let second: u64 = 2 << 32;
         check!(
             map(1, &[7, 3, 9])
-                == std::collections::BTreeMap::from([
-                    (3, second),
-                    (7, second + 1),
-                    (9, second + 2),
-                ])
+                == maplit::btreemap! { 3 => second, 7 => second + 1, 9 => second + 2 }
         );
 
         // Duplicates collapse rather than consuming a slot each.
-        check!(map(0, &[5, 5, 5]) == std::collections::BTreeMap::from([(5, 1_u64 << 32)]));
+        check!(map(0, &[5, 5, 5]) == maplit::btreemap! { 5 => 1_u64 << 32 });
 
         // A block that stored no partitions still gets the default one.
-        check!(
-            map(0, &[])
-                == std::collections::BTreeMap::from([(super::STACKTRACE_PARTITION, 1_u64 << 32)])
-        );
+        check!(map(0, &[]) == maplit::btreemap! { super::STACKTRACE_PARTITION => 1_u64 << 32 });
     }
 
     /// A metadata query covering all of time is answered from the index alone,
@@ -142,18 +138,27 @@ mod tests {
         let mut index = ProfileIndex::new();
         let mut planned_bytes = 0;
         let mut planned_symbols = 0;
-        for (offset, records) in [vec![api.clone(), worker], vec![later], vec![stranger]]
-            .into_iter()
-            .enumerate()
-        {
+        for BlockRecordsFixture { offset, records } in [
+            BlockRecordsFixture {
+                offset: 0,
+                records: vec![api.clone(), worker],
+            },
+            BlockRecordsFixture {
+                offset: 1,
+                records: vec![later],
+            },
+            BlockRecordsFixture {
+                offset: 2,
+                records: vec![stranger],
+            },
+        ] {
             let tenant = &records[0].tenant;
-            let offset = i64::try_from(offset).expect("fixture has three blocks");
             let metas = build_block(
                 &store,
                 tenant,
                 0,
                 &records,
-                (offset, offset),
+                OffsetRange::new(offset, offset),
                 &krabka_blockstore::ObjectStoreMetrics::unregistered(),
             )
             .await
@@ -217,7 +222,16 @@ mod tests {
             .unwrap();
         check!(empty.block_count == 0);
         let mut hot = krabka_pprof::InMemoryProfileStore::new();
-        hot.push_sample(("t", PT), api.labels.clone(), (0, 0), 5, 1000);
+        hot.push_sample(
+            ProfileIdentity::new("t", PT),
+            api.labels
+                .iter()
+                .map(|label| ProfileLabel::new(label.name.clone(), label.value.clone()))
+                .collect(),
+            StacktraceIdentity::new(0, 0),
+            5,
+            1000,
+        );
         let union = krabka_pprof::UnionProfileStore::new(Arc::new(hot), Arc::new(cold));
         let overlap = union
             .query_stats("t", PT, &matching, 900, 1100)
@@ -231,6 +245,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn query_analysis_with_omitted_bounds_returns_empty_for_hot_and_cold_data() {
         use krabka_pprof::{InMemoryProfileStore, UnionProfileStore};
 
@@ -240,8 +255,14 @@ mod tests {
             record_at("t", "cold-only", vec![0], 7, 1_000_000_000),
             record_at("t", "cold-only", vec![0], 11, 1_000_000_000),
         ];
-        for (record, id) in records.iter_mut().zip(["shared-cold", "cold-a", "cold-b"]) {
-            record.labels.push(("__profile_id__".into(), id.into()));
+        let profile_ids = ["shared-cold", "cold-a", "cold-b"];
+        for index in 0..records.len() {
+            records[index]
+                .labels
+                .push(krabka_blockstore::LabelPair::new(
+                    "__profile_id__",
+                    profile_ids[index],
+                ));
         }
         let mut index = index_with_series(&records, &[]);
         for block in build_block(
@@ -249,7 +270,7 @@ mod tests {
             "t",
             0,
             &records,
-            (0, 1),
+            OffsetRange::new(0, 1),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -260,65 +281,136 @@ mod tests {
         }
         let cold = Arc::new(ColdProfileStore::new(objects, Arc::new(index)));
         let mut first = InMemoryProfileStore::new();
-        let mut first_shared = records[0].labels.clone();
+        let mut first_shared = records[0]
+            .labels
+            .iter()
+            .map(|label| ProfileLabel::new(label.name.clone(), label.value.clone()))
+            .collect::<Vec<_>>();
         first_shared
             .iter_mut()
-            .find(|(name, _)| name == "__profile_id__")
+            .find(|label| label.name == "__profile_id__")
             .unwrap()
-            .1 = "head-a".into();
-        first.push_sample(("t", PT), first_shared, (0, 0), 5, 1000);
+            .value = "head-a".into();
+        first.push_sample(
+            ProfileIdentity::new("t", PT),
+            first_shared,
+            StacktraceIdentity::new(0, 0),
+            5,
+            1000,
+        );
         let hot_labels = vec![
-            ("service_name".into(), "hot-only".into()),
-            (krabka_blockstore::LABEL_PROFILE_TYPE.into(), PT.into()),
+            ProfileLabel::new("service_name", "hot-only"),
+            ProfileLabel::new(krabka_blockstore::LABEL_PROFILE_TYPE, PT),
         ];
-        first.push_sample(("t", PT), hot_labels.clone(), (0, 0), 11, 1000);
+        first.push_sample(
+            ProfileIdentity::new("t", PT),
+            hot_labels.clone(),
+            StacktraceIdentity::new(0, 0),
+            11,
+            1000,
+        );
         let mut second = InMemoryProfileStore::new();
-        let mut second_shared = records[0].labels.clone();
+        let mut second_shared = records[0]
+            .labels
+            .iter()
+            .map(|label| ProfileLabel::new(label.name.clone(), label.value.clone()))
+            .collect::<Vec<_>>();
         second_shared
             .iter_mut()
-            .find(|(name, _)| name == "__profile_id__")
+            .find(|label| label.name == "__profile_id__")
             .unwrap()
-            .1 = "head-b".into();
-        second.push_sample(("t", PT), second_shared, (0, 0), 5, 1000);
+            .value = "head-b".into();
+        second.push_sample(
+            ProfileIdentity::new("t", PT),
+            second_shared,
+            StacktraceIdentity::new(0, 0),
+            5,
+            1000,
+        );
         let mut wall_labels = hot_labels;
         wall_labels
             .iter_mut()
-            .find(|(name, _)| name == krabka_blockstore::LABEL_PROFILE_TYPE)
+            .find(|label| label.name == krabka_blockstore::LABEL_PROFILE_TYPE)
             .unwrap()
-            .1 = "wall:wall:nanoseconds:wall:nanoseconds".into();
+            .value = "wall:wall:nanoseconds:wall:nanoseconds".into();
         second.push_sample(
-            ("t", "wall:wall:nanoseconds:wall:nanoseconds"),
+            ProfileIdentity::new("t", "wall:wall:nanoseconds:wall:nanoseconds"),
             wall_labels,
-            (0, 0),
+            StacktraceIdentity::new(0, 0),
             13,
             2000,
         );
         second.push_sample(
-            ("u", PT),
-            vec![("service_name".into(), "secret".into())],
-            (0, 0),
+            ProfileIdentity::new("u", PT),
+            vec![ProfileLabel::new("service_name", "secret")],
+            StacktraceIdentity::new(0, 0),
             17,
             1000,
         );
         let heads = Arc::new(UnionProfileStore::new(Arc::new(first), Arc::new(second)));
         let mixed = Arc::new(UnionProfileStore::new(heads, Arc::clone(&cold)));
-        let (bound, stop) = serve_analysis_querier(mixed).await;
-        for (start_ms, end_ms) in [(0, 0), (0, 50), (3000, 0)] {
-            for (tenant, query) in [
-                ("t", "{}"),
-                ("t", "{service_name=\"hot-only\"}"),
-                (
-                    "t",
-                    "process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name=\"hot-only\"}",
-                ),
-                ("t", "{service_name=\"shared\"}"),
-                ("t", "{__profile_id__=\"head-a\"}"),
-                ("t", "{service_name=\"cold-only\"}"),
-                ("t", "{service_name=\"missing\"}"),
-                ("u", "{service_name=\"secret\"}"),
-                ("u", "{service_name=\"hot-only\"}"),
-                ("absent", "{}"),
-                ("t", "{invalid"),
+        let server = serve_analysis_querier(mixed).await;
+        let bound = server.address;
+        let stop = server.shutdown;
+        for TimeRange { start_ms, end_ms } in [
+            TimeRange {
+                start_ms: 0,
+                end_ms: 0,
+            },
+            TimeRange {
+                start_ms: 0,
+                end_ms: 50,
+            },
+            TimeRange {
+                start_ms: 3000,
+                end_ms: 0,
+            },
+        ] {
+            for AnalyzeQueryCase { tenant, query } in [
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "{}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "{service_name=\"hot-only\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name=\"hot-only\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "{service_name=\"shared\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "{__profile_id__=\"head-a\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "{service_name=\"cold-only\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "{service_name=\"missing\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "u",
+                    query: "{service_name=\"secret\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "u",
+                    query: "{service_name=\"hot-only\"}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "absent",
+                    query: "{}",
+                },
+                AnalyzeQueryCase {
+                    tenant: "t",
+                    query: "{invalid",
+                },
             ] {
                 let response = analyze_query(
                     bound,
@@ -344,8 +436,23 @@ mod tests {
             Arc::new(InMemoryProfileStore::new()),
             cold,
         ));
-        let (bound, stop) = serve_analysis_querier(flushed).await;
-        for (start_ms, end_ms) in [(0, 0), (0, 2000), (3000, 0)] {
+        let server = serve_analysis_querier(flushed).await;
+        let bound = server.address;
+        let stop = server.shutdown;
+        for TimeRange { start_ms, end_ms } in [
+            TimeRange {
+                start_ms: 0,
+                end_ms: 0,
+            },
+            TimeRange {
+                start_ms: 0,
+                end_ms: 2000,
+            },
+            TimeRange {
+                start_ms: 3000,
+                end_ms: 0,
+            },
+        ] {
             let response = analyze_query(
                 bound,
                 &AnalyzeQuery {
@@ -364,7 +471,7 @@ mod tests {
     /// Serves `store` on loopback as a querier with query analysis enabled.
     async fn serve_analysis_querier<S: krabka_pprof::ProfileStore + 'static>(
         store: Arc<S>,
-    ) -> (std::net::SocketAddr, tokio::sync::oneshot::Sender<()>) {
+    ) -> crate::test_support::BoundTestServer {
         use crate::query::{QuerierState, serve};
 
         let state = Arc::new(QuerierState::new(store).with_query_analysis_series_enabled(true));
@@ -380,6 +487,26 @@ mod tests {
         query: &'a str,
         start_ms: i64,
         end_ms: i64,
+    }
+
+    struct AnalyzeQueryCase {
+        tenant: &'static str,
+        query: &'static str,
+    }
+
+    struct TimeRange {
+        start_ms: i64,
+        end_ms: i64,
+    }
+
+    struct RecordOffsetValue {
+        offset: u64,
+        value: i64,
+    }
+
+    struct BlockRecordsFixture {
+        offset: i64,
+        records: Vec<ProfileRecord>,
     }
 
     /// Posts `request` to the querier at `bound` and returns the JSON answer,
@@ -413,9 +540,23 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let mut index = ProfileIndex::new();
         let mut input_keys = Vec::new();
-        for (offset, value) in [(0, 5), (1, 7)] {
+        for RecordOffsetValue { offset, value } in [
+            RecordOffsetValue {
+                offset: 0,
+                value: 5,
+            },
+            RecordOffsetValue {
+                offset: 1,
+                value: 7,
+            },
+        ] {
             let rec = record("t", "api", vec![0], value);
-            let meta = build_test_block(&store, std::slice::from_ref(&rec), offset).await;
+            let meta = build_test_block(
+                &store,
+                std::slice::from_ref(&rec),
+                i64::try_from(offset).unwrap(),
+            )
+            .await;
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
             index
                 .add_series("t", labels.fingerprint(), &labels)
@@ -501,6 +642,14 @@ mod tests {
         let meta = build_test_block(&store, records, 0).await;
         let index = index_with_series(records, &[&meta]);
         ColdProfileStore::new(store, Arc::new(index))
+    }
+
+    async fn api_worker_cold_store() -> ColdProfileStore {
+        let records = [
+            record_at("t", "api", vec![0], 5, 1_000_000_000),
+            record_at("t", "worker", vec![0], 7, 3_000_000_000),
+        ];
+        single_block_cold_store(&records).await
     }
 
     #[tokio::test]
@@ -628,9 +777,9 @@ mod tests {
         let mut memory = record_at("t", "api", vec![0], 7, 3_000_000_000);
         memory.profile_type = "memory:alloc_space:bytes:space:bytes".to_string();
         memory.labels = vec![
-            ("__name__".to_string(), "memory".to_string()),
-            ("__profile_type__".to_string(), memory.profile_type.clone()),
-            ("service_name".to_string(), "api".to_string()),
+            krabka_blockstore::LabelPair::new("__name__", "memory"),
+            krabka_blockstore::LabelPair::new("__profile_type__", &memory.profile_type),
+            krabka_blockstore::LabelPair::new("service_name", "api"),
         ];
         let records = vec![cpu, memory];
         let cold = single_block_cold_store(&records).await;
@@ -655,11 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_label_values_do_not_leak_series_outside_time_range_in_same_block() {
-        let api = record_at("t", "api", vec![0], 5, 1_000_000_000);
-        let worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
-        let records = vec![api, worker];
-        let cold = single_block_cold_store(&records).await;
-
+        let cold = api_worker_cold_store().await;
         let values = cold
             .label_values("t", "service_name", &[], 1_000, 1_000)
             .await
@@ -684,7 +829,7 @@ mod tests {
         let mut worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
         worker
             .labels
-            .push(("pod".to_string(), "worker-0".to_string()));
+            .push(krabka_blockstore::LabelPair::new("pod", "worker-0"));
         let records = vec![api, worker];
         let cold = single_block_cold_store(&records).await;
 
@@ -708,18 +853,14 @@ mod tests {
 
     #[tokio::test]
     async fn cold_store_series_do_not_leak_series_outside_time_range_in_same_block() {
-        let api = record_at("t", "api", vec![0], 5, 1_000_000_000);
-        let worker = record_at("t", "worker", vec![0], 7, 3_000_000_000);
-        let records = vec![api, worker];
-        let cold = single_block_cold_store(&records).await;
-
+        let cold = api_worker_cold_store().await;
         let series = cold
             .series("t", &[], &["service_name".to_string()], 1_000, 1_000)
             .await
             .unwrap();
 
         assert!(
-            series == vec![vec![("service_name".to_string(), "api".to_string())]],
+            series == vec![vec![ProfileLabel::new("service_name", "api")]],
             "{series:?}"
         );
     }
@@ -758,8 +899,8 @@ mod tests {
         check!(
             series
                 == vec![
-                    vec![("service_name".to_string(), "api".to_string())],
-                    vec![("service_name".to_string(), "worker".to_string())]
+                    vec![ProfileLabel::new("service_name", "api")],
+                    vec![ProfileLabel::new("service_name", "worker")]
                 ],
             "{series:?}"
         );
@@ -772,69 +913,79 @@ mod tests {
 
     #[test]
     fn filter_and_remap_batch_selects_and_remaps_in_one_pass() {
-        use krabka_blockstore::{ProfileSampleRow, encode_profile_samples};
+        use krabka_blockstore::{ProfileSampleFields, ProfileSampleRow, encode_profile_samples};
 
         let fp_keep = 7_u64;
         let fp_drop = 99_u64;
         let rows = vec![
             // keep: matching fp, type, in range; partition 0
             ProfileSampleRow {
-                series_fingerprint: fp_keep,
                 timestamp: 1_000,
-                profile_type: PT.to_string(),
-                stacktrace_id: 1,
-                value: 10,
-                stacktrace_partition: 0,
-                total_value: 10,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_keep,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 1,
+                    value: 10,
+                    stacktrace_partition: 0,
+                    total_value: 10,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
             // drop: wrong fingerprint
             ProfileSampleRow {
-                series_fingerprint: fp_drop,
                 timestamp: 1_000,
-                profile_type: PT.to_string(),
-                stacktrace_id: 2,
-                value: 5,
-                stacktrace_partition: 0,
-                total_value: 5,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_drop,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 2,
+                    value: 5,
+                    stacktrace_partition: 0,
+                    total_value: 5,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
             // drop: out of time range
             ProfileSampleRow {
-                series_fingerprint: fp_keep,
                 timestamp: 9_999,
-                profile_type: PT.to_string(),
-                stacktrace_id: 3,
-                value: 5,
-                stacktrace_partition: 0,
-                total_value: 5,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_keep,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 3,
+                    value: 5,
+                    stacktrace_partition: 0,
+                    total_value: 5,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
             // keep: matching, distinct partition 1 to verify per-row remap
             ProfileSampleRow {
-                series_fingerprint: fp_keep,
                 timestamp: 2_000,
-                profile_type: PT.to_string(),
-                stacktrace_id: 4,
-                value: 20,
-                stacktrace_partition: 1,
-                total_value: 20,
-                span_id: None,
-                trace_id: None,
-                wal_sample_ids: Vec::new(),
+                fields: ProfileSampleFields {
+                    series_fingerprint: fp_keep,
+                    profile_type: PT.to_string(),
+                    stacktrace_id: 4,
+                    value: 20,
+                    stacktrace_partition: 1,
+                    total_value: 20,
+                    span_id: None,
+                    trace_id: None,
+                    wal_sample_ids: Vec::new(),
+                },
             },
         ];
         let batch = encode_profile_samples(&rows).unwrap();
 
         let partition_base = 1_u64 << 32;
         // Dense per-block map: stored partitions {0, 1} -> {base|0, base|1}.
-        let partition_map = BTreeMap::from([(0_u64, partition_base), (1_u64, partition_base | 1)]);
+        let mut partition_map = BTreeMap::new();
+        partition_map.insert(0_u64, partition_base);
+        partition_map.insert(1_u64, partition_base | 1);
         let fps = BTreeSet::from([fp_keep]);
         let out = filter_and_remap_batch(
             &batch,

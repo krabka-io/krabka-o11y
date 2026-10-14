@@ -1,6 +1,6 @@
 use super::{
-    ComparisonResult, MetricComparison, SampleOperands, ScalarOperands, ScalarSide, Value, json,
-    metric_binary_operand_values, metric_scalar_comparison_matches,
+    ComparisonResult, MetricComparison, SampleOperands, Value, json,
+    metric_scalar_comparison_matches, output_sample_scalar_operands,
 };
 
 pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
@@ -8,20 +8,12 @@ pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
     operands: SampleOperands<'_>,
     comparison: MetricComparison,
 ) -> bool {
-    let Some(output_values) = output_sample.as_array_mut() else {
+    let Some((output_values, scalar_operands)) =
+        output_sample_scalar_operands(output_sample, operands)
+    else {
         return false;
     };
-    let Some((left_value, right_value)) = metric_binary_operand_values(operands) else {
-        return false;
-    };
-    let matches = metric_scalar_comparison_matches(
-        ScalarOperands {
-            sample: left_value,
-            scalar: right_value,
-            scalar_side: ScalarSide::Right,
-        },
-        comparison.op,
-    );
+    let matches = metric_scalar_comparison_matches(scalar_operands, comparison.op);
     match comparison.result {
         ComparisonResult::Bool => {
             if let Some(value) = output_values.get_mut(1) {
@@ -31,7 +23,8 @@ pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
         }
         ComparisonResult::Filter => {
             if matches
-                && let (Some(output), Some(left)) = (output_values.get_mut(1), operands.left.get(1))
+                && let Some(left) = operands.left.get(1)
+                && let Some(output) = output_values.get_mut(1)
             {
                 *output = left.clone();
             }

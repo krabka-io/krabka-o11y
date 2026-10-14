@@ -1,7 +1,7 @@
 use std::{error::Error, panic::AssertUnwindSafe, sync::Arc};
 
 use futures::{FutureExt as _, future::FusedFuture as _};
-use krabka_metrics::runtime::{WriterConfig, WriterTarget, serve_writer};
+use krabka_metrics::runtime::{WriterConfig, WriterLaunch, WriterTarget, serve_writer};
 use krabka_observability::{CancellationToken, RoleKind, StagedDrain};
 use prometheus_client::registry::Registry;
 use tokio::sync::{Mutex, mpsc};
@@ -12,6 +12,16 @@ use super::{
 };
 
 type RoleError = Box<dyn Error + Send + Sync>;
+
+struct AdminExit<F> {
+    abort: tokio::task::AbortHandle,
+    exit: F,
+}
+
+struct WriterRoleMetrics {
+    target: WriterTarget,
+    metrics: krabka_metrics::metrics::ServiceMetrics,
+}
 
 /// Installs both signal handlers before any role binds a listener.
 pub async fn run_all(
@@ -120,11 +130,14 @@ pub async fn serve_all(
         WriterTarget::BlockBuilder,
         WriterTarget::Compactor,
     ] {
-        writer_metrics.push((
+        writer_metrics.push(WriterRoleMetrics {
             target,
-            krabka_metrics::metrics::ServiceMetrics::for_role(Arc::clone(&registry), target.kind())
-                .await,
-        ));
+            metrics: krabka_metrics::metrics::ServiceMetrics::for_role(
+                Arc::clone(&registry),
+                target.kind(),
+            )
+            .await,
+        });
     }
     let query_metrics =
         krabka_promql::metrics::ServiceMetrics::for_role(Arc::clone(&registry), RoleKind::Querier)
@@ -137,10 +150,14 @@ pub async fn serve_all(
     let admin_address = cli.admin_listen_addr;
     let profiling = cli.profiling.clone();
     let mut drain = StagedDrain::new(cli.drain_timeout);
-    let (errors, mut failures) = mpsc::unbounded_channel();
+    let channel = mpsc::unbounded_channel();
+    let errors = channel.0;
+    let mut failures = channel.1;
     // Stop ingest first, then persist its WAL, then stop queries and compaction.
     let compactor = writer_metrics.pop().expect("three writer roles");
-    for (target, metrics) in writer_metrics {
+    for role_metrics in writer_metrics {
+        let target = role_metrics.target;
+        let metrics = role_metrics.metrics;
         let config = writer.clone();
         let role_readiness = readiness.for_role(target.kind());
         let role_security = security.clone();
@@ -151,12 +168,14 @@ pub async fn serve_all(
             target.kind().as_str(),
             move |token| {
                 serve_writer(
-                    (target, config),
-                    metrics,
-                    role_readiness,
-                    role_security,
-                    wal,
-                    token,
+                    WriterLaunch { target, config },
+                    krabka_metrics::runtime::WriterRuntime {
+                        metrics,
+                        readiness: role_readiness,
+                        security: role_security,
+                        wal_security: wal,
+                        stopping: token,
+                    },
                 )
             },
         );
@@ -179,12 +198,17 @@ pub async fn serve_all(
     let role_readiness = readiness.for_role(RoleKind::Compactor);
     stage(&mut drain, errors, "compactor", move |token| {
         serve_writer(
-            (compactor.0, writer),
-            compactor.1,
-            role_readiness,
-            compactor_security,
-            None,
-            token,
+            WriterLaunch {
+                target: compactor.target,
+                config: writer,
+            },
+            krabka_metrics::runtime::WriterRuntime {
+                metrics: compactor.metrics,
+                readiness: role_readiness,
+                security: compactor_security,
+                wal_security: None,
+                stopping: token,
+            },
         )
     });
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(
@@ -193,21 +217,19 @@ pub async fn serve_all(
         profiling,
     )
     .await;
-    let mut admin = admin.map(|task| {
-        (
-            task.abort_handle(),
-            krabka_telemetry::profiling::await_admin_exit(task)
-                .boxed()
-                .fuse(),
-        )
+    let mut admin = admin.map(|task| AdminExit {
+        abort: task.abort_handle(),
+        exit: krabka_telemetry::profiling::await_admin_exit(task)
+            .boxed()
+            .fuse(),
     });
     let outcome: Result<(), RoleError> = match admin.as_mut() {
-        Ok((_, exit)) => {
+        Ok(admin) => {
             tokio::select! {
                 () = stopping.cancelled() => Ok(()),
                 name = drain.first_unexpected_exit() => Err(format!("{name} stopped unexpectedly").into()),
                 name = audit_tasks.first_unexpected_exit() => Err(format!("{name} stopped unexpectedly").into()),
-                result = exit => result.map_err(|error| error.to_string().into()),
+                result = &mut admin.exit => result.map_err(|error| error.to_string().into()),
             }
         }
         Err(error) => Err(error.to_string().into()),
@@ -216,10 +238,10 @@ pub async fn serve_all(
     let overran = drain.drain().await;
     // Stop audit after the ordered role drain. An overrun fails the process.
     audit_tasks.shutdown().await;
-    if let Ok((abort, exit)) = admin {
-        abort.abort();
-        if !exit.is_terminated() {
-            let _ = exit.await;
+    if let Ok(admin) = admin {
+        admin.abort.abort();
+        if !admin.exit.is_terminated() {
+            let _ = admin.exit.await;
         }
     }
     let mut role_failures = Vec::new();

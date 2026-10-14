@@ -28,8 +28,8 @@ fn get(overrides: &OverridesProvider, tenant: &str, query: Option<&str>) -> Resp
     let scope = query
         .and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
-                .find(|(key, _)| key == "scope")
-                .map(|(_, value)| value.into_owned())
+                .find(|entry| entry.0 == "scope")
+                .map(|entry| entry.1.into_owned())
         })
         .unwrap_or_else(|| "api".to_string());
     if scope != "api" && scope != "merged" {
@@ -39,11 +39,11 @@ fn get(overrides: &OverridesProvider, tenant: &str, query: Option<&str>) -> Resp
         );
     }
     if scope == "merged" {
-        let version = overrides.api_get(tenant).map(|(_, version)| version);
+        let version = overrides.api_get(tenant).map(|snapshot| snapshot.version);
         return json_response(overrides.for_tenant(tenant), version);
     }
     match overrides.api_get(tenant) {
-        Some((limits, version)) => json_response(limits, Some(version)),
+        Some(snapshot) => json_response(snapshot.raw, Some(snapshot.version)),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -105,7 +105,7 @@ fn patch(
         );
     }
     match overrides.api_patch(tenant, patch) {
-        Ok((limits, version)) => json_response(limits, Some(version)),
+        Ok(snapshot) => json_response(snapshot.raw, Some(snapshot.version)),
         Err(error) => mutation_error(&error),
     }
 }
@@ -113,8 +113,8 @@ fn patch(
 fn skip_conflicts(query: Option<&str>) -> Result<bool, &'static str> {
     let value = query.and_then(|query| {
         url::form_urlencoded::parse(query.as_bytes())
-            .find(|(key, _)| key == "skip-conflicting-overrides-check")
-            .map(|(_, value)| value)
+            .find(|entry| entry.0 == "skip-conflicting-overrides-check")
+            .map(|entry| entry.1)
     });
     match value {
         Some(value) => value.parse::<bool>().map_err(
@@ -174,7 +174,10 @@ fn empty_response(status: StatusCode, version: Option<String>) -> Response {
 }
 
 fn text_error(status: StatusCode, message: &str) -> Response {
-    (status, format!("{message}\n")).into_response()
+    Response::builder()
+        .status(status)
+        .body(Body::from(format!("{message}\n")))
+        .expect("the HTTP response builds")
 }
 
 #[cfg(test)]

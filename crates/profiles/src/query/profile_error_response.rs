@@ -1,4 +1,4 @@
-use super::{IntoResponse, ProfileError, Response, StatusCode};
+use super::{ProfileError, Response, StatusCode};
 
 /// Maps a [`ProfileError`] to a legacy flamebearer HTTP response.
 ///
@@ -28,5 +28,8 @@ pub(crate) fn profile_error_response(err: ProfileError) -> Response {
         "internal error".to_string()
     };
     drop(err);
-    (status, message).into_response()
+    Response::builder()
+        .status(status)
+        .body(axum::body::Body::from(message))
+        .expect("valid profile error response")
 }

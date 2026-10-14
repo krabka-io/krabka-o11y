@@ -8,6 +8,8 @@
 
 #[path = "../../../../observability/tests/support/compaction_passes.rs"]
 mod compaction_passes;
+#[path = "../../../../traces/src/bin/krabka-traces/started_during_shutdown.rs"]
+mod started_during_shutdown;
 
 use std::{sync::Arc, time::Duration};
 
@@ -18,9 +20,12 @@ use krabka_profiles::limits::{Limits, OverridesProvider};
 use object_store::memory::InMemory;
 use tokio::sync::oneshot;
 
-use self::compaction_passes::{
-    COMPACTION_INTERVAL, assert_no_pass_after_the_stop, assert_stage_drains_with_its_loop,
-    assert_stopped_without_a_pass, passes_reach,
+use self::{
+    compaction_passes::{
+        COMPACTION_INTERVAL, assert_role_stops_after_cancel, assert_stage_drains_with_its_loop,
+        cancel_ready_role_after_two_passes,
+    },
+    started_during_shutdown::assert_starts_stopped,
 };
 use super::{CancellationToken, Cli, ObjectStore, ServiceMetrics, compactor_stage, run_compactor};
 
@@ -55,9 +60,9 @@ async fn a_cancelled_compactor_returns_and_leaves_no_loop_behind() {
     let watcher = tokio::spawn({
         let metrics = metrics.clone();
         let shutdown = shutdown.clone();
+        let readiness = readiness.clone();
         async move {
-            passes_reach(&metrics.compaction, 2).await;
-            shutdown.cancel();
+            cancel_ready_role_after_two_passes(&metrics.compaction, &readiness, &shutdown).await;
         }
     });
 
@@ -74,13 +79,7 @@ async fn a_cancelled_compactor_returns_and_leaves_no_loop_behind() {
     .expect("the compactor returns when its token is cancelled");
     watcher.await.expect("the watcher task");
 
-    check!(outcome.is_ok());
-    check!(readiness.is_ready(), "{:?}", readiness.pending());
-    assert_no_pass_after_the_stop(
-        &metrics.compaction,
-        "a compaction loop was still running after the role returned",
-    )
-    .await;
+    assert_role_stops_after_cancel(&outcome, &metrics.compaction).await;
 }
 
 /// A role started with its token already cancelled stops without a pass, and
@@ -95,18 +94,15 @@ async fn a_cancelled_compactor_returns_and_leaves_no_loop_behind() {
 #[tokio::test]
 async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
     let metrics = ServiceMetrics::new();
-    let shutdown = CancellationToken::new();
-    shutdown.cancel();
-
-    let outcome = run_compactor(
-        compactor_cli(),
-        metrics.clone(),
-        RoleReadiness::new(),
-        shutdown,
-    )
+    assert_starts_stopped(&metrics.compaction, |shutdown| {
+        run_compactor(
+            compactor_cli(),
+            metrics.clone(),
+            RoleReadiness::new(),
+            shutdown,
+        )
+    })
     .await;
-
-    assert_stopped_without_a_pass(&outcome, &metrics.compaction);
 }
 
 /// `--target all`: the compactor stage stops inside the drain's budget.
@@ -127,12 +123,15 @@ async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
         OverridesProvider::new(Limits::default()),
         &metrics,
     );
-    let (stopped_tx, stopped_rx) = oneshot::channel();
+    let stopped_channel = oneshot::channel();
     assert_stage_drains_with_its_loop(&metrics.compaction, move |token| async move {
         stage(token).await;
-        let _ = stopped_tx.send(());
+        let _ = stopped_channel.0.send(());
     })
     .await;
 
-    check!(stopped_rx.await.is_ok(), "the compactor stage returned");
+    check!(
+        stopped_channel.1.await.is_ok(),
+        "the compactor stage returned"
+    );
 }

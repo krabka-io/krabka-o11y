@@ -1,8 +1,8 @@
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, MimirTenantAdminState, RoleLaunch, RoleObjectStore, ServerSecurity, ServingWalHead,
-    Shutdown, load_runtime_overrides, mimir_tenant_admin_router, prometheus_router,
+    Arc, MimirTenantAdminState, RoleLaunch, RoleObjectStore, ServerSecurity, ServingMetricStore,
+    ServingWalHead, Shutdown, load_runtime_overrides, mimir_tenant_admin_router, prometheus_router,
     readiness_router, serve_prometheus_router_joinable, serving_api_state,
     spawn_role_wal_head_consumer,
 };
@@ -43,18 +43,17 @@ pub(crate) fn run_querier(
                     spawn_role_wal_head_consumer(&cli, feed, shutdown.clone()),
                 );
             }
-            let ServingWalHead {
+            let ServingMetricStore {
                 head,
-                status: status_wal,
-                ..
-            } = wal_head;
-            let metric_store = Arc::new(role_store.refreshing_metric_store(&cli, head.clone()));
+                status_wal,
+                metric_store,
+            } = ServingMetricStore::from_head(&role_store, &cli, wal_head);
             let state = serving_api_state(Arc::clone(&metric_store), &cli)
                 .with_erasure_store(Arc::clone(&store))
                 .with_metrics(metrics)
                 .with_audit(audit);
-            let state = if let Some((head, readiness)) = status_wal {
-                state.with_wal_head_status(head, readiness)
+            let state = if let Some(status) = status_wal {
+                state.with_wal_head_status(status.head, status.readiness)
             } else {
                 state
             };
@@ -66,7 +65,7 @@ pub(crate) fn run_querier(
                     head,
                 )))
                 .merge(readiness_router(readiness));
-            let (bound, mut server) = match serve_prometheus_router_joinable(
+            let mut serving = match serve_prometheus_router_joinable(
                 cli.listen,
                 router,
                 &security,
@@ -82,7 +81,7 @@ pub(crate) fn run_querier(
             };
             startup.mark_ready();
             tracing::info!(
-                %bound,
+                %serving.addr,
                 tls = security.tls_enabled(),
                 authentication = security.authentication_enabled(),
                 "metrics-service querier listening"
@@ -91,10 +90,10 @@ pub(crate) fn run_querier(
             // before the process exits -- unless the WAL head consumer stops first, in
             // which case the role fails by name and the drain happens on the way out.
             let outcome = tokio::select! {
-                result = &mut server => result.map_err(Into::into),
+                result = &mut serving.server => result.map_err(Into::into),
                 name = tasks.first_unexpected_exit() => {
                     shutdown.trigger();
-                    let _ = server.await;
+                    let _ = serving.server.await;
                     Err(Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)))
                 },
             };

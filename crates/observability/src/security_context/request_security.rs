@@ -59,10 +59,12 @@ impl RequestSecurity {
             .get::<ServiceAudit>()
             .cloned()
             .unwrap_or_else(ServiceAudit::disabled);
-        let principal = match (extensions.get::<Principal>(), peer) {
-            (Some(principal), _) => principal.clone(),
-            (None, None) if !audit.authentication_required => Principal::Unauthenticated,
-            (None, _) => return Err(MissingPrincipal),
+        let principal = if let Some(principal) = extensions.get::<Principal>() {
+            principal.clone()
+        } else if peer.is_none() && !audit.authentication_required {
+            Principal::Unauthenticated
+        } else {
+            return Err(MissingPrincipal);
         };
         Ok(Self {
             principal,

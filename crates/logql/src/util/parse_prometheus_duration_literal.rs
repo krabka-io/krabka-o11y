@@ -22,15 +22,15 @@ pub fn parse_prometheus_duration_literal(value: &str) -> Option<i64> {
         rest = rest.get(amount_len..)?;
 
         let unit_len = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
-        let (unit_order, _unit_bit, multiplier) = prometheus_duration_unit(rest.get(..unit_len)?)?;
+        let unit = prometheus_duration_unit(rest.get(..unit_len)?)?;
         rest = rest.get(unit_len..)?;
-        if previous_unit_order.is_some_and(|previous| unit_order <= previous) {
+        if previous_unit_order.is_some_and(|previous| unit.rank <= previous) {
             return None;
         }
 
-        let chunk_ns = amount.checked_mul(multiplier)?;
+        let chunk_ns = amount.checked_mul(unit.nanoseconds)?;
         total_ns = total_ns.checked_add(chunk_ns)?;
-        previous_unit_order = Some(unit_order);
+        previous_unit_order = Some(unit.rank);
         parsed_chunk = true;
     }
 

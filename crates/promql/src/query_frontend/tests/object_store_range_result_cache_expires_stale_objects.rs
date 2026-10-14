@@ -7,21 +7,11 @@ pub(crate) async fn object_store_range_result_cache_expires_stale_objects() {
     let cache = ObjectStoreQueryFrontendCache::new(object_store, "query-cache".to_string())
         .with_ttl(secs(30))
         .with_clock(clock.clone());
-    let query = up_range_query(0, None);
-    let result = one_sample_matrix(labels(&[("__name__", "up")]));
+    let fixture = up_query_and_result();
+    let query = fixture.query;
+    let result = fixture.result;
 
-    cache
-        .insert("tenant-a", &query, result.clone())
-        .await
-        .unwrap();
-
-    // Within TTL: hit.
-    clock.advance(29_000);
-    assert2::assert!(cache.get("tenant-a", &query).await.unwrap() == Some(result.clone()));
-
-    // Past TTL: miss.
-    clock.advance(2_000);
-    assert2::assert!(cache.get("tenant-a", &query).await.unwrap() == None);
+    assert_ttl_hit_then_miss(&cache, &clock, &query, &result, 29_000, 2_000).await;
 
     cache
         .insert("tenant-a", &query, result)

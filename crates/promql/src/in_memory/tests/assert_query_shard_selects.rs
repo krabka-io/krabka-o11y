@@ -6,20 +6,25 @@ use super::*;
 pub(crate) async fn assert_query_shard_selects(op: MatchOp) {
     let mut store = InMemoryMetricStore::new();
     let series = (0..12)
-        .map(|id| lbls(&[("__name__", "up"), ("series", &id.to_string())]))
+        .map(|id| {
+            lbls(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("series", &id.to_string()),
+            ])
+        })
         .collect::<Vec<_>>();
     for labels in &series {
         store.push_float("t", labels.clone(), 1, 1.0);
     }
 
     let keeps_even = op == MatchOp::Eq;
-    let expected = series
-        .iter()
-        .filter(|labels| labels.fingerprint().is_multiple_of(2) == keeps_even)
-        .map(|labels| (labels.fingerprint(), labels.clone()))
-        .collect::<BTreeMap<_, _>>()
-        .into_values()
-        .collect::<Vec<_>>();
+    let mut expected_by_fingerprint = BTreeMap::new();
+    for labels in &series {
+        if labels.fingerprint().is_multiple_of(2) == keeps_even {
+            expected_by_fingerprint.insert(labels.fingerprint(), labels.clone());
+        }
+    }
+    let expected = expected_by_fingerprint.into_values().collect::<Vec<_>>();
     assert2::assert!(!expected.is_empty());
     assert2::assert!(expected.len() < series.len());
 

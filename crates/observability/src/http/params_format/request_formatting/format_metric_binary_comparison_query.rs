@@ -6,12 +6,14 @@ use super::{
 };
 
 pub(crate) fn format_metric_binary_comparison_query(query: &str) -> Option<String> {
-    let (left_text, _, right_text) = split_top_level_comparison_query(query)?;
+    let split = split_top_level_comparison_query(query)?;
+    let left_text = split.left;
+    let right_text = split.right;
     let right_text = right_text.trim_start();
     let right_text = right_text
         .strip_prefix("bool")
         .map_or(right_text, str::trim_start);
-    let (_, right_text) = split_leading_vector_binary_modifiers(right_text);
+    let right_text = split_leading_vector_binary_modifiers(right_text).remainder;
     parse_metric_query(left_text.trim()).ok()?;
     parse_metric_query(right_text.trim()).ok()?;
     let comparison = parse_metric_binary_comparison_query(query).ok()?;

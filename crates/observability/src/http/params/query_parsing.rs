@@ -4,9 +4,20 @@ use krabka_units::convert::TimeExt;
 use crate::{
     DecodedQueryPair, DetectedFieldsParams, DetectedLabelsParams, HttpQueryError,
     LOKI_DEFAULT_QUERY_RANGE, LOKI_MAX_TAIL_DELAY, OffsetDateTime, PatternsParams, QueryParams,
-    Rfc3339, VolumeAggregateBy, VolumeParams, current_unix_time_ns, decode_form_component,
-    decode_query_pair, parse_decimal_seconds_timestamp, parse_usize_query_param, start_or_since,
+    Rfc3339, VolumeAggregateBy, VolumeParams, current_unix_time_ns, decode_query_pair,
+    parse_decimal_seconds_timestamp, parse_usize_query_param, start_or_since,
 };
+
+pub(crate) fn decoded_query_param_pairs(
+    raw_query: Option<&str>,
+    known_keys: &[&str],
+) -> Result<Vec<DecodedQueryPair>, HttpQueryError> {
+    let raw_query = raw_query.ok_or(HttpQueryError::MissingQueryParameter("query"))?;
+    split_query_param_pairs(raw_query, known_keys)
+        .into_iter()
+        .map(decode_query_pair)
+        .collect()
+}
 
 mod parse_detected_fields_params;
 mod parse_detected_labels_params;

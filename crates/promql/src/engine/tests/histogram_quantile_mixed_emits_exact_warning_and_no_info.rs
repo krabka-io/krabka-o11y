@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn histogram_quantile_mixed_emits_exact_warning_and_no_info() {
     let engine = PromqlEngine::new(Arc::new(mixed_histogram_store()), EngineOpts::default());
-    let (_, annotations) = engine
+    let annotated = engine
         .query_instant_with_annotations(
             &tenant_id("tenant-a"),
             "histogram_quantile(0.8, series)",
@@ -11,6 +11,7 @@ pub(crate) async fn histogram_quantile_mixed_emits_exact_warning_and_no_info() {
         )
         .await
         .expect("query");
+    let annotations = annotated.annotations;
     assert2::assert!(
         annotations
             == crate::Annotations {

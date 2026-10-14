@@ -18,22 +18,35 @@ pub(crate) async fn metadata_label_sets_are_distinct_filtered_and_stripped() {
             .expect("readable")
     }
     let mut label_index = LabelIndex::default();
-    let labels = |pairs: &[(&str, &str)]| {
-        pairs
-            .iter()
-            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-            .collect::<Labels>()
-    };
     // Two series for one tenant plus one for another, and a fourth that
     // differs from the first only by an internal label -- so it collapses
     // onto it once that label is hidden.
-    label_index.insert_series("t", labels(&[("app", "web"), ("env", "prod")]));
-    label_index.insert_series("t", labels(&[("app", "api"), ("env", "prod")]));
     label_index.insert_series(
         "t",
-        labels(&[("app", "web"), ("env", "prod"), ("detected_level", "warn")]),
+        krabka_blockstore::labels([
+            krabka_blockstore::LabelPair::new("app", "web"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
     );
-    label_index.insert_series("other", labels(&[("app", "elsewhere")]));
+    label_index.insert_series(
+        "t",
+        krabka_blockstore::labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
+    label_index.insert_series(
+        "t",
+        krabka_blockstore::labels([
+            krabka_blockstore::LabelPair::new("app", "web"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("detected_level", "warn"),
+        ]),
+    );
+    label_index.insert_series(
+        "other",
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "elsewhere")]),
+    );
 
     let dir = tempfile::TempDir::new().expect("temp dir");
     let state = QuerierState::new(dir.path(), label_index, BlockIndex::default());

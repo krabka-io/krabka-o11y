@@ -210,45 +210,54 @@ fn evaluate_template_comparison(name: &str, args: &[TemplateRuntimeValue]) -> Te
         return TemplateRuntimeValue::Json(serde_json::Value::Bool(false));
     };
     let compare = |right: &TemplateRuntimeValue| {
-        if let (TemplateRuntimeValue::Time(left), TemplateRuntimeValue::Time(right)) = (left, right)
+        if let TemplateRuntimeValue::Time(left_time) = left
+            && let TemplateRuntimeValue::Time(right_time) = right
         {
-            return Some(if left == right {
+            return Some(if left_time == right_time {
                 std::cmp::Ordering::Equal
             } else {
                 std::cmp::Ordering::Less
             });
         }
-        let same_pointer = match (left, right) {
-            (TemplateRuntimeValue::TimePointer(left), TemplateRuntimeValue::TimePointer(right)) => {
-                Some(std::sync::Arc::ptr_eq(left, right))
-            }
-            (
-                TemplateRuntimeValue::DurationPointer(left),
-                TemplateRuntimeValue::DurationPointer(right),
-            ) => Some(std::sync::Arc::ptr_eq(left, right)),
-            (TemplateRuntimeValue::Sample(left), TemplateRuntimeValue::Sample(right)) => {
-                Some(std::sync::Arc::ptr_eq(left, right))
-            }
-            (
-                TemplateRuntimeValue::FloatHistogram(left),
-                TemplateRuntimeValue::FloatHistogram(right),
-            ) => Some(left.ptr_eq(right)),
-            (
-                TemplateRuntimeValue::HistogramIterator(left),
-                TemplateRuntimeValue::HistogramIterator(right),
-            ) => Some(left == right),
-            (
-                TemplateRuntimeValue::HistogramBucket(left),
-                TemplateRuntimeValue::HistogramBucket(right),
-            ) => Some(left == right),
-            (
-                TemplateRuntimeValue::HistogramSpan(left),
-                TemplateRuntimeValue::HistogramSpan(right),
-            ) => Some(left == right),
-            (
-                TemplateRuntimeValue::HistogramError(left),
-                TemplateRuntimeValue::HistogramError(right),
-            ) => Some(std::sync::Arc::ptr_eq(left, right)),
+        let same_pointer = match left {
+            TemplateRuntimeValue::TimePointer(left) => match right {
+                TemplateRuntimeValue::TimePointer(right) => {
+                    Some(std::sync::Arc::ptr_eq(left, right))
+                }
+                _ => None,
+            },
+            TemplateRuntimeValue::DurationPointer(left) => match right {
+                TemplateRuntimeValue::DurationPointer(right) => {
+                    Some(std::sync::Arc::ptr_eq(left, right))
+                }
+                _ => None,
+            },
+            TemplateRuntimeValue::Sample(left) => match right {
+                TemplateRuntimeValue::Sample(right) => Some(std::sync::Arc::ptr_eq(left, right)),
+                _ => None,
+            },
+            TemplateRuntimeValue::FloatHistogram(left) => match right {
+                TemplateRuntimeValue::FloatHistogram(right) => Some(left.ptr_eq(right)),
+                _ => None,
+            },
+            TemplateRuntimeValue::HistogramIterator(left) => match right {
+                TemplateRuntimeValue::HistogramIterator(right) => Some(left == right),
+                _ => None,
+            },
+            TemplateRuntimeValue::HistogramBucket(left) => match right {
+                TemplateRuntimeValue::HistogramBucket(right) => Some(left == right),
+                _ => None,
+            },
+            TemplateRuntimeValue::HistogramSpan(left) => match right {
+                TemplateRuntimeValue::HistogramSpan(right) => Some(left == right),
+                _ => None,
+            },
+            TemplateRuntimeValue::HistogramError(left) => match right {
+                TemplateRuntimeValue::HistogramError(right) => {
+                    Some(std::sync::Arc::ptr_eq(left, right))
+                }
+                _ => None,
+            },
             _ => None,
         };
         if let Some(equal) = same_pointer {
@@ -271,29 +280,41 @@ fn evaluate_template_comparison(name: &str, args: &[TemplateRuntimeValue]) -> Te
         if left.is_template_string() && right.is_template_string() {
             return Some(left.string_bytes().cmp(&right.string_bytes()));
         }
-        if let (Some(left), Some(right)) = (left.signed_integer(), right.signed_integer()) {
-            return Some(left.cmp(&right));
-        }
-        if let (TemplateRuntimeValue::Byte(left), TemplateRuntimeValue::Byte(right)) = (left, right)
+        if let Some(left_integer) = left.signed_integer()
+            && let Some(right_integer) = right.signed_integer()
         {
-            return Some(left.cmp(right));
+            return Some(left_integer.cmp(&right_integer));
         }
-        if let (Some(left), TemplateRuntimeValue::Byte(right)) = (left.signed_integer(), right) {
-            return Some(
-                u8::try_from(left).map_or(std::cmp::Ordering::Less, |left| left.cmp(right)),
-            );
+        if let TemplateRuntimeValue::Byte(left_byte) = left
+            && let TemplateRuntimeValue::Byte(right_byte) = right
+        {
+            return Some(left_byte.cmp(right_byte));
         }
-        if let (TemplateRuntimeValue::Byte(left), Some(right)) = (left, right.signed_integer()) {
-            return Some(
-                u8::try_from(right).map_or(std::cmp::Ordering::Greater, |right| left.cmp(&right)),
-            );
-        }
-        if let (TemplateRuntimeValue::Complex(lr, li), TemplateRuntimeValue::Complex(rr, ri)) =
-            (left, right)
+        if let Some(left_integer) = left.signed_integer()
+            && let TemplateRuntimeValue::Byte(right_byte) = right
         {
             return Some(
-                if lr.partial_cmp(rr) == Some(std::cmp::Ordering::Equal)
-                    && li.partial_cmp(ri) == Some(std::cmp::Ordering::Equal)
+                u8::try_from(left_integer).map_or(std::cmp::Ordering::Less, |left_byte| {
+                    left_byte.cmp(right_byte)
+                }),
+            );
+        }
+        if let TemplateRuntimeValue::Byte(left_byte) = left
+            && let Some(right_integer) = right.signed_integer()
+        {
+            return Some(
+                u8::try_from(right_integer).map_or(std::cmp::Ordering::Greater, |right_byte| {
+                    left_byte.cmp(&right_byte)
+                }),
+            );
+        }
+        if let TemplateRuntimeValue::Complex(left_real, left_imaginary) = left
+            && let TemplateRuntimeValue::Complex(right_real, right_imaginary) = right
+        {
+            return Some(
+                if left_real.partial_cmp(right_real) == Some(std::cmp::Ordering::Equal)
+                    && left_imaginary.partial_cmp(right_imaginary)
+                        == Some(std::cmp::Ordering::Equal)
                 {
                     std::cmp::Ordering::Equal
                 } else {
@@ -306,15 +327,15 @@ fn evaluate_template_comparison(name: &str, args: &[TemplateRuntimeValue]) -> Te
             TemplateRuntimeValue::Json(serde_json::Value::Number(value)) => value.as_f64(),
             _ => None,
         };
-        if let (Some(left), Some(right)) = (number(left), number(right)) {
-            return left.partial_cmp(&right);
-        }
-        if let (
-            TemplateRuntimeValue::Json(serde_json::Value::Bool(left)),
-            TemplateRuntimeValue::Json(serde_json::Value::Bool(right)),
-        ) = (left, right)
+        if let Some(left_number) = number(left)
+            && let Some(right_number) = number(right)
         {
-            return Some(left.cmp(right));
+            return left_number.partial_cmp(&right_number);
+        }
+        if let TemplateRuntimeValue::Json(serde_json::Value::Bool(left_bool)) = left
+            && let TemplateRuntimeValue::Json(serde_json::Value::Bool(right_bool)) = right
+        {
+            return Some(left_bool.cmp(right_bool));
         }
         None
     };

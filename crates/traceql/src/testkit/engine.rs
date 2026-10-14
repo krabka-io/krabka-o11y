@@ -1,4 +1,4 @@
-use super::{Arc, AttrValue, EngineOpts, InMemorySpanStore, SpanFixture, TraceqlEngine};
+use super::{Arc, AttrValue, Attribute, EngineOpts, InMemorySpanStore, SpanFixture, TraceqlEngine};
 
 /// An engine over the fixture traces the golden corpus and the golden query
 /// suite assert against: tenant `t`, three traces of one to four spans.
@@ -16,10 +16,10 @@ pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
                 name: "root-a",
                 duration_nanos: 100,
                 attrs: vec![
-                    ("svc", AttrValue::Str("a".into())),
-                    ("a", AttrValue::Int(1)),
-                    ("http.method", AttrValue::Str("GET".into())),
-                    ("name", AttrValue::Str("post-root".into())),
+                    Attribute::new("svc", AttrValue::Str("a".into())),
+                    Attribute::new("a", AttrValue::Int(1)),
+                    Attribute::new("http.method", AttrValue::Str("GET".into())),
+                    Attribute::new("name", AttrValue::Str("post-root".into())),
                 ],
                 ..SpanFixture::default()
             }
@@ -31,8 +31,8 @@ pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
                 name: "child-x",
                 duration_nanos: 200,
                 attrs: vec![
-                    ("svc", AttrValue::Str("b".into())),
-                    ("b", AttrValue::Int(2)),
+                    Attribute::new("svc", AttrValue::Str("b".into())),
+                    Attribute::new("b", AttrValue::Int(2)),
                 ],
             }
             .input_span(),
@@ -42,7 +42,7 @@ pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
                 parent: Some(2),
                 name: "grand-y",
                 duration_nanos: 80,
-                attrs: vec![("svc", AttrValue::Str("c".into()))],
+                attrs: vec![Attribute::new("svc", AttrValue::Str("c".into()))],
             }
             .input_span(),
             SpanFixture {
@@ -51,7 +51,7 @@ pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
                 parent: Some(1),
                 name: "child-z",
                 duration_nanos: 220,
-                attrs: vec![("svc", AttrValue::Str("b".into()))],
+                attrs: vec![Attribute::new("svc", AttrValue::Str("b".into()))],
             }
             .input_span(),
         ],
@@ -67,10 +67,10 @@ pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
                 name: "both",
                 duration_nanos: 50,
                 attrs: vec![
-                    ("svc", AttrValue::Str("x".into())),
-                    ("a", AttrValue::Int(1)),
-                    ("b", AttrValue::Int(2)),
-                    ("name", AttrValue::Str("xpost".into())),
+                    Attribute::new("svc", AttrValue::Str("x".into())),
+                    Attribute::new("a", AttrValue::Int(1)),
+                    Attribute::new("b", AttrValue::Int(2)),
+                    Attribute::new("name", AttrValue::Str("xpost".into())),
                 ],
                 ..SpanFixture::default()
             }
@@ -87,7 +87,7 @@ pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
                 id: 1,
                 name: "root-d",
                 duration_nanos: 100,
-                attrs: vec![("svc", AttrValue::Str("a".into()))],
+                attrs: vec![Attribute::new("svc", AttrValue::Str("a".into()))],
                 ..SpanFixture::default()
             }
             .input_span(),
@@ -97,7 +97,7 @@ pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
                 parent: Some(1),
                 name: "child-d",
                 duration_nanos: 100,
-                attrs: vec![("svc", AttrValue::Str("d".into()))],
+                attrs: vec![Attribute::new("svc", AttrValue::Str("d".into()))],
             }
             .input_span(),
         ],

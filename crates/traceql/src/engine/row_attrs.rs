@@ -1,12 +1,14 @@
 use super::{
-    ATTR_PREFIX, Array, AsArray, AttrValue, DataType, RecordBatch, Result, TraceqlError,
+    ATTR_PREFIX, Array, AsArray, AttrValue, Attribute, DataType, RecordBatch, Result, TraceqlError,
     block_row_attrs, string_array_value,
 };
 
-pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, AttrValue)>> {
+pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<Attribute>> {
     let schema = batch.schema();
     let mut attrs = Vec::new();
-    for (idx, field) in schema.fields().iter().enumerate() {
+    for indexed_field in schema.fields().iter().enumerate() {
+        let idx = indexed_field.0;
+        let field = indexed_field.1;
         let Some(name) = field.name().strip_prefix(ATTR_PREFIX) else {
             continue;
         };
@@ -47,7 +49,9 @@ pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, 
                 let is_array = typed
                     .column_by_name("is_array")
                     .is_some_and(|flags| !flags.is_null(row) && flags.as_boolean().value(row));
-                for (key, value) in typed.column_names().iter().zip(typed.columns()) {
+                for named_column in typed.column_names().iter().zip(typed.columns()) {
+                    let key = named_column.0;
+                    let value = named_column.1;
                     if *key == "is_array" {
                         continue;
                     }
@@ -86,12 +90,15 @@ pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, 
                     }
                 }
                 if is_array {
-                    attrs.push((name.to_string(), AttrValue::Array(typed_values)));
+                    attrs.push(Attribute::new(
+                        name.to_string(),
+                        AttrValue::Array(typed_values),
+                    ));
                 } else {
                     attrs.extend(
                         typed_values
                             .into_iter()
-                            .map(|value| (name.to_string(), value)),
+                            .map(|value| Attribute::new(name.to_string(), value)),
                     );
                 }
                 continue;
@@ -102,9 +109,9 @@ pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, 
                 )));
             }
         };
-        attrs.push((name.to_string(), value));
+        attrs.push(Attribute::new(name.to_string(), value));
     }
     attrs.extend(block_row_attrs(batch, row)?);
-    attrs.sort_by(|a, b| a.0.cmp(&b.0));
+    attrs.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(attrs)
 }

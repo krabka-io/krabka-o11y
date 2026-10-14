@@ -8,6 +8,11 @@ const ALERTMANAGER_PREFIX: &str = "mimir-configs/alertmanager";
 const ALERTS_PREFIX: &str = "mimir-configs/alertmanager-alerts";
 const SILENCES_PREFIX: &str = "mimir-configs/alertmanager-silences";
 
+struct TenantValue<T> {
+    tenant: TenantId,
+    value: T,
+}
+
 impl<S: MetricStore> PrometheusApiState<S> {
     /// Reloads every persisted tenant configuration before the role starts evaluating.
     ///
@@ -29,7 +34,10 @@ impl<S: MetricStore> PrometheusApiState<S> {
             |tenant, bytes| {
                 let namespaces =
                     serde_yaml::from_slice(bytes).map_err(|error| error.to_string())?;
-                loaded_rules.push((tenant, namespaces));
+                loaded_rules.push(TenantValue {
+                    tenant,
+                    value: namespaces,
+                });
                 Ok(())
             },
         )
@@ -40,7 +48,10 @@ impl<S: MetricStore> PrometheusApiState<S> {
             |tenant, bytes| {
                 let config =
                     String::from_utf8(bytes.to_vec()).map_err(|error| error.to_string())?;
-                loaded_alertmanager.push((tenant, config));
+                loaded_alertmanager.push(TenantValue {
+                    tenant,
+                    value: config,
+                });
                 Ok(())
             },
         )
@@ -50,7 +61,10 @@ impl<S: MetricStore> PrometheusApiState<S> {
             TenantObjectListing::json(ALERTS_PREFIX),
             |tenant, bytes| {
                 let alerts = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-                loaded_alerts.push((tenant, alerts));
+                loaded_alerts.push(TenantValue {
+                    tenant,
+                    value: alerts,
+                });
                 Ok(())
             },
         )
@@ -60,27 +74,42 @@ impl<S: MetricStore> PrometheusApiState<S> {
             TenantObjectListing::json(SILENCES_PREFIX),
             |tenant, bytes| {
                 let silences = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-                loaded_silences.push((tenant, silences));
+                loaded_silences.push(TenantValue {
+                    tenant,
+                    value: silences,
+                });
                 Ok(())
             },
         )
         .await?;
-        self.ruler_rules
+        let mut rules = self
+            .ruler_rules
             .write()
-            .map_err(|_| "ruler rules lock poisoned")?
-            .extend(loaded_rules);
-        self.alertmanager_configs
+            .map_err(|_| "ruler rules lock poisoned")?;
+        for entry in loaded_rules {
+            rules.insert(entry.tenant, entry.value);
+        }
+        let mut configs = self
+            .alertmanager_configs
             .write()
-            .map_err(|_| "alertmanager configs lock poisoned")?
-            .extend(loaded_alertmanager);
-        self.alertmanager_alerts
+            .map_err(|_| "alertmanager configs lock poisoned")?;
+        for entry in loaded_alertmanager {
+            configs.insert(entry.tenant, entry.value);
+        }
+        let mut alerts = self
+            .alertmanager_alerts
             .write()
-            .map_err(|_| "alertmanager alerts lock poisoned")?
-            .extend(loaded_alerts);
-        self.alertmanager_silences
+            .map_err(|_| "alertmanager alerts lock poisoned")?;
+        for entry in loaded_alerts {
+            alerts.insert(entry.tenant, entry.value);
+        }
+        let mut silences = self
+            .alertmanager_silences
             .write()
-            .map_err(|_| "alertmanager silences lock poisoned")?
-            .extend(loaded_silences);
+            .map_err(|_| "alertmanager silences lock poisoned")?;
+        for entry in loaded_silences {
+            silences.insert(entry.tenant, entry.value);
+        }
         Ok(())
     }
 

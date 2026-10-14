@@ -2,14 +2,20 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn exemplars_reads_compacted_exemplar_sidecar_blocks() {
-    let series_labels = labels(&[("__name__", "http_requests_total"), ("job", "api")]);
+    let series_labels = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     let batch = exemplar_batch(ExemplarRow {
         fingerprint: series_labels.fingerprint(),
         timestamp_ms: 10_500,
         value: 7.0,
         trace_id: Some("abc".to_string()),
         span_id: Some("def".to_string()),
-        labels: vec![("kind".to_string(), "slow".to_string())],
+        labels: vec![krabka_blockstore::LabelPair::new(
+            "kind",
+            "slow".to_string(),
+        )],
     });
     let store = manifest_store(ManifestBlock {
         kind: MetricBlockKind::Exemplars,

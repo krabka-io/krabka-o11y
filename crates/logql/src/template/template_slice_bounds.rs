@@ -1,9 +1,15 @@
 use super::{TemplateRuntimeValue, parse_template_bound};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TemplateSliceBounds {
+    pub start: usize,
+    pub end: usize,
+}
+
 pub(crate) fn template_slice_bounds(
     len: usize,
     bounds: &[TemplateRuntimeValue],
-) -> Option<(usize, usize)> {
+) -> Option<TemplateSliceBounds> {
     if bounds.len() > 3 {
         return None;
     }
@@ -15,5 +21,5 @@ pub(crate) fn template_slice_bounds(
             return None;
         }
     }
-    (start <= end && end <= len).then_some((start, end))
+    (start <= end && end <= len).then_some(TemplateSliceBounds { start, end })
 }

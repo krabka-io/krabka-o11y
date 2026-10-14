@@ -9,6 +9,25 @@ pub(crate) struct TimedSample<'a> {
     pub(crate) sample_value: &'a str,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FormattedTimedSample {
+    pub(crate) timestamp: i64,
+    pub(crate) sample_value: String,
+}
+
+pub(crate) fn formatted_sample(timestamp: i64, sample_value: &str) -> FormattedTimedSample {
+    FormattedTimedSample {
+        timestamp,
+        sample_value: sample_value.to_string(),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BinaryOperationResult {
+    pub(crate) kept: bool,
+    pub(crate) samples: Vec<FormattedTimedSample>,
+}
+
 pub(crate) const fn timed_sample(timestamp: i64, sample_value: &str) -> TimedSample<'_> {
     TimedSample {
         timestamp,
@@ -35,17 +54,15 @@ pub(crate) fn instant_series(sample: TimedSample<'_>) -> Value {
 
 /// The `(timestamp, value)` pairs of a range series built by
 /// [`range_series`].
-pub(crate) fn range_pairs(series: &Value) -> Vec<(i64, String)> {
+pub(crate) fn range_pairs(series: &Value) -> Vec<FormattedTimedSample> {
     series
         .get("values")
         .and_then(Value::as_array)
         .expect("the series has values")
         .iter()
-        .map(|sample| {
-            (
-                sample[0].as_i64().expect("a timestamp"),
-                sample[1].as_str().expect("a value").to_string(),
-            )
+        .map(|sample| FormattedTimedSample {
+            timestamp: sample[0].as_i64().expect("a timestamp"),
+            sample_value: sample[1].as_str().expect("a value").to_string(),
         })
         .collect()
 }

@@ -13,19 +13,16 @@ pub(crate) fn align_batch_to_block_schema(
     batch: &RecordBatch,
     schema: &SchemaRef,
 ) -> Result<RecordBatch, TracesError> {
-    if batch.schema() == *schema {
-        return Ok(batch.clone());
-    }
-    let mut columns = Vec::with_capacity(schema.fields().len());
-    for field in schema.fields() {
-        if let Some(column) = batch.column_by_name(field.name()) {
-            columns.push(column.clone());
-            continue;
-        }
-        let attr = promoted_span_attr_from_field(field).ok_or_else(|| {
-            TracesError::Block(format!("span block is missing column `{}`", field.name()))
-        })?;
-        columns.push(promoted_attr_column(batch, &attr)?);
-    }
-    RecordBatch::try_new(schema.clone(), columns).map_err(|err| TracesError::Block(err.to_string()))
+    crate::align_record_batch::align_record_batch(
+        batch,
+        schema,
+        |_field, column| Ok(column.clone()),
+        |field| {
+            let attr = promoted_span_attr_from_field(field).ok_or_else(|| {
+                TracesError::Block(format!("span block is missing column `{}`", field.name()))
+            })?;
+            promoted_attr_column(batch, &attr)
+        },
+        |err| TracesError::Block(err.to_string()),
+    )
 }

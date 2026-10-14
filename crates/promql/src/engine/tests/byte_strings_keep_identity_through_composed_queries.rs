@@ -1,5 +1,20 @@
 use super::*;
 
+struct ByteStringCase {
+    query: &'static str,
+    expected: Vec<u8>,
+}
+
+struct ByteQueryCase {
+    query: &'static str,
+    multiplier: f64,
+}
+
+struct ByteQuerySample {
+    timestamp_ms: i64,
+    multiplier: f64,
+}
+
 #[tokio::test]
 async fn byte_strings_keep_identity_through_composed_queries() {
     async fn evaluate(
@@ -20,23 +35,43 @@ async fn byte_strings_keep_identity_through_composed_queries() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "t",
-        labels(&[("__name__", "g"), ("src", "first\nsecond")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "g"),
+            crate::test_support::TestLabelPair::new("src", "first\nsecond"),
+        ]),
         10_000,
         -2.0,
     );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for planned in [false, true] {
-        for (query, expected) in [
-            (r#""\xff""#, vec![0xff]),
-            (r#""\xfe""#, vec![0xfe]),
-            (r#""\xe2\x82""#, vec![0xe2, 0x82]),
-            (r#""\xef\xbf\xbd""#, vec![0xef, 0xbf, 0xbd]),
+        for case in [
+            ByteStringCase {
+                query: r#""\xff""#,
+                expected: vec![0xff],
+            },
+            ByteStringCase {
+                query: r#""\xfe""#,
+                expected: vec![0xfe],
+            },
+            ByteStringCase {
+                query: r#""\xe2\x82""#,
+                expected: vec![0xe2, 0x82],
+            },
+            ByteStringCase {
+                query: r#""\xef\xbf\xbd""#,
+                expected: vec![0xef, 0xbf, 0xbd],
+            },
         ] {
-            let QueryResult::Str { value, .. } = evaluate(&engine, query, planned).await.unwrap()
+            let QueryResult::Str { value, .. } =
+                evaluate(&engine, case.query, planned).await.unwrap()
             else {
                 panic!("string expected")
             };
-            assert2::assert!(value.as_bytes() == expected.as_slice(), "{query}");
+            assert2::assert!(
+                value.as_bytes() == case.expected.as_slice(),
+                "{}",
+                case.query
+            );
         }
         let replace =
             |replacement: &str| format!(r#"label_replace(g,"raw","{replacement}","src","(.*)")"#);
@@ -96,29 +131,71 @@ async fn stored_byte_labels_survive_instant_range_aggregation_and_rate_planners(
         b"__krabka_bytes_ff".to_vec(),
     ];
     let mut store = InMemoryMetricStore::new();
-    for (index, raw) in identities.iter().enumerate() {
-        let mut labels = crate::PromqlLabels::from_pairs([("__name__", "raw_total")]);
+    for index in 0..identities.len() {
+        let raw = &identities[index];
+        let mut labels = crate::PromqlLabels::from_pairs([krabka_metrics::MetricLabelPair::new(
+            "__name__",
+            "raw_total",
+        )]);
         labels.insert("raw", crate::PromqlString::from(raw.clone()));
         let base = f64::from(u32::try_from(index + 1).unwrap());
-        for (time, multiplier) in [(0, 0.0), (10_000, 1.0), (20_000, 2.0)] {
-            store.push_float("t", labels.clone(), time, base * multiplier);
+        for sample in [
+            ByteQuerySample {
+                timestamp_ms: 0,
+                multiplier: 0.0,
+            },
+            ByteQuerySample {
+                timestamp_ms: 10_000,
+                multiplier: 1.0,
+            },
+            ByteQuerySample {
+                timestamp_ms: 20_000,
+                multiplier: 2.0,
+            },
+        ] {
+            store.push_float(
+                "t",
+                labels.clone(),
+                sample.timestamp_ms,
+                base * sample.multiplier,
+            );
         }
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for planned in [false, true] {
-        for (query, multiplier) in [
-            ("raw_total", 2.0),
-            ("abs(raw_total)", 2.0),
-            ("sum by(raw)(raw_total)", 2.0),
-            ("sum_over_time(raw_total[20s])", 3.0),
-            ("rate(raw_total[20s])", 0.1),
-            ("sum by(raw)(rate(raw_total[20s]))", 0.1),
+        for case in [
+            ByteQueryCase {
+                query: "raw_total",
+                multiplier: 2.0,
+            },
+            ByteQueryCase {
+                query: "abs(raw_total)",
+                multiplier: 2.0,
+            },
+            ByteQueryCase {
+                query: "sum by(raw)(raw_total)",
+                multiplier: 2.0,
+            },
+            ByteQueryCase {
+                query: "sum_over_time(raw_total[20s])",
+                multiplier: 3.0,
+            },
+            ByteQueryCase {
+                query: "rate(raw_total[20s])",
+                multiplier: 0.1,
+            },
+            ByteQueryCase {
+                query: "sum by(raw)(rate(raw_total[20s]))",
+                multiplier: 0.1,
+            },
         ] {
             let result = if planned {
-                engine.query_instant(&tenant_id("t"), query, 20_000).await
+                engine
+                    .query_instant(&tenant_id("t"), case.query, 20_000)
+                    .await
             } else {
                 let expr = crate::parse_promql_with_duration_context(
-                    query,
+                    case.query,
                     crate::DurationExprContext::instant(20_000),
                 )
                 .unwrap();
@@ -128,16 +205,18 @@ async fn stored_byte_labels_survive_instant_range_aggregation_and_rate_planners(
             let QueryResult::InstantVector(samples) = result else {
                 panic!("expected vector")
             };
-            assert2::assert!(samples.len() == 4, "{query}, planned={planned}");
-            for (index, raw) in identities.iter().enumerate() {
+            assert2::assert!(samples.len() == 4, "{}, planned={planned}", case.query);
+            for index in 0..identities.len() {
+                let raw = &identities[index];
                 let sample = samples
                     .iter()
                     .find(|sample| sample.labels.get_value("raw").unwrap().as_bytes() == raw)
                     .unwrap();
-                let expected = f64::from(u32::try_from(index + 1).unwrap()) * multiplier;
+                let expected = f64::from(u32::try_from(index + 1).unwrap()) * case.multiplier;
                 assert2::assert!(
                     (float_value(&sample.value) - expected).abs() < 1e-12,
-                    "{query}, raw={raw:?}"
+                    "{}, raw={raw:?}",
+                    case.query
                 );
             }
         }
@@ -157,7 +236,8 @@ async fn stored_byte_labels_survive_instant_range_aggregation_and_rate_planners(
             panic!("expected matrix")
         };
         assert2::assert!(series.len() == 4);
-        for (index, raw) in identities.iter().enumerate() {
+        for index in 0..identities.len() {
+            let raw = &identities[index];
             let actual = series
                 .iter()
                 .find(|series| series.labels.get_value("raw").unwrap().as_bytes() == raw)
@@ -166,8 +246,8 @@ async fn stored_byte_labels_survive_instant_range_aggregation_and_rate_planners(
             assert2::assert!(
                 actual.samples
                     == [
-                        (10_000, SampleValue::Float(base)),
-                        (20_000, SampleValue::Float(base * 2.0))
+                        crate::RangeSeriesSample::new(10_000, SampleValue::Float(base)),
+                        crate::RangeSeriesSample::new(20_000, SampleValue::Float(base * 2.0))
                     ]
             );
         }

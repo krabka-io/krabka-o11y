@@ -4,7 +4,9 @@ pub(crate) fn metric_scalar_arithmetic_value(
     operands: ScalarOperands,
     op: MetricScalarArithmeticOp,
 ) -> Option<MetricValue> {
-    let (left, right) = operands.left_and_right();
+    let pair = operands.left_and_right();
+    let left = pair.left;
+    let right = pair.right;
     match op {
         MetricScalarArithmeticOp::Add => Some(left.add(right)),
         MetricScalarArithmeticOp::Subtract => Some(left.subtract(right)),

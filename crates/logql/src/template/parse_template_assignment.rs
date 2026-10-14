@@ -10,19 +10,22 @@ pub(crate) fn parse_template_assignment(
         return Ok(None);
     }
     let expression_declaration = expression.contains(":=");
-    let (variable, expression) = if let Some((variable, expression)) = expression.split_once(":=") {
-        (variable, expression)
-    } else if let Some((variable, expression)) = expression.split_once('=') {
-        if variable
+    let parts = if let Some(parts) = expression.split_once(":=") {
+        parts
+    } else if let Some(parts) = expression.split_once('=') {
+        if parts
+            .0
             .trim()
             .contains(is_template_control_assignment_variable_char)
         {
             return Ok(None);
         }
-        (variable, expression)
+        parts
     } else {
         return Ok(None);
     };
+    let variable = parts.0;
+    let expression = parts.1;
     let variable = parse_template_variable_name(variable.trim(), "expected template variable")?;
     Ok(Some(TemplateAssignment {
         variable,

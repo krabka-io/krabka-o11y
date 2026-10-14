@@ -8,9 +8,7 @@
 
 use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy, TenantResolveError};
 
-use crate::{
-    BTreeSet, Error, HeaderMap, IntoResponse, Response, StatusCode, encode_otlp_status_message,
-};
+use crate::{BTreeSet, Error, HeaderMap, Response, StatusCode, encode_otlp_status_message};
 
 mod grpc_tenant;
 mod require_org_id;

@@ -41,12 +41,13 @@ mod with_binding;
 
 pub use aggregate::{Aggregate, ScalarAggregate};
 pub use comparison_op::ComparisonOp;
+pub(crate) use comparison_op::NumericFilter;
 pub use field::Field;
 pub use field_expr::FieldExpr;
 pub use intrinsic::Intrinsic;
 pub use pipeline::Pipeline;
 pub use query::Query;
-pub use query_hints::QueryHints;
+pub use query_hints::{QueryHintValue, QueryHints};
 pub use scope::Scope;
 pub use spanset_expr::SpansetExpr;
 pub use structural_op::StructuralOp;

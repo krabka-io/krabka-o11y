@@ -3,28 +3,8 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn vector_vector_arithmetic_drops_metadata_labels() {
     let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            ("__name__", "requests_total"),
-            ("__type__", "counter"),
-            ("__unit__", "requests"),
-            ("instance", "a"),
-        ]),
-        10_000,
-        10.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            ("__name__", "requests_total"),
-            ("__type__", "counter"),
-            ("__unit__", "requests"),
-            ("instance", "b"),
-        ]),
-        10_000,
-        5.0,
-    );
+    push_metadata_sample(&mut store, "a", 10.0);
+    push_metadata_sample(&mut store, "b", 5.0);
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let samples = instant_vector(&engine, "requests_total + 1", 10_000).await;

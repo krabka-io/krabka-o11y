@@ -1,4 +1,4 @@
-use std::fmt;
+use derive_more::Display;
 
 use super::TopicContractError;
 
@@ -16,7 +16,7 @@ use super::TopicContractError;
 /// metadata -- the producer through its own metadata refresh, and a caller
 /// that needs the number through
 /// [`shard_count`](super::shard_count).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PartitionCount(i32);
 
 impl PartitionCount {
@@ -38,11 +38,5 @@ impl PartitionCount {
     #[must_use]
     pub const fn get(self) -> i32 {
         self.0
-    }
-}
-
-impl fmt::Display for PartitionCount {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
     }
 }

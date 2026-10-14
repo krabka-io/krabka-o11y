@@ -10,15 +10,7 @@ use super::*;
 pub(crate) fn a_tail_frame_limit_is_spent_across_streams_in_order() {
     let frame = |counts: &[usize]| {
         serde_json::json!({
-            "streams": counts
-                .iter()
-                .map(|count| serde_json::json!({
-                    "stream": {"app": "api"},
-                    "values": (0..*count)
-                        .map(|i| serde_json::json!([i.to_string(), "line"]))
-                        .collect::<Vec<_>>(),
-                }))
-                .collect::<Vec<_>>(),
+            "streams": crate::tests::prelude::loki_streams_with_counts(counts, "api"),
         })
     };
     let kept = |value: &serde_json::Value| {

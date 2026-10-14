@@ -1,10 +1,11 @@
-use krabka_observability::{CriticalTaskError, SupervisedTasks};
+use krabka_observability::SupervisedTasks;
 
 use super::{
     Arc, MimirTenantAdminState, QueryFrontendOptions, RoleLaunch, RoleObjectStore, ServerSecurity,
-    ServingWalHead, Shutdown, TimeExt, load_runtime_overrides, mimir_tenant_admin_router,
-    prometheus_router, readiness_router, serve_prometheus_router_joinable, serving_api_state,
-    spawn_role_wal_head_consumer, spawn_shutdown_signal_listener,
+    ServingMetricStore, ServingWalHead, Shutdown, TimeExt, load_runtime_overrides,
+    mimir_tenant_admin_router, prometheus_router, readiness_router,
+    serve_prometheus_router_joinable, serving_api_state, spawn_role_wal_head_consumer,
+    spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -50,12 +51,11 @@ pub(crate) async fn run_query_frontend(
             spawn_role_wal_head_consumer(&cli, feed, shutdown.clone()),
         );
     }
-    let ServingWalHead {
+    let ServingMetricStore {
         head,
-        status: status_wal,
-        ..
-    } = wal_head;
-    let metric_store = Arc::new(role_store.refreshing_metric_store(&cli, head.clone()));
+        status_wal,
+        metric_store,
+    } = ServingMetricStore::from_head(&role_store, &cli, wal_head);
     let query_cache = krabka_promql::ObjectStoreQueryFrontendCache::new(
         Arc::clone(&store),
         cli.query_frontend_cache_prefix.clone(),
@@ -83,8 +83,8 @@ pub(crate) async fn run_query_frontend(
             },
             Arc::new(query_cache),
         );
-    let state = if let Some((head, readiness)) = status_wal {
-        state.with_wal_head_status(head, readiness)
+    let state = if let Some(status) = status_wal {
+        state.with_wal_head_status(status.head, status.readiness)
     } else {
         state
     };
@@ -96,21 +96,16 @@ pub(crate) async fn run_query_frontend(
             head,
         )))
         .merge(readiness_router(readiness));
-    let (bound, server) =
+    let serving =
         serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
             .await?;
     tracing::info!(
-        %bound,
+        %serving.addr,
         tls = security.tls_enabled(),
         authentication = security.authentication_enabled(),
         "metrics-service query-frontend listening"
     );
-    let outcome = tokio::select! {
-        result = server => result.map_err(Into::into),
-        name = tasks.first_unexpected_exit() => Err(Box::<dyn std::error::Error>::from(
-            CriticalTaskError(name),
-        )),
-    };
+    let outcome = crate::server_or_critical_task_exit!(serving.server, tasks);
     tasks.shutdown().await;
     outcome
 }

@@ -10,7 +10,7 @@ use krabka_observability::{
         OPERATION_TENANT_ACCESS, RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT,
         admin_operation, principal, resource, source_endpoint, unknown_source_endpoint,
     },
-    server_security::{ClientAuth, PeerAddr, ServerSecurityArgs},
+    server_security::PeerAddr,
 };
 
 use super::*;
@@ -103,27 +103,18 @@ pub(crate) async fn ruler_config_mutations_are_audited() {
         ),
     )
     .expect("the credentials file is writable");
-    let (log, mut events) = AuditLog::new(64);
+    let audit_log = AuditLog::new(64);
+    let log = audit_log.0;
+    let mut events = audit_log.1;
     let audit = AuditHandle::new(
         log,
         Arc::new(AuditStats::new()),
         AuditClocks::system().clock,
     );
-    let security = ServerSecurityArgs {
-        server_tls_cert_path: None,
-        server_tls_key_path: None,
-        server_tls_client_ca_path: None,
-        server_tls_client_auth: ClientAuth::NoClientCert,
-        server_tls_handshake_timeout: secs(10),
-        auth_credentials_config: Some(credentials),
-        internal_client_token_path: None,
-        internal_client_tls_cert_path: None,
-        internal_client_tls_key_path: None,
-        internal_client_tls_ca_path: None,
-    }
-    .load()
-    .expect("the credentials load")
-    .with_security_events(Arc::new(audit.clone()));
+    let security = super::server_security_args(credentials)
+        .load()
+        .expect("the credentials load")
+        .with_security_events(Arc::new(audit.clone()));
     let state = Arc::new(
         PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
             .with_audit(audit),

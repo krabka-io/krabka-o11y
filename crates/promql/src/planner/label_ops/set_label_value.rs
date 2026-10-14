@@ -15,8 +15,8 @@ pub(crate) fn set_label_value(
     if value.as_bytes().is_empty() {
         return labels
             .iter()
-            .filter(|(label, _)| label.as_str() != name)
-            .map(|(label, value)| (label.clone(), value.clone()))
+            .filter(|pair| pair.name.as_str() != name)
+            .map(|pair| krabka_metrics::MetricLabelPair::new(pair.name.clone(), pair.value.clone()))
             .collect();
     }
     let mut labels = labels.clone();

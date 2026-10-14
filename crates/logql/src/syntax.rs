@@ -62,12 +62,11 @@ mod scan_top_level;
 mod set_text;
 mod sign_is_unary_or_exponent;
 mod strip_outer_metric_parentheses;
-mod syntax_error;
 mod vector_aggregation;
 mod vector_aggregation_op;
 mod vector_grouping;
 
-use arithmetic_text::arithmetic_text;
+pub use arithmetic_text::arithmetic_text;
 use comparison_text::comparison_text;
 use expr_operator::ExprOperator;
 use format_labels::format_labels;
@@ -114,7 +113,8 @@ use scan_top_level::scan_top_level;
 use set_text::set_text;
 use sign_is_unary_or_exponent::sign_is_unary_or_exponent;
 use strip_outer_metric_parentheses::strip_outer_metric_parentheses;
-use syntax_error::syntax_error;
 pub use vector_aggregation::VectorAggregation;
 pub use vector_aggregation_op::VectorAggregationOp;
 pub use vector_grouping::VectorGrouping;
+
+use crate::error::syntax_parse_error as syntax_error;

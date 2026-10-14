@@ -43,6 +43,11 @@ pub(crate) struct ClockColumns {
     pub(crate) ingest_unix_nanos: Int64Builder,
 }
 
+pub(crate) struct NamedArrayColumn {
+    pub(crate) name: &'static str,
+    pub(crate) array: ArrayRef,
+}
+
 impl ClockColumns {
     pub(crate) fn new() -> Self {
         Self {
@@ -140,70 +145,112 @@ impl ClockColumns {
     /// The caller orders them by the schema rather than by this list, so a
     /// reordered schema stays correct and a column this list forgets becomes a
     /// build error instead of a silently shifted block.
-    pub(crate) fn finish(mut self) -> Vec<(&'static str, ArrayRef)> {
+    pub(crate) fn finish(mut self) -> Vec<NamedArrayColumn> {
         vec![
-            (COL_FINGERPRINT, Arc::new(self.fingerprints.finish())),
-            (COL_TIMESTAMP, Arc::new(self.timestamps.finish())),
-            (CCOL_NODE, Arc::new(self.nodes.finish())),
-            (CCOL_CLOCK, Arc::new(self.clocks.finish())),
-            (CCOL_SOURCE_KIND, Arc::new(self.source_kinds.finish())),
-            (
-                CCOL_READING_UNIX_NANOS,
-                Arc::new(self.reading_unix_nanos.finish()),
-            ),
-            (
-                CCOL_UNCERTAINTY_NANOS,
-                Arc::new(self.uncertainty_nanos.finish()),
-            ),
-            (CCOL_OFFSET_NANOS, Arc::new(self.offset_nanos.finish())),
-            (CCOL_SYNC_STATE, Arc::new(self.sync_states.finish())),
-            (CCOL_REFERENCE_ID, Arc::new(self.reference_ids.finish())),
-            (
-                CCOL_LAST_SYNC_UNIX_NANOS,
-                Arc::new(self.last_sync_unix_nanos.finish()),
-            ),
-            (CCOL_FREQUENCY_PPB, Arc::new(self.frequency_ppb.finish())),
-            (
-                CCOL_LAST_STEP_NANOS,
-                Arc::new(self.last_step_nanos.finish()),
-            ),
-            (
-                CCOL_ROOT_DELAY_NANOS,
-                Arc::new(self.root_delay_nanos.finish()),
-            ),
-            (
-                CCOL_ROOT_DISPERSION_NANOS,
-                Arc::new(self.root_dispersion_nanos.finish()),
-            ),
-            (CCOL_STRATUM, Arc::new(self.stratum.finish())),
-            (
-                CCOL_MEAN_PATH_DELAY_NANOS,
-                Arc::new(self.mean_path_delay_nanos.finish()),
-            ),
-            (CCOL_STEPS_REMOVED, Arc::new(self.steps_removed.finish())),
-            (CCOL_GM_CLOCK_CLASS, Arc::new(self.gm_clock_class.finish())),
-            (
-                CCOL_GM_CLOCK_ACCURACY,
-                Arc::new(self.gm_clock_accuracy.finish()),
-            ),
-            (
-                CCOL_MAX_ERROR_NANOS,
-                Arc::new(self.max_error_nanos.finish()),
-            ),
-            (
-                CCOL_EST_ERROR_NANOS,
-                Arc::new(self.est_error_nanos.finish()),
-            ),
-            (CCOL_UNSYNCHRONIZED, Arc::new(self.unsynchronized.finish())),
-            (
-                CCOL_SATELLITES_USED,
-                Arc::new(self.satellites_used.finish()),
-            ),
-            (CCOL_GNSS_FIX, Arc::new(self.gnss_fixes.finish())),
-            (
-                CCOL_INGEST_UNIX_NANOS,
-                Arc::new(self.ingest_unix_nanos.finish()),
-            ),
+            NamedArrayColumn {
+                name: COL_FINGERPRINT,
+                array: Arc::new(self.fingerprints.finish()),
+            },
+            NamedArrayColumn {
+                name: COL_TIMESTAMP,
+                array: Arc::new(self.timestamps.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_NODE,
+                array: Arc::new(self.nodes.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_CLOCK,
+                array: Arc::new(self.clocks.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_SOURCE_KIND,
+                array: Arc::new(self.source_kinds.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_READING_UNIX_NANOS,
+                array: Arc::new(self.reading_unix_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_UNCERTAINTY_NANOS,
+                array: Arc::new(self.uncertainty_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_OFFSET_NANOS,
+                array: Arc::new(self.offset_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_SYNC_STATE,
+                array: Arc::new(self.sync_states.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_REFERENCE_ID,
+                array: Arc::new(self.reference_ids.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_LAST_SYNC_UNIX_NANOS,
+                array: Arc::new(self.last_sync_unix_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_FREQUENCY_PPB,
+                array: Arc::new(self.frequency_ppb.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_LAST_STEP_NANOS,
+                array: Arc::new(self.last_step_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_ROOT_DELAY_NANOS,
+                array: Arc::new(self.root_delay_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_ROOT_DISPERSION_NANOS,
+                array: Arc::new(self.root_dispersion_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_STRATUM,
+                array: Arc::new(self.stratum.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_MEAN_PATH_DELAY_NANOS,
+                array: Arc::new(self.mean_path_delay_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_STEPS_REMOVED,
+                array: Arc::new(self.steps_removed.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_GM_CLOCK_CLASS,
+                array: Arc::new(self.gm_clock_class.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_GM_CLOCK_ACCURACY,
+                array: Arc::new(self.gm_clock_accuracy.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_MAX_ERROR_NANOS,
+                array: Arc::new(self.max_error_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_EST_ERROR_NANOS,
+                array: Arc::new(self.est_error_nanos.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_UNSYNCHRONIZED,
+                array: Arc::new(self.unsynchronized.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_SATELLITES_USED,
+                array: Arc::new(self.satellites_used.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_GNSS_FIX,
+                array: Arc::new(self.gnss_fixes.finish()),
+            },
+            NamedArrayColumn {
+                name: CCOL_INGEST_UNIX_NANOS,
+                array: Arc::new(self.ingest_unix_nanos.finish()),
+            },
         ]
     }
 }

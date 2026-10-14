@@ -42,13 +42,12 @@ pub async fn compact_block_keys_with_max_bytes(
     let mut input_versions = Vec::with_capacity(input_keys.len());
     let mut runs = Vec::with_capacity(input_keys.len());
     for key in input_keys {
-        let (meta, schema, batches) =
-            open_block_stream(store.clone(), key, block_read_max, MERGE_READ_BATCH_ROWS)
-                .await
-                .map_err(|err| TracesError::Block(err.to_string()))?;
-        input_versions.push(meta);
-        schemas.push(schema);
-        runs.push(batches);
+        let stream = open_block_stream(store.clone(), key, block_read_max, MERGE_READ_BATCH_ROWS)
+            .await
+            .map_err(|err| TracesError::Block(err.to_string()))?;
+        input_versions.push(stream.meta);
+        schemas.push(stream.schema);
+        runs.push(stream.batches);
     }
 
     // `merged_promoted_attrs` reads its inputs' schemas and nothing else, so

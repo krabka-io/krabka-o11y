@@ -88,12 +88,13 @@ impl<'a> TemplateRenderContext<'a> {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .clone_into(&mut self.external_url);
-        self.variables.extend(variables.iter().map(|(name, value)| {
-            (
+        for name in variables.keys() {
+            let value = &variables[name];
+            self.variables.insert(
                 name.clone(),
                 Rc::new(RefCell::new(TemplateRuntimeValue::Json(value.clone()))),
-            )
-        }));
+            );
+        }
         self
     }
 
@@ -101,10 +102,12 @@ impl<'a> TemplateRenderContext<'a> {
         mut self,
         queries: &BTreeMap<String, serde_json::Value>,
     ) -> Self {
-        self.queries = queries
-            .iter()
-            .map(|(key, value)| (key.clone(), TemplateRuntimeValue::Json(value.clone())))
-            .collect();
+        self.queries.clear();
+        for key in queries.keys() {
+            let value = &queries[key];
+            self.queries
+                .insert(key.clone(), TemplateRuntimeValue::Json(value.clone()));
+        }
         self
     }
 

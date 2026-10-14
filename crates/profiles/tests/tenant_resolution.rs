@@ -42,7 +42,10 @@ use krabka_observability::{
     },
     server_security::{ClientAuth, ServerSecurity, ServerSecurityArgs, install_crypto_provider},
 };
-use krabka_pprof::{FunctionRec, InMemoryProfileStore, LineRec, LocationRec, PprofProfile, proto};
+use krabka_pprof::{
+    FunctionRec, InMemoryProfileStore, LineRec, LocationRec, PprofProfile, ProfileIdentity,
+    ProfileLabel, StacktraceIdentity, proto,
+};
 use krabka_profiles::{
     ProfileRecord, ProfilesError,
     distributor::{self, DistributorState, WalSink},
@@ -130,9 +133,19 @@ enum Answer {
     },
 }
 
-/// One row of the header table: a name, the `X-Scope-OrgID` bytes if the
-/// request carries the header, and the tenant or the message it resolves to.
-type Case<'a> = (&'a str, Option<&'a [u8]>, Result<&'a str, &'a str>);
+/// One row of the header table: its name, header bytes, and expected resolution.
+struct Case<'a> {
+    name: &'a str,
+    header: Option<&'a [u8]>,
+    resolution: Result<&'a str, &'a str>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ListenerAnswer {
+    status: u16,
+    body: String,
+    wal_tenants: Vec<String>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct Outcome {
@@ -141,28 +154,33 @@ struct Outcome {
     wal_tenants: Vec<String>,
 }
 
+struct ServerCertificatePaths {
+    certificate: Option<PathBuf>,
+    key: Option<PathBuf>,
+}
+
 impl Outcome {
     fn expected(door: Door, resolution: Result<&str, &str>) -> Self {
-        let answer = match (door, resolution) {
-            (Door::DistributorHttp | Door::DistributorConnect, Ok(_)) => Answer::Accepted,
-            (Door::QuerierHttp | Door::QuerierConnect, Ok(tenant)) => {
-                Answer::Served(tenant.to_string())
-            }
-            (Door::DistributorHttp | Door::QuerierHttp, Err(message)) => Answer::HttpRejection {
-                status: 400,
-                content_type: PLAIN_TEXT.to_string(),
-                body: message.to_string(),
+        let answer = match resolution {
+            Ok(tenant) => match door {
+                Door::DistributorHttp | Door::DistributorConnect => Answer::Accepted,
+                Door::QuerierHttp | Door::QuerierConnect => Answer::Served(tenant.to_string()),
             },
-            (Door::DistributorConnect | Door::QuerierConnect, Err(message)) => {
-                Answer::ConnectRejection {
+            Err(message) => match door {
+                Door::DistributorHttp | Door::QuerierHttp => Answer::HttpRejection {
+                    status: 400,
+                    content_type: PLAIN_TEXT.to_string(),
+                    body: message.to_string(),
+                },
+                Door::DistributorConnect | Door::QuerierConnect => Answer::ConnectRejection {
                     status: 400,
                     code: "invalid_argument".to_string(),
                     message: message.to_string(),
-                }
-            }
+                },
+            },
         };
-        let wal_tenants = match (door, resolution) {
-            (Door::DistributorHttp | Door::DistributorConnect, Ok(tenant)) => {
+        let wal_tenants = match resolution {
+            Ok(tenant) if matches!(door, Door::DistributorHttp | Door::DistributorConnect) => {
                 vec![tenant.to_string()]
             }
             _ => Vec::new(),
@@ -240,7 +258,7 @@ impl Stack {
             metrics: ServiceMetrics::new(),
         });
         let stop = CancellationToken::new();
-        let (distributor, _) = distributor::serve_supervised(
+        let distributor_server = distributor::serve_supervised(
             "127.0.0.1:0".parse().unwrap(),
             distributor_state,
             RoleReadiness::new(),
@@ -249,11 +267,12 @@ impl Stack {
         )
         .await
         .expect("the distributor binds");
+        let distributor = distributor_server.address;
 
         let querier_state = Arc::new(QuerierState::new(Arc::new(
             store_with_one_frame_per_tenant(),
         )));
-        let (querier, _) = query::serve_supervised(
+        let querier_server = query::serve_supervised(
             "127.0.0.1:0".parse().unwrap(),
             querier_state,
             RoleReadiness::new(),
@@ -262,6 +281,7 @@ impl Stack {
         )
         .await
         .expect("the querier binds");
+        let querier = querier_server.address;
 
         Self {
             client,
@@ -274,19 +294,18 @@ impl Stack {
     }
 
     fn request(&self, door: Door, tenant: Option<&[u8]>) -> reqwest::RequestBuilder {
-        let (scheme, distributor, querier) = (self.scheme, self.distributor, self.querier);
         let request = match door {
             Door::DistributorHttp => self
                 .client
                 .post(format!(
-                    "{scheme}://{distributor}/ingest?name=myapp{{service_name=\"api\"}}&format=groups&units=samples&until=1700000000000"
+                    "{}://{}/ingest?name=myapp{{service_name=\"api\"}}&format=groups&units=samples&until=1700000000000", self.scheme, self.distributor
                 ))
                 .header(CONTENT_TYPE, "text/plain")
                 .body("main;work 3\n"),
             Door::DistributorConnect => self
                 .client
                 .post(format!(
-                    "{scheme}://{distributor}/push.v1.PusherService/Push"
+                    "{}://{}/push.v1.PusherService/Push", self.scheme, self.distributor
                 ))
                 .json(&push_body()),
             Door::QuerierHttp => {
@@ -296,12 +315,12 @@ impl Stack {
                     .append_pair("until", "100")
                     .finish();
                 self.client
-                    .get(format!("{scheme}://{querier}/pyroscope/render?{query}"))
+                    .get(format!("{}://{}/pyroscope/render?{query}", self.scheme, self.querier))
             }
             Door::QuerierConnect => self
                 .client
                 .post(format!(
-                    "{scheme}://{querier}/querier.v1.QuerierService/LabelValues"
+                    "{}://{}/querier.v1.QuerierService/LabelValues", self.scheme, self.querier
                 ))
                 .json(&json!({ "name": "service_name" })),
         };
@@ -335,28 +354,34 @@ impl Stack {
             .to_string();
         let body = response.text().await.expect("the body is text");
 
-        let answer = match (door, status.is_success()) {
-            (Door::DistributorHttp | Door::DistributorConnect, true) => Answer::Accepted,
-            (Door::QuerierHttp, true) => Answer::Served(render_tenant(&body)),
-            (Door::QuerierConnect, true) => Answer::Served(label_values_tenant(&body)),
-            (Door::DistributorHttp | Door::QuerierHttp, false) => Answer::HttpRejection {
-                status: status.as_u16(),
-                content_type,
-                body,
-            },
-            (Door::DistributorConnect | Door::QuerierConnect, false) => {
-                let error: Value = serde_json::from_str(&body).expect("a Connect error is JSON");
-                let field = |name: &str| {
-                    error
-                        .get(name)
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string()
-                };
-                Answer::ConnectRejection {
+        let answer = if status.is_success() {
+            match door {
+                Door::DistributorHttp | Door::DistributorConnect => Answer::Accepted,
+                Door::QuerierHttp => Answer::Served(render_tenant(&body)),
+                Door::QuerierConnect => Answer::Served(label_values_tenant(&body)),
+            }
+        } else {
+            match door {
+                Door::DistributorHttp | Door::QuerierHttp => Answer::HttpRejection {
                     status: status.as_u16(),
-                    code: field("code"),
-                    message: field("message"),
+                    content_type,
+                    body,
+                },
+                Door::DistributorConnect | Door::QuerierConnect => {
+                    let error: Value =
+                        serde_json::from_str(&body).expect("a Connect error is JSON");
+                    let field = |name: &str| {
+                        error
+                            .get(name)
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string()
+                    };
+                    Answer::ConnectRejection {
+                        status: status.as_u16(),
+                        code: field("code"),
+                        message: field("message"),
+                    }
                 }
             }
         };
@@ -368,14 +393,15 @@ impl Stack {
 
     /// The status, the body, and the WAL tenants of `request`, read before
     /// any door gives the answer its shape.
-    async fn listener_answer(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> (u16, String, Vec<String>) {
+    async fn listener_answer(&self, request: reqwest::RequestBuilder) -> ListenerAnswer {
         let response = request.send().await.expect("the listener answers");
         let status = response.status().as_u16();
         let body = response.text().await.expect("the body is text");
-        (status, body, self.sink.take_tenants())
+        ListenerAnswer {
+            status,
+            body,
+            wal_tenants: self.sink.take_tenants(),
+        }
     }
 }
 
@@ -383,33 +409,50 @@ impl Stack {
 async fn every_door_resolves_the_same_header_to_the_same_answer() {
     let stack = Stack::start(TenantPolicy::anonymous()).await;
     let too_long = "x".repeat(151);
-    let cases: [Case<'_>; 7] = [
-        ("absent", None, Ok("anonymous")),
-        ("empty", Some(b""), Ok("anonymous")),
-        ("named", Some(b"tenant-a"), Ok("tenant-a")),
-        (
-            "separator",
-            Some(b"a/b"),
-            Err("tenant ID 'a/b' contains unsupported character '/'"),
-        ),
-        ("parent", Some(b".."), Err("tenant ID is '.' or '..'")),
-        (
-            "one byte too long",
-            Some(too_long.as_bytes()),
-            Err("tenant ID is too long: max 150 characters"),
-        ),
-        (
-            "not UTF-8",
-            Some(b"a\xff"),
-            Err("tenant ID 'a\u{fffd}' contains unsupported character '\u{ff}'"),
-        ),
+    let cases = [
+        Case {
+            name: "absent",
+            header: None,
+            resolution: Ok("anonymous"),
+        },
+        Case {
+            name: "empty",
+            header: Some(b""),
+            resolution: Ok("anonymous"),
+        },
+        Case {
+            name: "named",
+            header: Some(b"tenant-a"),
+            resolution: Ok("tenant-a"),
+        },
+        Case {
+            name: "separator",
+            header: Some(b"a/b"),
+            resolution: Err("tenant ID 'a/b' contains unsupported character '/'"),
+        },
+        Case {
+            name: "parent",
+            header: Some(b".."),
+            resolution: Err("tenant ID is '.' or '..'"),
+        },
+        Case {
+            name: "one byte too long",
+            header: Some(too_long.as_bytes()),
+            resolution: Err("tenant ID is too long: max 150 characters"),
+        },
+        Case {
+            name: "not UTF-8",
+            header: Some(b"a\xff"),
+            resolution: Err("tenant ID 'a\u{fffd}' contains unsupported character '\u{ff}'"),
+        },
     ];
 
     for door in DOORS {
-        for (name, header, resolution) in cases {
+        for case in &cases {
             check!(
-                stack.call(door, header).await == Outcome::expected(door, resolution),
-                "{door:?}, {name}"
+                stack.call(door, case.header).await == Outcome::expected(door, case.resolution),
+                "{door:?}, {}",
+                case.name
             );
         }
     }
@@ -467,29 +510,34 @@ async fn a_secured_door_serves_the_granted_tenant_and_denies_every_other() {
         "https",
     )
     .await;
-    let cases: [Case<'_>; 3] = [
-        ("granted", Some(b"tenant-a"), Ok("tenant-a")),
-        (
-            "absent",
-            None,
-            Err(r#"principal "grafana" is not allowed to access tenant "anonymous""#),
-        ),
-        (
-            "ungranted",
-            Some(b"tenant-b"),
-            Err(r#"principal "grafana" is not allowed to access tenant "tenant-b""#),
-        ),
+    let cases = [
+        Case {
+            name: "granted",
+            header: Some(b"tenant-a"),
+            resolution: Ok("tenant-a"),
+        },
+        Case {
+            name: "absent",
+            header: None,
+            resolution: Err(r#"principal "grafana" is not allowed to access tenant "anonymous""#),
+        },
+        Case {
+            name: "ungranted",
+            header: Some(b"tenant-b"),
+            resolution: Err(r#"principal "grafana" is not allowed to access tenant "tenant-b""#),
+        },
     ];
 
     for door in DOORS {
-        for (name, header, answer) in cases {
-            let expected = match answer {
+        for case in &cases {
+            let expected = match case.resolution {
                 Ok(tenant) => Outcome::expected(door, Ok(tenant)),
                 Err(message) => Outcome::denied(door, message),
             };
             check!(
-                stack.call_as(door, header, GRAFANA_TOKEN).await == expected,
-                "{door:?}, {name}"
+                stack.call_as(door, case.header, GRAFANA_TOKEN).await == expected,
+                "{door:?}, {}",
+                case.name
             );
         }
     }
@@ -505,7 +553,11 @@ async fn a_secured_door_refuses_a_missing_or_wrong_credential_and_ready_needs_no
         "https",
     )
     .await;
-    let unauthorized = || (401, "unauthorized\n".to_string(), Vec::<String>::new());
+    let unauthorized = || ListenerAnswer {
+        status: 401,
+        body: "unauthorized\n".to_string(),
+        wal_tenants: Vec::new(),
+    };
 
     for door in DOORS {
         let missing = stack.request(door, Some(b"tenant-a"));
@@ -524,7 +576,10 @@ async fn a_secured_door_refuses_a_missing_or_wrong_credential_and_ready_needs_no
     for role in [stack.distributor, stack.querier] {
         let ready = stack.client.get(format!("https://{role}/ready"));
         check!(
-            stack.listener_answer(ready).await == (200, "ready\n".to_string(), Vec::new()),
+            {
+                let answer = stack.listener_answer(ready).await;
+                answer.status == 200 && answer.body == "ready\n" && answer.wal_tenants.is_empty()
+            },
             "{role}"
         );
     }
@@ -535,7 +590,9 @@ async fn a_secured_door_refuses_a_missing_or_wrong_credential_and_ready_needs_no
 #[tokio::test]
 async fn a_refused_credential_and_a_denied_tenant_each_become_one_audit_event() {
     let pki = Pki::new();
-    let (log, mut queue) = AuditLog::new(8);
+    let audit_log = AuditLog::new(8);
+    let log = audit_log.0;
+    let mut queue = audit_log.1;
     let clock = FixedWallClock::new(
         SystemTime::UNIX_EPOCH
             + Duration::from_millis(u64::try_from(EVENT_TIME_MS).expect("positive event time")),
@@ -629,9 +686,7 @@ impl Pki {
     }
 
     fn write(&self, name: &str, contents: impl AsRef<[u8]>) -> PathBuf {
-        let path = self.dir.path().join(name);
-        std::fs::write(&path, contents).expect("the temporary file is writable");
-        path
+        server_security_pki::write_file(self.dir.path(), name, contents)
     }
 
     /// A credentials file in which `grafana` may use `tenant-a` only, and TLS
@@ -641,18 +696,21 @@ impl Pki {
             "principals:\n  - name: grafana\n    token_sha256: [{}]\n    tenants: [tenant-a]\n",
             sha256_hex(GRAFANA_TOKEN),
         );
-        let (certificate, key) = if tls {
+        let certificate_paths = if tls {
             let Pem { certificate, key } = Leaf::LOCAL_SERVER.signed_by(&self.authority);
-            (
-                Some(self.write("server.pem", certificate)),
-                Some(self.write("server-key.pem", key)),
-            )
+            ServerCertificatePaths {
+                certificate: Some(self.write("server.pem", certificate)),
+                key: Some(self.write("server-key.pem", key)),
+            }
         } else {
-            (None, None)
+            ServerCertificatePaths {
+                certificate: None,
+                key: None,
+            }
         };
         ServerSecurityArgs {
-            server_tls_cert_path: certificate,
-            server_tls_key_path: key,
+            server_tls_cert_path: certificate_paths.certificate,
+            server_tls_key_path: certificate_paths.key,
             server_tls_client_ca_path: None,
             server_tls_client_auth: ClientAuth::NoClientCert,
             server_tls_handshake_timeout: krabka_units::secs(10),
@@ -699,14 +757,13 @@ fn label_values_tenant(body: &str) -> String {
     values
         .get("names")
         .and_then(Value::as_array)
-        .map(|names| {
+        .map_or_else(Default::default, |names| {
             names
                 .iter()
                 .filter_map(Value::as_str)
                 .collect::<Vec<_>>()
                 .join(",")
         })
-        .unwrap_or_default()
 }
 
 /// A store with one sample for `anonymous` and one for `tenant-a`. Each
@@ -732,9 +789,9 @@ fn store_with_one_frame_per_tenant() -> InMemoryProfileStore {
         });
         let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
         store.push_sample(
-            (tenant, PROFILE_TYPE),
-            vec![("service_name".to_string(), tenant.to_string())],
-            (0, stacktrace),
+            ProfileIdentity::new(tenant, PROFILE_TYPE),
+            vec![ProfileLabel::new("service_name", tenant)],
+            StacktraceIdentity::new(0, stacktrace),
             7,
             10,
         );

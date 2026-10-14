@@ -11,9 +11,9 @@ pub(crate) fn categorized_loki_stream_results(
     streams: BTreeMap<Labels, Vec<LokiStreamEntry>>,
 ) -> Vec<Value> {
     let mut categorized: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
-    for (folded, entries) in streams {
-        for entry in entries {
-            let mut stream = folded.clone();
+    for stream_entry in streams {
+        for entry in stream_entry.1 {
+            let mut stream = stream_entry.0.clone();
             for name in entry.categorized_label_names() {
                 stream.remove(name);
             }
@@ -26,10 +26,10 @@ pub(crate) fn categorized_loki_stream_results(
 
     categorized
         .into_iter()
-        .map(|(stream, values)| {
+        .map(|categorized_entry| {
             json!({
-                "stream": stream,
-                "values": values
+                "stream": categorized_entry.0,
+                "values": categorized_entry.1
                     .iter()
                     .map(LokiStreamEntry::categorized_value)
                     .collect::<Vec<_>>(),

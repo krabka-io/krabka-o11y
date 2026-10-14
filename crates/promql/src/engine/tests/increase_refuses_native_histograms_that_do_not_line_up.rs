@@ -1,5 +1,10 @@
 use super::*;
 
+struct HistogramLayoutCase {
+    field: &'static str,
+    histogram: NativeHistogram,
+}
+
 /// `increase` reconciles compatible native-histogram layouts before subtraction.
 #[tokio::test]
 pub(crate) async fn increase_reconciles_native_histograms_that_do_not_line_up() {
@@ -37,60 +42,60 @@ pub(crate) async fn increase_reconciles_native_histograms_that_do_not_line_up() 
     }
 
     let variants = [
-        (
-            "schema",
-            NativeHistogram {
+        HistogramLayoutCase {
+            field: "schema",
+            histogram: NativeHistogram {
                 schema: 1,
                 ..grown()
             },
-        ),
-        (
-            "is_float",
-            NativeHistogram {
+        },
+        HistogramLayoutCase {
+            field: "is_float",
+            histogram: NativeHistogram {
                 is_float: false,
                 ..grown()
             },
-        ),
-        (
-            "zero_threshold",
-            NativeHistogram {
+        },
+        HistogramLayoutCase {
+            field: "zero_threshold",
+            histogram: NativeHistogram {
                 zero_threshold: 2.0,
                 ..grown()
             },
-        ),
-        (
-            "custom_values",
-            NativeHistogram {
+        },
+        HistogramLayoutCase {
+            field: "custom_values",
+            histogram: NativeHistogram {
                 custom_values: Some(vec![1.0]),
                 ..grown()
             },
-        ),
-        (
-            "positive_spans",
-            NativeHistogram {
+        },
+        HistogramLayoutCase {
+            field: "positive_spans",
+            histogram: NativeHistogram {
                 positive_spans: vec![BucketSpan {
                     offset: 1,
                     length: 2,
                 }],
                 ..grown()
             },
-        ),
-        (
-            "negative_spans",
-            NativeHistogram {
+        },
+        HistogramLayoutCase {
+            field: "negative_spans",
+            histogram: NativeHistogram {
                 negative_spans: vec![BucketSpan {
                     offset: 1,
                     length: 1,
                 }],
                 ..grown()
             },
-        ),
+        },
         // The two counts-length clauses cannot be isolated: the store rejects
         // a histogram whose counts disagree with its spans, so equal spans
         // already force equal counts lengths. These grow both together.
-        (
-            "positive bucket count",
-            NativeHistogram {
+        HistogramLayoutCase {
+            field: "positive bucket count",
+            histogram: NativeHistogram {
                 positive_spans: vec![BucketSpan {
                     offset: 0,
                     length: 3,
@@ -98,10 +103,10 @@ pub(crate) async fn increase_reconciles_native_histograms_that_do_not_line_up() 
                 positive_counts: vec![3.0, 4.0, 5.0],
                 ..grown()
             },
-        ),
-        (
-            "negative bucket count",
-            NativeHistogram {
+        },
+        HistogramLayoutCase {
+            field: "negative bucket count",
+            histogram: NativeHistogram {
                 negative_spans: vec![BucketSpan {
                     offset: 0,
                     length: 2,
@@ -109,26 +114,43 @@ pub(crate) async fn increase_reconciles_native_histograms_that_do_not_line_up() 
                 negative_counts: vec![2.0, 3.0],
                 ..grown()
             },
-        ),
+        },
     ];
 
     let mut store = InMemoryMetricStore::new();
-    for (index, (_, variant)) in variants.iter().enumerate() {
+    for index in 0..variants.len() {
+        let variant = &variants[index].histogram;
         let name = format!("hx{index}");
-        store.push_histogram("tenant-a", labels(&[("__name__", &name)]), 10_000, base());
         store.push_histogram(
             "tenant-a",
-            labels(&[("__name__", &name)]),
+            labels(&[crate::test_support::TestLabelPair::new("__name__", &name)]),
+            10_000,
+            base(),
+        );
+        store.push_histogram(
+            "tenant-a",
+            labels(&[crate::test_support::TestLabelPair::new("__name__", &name)]),
             20_000,
             variant.clone(),
         );
     }
     // A pair that does line up, so a check stuck at false is caught too.
-    store.push_histogram("tenant-a", labels(&[("__name__", "ok")]), 10_000, base());
-    store.push_histogram("tenant-a", labels(&[("__name__", "ok")]), 20_000, grown());
+    store.push_histogram(
+        "tenant-a",
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "ok")]),
+        10_000,
+        base(),
+    );
+    store.push_histogram(
+        "tenant-a",
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "ok")]),
+        20_000,
+        grown(),
+    );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    for (index, (field, _)) in variants.iter().enumerate() {
+    for index in 0..variants.len() {
+        let field = variants[index].field;
         let query = format!("increase(hx{index}[5m])");
         let QueryResult::InstantVector(samples) = engine
             .query_instant(&tenant_id("tenant-a"), &query, 20_000)

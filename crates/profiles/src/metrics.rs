@@ -23,6 +23,10 @@ pub use self::{service_metrics::ServiceMetrics, symbolizer_cache_lookup::Symboli
 
 #[cfg(test)]
 mod tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../metrics/tests/support/shared_registry_assertion.rs"
+    ));
     use assert2::{assert, check};
     use krabka_blockstore::ObjectStoreOperation;
     use krabka_observability::service_metrics::{
@@ -74,33 +78,24 @@ mod tests {
         m.debuginfo_upload_timeouts.inc();
         m.record_symbolizer_cache(SymbolizerCacheLookup::Hit);
         m.record_symbolizer_cache(SymbolizerCacheLookup::Miss);
-        // The shared bundles must land in this signal's registry.
-        m.wal_consumer.record_partition_assigned("__wal", 2);
-        m.wal_produce.record_batch_failure(1, 3);
-        m.compaction.record_output(4);
-        m.object_store.record_retry(ObjectStoreOperation::Get);
-
-        let buf = encode_registry(&m.registry).await.unwrap();
-        for needle in [
-            "krabka_profiles_ingest_requests_total",
-            "krabka_profiles_ingest_bytes_total",
-            "krabka_profiles_ingest_items_total",
-            "krabka_profiles_ingest_duration_seconds",
-            "krabka_profiles_wal_append_failures_total",
-            "krabka_profiles_ingest_samples_total",
-            "krabka_profiles_blocks_built_total",
-            "krabka_profiles_query_requests_total",
-            "krabka_profiles_query_duration_seconds",
-            "krabka_profiles_debuginfo_upload_retries_total",
-            "krabka_profiles_debuginfo_upload_timeouts_total",
-            "krabka_profiles_symbolizer_cache_requests_total",
-            "krabka_profiles_wal_consumer_partition_owned{topic=\"__wal\",partition=\"2\"} 1",
-            "krabka_profiles_wal_partial_batch_appends_total 1",
-            "krabka_profiles_compaction_blocks_total 4",
-            "krabka_profiles_objstore_operation_retries_total{operation=\"get\"} 1",
-        ] {
-            assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
-        }
+        let buf = assert_shared_registry_metrics!(
+            &m,
+            "krabka_profiles",
+            [
+                "krabka_profiles_ingest_requests_total",
+                "krabka_profiles_ingest_bytes_total",
+                "krabka_profiles_ingest_items_total",
+                "krabka_profiles_ingest_duration_seconds",
+                "krabka_profiles_wal_append_failures_total",
+                "krabka_profiles_ingest_samples_total",
+                "krabka_profiles_blocks_built_total",
+                "krabka_profiles_query_requests_total",
+                "krabka_profiles_query_duration_seconds",
+                "krabka_profiles_debuginfo_upload_retries_total",
+                "krabka_profiles_debuginfo_upload_timeouts_total",
+                "krabka_profiles_symbolizer_cache_requests_total",
+            ]
+        );
         for label in [
             "tenant=\"tenant-a\"",
             "status=\"ok\"",

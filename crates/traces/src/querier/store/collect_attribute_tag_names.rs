@@ -8,24 +8,24 @@ pub(crate) fn collect_attribute_tag_names(
     names: &mut ColdAttributeTagNames,
 ) -> Result<(), TraceqlError> {
     for row in 0..batch.num_rows() {
-        for (key, _) in attr_values_with_resource(batch, row, ResourceAttrs::Include)? {
-            if let Some(key) = key.strip_prefix(RESOURCE_ATTR_PREFIX) {
+        for attribute in attr_values_with_resource(batch, row, ResourceAttrs::Include)? {
+            if let Some(key) = attribute.key.strip_prefix(RESOURCE_ATTR_PREFIX) {
                 names.resource.insert(key.to_string());
-            } else if let Some(key) = key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {
+            } else if let Some(key) = attribute.key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {
                 names.instrumentation.insert(key.to_string());
             } else {
-                names.span.insert(key);
+                names.span.insert(attribute.key);
             }
         }
         for event in event_values(batch, row)? {
             names
                 .event
-                .extend(event.attributes.into_iter().map(|(key, _)| key));
+                .extend(event.attributes.into_iter().map(|attribute| attribute.key));
         }
         for link in link_values(batch, row)? {
             names
                 .link
-                .extend(link.attributes.into_iter().map(|(key, _)| key));
+                .extend(link.attributes.into_iter().map(|attribute| attribute.key));
         }
     }
     Ok(())

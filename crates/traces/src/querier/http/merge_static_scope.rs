@@ -4,8 +4,7 @@ pub(crate) fn merge_static_scope(tags: &mut Vec<ScopedTag>, scope: TagScope, sta
     let existing = tags
         .iter()
         .position(|scoped| scoped.scope == scope)
-        .map(|idx| tags.remove(idx).tags)
-        .unwrap_or_default();
+        .map_or_else(Default::default, |idx| tags.remove(idx).tags);
     let mut seen = BTreeSet::new();
     let mut merged = Vec::new();
     for tag in static_tags {

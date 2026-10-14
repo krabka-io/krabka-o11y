@@ -86,53 +86,56 @@ async fn publish_log_index_shard_snapshot(
     let in_shard = |block: &&BlockDescriptor| {
         block.key.tenant == tenant && block.key.time_range.overlaps(shard_range)
     };
-    let previous_blocks: BTreeMap<_, _> = previous
+    let mut previous_blocks = BTreeMap::new();
+    for block in previous
         .into_iter()
         .flat_map(BlockIndex::blocks)
         .filter(in_shard)
-        .map(|block| (block.key.object_key(), block))
-        .collect();
-    let next: BTreeMap<_, _> = next
-        .blocks()
-        .iter()
-        .filter(in_shard)
-        .map(|block| (block.key.object_key(), block))
-        .collect();
+    {
+        previous_blocks.insert(block.key.object_key(), block);
+    }
+    let mut next_blocks = BTreeMap::new();
+    for block in next.blocks().iter().filter(in_shard) {
+        next_blocks.insert(block.key.object_key(), block);
+    }
     let mut observed_additions = BTreeSet::new();
     for attempt in 0..64 {
         let base = read_log_index_shard_snapshot_base(store, &key, tenant).await?;
-        let generation = match &base {
-            Some((generation, _, _)) => {
-                generation
-                    .checked_add(1)
-                    .ok_or_else(|| object_store::Error::Generic {
+        let generation =
+            match &base {
+                Some(snapshot) => snapshot.generation.checked_add(1).ok_or_else(|| {
+                    object_store::Error::Generic {
                         store: "log index shard",
                         source: "manifest generation exhausted".into(),
-                    })?
-            }
-            None => 0,
-        };
-        let (_, mut labels, mut blocks) = base.unwrap_or_default();
+                    }
+                })?,
+                None => 0,
+            };
+        let snapshot = base.unwrap_or_default();
+        let mut labels = snapshot.indexes.labels;
+        let mut blocks = snapshot.indexes.blocks;
         if previous.is_some() {
             if attempt == 0 {
                 observed_additions = blocks
                     .blocks()
                     .iter()
                     .map(|block| block.key.object_key())
-                    .filter(|key| next.contains_key(key) && !previous_blocks.contains_key(key))
+                    .filter(|key| {
+                        next_blocks.contains_key(key) && !previous_blocks.contains_key(key)
+                    })
                     .collect();
             }
             apply_block_index_delta(
                 &mut blocks,
                 &previous_blocks,
-                &next,
+                &next_blocks,
                 &observed_additions,
                 &key,
             )?;
         } else {
             labels = LabelIndex::default();
             blocks = BlockIndex::default();
-            for block in next.values() {
+            for block in next_blocks.values() {
                 blocks.insert((*block).clone());
             }
         }
@@ -216,7 +219,8 @@ fn apply_block_index_delta(
         }
         true
     });
-    for (key, block) in next {
+    for key in next.keys() {
+        let block = next[key];
         if !previous.contains_key(key)
             && !observed_additions.contains(key)
             && !blocks

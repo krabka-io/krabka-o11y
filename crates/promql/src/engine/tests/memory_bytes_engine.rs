@@ -1,16 +1,37 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct MemoryBytesSample {
+    instance: &'static str,
+    value: f64,
+}
+
 /// An engine over `memory_bytes` for instances `a` = 1, `b` = 3 and `c` = 2 at 10s.
 pub(crate) fn memory_bytes_engine() -> PromqlEngine<InMemoryMetricStore> {
-    [("a", 1.0), ("b", 3.0), ("c", 2.0)]
-        .into_iter()
-        .fold(FloatStore::default(), |store, (instance, sample_value)| {
-            store.sample(
-                labels(&[("__name__", "memory_bytes"), ("instance", instance)]),
-                sample_value,
-            )
-        })
-        .engine()
+    let mut store = FloatStore::default();
+    for sample in [
+        MemoryBytesSample::builder()
+            .instance("a")
+            .value(1.0)
+            .build(),
+        MemoryBytesSample::builder()
+            .instance("b")
+            .value(3.0)
+            .build(),
+        MemoryBytesSample::builder()
+            .instance("c")
+            .value(2.0)
+            .build(),
+    ] {
+        store = store.sample(
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "memory_bytes"),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
+            ]),
+            sample.value,
+        );
+    }
+    store.engine()
 }
 
 /// One `memory_bytes{job, instance}` float sample.
@@ -29,9 +50,9 @@ pub(crate) fn job_memory_bytes_engine(
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "memory_bytes"),
-                ("job", sample.job),
-                ("instance", sample.instance),
+                crate::test_support::TestLabelPair::new("__name__", "memory_bytes"),
+                crate::test_support::TestLabelPair::new("job", sample.job),
+                crate::test_support::TestLabelPair::new("instance", sample.instance),
             ]),
             10_000,
             sample.value,

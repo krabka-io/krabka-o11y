@@ -1,12 +1,14 @@
-use super::{MetricsRange, f64_from_u64};
+use super::{MetricPoint, MetricsRange, f64_from_u64};
 
-pub(crate) fn compare_points(buckets: &[u64], range: MetricsRange) -> Vec<(i64, f64)> {
+pub(crate) fn compare_points(buckets: &[u64], range: MetricsRange) -> Vec<MetricPoint> {
     buckets
         .iter()
         .enumerate()
-        .map(|(idx, count)| {
+        .map(|indexed_count| {
+            let idx = indexed_count.0;
+            let count = indexed_count.1;
             let ts = range.output_start.0 + i64::try_from(idx).unwrap_or(i64::MAX) * range.step.0;
-            (ts, f64_from_u64(*count).unwrap_or(0.0))
+            MetricPoint::new(ts, f64_from_u64(*count).unwrap_or(0.0))
         })
         .collect()
 }

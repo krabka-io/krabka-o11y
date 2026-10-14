@@ -2,28 +2,18 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_quantile_aggregation_ignores_histograms() {
-    let mut store = InMemoryMetricStore::new();
-    for (instance, value) in [("a", 2.0), ("b", 6.0)] {
-        store.push_float(
-            "tenant-a",
-            labels(&[
-                ("__name__", "latency_seconds"),
-                ("job", "api"),
-                ("instance", instance),
-            ]),
-            10_000,
-            value,
-        );
-    }
-    store.push_histogram(
-        "tenant-a",
-        labels(&[
-            ("__name__", "latency_seconds"),
-            ("job", "api"),
-            ("instance", "hist"),
-        ]),
-        10_000,
-        native_histogram(4.0, 10.0),
+    let store = mixed_metric_store(
+        "latency_seconds",
+        &[
+            MixedMetricFloatSample::builder()
+                .instance("a")
+                .value(2.0)
+                .build(),
+            MixedMetricFloatSample::builder()
+                .instance("b")
+                .value(6.0)
+                .build(),
+        ],
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());

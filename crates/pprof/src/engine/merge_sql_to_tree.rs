@@ -1,6 +1,6 @@
 use super::{
-    Arc, Array, AsArray, BinaryArray, Frame, Int64Type, ProfileError, Tree, UInt64Type,
-    stack_matches_call_sites,
+    Arc, Frame, ProfileError, StacktraceIdentity, Tree, selected_sample_rows,
+    selected_sample_rows::SelectedSampleRow, stack_matches_call_sites,
 };
 
 pub(crate) async fn merge_sql_to_tree(
@@ -13,31 +13,17 @@ pub(crate) async fn merge_sql_to_tree(
 ) -> Result<(), ProfileError> {
     let batches = scan.collect_sql(sql).await?;
     for batch in batches {
-        let partitions = batch.column(0).as_primitive::<UInt64Type>();
-        let stacktrace_ids = batch.column(1).as_primitive::<UInt64Type>();
-        let values = batch.column(2).as_primitive::<Int64Type>();
-        let traces = trace_ids.map(|_| batch.column(3).as_binary::<i32>() as &BinaryArray);
-        let mut rows = Vec::with_capacity(batch.num_rows());
-        for row in 0..batch.num_rows() {
-            if let (Some(wanted), Some(traces)) = (trace_ids, traces)
-                && (traces.is_null(row)
-                    || !wanted
-                        .iter()
-                        .any(|trace| trace.as_slice() == traces.value(row)))
-            {
-                continue;
-            }
-            let partition = partitions.value(row);
-            let stacktrace_id = u32::try_from(stacktrace_ids.value(row)).map_err(|err| {
-                ProfileError::Symbolize(format!("stacktrace id does not fit u32: {err}"))
-            })?;
-            rows.push((partition, stacktrace_id, values.value(row)));
-        }
+        let rows = selected_sample_rows(&batch, trace_ids)?;
         let symbols = Arc::clone(&scan.symbols);
         let resolved = tokio::task::spawn_blocking(move || {
             let mut resolved = Vec::<ResolvedStack>::new();
-            for (partition, stacktrace_id, value) in rows {
-                let stack = (partition, stacktrace_id);
+            for row in rows {
+                let SelectedSampleRow {
+                    partition,
+                    stacktrace_id,
+                    value,
+                } = row;
+                let stack = StacktraceIdentity::new(partition, stacktrace_id);
                 if let Some(previous) = resolved.last_mut()
                     && previous.stack == stack
                 {
@@ -74,7 +60,7 @@ pub(crate) async fn merge_sql_to_tree(
 // Query SQL orders samples by partition and stack ID. Reuse adjacent stacks
 // within each batch; no state outlives the captured symbol source or batch.
 struct ResolvedStack {
-    stack: (u64, u32),
+    stack: StacktraceIdentity,
     frames: Vec<Frame>,
     values: Vec<i64>,
 }
@@ -97,6 +83,16 @@ mod tests {
 
     struct Symbols;
 
+    struct StackExpectation {
+        frames: Vec<&'static str>,
+        value: i64,
+    }
+
+    struct CallSiteExpectation {
+        sites: Vec<&'static str>,
+        indices: Vec<usize>,
+    }
+
     fn frames(names: &[&str]) -> Vec<Frame> {
         names
             .iter()
@@ -110,11 +106,14 @@ mod tests {
 
     impl SymbolSource for Symbols {
         fn resolve(&self, partition: u64, id: u32) -> Vec<Frame> {
-            match (partition, id) {
-                (0, 1) => frames(&["a", "main"]),
-                (1, 1) => frames(&["b", "main"]),
-                (0, 3) => frames(&["inline_leaf", "inline_outer", "main"]),
-                _ => Vec::new(),
+            if partition == 0 && id == 1 {
+                frames(&["a", "main"])
+            } else if partition == 1 && id == 1 {
+                frames(&["b", "main"])
+            } else if partition == 0 && id == 3 {
+                frames(&["inline_leaf", "inline_outer", "main"])
+            } else {
+                Vec::new()
             }
         }
     }
@@ -173,18 +172,46 @@ mod tests {
         let prefix = frames(&["group"]);
         let wanted = [b"wanted".to_vec()];
         let stacks = [
-            (vec!["a", "main", "group"], 5),
-            (vec!["b", "main", "group"], 5),
-            (vec!["group"], 7),
-            (vec!["inline_leaf", "inline_outer", "main", "group"], 2),
+            StackExpectation {
+                frames: vec!["a", "main", "group"],
+                value: 5,
+            },
+            StackExpectation {
+                frames: vec!["b", "main", "group"],
+                value: 5,
+            },
+            StackExpectation {
+                frames: vec!["group"],
+                value: 7,
+            },
+            StackExpectation {
+                frames: vec!["inline_leaf", "inline_outer", "main", "group"],
+                value: 2,
+            },
         ];
-        for (sites, expected_indices) in [
-            (vec![], vec![0, 1, 2, 3]),
-            (vec!["main"], vec![0, 1, 3]),
-            (vec!["main", "inline_outer"], vec![3]),
-            (vec!["group"], vec![]),
+        for expectation in [
+            CallSiteExpectation {
+                sites: vec![],
+                indices: vec![0, 1, 2, 3],
+            },
+            CallSiteExpectation {
+                sites: vec!["main"],
+                indices: vec![0, 1, 3],
+            },
+            CallSiteExpectation {
+                sites: vec!["main", "inline_outer"],
+                indices: vec![3],
+            },
+            CallSiteExpectation {
+                sites: vec!["group"],
+                indices: vec![],
+            },
         ] {
-            let sites = sites.into_iter().map(str::to_string).collect::<Vec<_>>();
+            let sites = expectation
+                .sites
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
             let mut actual = Tree::new();
             merge_sql_to_tree(
                 &scan,
@@ -197,9 +224,9 @@ mod tests {
             .await
             .unwrap();
             let mut expected_tree = Tree::new();
-            for index in expected_indices {
-                let (names, value) = &stacks[index];
-                expected_tree.add_stack(&frames(names), *value);
+            for index in expectation.indices {
+                let expected = &stacks[index];
+                expected_tree.add_stack(&frames(&expected.frames), expected.value);
             }
             assert!(actual.to_flamegraph(i64::MAX) == expected_tree.to_flamegraph(i64::MAX));
         }

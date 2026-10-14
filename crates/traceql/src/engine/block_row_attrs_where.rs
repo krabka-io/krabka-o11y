@@ -1,5 +1,5 @@
 use super::{
-    Array, AttrValue, BLOCK_ATTR_KEYS, BLOCK_ATTR_VALUE, BLOCK_ATTR_VALUE_BOOL,
+    Array, AttrValue, Attribute, BLOCK_ATTR_KEYS, BLOCK_ATTR_VALUE, BLOCK_ATTR_VALUE_BOOL,
     BLOCK_ATTR_VALUE_DOUBLE, BLOCK_ATTR_VALUE_INT, RecordBatch, Result, StringArray, TraceqlError,
     block_attr_values_for_key, optional_list_column,
 };
@@ -19,7 +19,7 @@ pub fn block_row_attrs_where(
     batch: &RecordBatch,
     row: usize,
     keep_key: impl Fn(&str) -> bool,
-) -> Result<Vec<(String, AttrValue)>> {
+) -> Result<Vec<Attribute>> {
     let Some(keys) = optional_list_column(batch, BLOCK_ATTR_KEYS)? else {
         return Ok(Vec::new());
     };
@@ -27,10 +27,9 @@ pub fn block_row_attrs_where(
         return Ok(Vec::new());
     }
     let key_values = keys.value(row);
-    let key_values = key_values
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| TraceqlError::Exec("attr_keys row is not Utf8".into()))?;
+    let key_values = crate::string_array_from_arrow(key_values.as_ref(), || {
+        TraceqlError::Exec("attr_keys row is not Utf8".into())
+    })?;
     let str_values = optional_list_column(batch, BLOCK_ATTR_VALUE)?;
     let int_values = optional_list_column(batch, BLOCK_ATTR_VALUE_INT)?;
     let double_values = optional_list_column(batch, BLOCK_ATTR_VALUE_DOUBLE)?;
@@ -62,7 +61,7 @@ pub fn block_row_attrs_where(
         if let Some(opaque) =
             opaque.filter(|values| attr_idx < values.len() && !values.is_null(attr_idx))
         {
-            out.push((
+            out.push(Attribute::new(
                 key.to_string(),
                 AttrValue::Unsupported(opaque.value(attr_idx).to_string()),
             ));
@@ -79,9 +78,9 @@ pub fn block_row_attrs_where(
         if flags.is_some_and(|flags| {
             attr_idx < flags.len() && !flags.is_null(attr_idx) && flags.value(attr_idx)
         }) {
-            out.push((key.to_string(), AttrValue::Array(values)));
+            out.push(Attribute::new(key.to_string(), AttrValue::Array(values)));
         } else {
-            out.extend(values.into_iter().map(|value| (key.to_string(), value)));
+            out.extend(values.into_iter().map(|value| Attribute::new(key, value)));
         }
     }
     Ok(out)

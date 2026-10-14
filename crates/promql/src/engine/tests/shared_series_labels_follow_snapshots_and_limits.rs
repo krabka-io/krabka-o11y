@@ -31,10 +31,9 @@ async fn shared_series_labels_follow_snapshots_and_limits() {
         .labels_by_fingerprint_sets("t", std::slice::from_ref(&matchers), 1_000, 2_000)
         .await
         .unwrap();
-    let expected: BTreeMap<_, crate::PromqlLabels> = BTreeMap::from([
-        (api.fingerprint(), api.clone().into()),
-        (latency.fingerprint(), latency.clone().into()),
-    ]);
+    let mut expected: BTreeMap<_, crate::PromqlLabels> = BTreeMap::new();
+    expected.insert(api.fingerprint(), api.clone().into());
+    expected.insert(latency.fingerprint(), latency.clone().into());
     let hot_series = head
         .series_shared("t", &matchers, 1_000, 2_000)
         .await

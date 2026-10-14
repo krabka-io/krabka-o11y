@@ -1,8 +1,7 @@
 use super::{
-    AuditOutcome, Bytes, CompactorDeleteRequest, CompactorDeleteState, HttpQueryError,
-    OPERATION_DELETE_REQUEST_CREATE, RESOURCE_DELETE_REQUEST, RESOURCE_TENANT, RequestSecurity,
-    TenantId, current_unix_time_ns, parse_create_delete_request_params, parse_query,
-    request_query_or_form_body, resource,
+    Bytes, CompactorDeleteRequest, CompactorDeleteState, HttpQueryError,
+    OPERATION_DELETE_REQUEST_CREATE, RequestSecurity, TenantId, current_unix_time_ns,
+    parse_create_delete_request_params, parse_query, request_query_or_form_body,
 };
 
 /// Stores a new delete request for `tenant`.
@@ -42,17 +41,12 @@ pub(crate) fn execute_create_delete_request(
     });
     let persisted = state.delete_requests.persist(&requests);
     drop(requests);
-    security.admin_operation(
+    super::audit_delete_request_write(
+        security,
         OPERATION_DELETE_REQUEST_CREATE,
-        vec![
-            resource(RESOURCE_TENANT, tenant.as_str()),
-            resource(RESOURCE_DELETE_REQUEST, request_id),
-        ],
-        if persisted.is_ok() {
-            AuditOutcome::Success
-        } else {
-            AuditOutcome::Failure
-        },
+        tenant,
+        &request_id,
+        &persisted,
     );
     persisted?;
     Ok(())

@@ -14,6 +14,11 @@ mod tests {
     use super::*;
     use crate::{Frame, Tree};
 
+    struct DiffBarExpectation {
+        index: usize,
+        value: i64,
+    }
+
     fn frame(name: &str) -> Frame {
         Frame {
             function: name.to_string(),
@@ -40,8 +45,17 @@ mod tests {
         let b_idx = i64::try_from(diff.names.iter().position(|name| name == "b").unwrap()).unwrap();
         let level1 = &diff.levels[1].values;
         let b_bar = level1.chunks(7).find(|chunk| chunk[6] == b_idx).unwrap();
-        for (index, want) in [(1, 0), (2, 0), (4, 5), (5, 5)] {
-            assert!(b_bar[index] == want, "b_bar[{index}]");
+        for expected in [
+            DiffBarExpectation { index: 1, value: 0 },
+            DiffBarExpectation { index: 2, value: 0 },
+            DiffBarExpectation { index: 4, value: 5 },
+            DiffBarExpectation { index: 5, value: 5 },
+        ] {
+            assert!(
+                b_bar[expected.index] == expected.value,
+                "b_bar[{}]",
+                expected.index
+            );
         }
     }
 

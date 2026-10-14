@@ -6,10 +6,10 @@ pub(crate) fn loki_matrix_response_with_warnings(
 ) -> Value {
     let result = series
         .into_iter()
-        .map(|(metric, values)| {
+        .map(|series| {
             json!({
-                "metric": metric,
-                "values": values
+                "metric": series.labels,
+                "values": series.values
                     .into_iter()
                     .map(loki_metric_sample)
                     .collect::<Vec<_>>(),

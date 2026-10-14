@@ -30,6 +30,17 @@ mod tests {
     use object::{Object, ObjectSymbol};
 
     use super::*;
+
+    struct SymbolRecord {
+        address: u64,
+        size: u64,
+        name: String,
+    }
+
+    struct ZeroSizeSymbols {
+        address: u64,
+        names: Vec<String>,
+    }
     use crate::{LocationRec, MappingRec, MappingSymbolization};
 
     #[test]
@@ -96,7 +107,12 @@ mod tests {
 
     /// A database holding one unsymbolized mapping of `/bin/app` (build
     /// `build-a`) at `0x1000..0x2000`, file offset `0x30`, and that mapping's id.
-    fn db_with_unsymbolized_app_mapping() -> (SymbolDb, u32) {
+    struct UnsymbolizedAppFixture {
+        db: SymbolDb,
+        mapping_id: u32,
+    }
+
+    fn db_with_unsymbolized_app_mapping() -> UnsymbolizedAppFixture {
         let mut db = SymbolDb::new();
         let filename = db.intern_string("/bin/app");
         let build_id = db.intern_string("build-a");
@@ -108,12 +124,18 @@ mod tests {
             build_id,
             symbolization: MappingSymbolization::default(),
         });
-        (db, mapping)
+        UnsymbolizedAppFixture {
+            db,
+            mapping_id: mapping,
+        }
     }
 
     #[test]
     fn lazy_symbolizer_resolves_unsymbolized_location_once() {
-        let (mut db, mapping) = db_with_unsymbolized_app_mapping();
+        let UnsymbolizedAppFixture {
+            mut db,
+            mapping_id: mapping,
+        } = db_with_unsymbolized_app_mapping();
         let loc = db.intern_location(LocationRec {
             address: 0x1010,
             mapping_id: mapping,
@@ -149,7 +171,10 @@ mod tests {
             }
         }
 
-        let (mut db, mapping) = db_with_unsymbolized_app_mapping();
+        let UnsymbolizedAppFixture {
+            mut db,
+            mapping_id: mapping,
+        } = db_with_unsymbolized_app_mapping();
         for address in [0x1010, 0x1020] {
             db.intern_location(LocationRec {
                 address,
@@ -300,7 +325,8 @@ mod tests {
         let served_clone = Arc::clone(&served);
         let server_thread = std::thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
-            let (mut stream, _) = accept_with_deadline(&listener);
+            let connection = accept_with_deadline(&listener);
+            let AcceptedConnection { mut stream, .. } = connection;
             let mut request = [0_u8; 1024];
             let read = std::io::Read::read(&mut stream, &mut request).unwrap();
             let request = String::from_utf8_lossy(&request[..read]);
@@ -416,32 +442,39 @@ mod tests {
             .symbols()
             .filter_map(|symbol| {
                 let name = symbol.name().ok()?;
-                (!name.is_empty()).then(|| (symbol.address(), symbol.size(), name.to_string()))
+                (!name.is_empty()).then(|| SymbolRecord {
+                    address: symbol.address(),
+                    size: symbol.size(),
+                    name: name.to_string(),
+                })
             })
             .collect::<Vec<_>>();
-        let (zero_addr, zero_names) = symbols
+        let candidates = symbols
             .iter()
-            .filter(|(address, size, _)| *address != 0 && *size == 0)
-            .find_map(|(address, _, _)| {
-                let covered_by_sized = symbols.iter().any(|(candidate, size, _)| {
-                    *size != 0
-                        && *candidate <= *address
-                        && *address < (*candidate).saturating_add(*size)
+            .filter(|symbol| symbol.address != 0 && symbol.size == 0)
+            .find_map(|symbol| {
+                let covered_by_sized = symbols.iter().any(|candidate| {
+                    candidate.size != 0
+                        && candidate.address <= symbol.address
+                        && symbol.address < candidate.address.saturating_add(candidate.size)
                 });
                 if covered_by_sized {
                     return None;
                 }
                 let names = symbols
                     .iter()
-                    .filter(|(candidate, size, _)| candidate == address && *size == 0)
-                    .map(|(_, _, name)| name.clone())
+                    .filter(|candidate| candidate.address == symbol.address && candidate.size == 0)
+                    .map(|candidate| candidate.name.clone())
                     .collect::<Vec<_>>();
-                (!names.is_empty()).then_some((*address, names))
+                (!names.is_empty()).then_some(ZeroSizeSymbols {
+                    address: symbol.address,
+                    names,
+                })
             })
             .expect("test binary has an uncovered zero-size symbol");
         assert!(
-            nearest_symbol_name(&object, zero_addr)
-                .is_some_and(|name| zero_names.iter().any(|candidate| candidate == &name))
+            nearest_symbol_name(&object, candidates.address)
+                .is_some_and(|name| candidates.names.iter().any(|candidate| candidate == &name))
         );
 
         let anchor = object
@@ -541,14 +574,19 @@ mod tests {
         assert!(out.len() == cap_usize);
     }
 
-    #[test]
-    fn content_length_cap_allows_absent_and_exact_lengths_only() {
-        for (content_length, want) in [(None, true), (Some(10), true), (Some(11), false)] {
-            assert!(
-                content_length_within_cap(content_length, 10) == want,
-                "{content_length:?}"
-            );
-        }
+    #[yare::parameterized(
+        absent = { None, true },
+        exact_limit = { Some(10), true },
+        over_limit = { Some(11), false },
+    )]
+    fn content_length_cap_allows_absent_and_exact_lengths_only(
+        content_length: Option<u64>,
+        want: bool,
+    ) {
+        assert2::assert!(
+            content_length_within_cap(content_length, 10) == want,
+            "{content_length:?}"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -567,7 +605,8 @@ mod tests {
             listener
                 .set_nonblocking(true)
                 .expect("set listener non-blocking");
-            let (mut stream, _) = accept_with_deadline(&listener);
+            let connection = accept_with_deadline(&listener);
+            let AcceptedConnection { mut stream, .. } = connection;
             let mut request = [0_u8; 1024];
             let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
             let response = "HTTP/1.1 302 Found\r\nlocation: /elsewhere\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
@@ -629,13 +668,19 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn accept_with_deadline(
-        listener: &std::net::TcpListener,
-    ) -> (std::net::TcpStream, std::net::SocketAddr) {
+    struct AcceptedConnection {
+        stream: std::net::TcpStream,
+    }
+
+    fn accept_with_deadline(listener: &std::net::TcpListener) -> AcceptedConnection {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             match listener.accept() {
-                Ok(stream) => return stream,
+                Ok(connection) => {
+                    return AcceptedConnection {
+                        stream: connection.0,
+                    };
+                }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                     assert!(
                         std::time::Instant::now() < deadline,

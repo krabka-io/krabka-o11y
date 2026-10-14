@@ -11,11 +11,10 @@ pub fn assign_nested_set(spans: &[SpanNode], cycle_spans: CycleSpans) -> Vec<Nes
         Exit { idx: usize },
     }
 
-    let pos: HashMap<[u8; 8], usize> = spans
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.span_id, i))
-        .collect();
+    let mut pos: HashMap<[u8; 8], usize> = HashMap::new();
+    for (i, span) in spans.iter().enumerate() {
+        pos.insert(span.span_id, i);
+    }
 
     let mut children = vec![Vec::new(); spans.len()];
     let mut roots = Vec::new();

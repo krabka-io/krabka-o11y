@@ -41,28 +41,16 @@ pub(crate) fn apply_metric_binary_set_to_loki_result(
         return;
     }
 
-    let mut index = 0;
-    while index < left_results.len() {
-        let Some(left_labels) = metric_series_labels(&left_results[index]) else {
-            left_results.remove(index);
-            continue;
-        };
-        let left_key = metric_vector_matching_key(&left_labels, matching);
-        let right_series = right_results.iter().find(|series| {
-            metric_series_labels(series)
-                .is_some_and(|labels| metric_vector_matching_key(&labels, matching) == left_key)
-        });
-        let keep = match (op, right_series) {
+    super::super::matching_metric_result_series::retain_matching_metric_result_series(
+        left_results,
+        right_results,
+        matching,
+        |left_series, right_series| match (op, right_series) {
             (MetricBinarySetOp::And | MetricBinarySetOp::Unless, Some(right_series)) => {
-                apply_metric_binary_set_to_series(&mut left_results[index], right_series, op)
+                apply_metric_binary_set_to_series(left_series, right_series, op)
             }
-            (MetricBinarySetOp::And, None) => false,
-            (MetricBinarySetOp::Unless, None) | (MetricBinarySetOp::Or, _) => true,
-        };
-        if keep {
-            index += 1;
-        } else {
-            left_results.remove(index);
-        }
-    }
+            (MetricBinarySetOp::Unless, None) | (MetricBinarySetOp::Or, Some(_)) => true,
+            (MetricBinarySetOp::And | MetricBinarySetOp::Or, None) => false,
+        },
+    );
 }

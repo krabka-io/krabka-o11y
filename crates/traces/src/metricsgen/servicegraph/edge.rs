@@ -10,6 +10,6 @@ pub struct Edge {
     pub failed: bool,
     pub connection_type: ConnectionType,
     pub first_seen_ns: i64,
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<krabka_traceql::MetricLabel>,
     pub multiplier: f64,
 }

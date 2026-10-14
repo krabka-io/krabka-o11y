@@ -16,13 +16,7 @@ mod tests {
     use assert2::check;
 
     use super::*;
-
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
-        pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-            .collect()
-    }
+    use crate::test_support::{LabelPair, labels};
 
     #[test]
     fn label_format_accessors_return_configured_assignments() {
@@ -86,7 +80,11 @@ mod tests {
 
         assert_eq!(selections.selections(), &[drop_level, drop_debug_app]);
 
-        let mut fields = labels(&[("app", "debug-api"), ("level", "warn"), ("status", "500")]);
+        let mut fields = labels(&[
+            LabelPair::new("app", "debug-api"),
+            LabelPair::new("level", "warn"),
+            LabelPair::new("status", "500"),
+        ]);
         selections.apply_drop(&mut fields);
 
         assert_eq!(fields.get("status"), Some(&"500".to_string()));
@@ -112,25 +110,57 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn label_selection_matches_requires_present_matching_value() {
         let bare = LabelSelection::name("level").unwrap();
         let exact = LabelSelection::equal("status", "500").unwrap();
         let regex = LabelSelection::regex("app", "api|worker").unwrap();
-        let fields = labels(&[("app", "api"), ("status", "500")]);
-        let wrong_status = labels(&[("status", "200")]);
-        let frontend = labels(&[("app", "frontend")]);
+        let fields = labels(&[
+            LabelPair::new("app", "api"),
+            LabelPair::new("status", "500"),
+        ]);
+        let wrong_status = labels(&[LabelPair::new("status", "200")]);
+        let frontend = labels(&[LabelPair::new("app", "frontend")]);
 
-        for (selection, candidate, expected) in [
-            (&bare, &fields, false),
-            (&exact, &fields, true),
-            (&exact, &wrong_status, false),
-            (&regex, &fields, true),
-            (&regex, &frontend, false),
+        struct SelectionCase<'a> {
+            selection: &'a LabelSelection,
+            candidate: &'a Labels,
+            expected: bool,
+        }
+
+        for case in [
+            SelectionCase {
+                selection: &bare,
+                candidate: &fields,
+                expected: false,
+            },
+            SelectionCase {
+                selection: &exact,
+                candidate: &fields,
+                expected: true,
+            },
+            SelectionCase {
+                selection: &exact,
+                candidate: &wrong_status,
+                expected: false,
+            },
+            SelectionCase {
+                selection: &regex,
+                candidate: &fields,
+                expected: true,
+            },
+            SelectionCase {
+                selection: &regex,
+                candidate: &frontend,
+                expected: false,
+            },
         ] {
             assert_eq!(
-                selection.matches(candidate),
-                expected,
-                "{selection:?} against {candidate:?}"
+                case.selection.matches(case.candidate),
+                case.expected,
+                "{:?} against {:?}",
+                case.selection,
+                case.candidate
             );
         }
     }
@@ -162,7 +192,7 @@ pub use label_selection::LabelSelection;
 pub use label_selection_matcher::LabelSelectionMatcher;
 pub use label_selection_set::LabelSelectionSet;
 use parse_decimal_exponent::parse_decimal_exponent;
-pub use parse_decimal_sample_literal::parse_decimal_sample_literal;
+pub use parse_decimal_sample_literal::{DecimalSampleRatio, parse_decimal_sample_literal};
 use parse_raw_sample_literal::parse_raw_sample_literal;
 pub use unwrap_conversion::UnwrapConversion;
 pub use unwrap_expression::UnwrapExpression;

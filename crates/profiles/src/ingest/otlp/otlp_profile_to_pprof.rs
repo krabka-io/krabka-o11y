@@ -13,12 +13,12 @@ pub(crate) fn otlp_profile_to_pprof(
             .mapping_table
             .iter()
             .enumerate()
-            .map(|(idx, mapping)| krabka_pprof::proto::Mapping {
-                id: u64::try_from(idx + 1).unwrap_or(u64::MAX),
-                memory_start: mapping.memory_start,
-                memory_limit: mapping.memory_limit,
-                file_offset: mapping.file_offset,
-                filename: i64::from(mapping.filename_strindex),
+            .map(|entry| krabka_pprof::proto::Mapping {
+                id: u64::try_from(entry.0 + 1).unwrap_or(u64::MAX),
+                memory_start: entry.1.memory_start,
+                memory_limit: entry.1.memory_limit,
+                file_offset: entry.1.file_offset,
+                filename: i64::from(entry.1.filename_strindex),
                 ..Default::default()
             })
             .collect(),
@@ -26,23 +26,24 @@ pub(crate) fn otlp_profile_to_pprof(
             .function_table
             .iter()
             .enumerate()
-            .map(|(idx, function)| krabka_pprof::proto::Function {
-                id: u64::try_from(idx + 1).unwrap_or(u64::MAX),
-                name: i64::from(function.name_strindex),
-                system_name: i64::from(function.system_name_strindex),
-                filename: i64::from(function.filename_strindex),
-                start_line: function.start_line,
+            .map(|entry| krabka_pprof::proto::Function {
+                id: u64::try_from(entry.0 + 1).unwrap_or(u64::MAX),
+                name: i64::from(entry.1.name_strindex),
+                system_name: i64::from(entry.1.system_name_strindex),
+                filename: i64::from(entry.1.filename_strindex),
+                start_line: entry.1.start_line,
             })
             .collect(),
         location: dict
             .location_table
             .iter()
             .enumerate()
-            .map(|(idx, location)| krabka_pprof::proto::Location {
-                id: u64::try_from(idx + 1).unwrap_or(u64::MAX),
-                mapping_id: table_ref(location.mapping_index, dict.mapping_table.len()),
-                address: location.address,
-                line: location
+            .map(|entry| krabka_pprof::proto::Location {
+                id: u64::try_from(entry.0 + 1).unwrap_or(u64::MAX),
+                mapping_id: table_ref(entry.1.mapping_index, dict.mapping_table.len()),
+                address: entry.1.address,
+                line: entry
+                    .1
                     .lines
                     .iter()
                     .map(|line| krabka_pprof::proto::Line {

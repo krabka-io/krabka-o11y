@@ -1,86 +1,182 @@
 use super::*;
 
+#[derive(Clone)]
+struct ComparisonInput {
+    metric: &'static str,
+    job: &'static str,
+    extra_label: Option<InputLabel>,
+    value: f64,
+}
+
+#[derive(Clone)]
+struct InputLabel {
+    name: &'static str,
+    value: &'static str,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ExpectedLabel {
+    name: String,
+    value: String,
+}
+
+impl ExpectedLabel {
+    fn new(name: &str, value: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+}
+
+fn expected_job_labels() -> Vec<Vec<ExpectedLabel>> {
+    ["x", "y"]
+        .into_iter()
+        .map(|job| vec![ExpectedLabel::new("job", job)])
+        .collect()
+}
+
+fn expected_instance_job_labels(keep_metric_name: bool) -> Vec<Vec<ExpectedLabel>> {
+    ["1", "9"]
+        .into_iter()
+        .zip(["x", "y"])
+        .map(|(instance, job)| {
+            let mut labels = Vec::new();
+            if keep_metric_name {
+                labels.push(ExpectedLabel::new("__name__", "m"));
+            }
+            labels.push(ExpectedLabel::new("inst", instance));
+            labels.push(ExpectedLabel::new("job", job));
+            labels
+        })
+        .collect()
+}
+
+struct QueryExpectation {
+    query: &'static str,
+    labels: Vec<Vec<ExpectedLabel>>,
+}
+
 /// One-to-one `on` projects comparison labels to the matching set. Grouped
 /// comparisons preserve operand metadata while arithmetic drops metric names.
 /// Each query pair exercises matched and filled paths against explicit labels.
 #[tokio::test]
 pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
     let mut store = InMemoryMetricStore::new();
-    for (name, job, extra, value) in [
-        ("a", "x", Some(("extra", "1")), 5.0),
-        ("a", "y", Some(("extra", "2")), 5.0),
-        ("b", "x", None, 3.0),
-        ("m", "x", Some(("inst", "1")), 7.0),
-        ("m", "y", Some(("inst", "9")), 7.0),
+    for input in [
+        ComparisonInput {
+            metric: "a",
+            job: "x",
+            extra_label: Some(InputLabel {
+                name: "extra",
+                value: "1",
+            }),
+            value: 5.0,
+        },
+        ComparisonInput {
+            metric: "a",
+            job: "y",
+            extra_label: Some(InputLabel {
+                name: "extra",
+                value: "2",
+            }),
+            value: 5.0,
+        },
+        ComparisonInput {
+            metric: "b",
+            job: "x",
+            extra_label: None,
+            value: 3.0,
+        },
+        ComparisonInput {
+            metric: "m",
+            job: "x",
+            extra_label: Some(InputLabel {
+                name: "inst",
+                value: "1",
+            }),
+            value: 7.0,
+        },
+        ComparisonInput {
+            metric: "m",
+            job: "y",
+            extra_label: Some(InputLabel {
+                name: "inst",
+                value: "9",
+            }),
+            value: 7.0,
+        },
     ] {
-        let mut pairs = vec![("__name__", name), ("job", job)];
-        if let Some(extra) = extra {
-            pairs.push(extra);
+        let mut pairs = vec![
+            krabka_metrics::MetricLabelPair::new("__name__", input.metric),
+            krabka_metrics::MetricLabelPair::new("job", input.job),
+        ];
+        if let Some(extra) = input.extra_label {
+            pairs.push(krabka_metrics::MetricLabelPair::new(
+                extra.name,
+                extra.value,
+            ));
         }
-        store.push_float("tenant-a", labels(&pairs), 10_000, value);
+        store.push_float(
+            "tenant-a",
+            crate::PromqlLabels::from_pairs(pairs),
+            10_000,
+            input.value,
+        );
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    for (query, want) in [
+    for case in [
         // One-to-one: `x` matches, `y` takes the right-fill path.
-        (
-            "a > on (job) fill_right(0) b",
-            vec![vec![("job", "x")], vec![("job", "y")]],
-        ),
-        (
-            "a + on (job) fill_right(0) b",
-            vec![vec![("job", "x")], vec![("job", "y")]],
-        ),
+        QueryExpectation {
+            query: "a > on (job) fill_right(0) b",
+            labels: expected_job_labels(),
+        },
+        QueryExpectation {
+            query: "a + on (job) fill_right(0) b",
+            labels: expected_job_labels(),
+        },
         // The mirror of the pair above: here the *left* side is filled, so the
         // synthetic left operand has the matching labels and no metric name.
         // Only a left-fill query reaches that branch.
-        (
-            "b < on (job) fill_left(0) a",
-            vec![vec![("job", "x")], vec![("job", "y")]],
-        ),
-        (
-            "b + on (job) fill_left(0) a",
-            vec![vec![("job", "x")], vec![("job", "y")]],
-        ),
+        QueryExpectation {
+            query: "b < on (job) fill_left(0) a",
+            labels: expected_job_labels(),
+        },
+        QueryExpectation {
+            query: "b + on (job) fill_left(0) a",
+            labels: expected_job_labels(),
+        },
         // `bool` puts a comparison back on the arithmetic rule.
-        ("a > bool on (job) b", vec![vec![("job", "x")]]),
+        QueryExpectation {
+            query: "a > bool on (job) b",
+            labels: vec![vec![ExpectedLabel::new("job", "x")]],
+        },
         // Many-to-one: `x` matches, `y` takes the right-fill path.
-        (
-            "m > on (job) group_left fill_right(0) b",
-            vec![
-                vec![("__name__", "m"), ("inst", "1"), ("job", "x")],
-                vec![("__name__", "m"), ("inst", "9"), ("job", "y")],
-            ],
-        ),
-        (
-            "m + on (job) group_left fill_right(0) b",
-            vec![
-                vec![("inst", "1"), ("job", "x")],
-                vec![("inst", "9"), ("job", "y")],
-            ],
-        ),
+        QueryExpectation {
+            query: "m > on (job) group_left fill_right(0) b",
+            labels: expected_instance_job_labels(true),
+        },
+        QueryExpectation {
+            query: "m + on (job) group_left fill_right(0) b",
+            labels: expected_instance_job_labels(false),
+        },
         // One-to-many: `x` matches, `y` takes the left-fill path.
-        (
-            "b < on (job) group_right fill_right(0) m",
-            vec![
-                vec![("__name__", "m"), ("inst", "1"), ("job", "x")],
-                vec![("__name__", "m"), ("inst", "9"), ("job", "y")],
-            ],
-        ),
-        (
-            "b + on (job) group_right fill_right(0) m",
-            vec![
-                vec![("inst", "1"), ("job", "x")],
-                vec![("inst", "9"), ("job", "y")],
-            ],
-        ),
+        QueryExpectation {
+            query: "b < on (job) group_right fill_right(0) m",
+            labels: expected_instance_job_labels(true),
+        },
+        QueryExpectation {
+            query: "b + on (job) group_right fill_right(0) m",
+            labels: expected_instance_job_labels(false),
+        },
     ] {
         let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), case.query, 10_000)
             .await
-            .unwrap_or_else(|error| panic!("{query}: {error}"));
+            .unwrap_or_else(|error| panic!("{}: {error}", case.query));
         let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {query}");
+            panic!("expected a vector for {}", case.query);
         };
         let mut got = samples
             .iter()
@@ -88,20 +184,15 @@ pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
                 sample
                     .labels
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|pair| ExpectedLabel {
+                        name: pair.name.clone(),
+                        value: pair.value.to_string(),
+                    })
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
         got.sort();
-        let want = want
-            .iter()
-            .map(|pairs| {
-                pairs
-                    .iter()
-                    .map(|(name, value)| ((*name).to_string(), crate::PromqlString::from(*value)))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        assert2::assert!(got == want, "{query}");
+        let want = case.labels.iter().cloned().collect::<Vec<_>>();
+        assert2::assert!(got == want, "{}", case.query);
     }
 }

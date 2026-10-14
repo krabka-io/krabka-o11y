@@ -43,8 +43,8 @@ pub(crate) fn metric_label_value(batch: &RecordBatch, column: &str, row: usize) 
             })?;
             let value = super::row_attrs(batch, row)?
                 .into_iter()
-                .find(|(name, _)| name == key)
-                .map(|(_, value)| match value {
+                .find(|attribute| attribute.key == key)
+                .map(|attribute| match attribute.value {
                     super::AttrValue::Unsupported(_) => "nil".into(),
                     super::AttrValue::Array(value) => format!("{value:?}"),
                     super::AttrValue::Str(value) => value,

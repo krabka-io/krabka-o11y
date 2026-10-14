@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_count_partials() {
     let cache = QueryFrontendCache::default();
-    let executor = AvgPartialRecordingExecutor::default();
+    let executor = PartialRecordingExecutor::average();
 
     let result =
         execute_range_query_frontend(&executor, &cache, &two_shard_instant_request("avg(up)"))
@@ -22,7 +22,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_co
                 drop_name: false,
                 start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: labels(&[]).into(),
-                samples: vec![(0, SampleValue::Float(4.0))],
+                samples: vec![RangeSeriesSample::new(0, SampleValue::Float(4.0))],
             }]))
     );
 }

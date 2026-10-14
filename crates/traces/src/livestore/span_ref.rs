@@ -18,12 +18,18 @@ pub(crate) fn span_ref(span: &Span, nested: nested_set::NestedSet) -> krabka_tra
         resource_attributes: span
             .resource_attrs
             .iter()
-            .filter_map(|attr| traceql_attr(attr).map(|value| (attr.key.clone(), value)))
+            .filter_map(|attr| {
+                traceql_attr(attr)
+                    .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+            })
             .collect(),
         attributes: span
             .span_attrs
             .iter()
-            .filter_map(|attr| traceql_attr(attr).map(|value| (attr.key.clone(), value)))
+            .filter_map(|attr| {
+                traceql_attr(attr)
+                    .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+            })
             .collect(),
         events: span
             .events

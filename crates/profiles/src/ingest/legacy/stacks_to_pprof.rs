@@ -1,16 +1,15 @@
-use super::{BTreeMap, PprofProfile, intern_string};
+use super::{BTreeMap, LegacyStackFrame, PprofProfile, intern_string};
 
 pub(crate) fn stacks_to_pprof(
     name: &str,
     sample_type: &str,
     sample_unit: &str,
-    stacks: BTreeMap<Vec<(String, i32)>, i64>,
+    stacks: BTreeMap<Vec<LegacyStackFrame>, i64>,
 ) -> PprofProfile {
-    let mut string_ids = BTreeMap::from([
-        (String::new(), 0_i64),
-        (sample_type.to_string(), 1_i64),
-        (sample_unit.to_string(), 2_i64),
-    ]);
+    let mut string_ids = BTreeMap::new();
+    string_ids.insert(String::new(), 0_i64);
+    string_ids.insert(sample_type.to_string(), 1_i64);
+    string_ids.insert(sample_unit.to_string(), 2_i64);
     let mut strings = vec![
         String::new(),
         sample_type.to_string(),
@@ -21,13 +20,15 @@ pub(crate) fn stacks_to_pprof(
     let mut locations = Vec::new();
     let mut samples = Vec::new();
 
-    for (stack, value) in stacks {
+    for stack_entry in stacks {
+        let stack = stack_entry.0;
+        let value = stack_entry.1;
         let mut location_ids = Vec::new();
-        for (frame, line) in stack.into_iter().rev() {
-            let function_id = if let Some(id) = function_ids.get(&frame) {
+        for frame in stack.into_iter().rev() {
+            let function_id = if let Some(id) = function_ids.get(&frame.name) {
                 *id
             } else {
-                let name_ref = intern_string(&mut strings, &mut string_ids, &frame);
+                let name_ref = intern_string(&mut strings, &mut string_ids, &frame.name);
                 let id = i64::try_from(functions.len() + 1).expect("function id fits i64");
                 functions.push(krabka_pprof::proto::Function {
                     id: u64::try_from(id).expect("positive id fits u64"),
@@ -40,12 +41,12 @@ pub(crate) fn stacks_to_pprof(
                     id: u64::try_from(id).expect("positive id fits u64"),
                     line: vec![krabka_pprof::proto::Line {
                         function_id: u64::try_from(id).expect("positive id fits u64"),
-                        line: i64::from(line),
+                        line: i64::from(frame.line),
                         column: 0,
                     }],
                     ..Default::default()
                 });
-                function_ids.insert(frame, id);
+                function_ids.insert(frame.name, id);
                 id
             };
             location_ids.push(u64::try_from(function_id).expect("positive id fits u64"));

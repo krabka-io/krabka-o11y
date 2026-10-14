@@ -1,23 +1,26 @@
 use super::{
-    ATTR_PREFIX, Array, AttrValue, DataType, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs,
-    TraceqlError, block_row_attrs_where, bool_array_value, float64_array_value, int64_array_value,
-    string_array_value,
+    ATTR_PREFIX, Array, AttrValue, Attribute, DataType, RESOURCE_ATTR_PREFIX, RecordBatch,
+    ResourceAttrs, TraceqlError, block_row_attrs_where, bool_array_value, float64_array_value,
+    int64_array_value, string_array_value,
 };
 
 pub(crate) fn attr_values_with_resource(
     batch: &RecordBatch,
     row: usize,
     resource: ResourceAttrs,
-) -> Result<Vec<(String, AttrValue)>, TraceqlError> {
+) -> Result<Vec<Attribute>, TraceqlError> {
     let packed = block_row_attrs_where(batch, row, |key| {
         resource == ResourceAttrs::Include || !key.starts_with(RESOURCE_ATTR_PREFIX)
     })?;
     let mut out = Vec::new();
-    for (idx, field) in batch.schema().fields().iter().enumerate() {
+    let schema = batch.schema();
+    let fields = schema.fields();
+    for idx in 0..fields.len() {
+        let field = &fields[idx];
         let Some(key) = field.name().strip_prefix(ATTR_PREFIX) else {
             continue;
         };
-        if packed.iter().any(|(name, _)| name == key) {
+        if packed.iter().any(|attribute| attribute.key == key) {
             continue;
         }
         let col = batch.column(idx);
@@ -34,7 +37,7 @@ pub(crate) fn attr_values_with_resource(
             DataType::Boolean => AttrValue::Bool(bool_array_value(col.as_ref(), row)?),
             _ => continue,
         };
-        out.push((key.to_string(), value));
+        out.push(Attribute::new(key, value));
     }
     out.extend(packed);
     Ok(out)

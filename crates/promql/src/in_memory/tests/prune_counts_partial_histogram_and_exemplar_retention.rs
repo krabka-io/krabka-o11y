@@ -3,15 +3,33 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn prune_counts_partial_histogram_and_exemplar_retention() {
     let mut store = InMemoryMetricStore::with_retention(secs(1));
-    let live = lbls(&[("__name__", "latency_seconds"), ("job", "api")]);
-    let stale = lbls(&[("__name__", "latency_seconds"), ("job", "old")]);
+    let live = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
+    let stale = lbls(&[
+        crate::test_support::TestLabelPair::new("__name__", "latency_seconds"),
+        crate::test_support::TestLabelPair::new("job", "old"),
+    ]);
     store.push_float("t", live.clone(), 8_999, 1.0);
     store.push_float("t", live.clone(), 9_000, 2.0);
     store.push_float("t", stale.clone(), 1_000, 3.0);
     store.push_histogram("t", live.clone(), 8_999, count_two_sum_three_histogram());
     store.push_histogram("t", live.clone(), 9_000, count_two_sum_three_histogram());
-    store.push_exemplar("t", live.clone(), lbls(&[("trace_id", "old")]), 8_999, 1.0);
-    store.push_exemplar("t", live.clone(), lbls(&[("trace_id", "new")]), 9_000, 2.0);
+    store.push_exemplar(
+        "t",
+        live.clone(),
+        lbls(&[crate::test_support::TestLabelPair::new("trace_id", "old")]),
+        8_999,
+        1.0,
+    );
+    store.push_exemplar(
+        "t",
+        live.clone(),
+        lbls(&[crate::test_support::TestLabelPair::new("trace_id", "new")]),
+        9_000,
+        2.0,
+    );
 
     let stats = store.prune(10_000);
     assert2::assert!(
@@ -35,7 +53,9 @@ pub(crate) async fn prune_counts_partial_histogram_and_exemplar_retention() {
         .unwrap()
         .exemplars;
     check!(exemplars.len() == 1);
-    check!(exemplars[0].labels == lbls(&[("trace_id", "new")]));
+    check!(
+        exemplars[0].labels == lbls(&[crate::test_support::TestLabelPair::new("trace_id", "new")])
+    );
     let stale_matchers = [LabelMatcher::new("job", MatchOp::Eq, "old")];
     check!(
         store

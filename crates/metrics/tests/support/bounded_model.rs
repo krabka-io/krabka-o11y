@@ -12,6 +12,12 @@ pub struct ModelBounds {
     pub expected_states: usize,
 }
 
+#[allow(dead_code)]
+pub fn apply_transition<S: Clone>(last: &S, transition: impl FnOnce(&mut S) -> bool) -> Option<S> {
+    let mut state = last.clone();
+    transition(&mut state).then_some(state)
+}
+
 /// Explores `model` breadth first within `bounds`, checks that the search
 /// finished inside them and found exactly the expected states, and checks
 /// every property of the model.

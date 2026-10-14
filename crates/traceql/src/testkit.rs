@@ -4,7 +4,9 @@ use std::{fmt::Write as _, fs, path::Path, sync::Arc};
 
 use krabka_units::{Time, convert::TimeExt as _};
 
-use crate::{AttrValue, EngineOpts, InMemorySpanStore, InputSpan, SearchResponse, TraceqlEngine};
+use crate::{
+    AttrValue, Attribute, EngineOpts, InMemorySpanStore, InputSpan, SearchResponse, TraceqlEngine,
+};
 
 #[cfg(test)]
 mod tests {

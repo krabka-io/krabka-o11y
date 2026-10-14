@@ -1,5 +1,10 @@
 use super::*;
 
+struct ClampBounds {
+    min: Option<f64>,
+    max: Option<f64>,
+}
+
 impl<S: MetricStore> PromqlEngine<S> {
     /// Tree-walking differential test oracle, NOT compiled into shipped builds.
     ///
@@ -572,7 +577,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             )));
         };
 
-        let (min, max) = match kind {
+        let bounds = match kind {
             ClampKind::Both => {
                 let min = self
                     .eval_scalar_arg(tenant, call, 1, time_ms, "minimum")
@@ -583,19 +588,28 @@ impl<S: MetricStore> PromqlEngine<S> {
                 if min > max {
                     return Ok(QueryResult::InstantVector(Vec::new()));
                 }
-                (Some(min), Some(max))
+                ClampBounds {
+                    min: Some(min),
+                    max: Some(max),
+                }
             }
             ClampKind::Min => {
                 let min = self
                     .eval_scalar_arg(tenant, call, 1, time_ms, "minimum")
                     .await?;
-                (Some(min), None)
+                ClampBounds {
+                    min: Some(min),
+                    max: None,
+                }
             }
             ClampKind::Max => {
                 let max = self
                     .eval_scalar_arg(tenant, call, 1, time_ms, "maximum")
                     .await?;
-                (None, Some(max))
+                ClampBounds {
+                    min: None,
+                    max: Some(max),
+                }
             }
         };
 
@@ -607,7 +621,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 };
                 sample.labels = labels_without_metric_name(&sample.labels);
                 sample.drop_name = true;
-                sample.value = SampleValue::Float(clamp_float(value, min, max));
+                sample.value = SampleValue::Float(clamp_float(value, bounds.min, bounds.max));
                 Some(sample)
             })
             .collect();
@@ -971,11 +985,10 @@ impl<S: MetricStore> PromqlEngine<S> {
 
         let dst_label = string_literal_arg(call, 1, "destination label")?;
         let separator = string_literal_arg(call, 2, "separator")?;
-        let src_labels = call.args.args[3..]
-            .iter()
-            .enumerate()
-            .map(|(offset, _)| string_literal_arg(call, offset + 3, "source label"))
-            .collect::<Result<Vec<_>>>()?;
+        let mut src_labels = Vec::with_capacity(call.args.args.len() - 3);
+        for offset in 0..call.args.args.len() - 3 {
+            src_labels.push(string_literal_arg(call, offset + 3, "source label")?);
+        }
 
         let input = self
             .eval_instant_expr(tenant, &call.args.args[0], time_ms)

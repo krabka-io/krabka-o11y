@@ -36,6 +36,11 @@ struct TestBroker {
     _dir: tempfile::TempDir,
 }
 
+struct TopicConfigEntry<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
 async fn start_broker() -> TestBroker {
     let dir = tempfile::tempdir().expect("broker tempdir");
     let broker = Broker::start(BrokerConfig::for_tests(dir.path().to_path_buf()))
@@ -63,7 +68,16 @@ fn settings(wal_partitions: i32, state_partitions: i32) -> TopicSettings {
     }
 }
 
-async fn create_raw(bootstrap: &str, name: &str, partitions: i32, configs: &[(&str, &str)]) {
+async fn create_raw(
+    bootstrap: &str,
+    name: &str,
+    partitions: i32,
+    configs: &[TopicConfigEntry<'_>],
+) {
+    let mut topic_configs = BTreeMap::new();
+    for config in configs {
+        topic_configs.insert(config.name.to_string(), config.value.to_string());
+    }
     let outcomes = admin(bootstrap)
         .await
         .create_topics(
@@ -71,10 +85,7 @@ async fn create_raw(bootstrap: &str, name: &str, partitions: i32, configs: &[(&s
                 name: name.to_string(),
                 partitions,
                 replicas: 1,
-                configs: configs
-                    .iter()
-                    .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                    .collect(),
+                configs: topic_configs,
                 ..Default::default()
             }],
             TopicMutationOptions::with_timeout(secs(10)),
@@ -156,12 +167,15 @@ async fn provisioning_creates_all_six_topics_with_the_configuration_the_contract
         );
 
         let overrides = live_overrides(&broker.bootstrap, contract.name).await;
-        let expected_overrides = match contract.kind {
-            TopicKind::Wal => BTreeMap::from([(RETENTION_MS.to_string(), "900000".to_string())]),
-            TopicKind::CompactedState => {
-                BTreeMap::from([(CLEANUP_POLICY.to_string(), COMPACT.to_string())])
+        let mut expected_overrides = BTreeMap::new();
+        match contract.kind {
+            TopicKind::Wal => {
+                expected_overrides.insert(RETENTION_MS.to_string(), "900000".to_string());
             }
-        };
+            TopicKind::CompactedState => {
+                expected_overrides.insert(CLEANUP_POLICY.to_string(), COMPACT.to_string());
+            }
+        }
         check!(overrides == expected_overrides, "{}", contract.name);
     }
 
@@ -234,7 +248,10 @@ async fn a_state_topic_that_is_not_compacted_is_refused() {
         &broker.bootstrap,
         METRICS_RULER_STATE_TOPIC,
         2,
-        &[(CLEANUP_POLICY, "delete")],
+        &[TopicConfigEntry {
+            name: CLEANUP_POLICY,
+            value: "delete",
+        }],
     )
     .await;
 
@@ -272,7 +289,10 @@ async fn a_different_retention_window_is_reported_and_the_role_still_starts() {
         &broker.bootstrap,
         LOGS_WAL_TOPIC,
         3,
-        &[(RETENTION_MS, "60000")],
+        &[TopicConfigEntry {
+            name: RETENTION_MS,
+            value: "60000",
+        }],
     )
     .await;
 

@@ -25,17 +25,45 @@ mod tests {
 
     #[test]
     fn direction_defaults_and_case_match_lokis_http_parser() {
-        for (input, expected) in [
-            (None, LokiDirection::Backward),
-            (Some(""), LokiDirection::Backward),
-            (Some("backward"), LokiDirection::Backward),
-            (Some("BACKWARD"), LokiDirection::Backward),
-            (Some("BaCkWaRd"), LokiDirection::Backward),
-            (Some("forward"), LokiDirection::Forward),
-            (Some("FORWARD"), LokiDirection::Forward),
-            (Some("FoRwArD"), LokiDirection::Forward),
+        struct DirectionCase {
+            input: Option<&'static str>,
+            expected: LokiDirection,
+        }
+        for case in [
+            DirectionCase {
+                input: None,
+                expected: LokiDirection::Backward,
+            },
+            DirectionCase {
+                input: Some(""),
+                expected: LokiDirection::Backward,
+            },
+            DirectionCase {
+                input: Some("backward"),
+                expected: LokiDirection::Backward,
+            },
+            DirectionCase {
+                input: Some("BACKWARD"),
+                expected: LokiDirection::Backward,
+            },
+            DirectionCase {
+                input: Some("BaCkWaRd"),
+                expected: LokiDirection::Backward,
+            },
+            DirectionCase {
+                input: Some("forward"),
+                expected: LokiDirection::Forward,
+            },
+            DirectionCase {
+                input: Some("FORWARD"),
+                expected: LokiDirection::Forward,
+            },
+            DirectionCase {
+                input: Some("FoRwArD"),
+                expected: LokiDirection::Forward,
+            },
         ] {
-            assert!(loki_direction(input).unwrap() == expected);
+            assert!(loki_direction(case.input).unwrap() == case.expected);
         }
         for input in ["sideways", "forward ", " backward", "0", " "] {
             assert!(matches!(

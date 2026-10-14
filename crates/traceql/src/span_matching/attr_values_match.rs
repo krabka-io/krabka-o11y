@@ -1,4 +1,5 @@
 use super::{AttrValue, MatchCmp, MatchValue, attr_matches, nil_matches, present_value_matches};
+use crate::result::normalized_attr_value;
 
 /// Whether the values one key holds satisfy `op` against `expected`.
 ///
@@ -7,12 +8,7 @@ use super::{AttrValue, MatchCmp, MatchValue, attr_matches, nil_matches, present_
 pub fn attr_values_match(values: &[&AttrValue], op: MatchCmp, expected: &MatchValue) -> bool {
     let values = values
         .iter()
-        .filter_map(|value| match value {
-            AttrValue::Unsupported(_) => None,
-            AttrValue::Array(values) if values.is_empty() => None,
-            AttrValue::Array(values) if values.len() == 1 => values.first(),
-            value => Some(*value),
-        })
+        .filter_map(|value| normalized_attr_value(value))
         .collect::<Vec<_>>();
     if values.is_empty() {
         return nil_matches(op, expected);

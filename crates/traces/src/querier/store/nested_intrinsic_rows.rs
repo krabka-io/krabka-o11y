@@ -2,13 +2,14 @@ use arrow::{
     array::{
         BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, StringBuilder, StructArray,
     },
-    datatypes::Field,
+    datatypes::{Field, Fields},
 };
 
 use super::{
-    Arc, ArrayRef, AttrValue, BTreeMap, FixedSizeBinaryBuilder, NestedAttrColumn, RecordBatch,
-    SpanMatcher, TraceqlError, UInt32Array, append_nested_attr, append_nested_event,
-    append_nested_link, matching_events_for_scan, matching_links_for_scan,
+    Arc, ArrayRef, AttrValue, BTreeMap, FixedSizeBinaryBuilder, RecordBatch, SpanMatcher,
+    TraceqlError, UInt32Array, append_nested_attr, append_nested_event, append_nested_link,
+    matching_events_for_scan, matching_links_for_scan,
+    nested_attr_column::NestedAttrColumnProjection,
 };
 
 pub(crate) struct NestedIntrinsicRows {
@@ -20,10 +21,21 @@ pub(crate) struct NestedIntrinsicRows {
     pub(crate) attr_columns: BTreeMap<String, ArrayRef>,
 }
 
+struct NestedAttributeBuilder<'a> {
+    column: String,
+    attribute: super::NestedAttrColumn<'a>,
+    values: Vec<Vec<AttrValue>>,
+}
+
+struct NamedArray {
+    name: &'static str,
+    array: ArrayRef,
+}
+
 pub(crate) fn nested_intrinsic_rows(
     batch: &RecordBatch,
     matchers: &[SpanMatcher],
-    attr_columns: &[(String, NestedAttrColumn)],
+    attr_columns: &[NestedAttrColumnProjection<'_>],
 ) -> Result<NestedIntrinsicRows, TraceqlError> {
     let mut event_name = StringBuilder::new();
     let mut event_time_since_start = Int64Builder::new();
@@ -31,7 +43,11 @@ pub(crate) fn nested_intrinsic_rows(
     let mut link_span_id = FixedSizeBinaryBuilder::with_capacity(batch.num_rows(), 8);
     let mut attr_builders = attr_columns
         .iter()
-        .map(|(column, attr)| (column.clone(), *attr, Vec::new()))
+        .map(|projection| NestedAttributeBuilder {
+            column: projection.column.clone(),
+            attribute: projection.attribute,
+            values: Vec::new(),
+        })
         .collect::<Vec<_>>();
     let mut row_indices = Vec::new();
     let filtered_events = matchers.iter().any(super::is_event_matcher);
@@ -49,79 +65,100 @@ pub(crate) fn nested_intrinsic_rows(
                     })?);
                 append_nested_event(event.as_ref(), &mut event_name, &mut event_time_since_start);
                 append_nested_link(link.as_ref(), &mut link_trace_id, &mut link_span_id)?;
-                for (_, attr, builder) in &mut attr_builders {
+                for builder in &mut attr_builders {
+                    let attr = builder.attribute;
                     let projected_event = if filtered_events {
                         event.as_ref()
                     } else {
-                        all_events
-                            .iter()
-                            .find(|event| event.attributes.iter().any(|(key, _)| key == attr.key))
+                        all_events.iter().find(|event| {
+                            event
+                                .attributes
+                                .iter()
+                                .any(|attribute| attribute.key == attr.key)
+                        })
                     };
                     let projected_link = if filtered_links {
                         link.as_ref()
                     } else {
-                        all_links
-                            .iter()
-                            .find(|link| link.attributes.iter().any(|(key, _)| key == attr.key))
+                        all_links.iter().find(|link| {
+                            link.attributes
+                                .iter()
+                                .any(|attribute| attribute.key == attr.key)
+                        })
                     };
-                    append_nested_attr(projected_event, projected_link, *attr, builder);
+                    append_nested_attr(projected_event, projected_link, attr, &mut builder.values);
                 }
             }
         }
     }
-    let attr_columns = attr_builders
-        .into_iter()
-        .map(|(column, _, values)| {
-            let mut strings = ListBuilder::new(StringBuilder::new());
-            let mut ints = ListBuilder::new(Int64Builder::new());
-            let mut floats = ListBuilder::new(Float64Builder::new());
-            let mut bools = ListBuilder::new(BooleanBuilder::new());
-            let mut is_array = BooleanBuilder::new();
-            for values in values {
-                is_array.append_value(matches!(values.as_slice(), [AttrValue::Array(_)]));
-                let values = if let [AttrValue::Array(elements)] = values.as_slice() {
-                    elements.clone()
-                } else {
-                    values
-                };
-                for value in values {
-                    match value {
-                        AttrValue::Unsupported(_) => {}
-                        AttrValue::Array(_) => {
-                            unreachable!("OTLP nested arrays are rejected before block encoding")
-                        }
-                        AttrValue::Str(value) => strings.values().append_value(value),
-                        AttrValue::Int(value) => ints.values().append_value(value),
-                        AttrValue::Float(value) => floats.values().append_value(value),
-                        AttrValue::Bool(value) => bools.values().append_value(value),
+    let mut attr_columns = BTreeMap::new();
+    for builder in attr_builders {
+        let NestedAttributeBuilder { column, values, .. } = builder;
+        let mut strings = ListBuilder::new(StringBuilder::new());
+        let mut ints = ListBuilder::new(Int64Builder::new());
+        let mut floats = ListBuilder::new(Float64Builder::new());
+        let mut bools = ListBuilder::new(BooleanBuilder::new());
+        let mut is_array = BooleanBuilder::new();
+        for values in values {
+            is_array.append_value(matches!(values.as_slice(), [AttrValue::Array(_)]));
+            let values = if let [AttrValue::Array(elements)] = values.as_slice() {
+                elements.clone()
+            } else {
+                values
+            };
+            for value in values {
+                match value {
+                    AttrValue::Unsupported(_) => {}
+                    AttrValue::Array(_) => {
+                        unreachable!("OTLP nested arrays are rejected before block encoding")
                     }
+                    AttrValue::Str(value) => strings.values().append_value(value),
+                    AttrValue::Int(value) => ints.values().append_value(value),
+                    AttrValue::Float(value) => floats.values().append_value(value),
+                    AttrValue::Bool(value) => bools.values().append_value(value),
                 }
-                strings.append(true);
-                ints.append(true);
-                floats.append(true);
-                bools.append(true);
             }
-            let arrays = [
-                ("is_array", Arc::new(is_array.finish()) as ArrayRef),
-                ("string", Arc::new(strings.finish()) as ArrayRef),
-                ("int", Arc::new(ints.finish()) as ArrayRef),
-                ("float", Arc::new(floats.finish()) as ArrayRef),
-                ("bool", Arc::new(bools.finish()) as ArrayRef),
-            ];
-            let array = StructArray::from(
-                arrays
-                    .into_iter()
-                    .map(|(name, array)| {
-                        (
-                            Arc::new(Field::new(name, array.data_type().clone(), true)),
-                            array,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            );
-            (column, Arc::new(array) as ArrayRef)
-        })
-        .collect();
+            strings.append(true);
+            ints.append(true);
+            floats.append(true);
+            bools.append(true);
+        }
+        let named_arrays = [
+            NamedArray {
+                name: "is_array",
+                array: Arc::new(is_array.finish()),
+            },
+            NamedArray {
+                name: "string",
+                array: Arc::new(strings.finish()),
+            },
+            NamedArray {
+                name: "int",
+                array: Arc::new(ints.finish()),
+            },
+            NamedArray {
+                name: "float",
+                array: Arc::new(floats.finish()),
+            },
+            NamedArray {
+                name: "bool",
+                array: Arc::new(bools.finish()),
+            },
+        ];
+        let fields: Fields = named_arrays
+            .iter()
+            .map(|named| {
+                Arc::new(Field::new(
+                    named.name,
+                    named.array.data_type().clone(),
+                    true,
+                ))
+            })
+            .collect();
+        let arrays = named_arrays.into_iter().map(|named| named.array).collect();
+        let array = StructArray::new(fields, arrays, None);
+        attr_columns.insert(column, Arc::new(array) as ArrayRef);
+    }
     Ok(NestedIntrinsicRows {
         indices: UInt32Array::from(row_indices),
         event_name: Arc::new(event_name.finish()),

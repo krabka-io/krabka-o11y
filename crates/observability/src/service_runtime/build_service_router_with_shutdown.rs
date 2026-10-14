@@ -1,6 +1,6 @@
 use super::{
-    Arc, CancellationToken, JoinHandle, ObjectStore, QUERIER_OPS, Role, Router, ServiceConfig,
-    ServiceConfigError, ServiceDependencies, all_in_one_router,
+    Arc, CancellationToken, ObjectStore, QUERIER_OPS, Role, Router, ServiceConfig,
+    ServiceConfigError, ServiceDependencies, ServiceRouter, all_in_one_router,
     compactor_delete_requests_for_config, compactor_router_with_delete_requests,
     distributor_router_with_sink, distributor_state_for_config, ingest_limiter_refresh_task,
     limits_provider_for_config, querier_routes_with_shutdown, query_authorizer_for_role,
@@ -13,7 +13,7 @@ pub(crate) async fn build_service_router_with_shutdown(
     dependencies: ServiceDependencies,
     object_store: Option<&dyn ObjectStore>,
     token: CancellationToken,
-) -> Result<(Router, Vec<(&'static str, JoinHandle<()>)>), ServiceConfigError> {
+) -> Result<ServiceRouter, ServiceConfigError> {
     let metrics = dependencies.metrics.clone().unwrap_or_default();
     // The binary may have handed in the same readiness its admin port serves,
     // so a probe on `:9404` and a probe on the data port agree.
@@ -24,7 +24,7 @@ pub(crate) async fn build_service_router_with_shutdown(
     // One provider for the process. Both the write path and the read path
     // resolve every tenant through this one, so the two gates cannot disagree.
     let overrides = limits_provider_for_config(config)?;
-    let (router, background_tasks) = match config.target {
+    let service_router = match config.target {
         Role::Distributor => {
             let state = distributor_state_for_config(
                 config,
@@ -36,16 +36,16 @@ pub(crate) async fn build_service_router_with_shutdown(
                 overrides,
             )?;
             let refresh = ingest_limiter_refresh_task(&state.ingest_limiter, &token);
-            (
-                distributor_router_with_sink(
+            ServiceRouter {
+                router: distributor_router_with_sink(
                     state.sink,
                     state.ingest_limiter,
                     state.overrides,
                     config.wal_append_timeout,
                     state.metrics,
                 ),
-                vec![refresh],
-            )
+                background_tasks: vec![refresh],
+            }
         }
         Role::Querier => {
             let role_authorizer =
@@ -54,7 +54,7 @@ pub(crate) async fn build_service_router_with_shutdown(
                 query_authorizer: Some(role_authorizer.authorizer),
                 ..dependencies
             };
-            let (routes, mut background_tasks) = Box::pin(querier_routes_with_shutdown(
+            let mut service_router = Box::pin(querier_routes_with_shutdown(
                 config,
                 dependencies,
                 object_store,
@@ -64,25 +64,24 @@ pub(crate) async fn build_service_router_with_shutdown(
                 overrides,
             ))
             .await?;
-            background_tasks.extend(role_authorizer.task);
-            (
-                with_role_ops_routes(Router::new(), QUERIER_OPS, readiness).merge(routes),
-                background_tasks,
-            )
+            service_router.background_tasks.extend(role_authorizer.task);
+            service_router.router = with_role_ops_routes(Router::new(), QUERIER_OPS, readiness)
+                .merge(service_router.router);
+            service_router
         }
         Role::BlockBuilder => {
             let role_authorizer =
                 query_authorizer_for_role(config, &dependencies, &token, &readiness);
             let delete_requests =
                 compactor_delete_requests_for_config(config, dependencies.delete_requests)?;
-            (
-                compactor_router_with_delete_requests(
+            ServiceRouter {
+                router: compactor_router_with_delete_requests(
                     delete_requests,
                     role_authorizer.authorizer,
                     readiness,
                 ),
-                role_authorizer.task.into_iter().collect(),
-            )
+                background_tasks: role_authorizer.task.into_iter().collect(),
+            }
         }
         Role::All => {
             let distributor_state = distributor_state_for_config(
@@ -106,5 +105,8 @@ pub(crate) async fn build_service_router_with_shutdown(
             .await?
         }
     };
-    Ok((with_service_audit(router, audit), background_tasks))
+    Ok(ServiceRouter {
+        router: with_service_audit(service_router.router, audit),
+        background_tasks: service_router.background_tasks,
+    })
 }

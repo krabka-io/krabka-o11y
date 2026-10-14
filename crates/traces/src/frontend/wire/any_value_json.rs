@@ -39,25 +39,9 @@ impl From<&AttrValue> for AnyValueJson {
 }
 
 mod double_json {
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+    use serde::{Deserialize, Deserializer, de::Error as _};
 
-    pub(super) fn serialize<S: Serializer>(
-        value: impl std::borrow::Borrow<f64>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let value = *value.borrow();
-        if value.is_nan() {
-            serializer.serialize_str("NaN")
-        } else if value.is_infinite() {
-            serializer.serialize_str(if value.is_sign_negative() {
-                "-Infinity"
-            } else {
-                "Infinity"
-            })
-        } else {
-            serializer.serialize_f64(value)
-        }
-    }
+    pub(super) use crate::float_json::serialize_proto as serialize;
 
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
@@ -78,31 +62,32 @@ mod double_json {
 
 #[cfg(test)]
 mod tests {
-    use assert2::assert;
-
     use super::{AnyValueJson, ArrayValueJson};
 
-    #[test]
-    fn nonfinite_doubles_roundtrip_through_scalar_and_array_frontend_values() {
-        for (number, text) in [
-            (f64::NAN, "NaN"),
-            (f64::INFINITY, "Infinity"),
-            (f64::NEG_INFINITY, "-Infinity"),
-        ] {
-            let scalar = AnyValueJson::DoubleValue(number);
-            let encoded = serde_json::to_value(&scalar).unwrap();
-            assert!(encoded == serde_json::json!({"doubleValue":text}));
-            let decoded: AnyValueJson = serde_json::from_value(encoded).unwrap();
-            let AnyValueJson::DoubleValue(actual) = decoded else {
-                panic!("double discriminator lost")
-            };
-            assert!(actual.to_bits() == number.to_bits() || actual.is_nan() && number.is_nan());
-            let array = AnyValueJson::ArrayValue(ArrayValueJson {
-                values: vec![scalar],
-            });
-            let encoded = serde_json::to_value(&array).unwrap();
-            let decoded: AnyValueJson = serde_json::from_value(encoded.clone()).unwrap();
-            assert!(serde_json::to_value(decoded).unwrap() == encoded);
-        }
+    #[yare::parameterized(
+        nan = { f64::NAN, "NaN" },
+        positive_infinity = { f64::INFINITY, "Infinity" },
+        negative_infinity = { f64::NEG_INFINITY, "-Infinity" },
+    )]
+    fn nonfinite_doubles_roundtrip_through_scalar_and_array_frontend_values(
+        number: f64,
+        text: &str,
+    ) {
+        let scalar = AnyValueJson::DoubleValue(number);
+        let encoded = serde_json::to_value(&scalar).unwrap();
+        assert2::assert!(encoded == serde_json::json!({"doubleValue":text}));
+        let decoded: AnyValueJson = serde_json::from_value(encoded).unwrap();
+        let AnyValueJson::DoubleValue(actual) = decoded else {
+            panic!("double discriminator lost")
+        };
+        assert2::assert!(
+            actual.to_bits() == number.to_bits() || actual.is_nan() && number.is_nan()
+        );
+        let array = AnyValueJson::ArrayValue(ArrayValueJson {
+            values: vec![scalar],
+        });
+        let encoded = serde_json::to_value(&array).unwrap();
+        let decoded: AnyValueJson = serde_json::from_value(encoded.clone()).unwrap();
+        assert2::assert!(serde_json::to_value(decoded).unwrap() == encoded);
     }
 }

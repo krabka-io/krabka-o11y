@@ -58,10 +58,10 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use krabka_blockstore::{
-    AttrValue, BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, CycleSpans, Index,
-    LabelMatcher, Labels, MatchOp, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow,
-    StatusCode, SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows,
-    read_block, span_block_decl, span_block_schema,
+    BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, CycleSpans, Index, LabelMatcher,
+    Labels, MatchOp, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow, StatusCode,
+    SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows, read_block,
+    span_block_decl, span_block_schema,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt as _, path::Path as ObjectPath};
@@ -117,6 +117,28 @@ fn series_labels(which: usize) -> Labels {
     labels
 }
 
+struct SeriesIndexFixture {
+    index: Index,
+    sorted_fingerprints: Vec<u64>,
+}
+
+fn series_index(series_count: usize) -> SeriesIndexFixture {
+    let mut index = Index::new();
+    let mut fingerprints = (0..series_count)
+        .map(|which| {
+            let labels = series_labels(which);
+            let fingerprint = labels.fingerprint();
+            index.add_series(TENANT, fingerprint, &labels);
+            fingerprint
+        })
+        .collect::<Vec<_>>();
+    fingerprints.sort_unstable();
+    SeriesIndexFixture {
+        index,
+        sorted_fingerprints: fingerprints,
+    }
+}
+
 /// One block's rows: every series, sampled `samples` times inside the block's
 /// own window, sorted by fingerprint and then timestamp.
 fn series_batch(fingerprints: &[u64], block: usize, samples: usize) -> RecordBatch {
@@ -162,29 +184,28 @@ fn trace_rows(trace_id: [u8; 16], spans: usize, start_nano: i64) -> Vec<SpanRow>
         .iter()
         .zip(&nested)
         .enumerate()
-        .map(|(index, (node, nset))| SpanRow {
+        .map(|entry| SpanRow {
             trace_id,
-            span_id: node.span_id,
-            parent_span_id: node.parent_span_id,
-            nested_set: *nset,
+            span_id: entry.1.0.span_id,
+            parent_span_id: entry.1.0.parent_span_id,
+            nested_set: *entry.1.1,
             child_count: 0,
-            root_service_name: Some(format!("svc-{}", index % 32)),
+            root_service_name: Some(format!("svc-{}", entry.0 % 32)),
             root_span_name: Some("GET /api".into()),
             trace_start_unix_nano: start_nano,
             trace_duration: nanos(1_000),
-            name: Some(format!("span-{index}")),
+            name: Some(format!("span-{}", entry.0)),
             kind: SpanKind::Server,
-            start_unix_nano: start_nano + i64::try_from(index).expect("a span index fits an i64"),
+            start_unix_nano: start_nano + i64::try_from(entry.0).expect("a span index fits an i64"),
             duration: nanos(10),
             status_code: StatusCode::Ok,
             status_message: None,
             instrumentation_name: Some("tracer".into()),
             instrumentation_version: None,
-            attrs: vec![SpanAttr {
-                key: "service.name".into(),
-                is_array: false,
-                value: AttrValue::Str(vec![format!("svc-{}", index % 32)]),
-            }],
+            attrs: vec![SpanAttr::string(
+                "service.name",
+                format!("svc-{}", entry.0 % 32),
+            )],
             events: vec![],
             links: vec![],
         })
@@ -225,18 +246,10 @@ async fn ten_thousand_series_over_twelve_blocks_prune_to_one() {
 
     let minio = start_minio(MINIO_USER).await;
     let writer = BlockWriter::new(Arc::clone(&minio.store));
-    let mut index = Index::new();
-
-    let fingerprints: Vec<u64> = (0..SERIES)
-        .map(|which| {
-            let labels = series_labels(which);
-            let fingerprint = labels.fingerprint();
-            index.add_series(TENANT, fingerprint, &labels);
-            fingerprint
-        })
-        .collect();
-    let mut sorted = fingerprints.clone();
-    sorted.sort_unstable();
+    let SeriesIndexFixture {
+        mut index,
+        sorted_fingerprints: sorted,
+    } = series_index(SERIES);
 
     for block in 0..BLOCKS {
         let key = format!("blocks/{TENANT}/{block:06}.parquet");
@@ -387,17 +400,10 @@ async fn compaction_over_twenty_four_blocks_keeps_every_row() {
 
     let minio = start_minio(MINIO_USER).await;
     let writer = BlockWriter::new(Arc::clone(&minio.store));
-    let mut index = Index::new();
-
-    let mut fingerprints: Vec<u64> = (0..SERIES)
-        .map(|which| {
-            let labels = series_labels(which);
-            let fingerprint = labels.fingerprint();
-            index.add_series(TENANT, fingerprint, &labels);
-            fingerprint
-        })
-        .collect();
-    fingerprints.sort_unstable();
+    let SeriesIndexFixture {
+        mut index,
+        sorted_fingerprints: fingerprints,
+    } = series_index(SERIES);
 
     let mut source_keys = Vec::with_capacity(BLOCKS);
     for block in 0..BLOCKS {

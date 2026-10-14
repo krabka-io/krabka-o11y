@@ -1,5 +1,11 @@
 use super::{BlockStoreError, Labels, MatchOp, Regex, anchored_regex_pattern};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExactPostingKey<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+}
+
 #[derive(Clone, Debug)]
 pub struct LabelPredicate {
     pub(crate) name: String,
@@ -39,15 +45,17 @@ impl LabelPredicate {
 
     #[must_use]
     pub fn matches(&self, labels: &Labels) -> bool {
-        self.op.accepts(
-            &self.value,
-            labels.get(&self.name).map(String::as_str),
-            |value| self.regex_matches(value),
-        )
+        self.op
+            .accepts_named_label(&self.name, &self.value, labels, |value| {
+                self.regex_matches(value)
+            })
     }
 
-    pub(crate) fn exact_posting_key(&self) -> Option<(&str, &str)> {
-        (self.op == MatchOp::Equal).then_some((&self.name, &self.value))
+    pub(crate) fn exact_posting_key(&self) -> Option<ExactPostingKey<'_>> {
+        (self.op == MatchOp::Equal).then_some(ExactPostingKey {
+            name: &self.name,
+            value: &self.value,
+        })
     }
 
     pub(crate) fn regex_matches(&self, value: &str) -> bool {

@@ -35,10 +35,21 @@ mod tests {
 
     use super::*;
 
-    fn sample(pairs: &[(&str, &str)], value: f64) -> InstantSample {
+    struct LabelPair {
+        name: &'static str,
+        value: &'static str,
+    }
+
+    impl LabelPair {
+        const fn new(name: &'static str, value: &'static str) -> Self {
+            Self { name, value }
+        }
+    }
+
+    fn sample(pairs: &[LabelPair], value: f64) -> InstantSample {
         let mut labels = Labels::new();
-        for (name, val) in pairs {
-            labels.insert(*name, *val);
+        for pair in pairs {
+            labels.insert(pair.name, pair.value);
         }
         InstantSample {
             labels,
@@ -51,7 +62,13 @@ mod tests {
     #[test]
     fn label_replace_capture_group_expands() {
         let out = apply_label_replace(
-            vec![sample(&[("__name__", "m"), ("src", "a-b")], 1.0)],
+            vec![sample(
+                &[
+                    LabelPair::new("__name__", "m"),
+                    LabelPair::new("src", "a-b"),
+                ],
+                1.0,
+            )],
             "dst",
             "$1",
             "src",
@@ -62,7 +79,11 @@ mod tests {
         // (label_replace does not drop it).
         assert2::assert!(
             out == vec![sample(
-                &[("__name__", "m"), ("src", "a-b"), ("dst", "a")],
+                &[
+                    LabelPair::new("__name__", "m"),
+                    LabelPair::new("src", "a-b"),
+                    LabelPair::new("dst", "a")
+                ],
                 1.0
             )]
         );
@@ -70,7 +91,13 @@ mod tests {
 
     #[test]
     fn label_replace_no_match_passthrough() {
-        let input = vec![sample(&[("__name__", "m"), ("src", "zzz")], 1.0)];
+        let input = vec![sample(
+            &[
+                LabelPair::new("__name__", "m"),
+                LabelPair::new("src", "zzz"),
+            ],
+            1.0,
+        )];
         let out = apply_label_replace(input.clone(), "dst", "$1", "src", "(\\d+)").unwrap();
         // No match: series unchanged, no `dst` label added.
         assert2::assert!(out == input);
@@ -80,7 +107,11 @@ mod tests {
     fn label_replace_empty_replacement_removes_the_label() {
         let out = apply_label_replace(
             vec![sample(
-                &[("__name__", "m"), ("src", "abc"), ("dst", "old")],
+                &[
+                    LabelPair::new("__name__", "m"),
+                    LabelPair::new("src", "abc"),
+                    LabelPair::new("dst", "old"),
+                ],
                 1.0,
             )],
             "dst",
@@ -91,18 +122,29 @@ mod tests {
         .unwrap();
         // Prometheus writes through `labels.Builder.Set`, which deletes a label
         // set to the empty string rather than store it empty.
-        assert2::assert!(out == vec![sample(&[("__name__", "m"), ("src", "abc")], 1.0)]);
+        assert2::assert!(
+            out == vec![sample(
+                &[
+                    LabelPair::new("__name__", "m"),
+                    LabelPair::new("src", "abc")
+                ],
+                1.0
+            )]
+        );
     }
 
     #[test]
     fn label_join_empty_join_removes_the_label() {
         let out = apply_label_join(
-            vec![sample(&[("a", "1"), ("dst", "old")], 1.0)],
+            vec![sample(
+                &[LabelPair::new("a", "1"), LabelPair::new("dst", "old")],
+                1.0,
+            )],
             "dst",
             "",
             &["missing".to_string(), "alsomissing".to_string()],
         );
-        assert2::assert!(out == vec![sample(&[("a", "1")], 1.0)]);
+        assert2::assert!(out == vec![sample(&[LabelPair::new("a", "1")], 1.0)]);
     }
 
     #[test]
@@ -110,14 +152,26 @@ mod tests {
         // Prometheus fully anchors the regex (`^(?:foo)$`), so a `foo` pattern
         // must NOT match the substring inside `xfooy`. A raw unanchored `Regex`
         // would wrongly match and write `dst`.
-        let input = vec![sample(&[("__name__", "m"), ("src", "xfooy")], 1.0)];
+        let input = vec![sample(
+            &[
+                LabelPair::new("__name__", "m"),
+                LabelPair::new("src", "xfooy"),
+            ],
+            1.0,
+        )];
         let out = apply_label_replace(input.clone(), "dst", "$0", "src", "foo").unwrap();
         assert2::assert!(out == input);
         assert2::assert!(out[0].labels.get("dst").is_none());
 
         // The same pattern matches when it spans the entire value.
         let out = apply_label_replace(
-            vec![sample(&[("__name__", "m"), ("src", "foo")], 1.0)],
+            vec![sample(
+                &[
+                    LabelPair::new("__name__", "m"),
+                    LabelPair::new("src", "foo"),
+                ],
+                1.0,
+            )],
             "dst",
             "$0",
             "src",
@@ -129,15 +183,28 @@ mod tests {
 
     #[test]
     fn label_replace_invalid_regex_errors() {
-        let err = apply_label_replace(vec![sample(&[("src", "x")], 1.0)], "dst", "$1", "src", "(")
-            .unwrap_err();
+        let err = apply_label_replace(
+            vec![sample(&[LabelPair::new("src", "x")], 1.0)],
+            "dst",
+            "$1",
+            "src",
+            "(",
+        )
+        .unwrap_err();
         assert2::assert!(matches!(err, PromqlError::Exec(_)));
     }
 
     #[test]
     fn label_join_joins_sources_with_separator() {
         let out = apply_label_join(
-            vec![sample(&[("__name__", "m"), ("a", "1"), ("b", "2")], 1.0)],
+            vec![sample(
+                &[
+                    LabelPair::new("__name__", "m"),
+                    LabelPair::new("a", "1"),
+                    LabelPair::new("b", "2"),
+                ],
+                1.0,
+            )],
             "dst",
             "-",
             &["a".to_string(), "b".to_string()],
@@ -148,7 +215,7 @@ mod tests {
     #[test]
     fn label_join_missing_source_is_empty() {
         let out = apply_label_join(
-            vec![sample(&[("a", "1")], 1.0)],
+            vec![sample(&[LabelPair::new("a", "1")], 1.0)],
             "dst",
             ",",
             &["a".to_string(), "missing".to_string()],
@@ -163,21 +230,32 @@ mod tests {
             .collect()
     }
 
+    struct SortExpectation {
+        direction: SortOrder,
+        expected: Vec<&'static str>,
+    }
+
     #[test]
     fn sort_orders_by_value_and_places_nan_last_in_both_directions() {
-        for (direction, want) in [
-            (SortOrder::Ascending, vec!["a", "b", "n"]),
-            (SortOrder::Descending, vec!["b", "a", "n"]),
+        for expectation in [
+            SortExpectation {
+                direction: SortOrder::Ascending,
+                expected: vec!["a", "b", "n"],
+            },
+            SortExpectation {
+                direction: SortOrder::Descending,
+                expected: vec!["b", "a", "n"],
+            },
         ] {
             let out = apply_sort(
                 vec![
-                    sample(&[("l", "b")], 2.0),
-                    sample(&[("l", "n")], f64::NAN),
-                    sample(&[("l", "a")], 1.0),
+                    sample(&[LabelPair::new("l", "b")], 2.0),
+                    sample(&[LabelPair::new("l", "n")], f64::NAN),
+                    sample(&[LabelPair::new("l", "a")], 1.0),
                 ],
-                direction,
+                expectation.direction,
             );
-            assert2::assert!(order(&out) == want);
+            assert2::assert!(order(&out) == expectation.expected);
             assert2::assert!(matches!(out[2].value, SampleValue::Float(v) if v.is_nan()));
         }
     }
@@ -185,7 +263,10 @@ mod tests {
     #[test]
     fn sort_breaks_ties_by_label_key() {
         let out = apply_sort(
-            vec![sample(&[("l", "z")], 1.0), sample(&[("l", "a")], 1.0)],
+            vec![
+                sample(&[LabelPair::new("l", "z")], 1.0),
+                sample(&[LabelPair::new("l", "a")], 1.0),
+            ],
             SortOrder::Ascending,
         );
         assert2::assert!(out[0].labels.get("l") == Some("a"));

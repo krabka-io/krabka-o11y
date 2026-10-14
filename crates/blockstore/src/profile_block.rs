@@ -25,16 +25,18 @@ mod tests {
 
     fn row(fp: u64, ts: i64, stack: u64, value: i64, trace: Option<Vec<u8>>) -> ProfileSampleRow {
         ProfileSampleRow {
-            series_fingerprint: fp,
             timestamp: ts,
-            profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".to_string(),
-            stacktrace_id: stack,
-            value,
-            stacktrace_partition: 0,
-            total_value: 1_000,
-            span_id: None,
-            trace_id: trace,
-            wal_sample_ids: Vec::new(),
+            fields: ProfileSampleFields {
+                series_fingerprint: fp,
+                profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".to_string(),
+                stacktrace_id: stack,
+                value,
+                stacktrace_partition: 0,
+                total_value: 1_000,
+                span_id: None,
+                trace_id: trace,
+                wal_sample_ids: Vec::new(),
+            },
         }
     }
 
@@ -81,4 +83,4 @@ mod encode_profile_samples;
 mod profile_sample_row;
 
 pub use encode_profile_samples::encode_profile_samples;
-pub use profile_sample_row::ProfileSampleRow;
+pub use profile_sample_row::{ProfileSampleFields, ProfileSampleRow};

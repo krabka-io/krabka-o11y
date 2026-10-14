@@ -1,9 +1,11 @@
 use super::DecodedSeries;
 
-pub(crate) fn label_pairs(series: &DecodedSeries) -> Vec<(String, crate::MetricString)> {
+pub(crate) fn label_pairs(
+    series: &DecodedSeries,
+) -> Vec<crate::MetricLabelPair<crate::MetricString>> {
     series
         .labels
         .iter()
-        .map(|(name, value)| (name.clone(), value.clone().into()))
+        .map(|pair| crate::MetricLabelPair::new(pair.name, pair.value.into()))
         .collect()
 }

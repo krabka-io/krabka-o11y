@@ -12,20 +12,17 @@ pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
         let resource_attrs = resource_spans
             .resource
             .as_ref()
-            .map(|resource| kvs(&resource.attributes))
-            .unwrap_or_default();
+            .map_or_else(Default::default, |resource| kvs(&resource.attributes));
 
         for scope_spans in &resource_spans.scope_spans {
             let scope_name = scope_spans
                 .scope
                 .as_ref()
-                .map(|scope| scope.name.clone())
-                .unwrap_or_default();
+                .map_or_else(Default::default, |scope| scope.name.clone());
             let scope_version = scope_spans
                 .scope
                 .as_ref()
-                .map(|scope| scope.version.clone())
-                .unwrap_or_default();
+                .map_or_else(Default::default, |scope| scope.version.clone());
             let instrumentation_attrs = scope_spans.scope.as_ref().map_or_else(Vec::new, |scope| {
                 kvs(&scope.attributes)
                     .into_iter()
@@ -46,7 +43,7 @@ pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
                 } else {
                     Some(fixed8(&span.parent_span_id, "parent_span_id")?)
                 };
-                let (status, status_message) = status_of(span.status.as_ref());
+                let status = status_of(span.status.as_ref());
                 let events = span
                     .events
                     .iter()
@@ -82,8 +79,8 @@ pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
                             .saturating_sub(span.start_time_unix_nano),
                     )
                     .unwrap_or(i64::MAX),
-                    status,
-                    status_message,
+                    status: status.code,
+                    status_message: status.message,
                     resource_attrs: resource_attrs.clone(),
                     span_attrs,
                     events,

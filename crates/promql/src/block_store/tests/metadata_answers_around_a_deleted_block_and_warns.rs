@@ -2,13 +2,16 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn metadata_answers_around_a_deleted_block_and_warns() {
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let base = url::Url::parse("memory:///").unwrap();
-    let writer_store = BlockStore::new(object_store.clone(), base.clone());
+    let fixture = MemoryBlockStoreFixture::build();
+    let object_store = &fixture.object_store;
+    let writer_store = fixture.writer();
 
     // One metric family, described by two blocks. The index names both, and one
     // of the two objects is gone.
-    let series = labels(&[("__name__", "http_requests_total")]);
+    let series = labels(&[crate::test_support::TestLabelPair::new(
+        "__name__",
+        "http_requests_total",
+    )]);
     let deleted = sidecar_manifest(
         &writer_store,
         MetricBlockKind::Metadata,
@@ -46,11 +49,8 @@ pub(crate) async fn metadata_answers_around_a_deleted_block_and_warns() {
         .await
         .unwrap();
 
-    let store = MetricBlockStore::from_compaction_manifests(
-        BlockStore::new(object_store, base),
-        None,
-        &[deleted, kept],
-    );
+    let store =
+        MetricBlockStore::from_compaction_manifests(fixture.reader(), None, &[deleted, kept]);
     let scan = store
         .metadata("tenant-a", Some("http_requests_total"))
         .await

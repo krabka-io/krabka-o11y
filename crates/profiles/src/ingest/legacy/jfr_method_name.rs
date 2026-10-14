@@ -66,35 +66,15 @@ fn normalize_symbol(symbol: &str) -> String {
 mod tests {
     use super::normalize_symbol;
 
-    #[test]
-    fn normalizes_jvm_generated_classes_like_pyroscope() {
-        for (input, expected) in [
-            (
-                "org/example/Enclosing$$Lambda$4/1283928880",
-                "org/example/Enclosing$$Lambda_",
-            ),
-            (
-                "jdk/internal/reflect/GeneratedMethodAccessor31",
-                "jdk/internal/reflect/GeneratedMethodAccessor_",
-            ),
-            (
-                "foo/Bar$$EnhancerBySpringCGLIB$$1234567890",
-                "foo/Bar$$EnhancerBySpringCGLIB$$_",
-            ),
-            (
-                "libzstd-jni-1.5.1-16931311898282279136.so",
-                "libzstd-jni-_.so",
-            ),
-            (
-                "/tmp/libamazonCorrettoCryptoProvider109b39cf33c563eb.so",
-                "libamazonCorrettoCryptoProvider_.so",
-            ),
-            (
-                "libasyncProfiler-linux-arm64-17b9a1d8156277a98ccc871afa9a8f69215f92.so",
-                "libasyncProfiler-_.so",
-            ),
-        ] {
-            assert_eq!(normalize_symbol(input), expected);
-        }
+    #[yare::parameterized(
+        lambda = { "org/example/Enclosing$$Lambda$4/1283928880", "org/example/Enclosing$$Lambda_" },
+        generated_accessor = { "jdk/internal/reflect/GeneratedMethodAccessor31", "jdk/internal/reflect/GeneratedMethodAccessor_" },
+        cglib = { "foo/Bar$$EnhancerBySpringCGLIB$$1234567890", "foo/Bar$$EnhancerBySpringCGLIB$$_" },
+        zstd = { "libzstd-jni-1.5.1-16931311898282279136.so", "libzstd-jni-_.so" },
+        amazon_crypto = { "/tmp/libamazonCorrettoCryptoProvider109b39cf33c563eb.so", "libamazonCorrettoCryptoProvider_.so" },
+        async_profiler = { "libasyncProfiler-linux-arm64-17b9a1d8156277a98ccc871afa9a8f69215f92.so", "libasyncProfiler-_.so" },
+    )]
+    fn normalizes_jvm_generated_classes_like_pyroscope(input: &str, expected: &str) {
+        assert_eq!(normalize_symbol(input), expected);
     }
 }

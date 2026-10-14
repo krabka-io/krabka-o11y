@@ -73,41 +73,121 @@ fn lines_selected_by_pipeline(pipeline: &[PipelineStage]) -> Vec<String> {
 /// the scan prunes, and the row-by-row pass decides.
 #[tokio::test]
 pub(crate) async fn a_pushed_line_filter_predicate_selects_the_same_lines_as_the_rust_filter() {
+    struct PredicatePushCase {
+        query: &'static str,
+        expected_predicates: usize,
+    }
     let cases = [
-        (r#"{app="a"} |= "error""#, 1),
-        (r#"{app="a"} != "error""#, 1),
-        (r#"{app="a"} |= "100%""#, 1),
-        (r#"{app="a"} |= "a_b""#, 1),
-        (r#"{app="a"} |= "C:\\Users""#, 1),
-        (r#"{app="a"} |= "'hi'""#, 1),
-        (r#"{app="a"} |~ "err(0|o)r""#, 1),
-        (r#"{app="a"} !~ "err(0|o)r""#, 1),
-        (r#"{app="a"} |~ "^level=error""#, 1),
-        (r#"{app="a"} |~ "a.b""#, 1),
-        (r#"{app="a"} |~ "a\\.b""#, 1),
-        (r#"{app="a"} |~ "(?i)ERROR""#, 1),
-        (r#"{app="a"} |~ "5\\d\\d""#, 1),
-        (r#"{app="a"} |~ "100%""#, 1),
-        (r#"{app="a"} |~ "'hi'""#, 1),
-        (r#"{app="a"} |> "start<_>end""#, 1),
-        (r#"{app="a"} !> "start<_>end""#, 1),
-        (r#"{app="a"} |> "100%<_>cpu""#, 1),
-        (r#"{app="a"} |= "level=" |~ "err(0|o)r" |> "level=<_>r""#, 3),
+        PredicatePushCase {
+            query: r#"{app="a"} |= "error""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} != "error""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |= "100%""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |= "a_b""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |= "C:\\Users""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |= "'hi'""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "err(0|o)r""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} !~ "err(0|o)r""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "^level=error""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "a.b""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "a\\.b""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "(?i)ERROR""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "5\\d\\d""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "100%""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "'hi'""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |> "start<_>end""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} !> "start<_>end""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |> "100%<_>cpu""#,
+            expected_predicates: 1,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |= "level=" |~ "err(0|o)r" |> "level=<_>r""#,
+            expected_predicates: 3,
+        },
         // A regex whose literal text can hold a backslash is not pushed:
         // DataFusion would rewrite it into a LIKE that reads the backslash as
         // an escape and drops the lines it should keep.
-        (r#"{app="a"} |~ "C:\\\\Users""#, 0),
-        (r#"{app="a"} !~ "C:\\\\Users""#, 0),
-        (r#"{app="a"} |~ "\\x41""#, 0),
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "C:\\\\Users""#,
+            expected_predicates: 0,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} !~ "C:\\\\Users""#,
+            expected_predicates: 0,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |~ "\\x41""#,
+            expected_predicates: 0,
+        },
         // An `ip(...)` filter and a `<_>`-only pattern have no SQL form.
-        (r#"{app="a"} |= ip("127.0.0.1")"#, 0),
-        (r#"{app="a"} |> "<_>""#, 0),
+        PredicatePushCase {
+            query: r#"{app="a"} |= ip("127.0.0.1")"#,
+            expected_predicates: 0,
+        },
+        PredicatePushCase {
+            query: r#"{app="a"} |> "<_>""#,
+            expected_predicates: 0,
+        },
     ];
 
-    for (query, expected_predicates) in cases {
-        let parsed = parse_query(query).expect("query parses");
+    for case in cases {
+        let parsed = parse_query(case.query).expect("query parses");
         let predicates = line_filter_sql_predicates(&parsed.pipeline);
-        check!(predicates.len() == expected_predicates, "{query}");
+        check!(
+            predicates.len() == case.expected_predicates,
+            "{}",
+            case.query
+        );
 
         let rust = lines_selected_by_pipeline(&parsed.pipeline);
         if predicates.is_empty() {
@@ -115,9 +195,13 @@ pub(crate) async fn a_pushed_line_filter_predicate_selects_the_same_lines_as_the
         }
         let pushed = lines_selected_by_predicates(&predicates).await;
         if predicates.len() == parsed.pipeline.len() {
-            check!(pushed == rust, "{query}");
+            check!(pushed == rust, "{}", case.query);
         } else {
-            check!(rust.iter().all(|line| pushed.contains(line)), "{query}");
+            check!(
+                rust.iter().all(|line| pushed.contains(line)),
+                "{}",
+                case.query
+            );
         }
     }
 }

@@ -46,8 +46,8 @@ pub use membership::{
     QuerierMember, ReadinessProbe, refresh_membership, run_membership_refresh,
 };
 pub use merge::{
-    TraceStatus, assemble_trace, assembled_span_count, merge_search, merge_tag_names,
-    merge_tag_values,
+    AssembledTrace, MergedTagNames, MergedTagValues, TraceStatus, assemble_trace,
+    assembled_span_count, merge_search, merge_tag_names, merge_tag_values,
 };
 pub use metrics_merge::{
     Exemplar, KeyValue, MetricSample, MetricSeries, MetricsResponseJson, limit_exemplars,
@@ -78,6 +78,36 @@ mod orch_tests {
 
     fn tenant_t1() -> TenantId {
         TenantId::new("t1").unwrap()
+    }
+
+    fn test_frontend<C: BlockCatalog + 'static>(
+        backend: MockQuerier,
+        catalog: C,
+        config: FrontendConfig,
+    ) -> QueryFrontend<MockQuerier, C> {
+        QueryFrontend::new(
+            Arc::new(backend),
+            Arc::new(catalog),
+            config,
+            MembershipView::fixed(["q1:3200"]),
+        )
+    }
+
+    fn three_querier_frontend(config: FrontendConfig) -> QueryFrontend<MockQuerier, MockCatalog> {
+        let catalog = MockCatalog::one_block_with_row_groups(
+            "b1",
+            TimeRange {
+                start_ns: 0,
+                end_ns: 100,
+            },
+            &[500],
+        );
+        QueryFrontend::new(
+            Arc::new(MockQuerier::new()),
+            Arc::new(catalog),
+            config,
+            MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
+        )
     }
 
     fn one_trace(tid: &str, start: u64) -> SearchPartial {
@@ -112,24 +142,7 @@ mod orch_tests {
     // Blocks `b1` over [0, 100) and `b2` over [100, 200), one 500-byte row
     // group each.
     fn two_small_cold_blocks() -> MockCatalog {
-        MockCatalog::new(vec![
-            BlockMetaInfo::with_row_groups(
-                "b1",
-                TimeRange {
-                    start_ns: 0,
-                    end_ns: 100,
-                },
-                &[500],
-            ),
-            BlockMetaInfo::with_row_groups(
-                "b2",
-                TimeRange {
-                    start_ns: 100,
-                    end_ns: 200,
-                },
-                &[500],
-            ),
-        ])
+        MockCatalog::two_small_blocks()
     }
 
     #[tokio::test]
@@ -146,12 +159,7 @@ mod orch_tests {
             hot_frontier_ns: 150,
             ..FrontendConfig::default()
         };
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(catalog),
-            cfg,
-            MembershipView::fixed(["q1:3200"]),
-        );
+        let qf = test_frontend(backend, catalog, cfg);
 
         let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 20, 3).await.unwrap();
         assert2::assert!(qf.backend_ref().search_calls().len() == 3);
@@ -182,14 +190,14 @@ mod orch_tests {
 
     #[tokio::test]
     async fn search_honors_limit() {
-        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
+        let catalog = MockCatalog::one_block_with_row_groups(
             "b1",
             TimeRange {
                 start_ns: 0,
                 end_ns: 100,
             },
             &[500],
-        )]);
+        );
         let backend = MockQuerier::new();
         backend.stub_search(SearchPartial {
             traces: vec![
@@ -206,12 +214,7 @@ mod orch_tests {
             hot_frontier_ns: i64::MAX,
             ..FrontendConfig::default()
         };
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(catalog),
-            cfg,
-            MembershipView::fixed(["q1:3200"]),
-        );
+        let qf = test_frontend(backend, catalog, cfg);
         let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 1, 3).await.unwrap();
         assert2::assert!(resp.traces.len() == 1);
         assert2::assert!(resp.traces[0].start_time_unix_nano.as_str() == "300");
@@ -219,27 +222,12 @@ mod orch_tests {
 
     #[tokio::test]
     async fn trace_by_id_fans_one_job_per_ready_querier() {
-        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
-            "b1",
-            TimeRange {
-                start_ns: 0,
-                end_ns: 100,
-            },
-            &[500],
-        )]);
-        let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             max_concurrency: 1,
             ..FrontendConfig::default()
         };
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(catalog),
-            cfg,
-            MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
-        );
-        let (_t, metrics, status, warnings) =
-            qf.trace_by_id(&tenant_t1(), [9; 16], 0, 300).await.unwrap();
+        let qf = three_querier_frontend(cfg);
+        let result = qf.trace_by_id(&tenant_t1(), [9; 16], 0, 300).await.unwrap();
         // One job per ready querier (3), each addressed by name, none returned
         // the trace => Complete + None.
         check!(
@@ -253,9 +241,9 @@ mod orch_tests {
                     .into_iter()
                     .collect()
         );
-        check!(metrics.total_jobs == 3);
-        check!(warnings.is_empty());
-        assert2::assert!(matches!(status, TraceStatus::Complete));
+        check!(result.metrics.total_jobs == 3);
+        check!(result.warnings.is_empty());
+        assert2::assert!(matches!(result.status, TraceStatus::Complete));
     }
 
     /// The hot tier is sharded across the queriers' live-stores, so a live
@@ -263,25 +251,11 @@ mod orch_tests {
     /// so it goes to exactly one.
     #[tokio::test]
     async fn a_live_shard_reaches_every_querier_and_a_block_reaches_one() {
-        let catalog = MockCatalog::new(vec![BlockMetaInfo::with_row_groups(
-            "b1",
-            TimeRange {
-                start_ns: 0,
-                end_ns: 100,
-            },
-            &[500],
-        )]);
-        let backend = MockQuerier::new();
         let cfg = FrontendConfig {
             hot_frontier_ns: 0,
             ..FrontendConfig::default()
         };
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(catalog),
-            cfg,
-            MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
-        );
+        let qf = three_querier_frontend(cfg);
         let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 20, 3).await.unwrap();
 
         let calls = qf.backend_ref().search_calls();
@@ -475,12 +449,7 @@ mod orch_tests {
         // A catalog failure drops the cold partitions; swallowing it would return
         // a misleading live-only 200. It must surface as a backend error (5xx).
         let backend = MockQuerier::new();
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(FailingCatalog),
-            FrontendConfig::default(),
-            MembershipView::fixed(["q1:3200"]),
-        );
+        let qf = test_frontend(backend, FailingCatalog, FrontendConfig::default());
         let err = qf
             .search(&tenant_t1(), "{ }", 0, 300, 20, 3)
             .await
@@ -493,12 +462,7 @@ mod orch_tests {
     #[tokio::test]
     async fn tag_names_surfaces_catalog_error_instead_of_empty_200() {
         let backend = MockQuerier::new();
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(FailingCatalog),
-            FrontendConfig::default(),
-            MembershipView::fixed(["q1:3200"]),
-        );
+        let qf = test_frontend(backend, FailingCatalog, FrontendConfig::default());
         let err = qf
             .tag_names(
                 &tenant_t1(),
@@ -516,12 +480,7 @@ mod orch_tests {
     #[tokio::test]
     async fn tag_values_surfaces_catalog_error_instead_of_empty_200() {
         let backend = MockQuerier::new();
-        let qf = QueryFrontend::new(
-            Arc::new(backend),
-            Arc::new(FailingCatalog),
-            FrontendConfig::default(),
-            MembershipView::fixed(["q1:3200"]),
-        );
+        let qf = test_frontend(backend, FailingCatalog, FrontendConfig::default());
         let err = qf
             .tag_values(
                 &tenant_t1(),
@@ -543,4 +502,6 @@ mod query_frontend;
 
 use catalog_error::catalog_error;
 pub use querier_scheme::QuerierScheme;
-pub use query_frontend::QueryFrontend;
+pub use query_frontend::{
+    MetricsQueryWindow, QueryFrontend, TagNamesResult, TagValuesResult, TraceByIdResult,
+};

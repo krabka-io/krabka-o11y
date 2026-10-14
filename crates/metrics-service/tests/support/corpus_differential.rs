@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use serde_json::Value;
 
 use crate::{
-    promql_corpus::{self, CorpusCase, PromqlCorpus, QueryKind},
+    promql_corpus::{self, CorpusCase, CorpusMismatch, PromqlCorpus, QueryKind},
     upstream_http::{RemoteWrite, TestResult, post_remote_write, wait_for_non_empty_result},
 };
 
@@ -35,6 +35,11 @@ pub struct MillisRange {
 pub struct QueryParam<'a> {
     pub name: &'a str,
     pub argument: String,
+}
+
+pub struct CorpusProbe {
+    pub selector: String,
+    pub timestamp_ms: i64,
 }
 
 /// Where Krabka and the upstream engine of one suite take writes and answer
@@ -86,10 +91,12 @@ impl CorpusDiff<'_> {
             .await?;
         }
 
-        let (probe, at) = corpus_probe(corpus).ok_or("the corpus seeded no float samples")?;
-        self.krabka.wait_for_query_ready(client, &probe, at).await?;
+        let probe = corpus_probe(corpus).ok_or("the corpus seeded no float samples")?;
+        self.krabka
+            .wait_for_query_ready(client, &probe.selector, probe.timestamp_ms)
+            .await?;
         self.upstream
-            .wait_for_query_ready(client, &probe, at)
+            .wait_for_query_ready(client, &probe.selector, probe.timestamp_ms)
             .await?;
         Ok(())
     }
@@ -99,28 +106,41 @@ impl CorpusDiff<'_> {
         &self,
         client: &reqwest::Client,
         corpus: &PromqlCorpus,
-    ) -> TestResult<Vec<(String, String)>> {
+    ) -> TestResult<Vec<CorpusMismatch>> {
         let started = std::time::Instant::now();
-        let mut mismatches: Vec<(String, String)> = futures::stream::iter(corpus.cases.iter())
+        let mut mismatches: Vec<CorpusMismatch> = futures::stream::iter(corpus.cases.iter())
             .map(|case| async move {
                 let krabka = self.krabka.query_case(client, case).await;
                 let upstream = self.upstream.query_case(client, case).await;
-                let detail = match (krabka, upstream) {
-                    (Ok(krabka), Ok(upstream)) => {
-                        promql_corpus::compare_case(case, &krabka, &upstream)
-                    }
-                    (krabka, upstream) => Some(format!(
-                        "{} `{}`: transport failure\n      krabka:   {krabka:?}\n      upstream: {upstream:?}",
-                        case.name, case.promql
-                    )),
+                let detail = match krabka.as_ref() {
+                    Ok(krabka) => match upstream.as_ref() {
+                        Ok(upstream) => promql_corpus::compare_case(case, krabka, upstream),
+                        Err(upstream) => Some(format!(
+                            "{} `{}`: transport failure\n      krabka:   ok\n      upstream: {upstream:?}",
+                            case.name, case.promql
+                        )),
+                    },
+                    Err(krabka) => match upstream.as_ref() {
+                        Ok(_) => Some(format!(
+                            "{} `{}`: transport failure\n      krabka:   {krabka:?}\n      upstream: ok",
+                            case.name, case.promql
+                        )),
+                        Err(upstream) => Some(format!(
+                            "{} `{}`: transport failure\n      krabka:   {krabka:?}\n      upstream: {upstream:?}",
+                            case.name, case.promql
+                        )),
+                    },
                 };
-                detail.map(|detail| (case.name.clone(), detail))
+                detail.map(|detail| CorpusMismatch {
+                    case_name: case.name.clone(),
+                    detail,
+                })
             })
             .buffer_unordered(self.query_concurrency)
             .filter_map(|mismatch| async move { mismatch })
             .collect()
             .await;
-        mismatches.sort();
+        mismatches.sort_by(|left, right| left.case_name.cmp(&right.case_name));
         println!(
             "{}: {} cases in {:.1}s, {} skipped, {} disagreed",
             self.suite,
@@ -135,7 +155,7 @@ impl CorpusDiff<'_> {
 
 /// A selector and timestamp that must return something once the seed has
 /// landed, taken from the corpus rather than assumed.
-fn corpus_probe(corpus: &PromqlCorpus) -> Option<(String, i64)> {
+fn corpus_probe(corpus: &PromqlCorpus) -> Option<CorpusProbe> {
     let series = corpus
         .series
         .iter()
@@ -143,10 +163,13 @@ fn corpus_probe(corpus: &PromqlCorpus) -> Option<(String, i64)> {
     let selector = series
         .labels
         .iter()
-        .map(|(name, value)| format!("{name}={}", quoted(value)))
+        .map(|label| format!("{}={}", label.name, quoted(&label.value)))
         .collect::<Vec<_>>()
         .join(",");
-    Some((format!("{{{selector}}}"), series.floats.first()?.0))
+    Some(CorpusProbe {
+        selector: format!("{{{selector}}}"),
+        timestamp_ms: series.floats.first()?.timestamp_ms,
+    })
 }
 
 pub fn quoted(label_value: &str) -> String {
@@ -269,13 +292,11 @@ async fn json_body(request: reqwest::RequestBuilder) -> TestResult<Value> {
 }
 
 pub fn query_url(base: &str, path: &str, query: &[QueryParam<'_>]) -> String {
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(
-            query
-                .iter()
-                .map(|param| (param.name, param.argument.as_str())),
-        )
-        .finish();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for param in query {
+        serializer.append_pair(param.name, param.argument.as_str());
+    }
+    let query = serializer.finish();
     format!("{base}{path}?{query}")
 }
 

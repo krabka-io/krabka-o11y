@@ -7,31 +7,25 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn one_to_one_fill_subtracts_in_the_declared_operand_order() {
     let mut store = InMemoryMetricStore::new();
-    for (name, job, value) in [
-        ("a", "shared", 3.0),
-        ("a", "left_only", 4.0),
-        ("b", "shared", 1.0),
-        ("b", "right_only", 5.0),
-    ] {
-        store.push_float(
-            "tenant-a",
-            labels(&[("__name__", name), ("job", job)]),
-            10_000,
-            value,
-        );
-    }
+    push_metric_job_samples(
+        &mut store,
+        [
+            ("a", "shared", 3.0),
+            ("a", "left_only", 4.0),
+            ("b", "shared", 1.0),
+            ("b", "right_only", 5.0),
+        ],
+    );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let samples = instant_vector(&engine, "a - on (job) fill(0) b", 10_000).await;
-    let values = samples
-        .iter()
-        .map(|sample| {
-            (
-                sample.labels.get("job").expect("job label"),
-                float_value(&sample.value),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+    let mut values = BTreeMap::new();
+    for sample in &samples {
+        values.insert(
+            sample.labels.get("job").expect("job label"),
+            float_value(&sample.value),
+        );
+    }
     assert2::assert!(values.len() == 3);
     assert2::assert!(approx_eq(values["shared"], 2.0));
     assert2::assert!(approx_eq(values["left_only"], 4.0));

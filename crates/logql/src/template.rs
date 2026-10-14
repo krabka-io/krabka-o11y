@@ -9,6 +9,24 @@ use crate::{Labels, ParseError};
 #[cfg(test)]
 mod tests {
 
+    struct TemplateFunctionCase<'a> {
+        name: &'a str,
+        arguments: Vec<TemplateRuntimeValue>,
+        expected: &'a str,
+    }
+
+    fn template_function_case<'a>(
+        name: &'a str,
+        arguments: Vec<TemplateRuntimeValue>,
+        expected: &'a str,
+    ) -> TemplateFunctionCase<'a> {
+        TemplateFunctionCase {
+            name,
+            arguments,
+            expected,
+        }
+    }
+
     /// `evaluate_template_function` is the whole Go-template function surface
     /// `LogQL` exposes through `line_format`, and it carried by far the largest
     /// concentration of surviving mutants in this crate: thirty-nine dispatch
@@ -22,62 +40,63 @@ mod tests {
     fn template_functions_render_their_documented_results() {
         let s = |v: &str| TemplateRuntimeValue::String(v.to_string());
 
-        let cases: &[(&str, Vec<TemplateRuntimeValue>, &str)] = &[
-            ("add", vec![s("7"), s("3")], "10"),
-            ("sub", vec![s("7"), s("3")], "4"),
-            ("mul", vec![s("7"), s("3")], "21"),
-            ("div", vec![s("7"), s("3")], "2"),
-            ("mod", vec![s("7"), s("3")], "1"),
-            ("max", vec![s("7"), s("3")], "7"),
-            ("min", vec![s("7"), s("3")], "3"),
-            ("addf", vec![s("7.5"), s("3.25")], "10.75"),
-            ("mulf", vec![s("2.5"), s("4")], "10"),
-            ("divf", vec![s("7.5"), s("2.5")], "3"),
-            ("maxf", vec![s("2.5"), s("7.5")], "7.5"),
-            ("minf", vec![s("2.5"), s("7.5")], "2.5"),
-            ("ceil", vec![s("2.1")], "3"),
-            ("floor", vec![s("2.9")], "2"),
+        let cases = [
+            template_function_case("add", vec![s("7"), s("3")], "10"),
+            template_function_case("sub", vec![s("7"), s("3")], "4"),
+            template_function_case("mul", vec![s("7"), s("3")], "21"),
+            template_function_case("div", vec![s("7"), s("3")], "2"),
+            template_function_case("mod", vec![s("7"), s("3")], "1"),
+            template_function_case("max", vec![s("7"), s("3")], "7"),
+            template_function_case("min", vec![s("7"), s("3")], "3"),
+            template_function_case("addf", vec![s("7.5"), s("3.25")], "10.75"),
+            template_function_case("mulf", vec![s("2.5"), s("4")], "10"),
+            template_function_case("divf", vec![s("7.5"), s("2.5")], "3"),
+            template_function_case("maxf", vec![s("2.5"), s("7.5")], "7.5"),
+            template_function_case("minf", vec![s("2.5"), s("7.5")], "2.5"),
+            template_function_case("ceil", vec![s("2.1")], "3"),
+            template_function_case("floor", vec![s("2.9")], "2"),
             // `int` parses an integer, it does not truncate a float.
-            ("int", vec![s("42")], "42"),
-            ("len", vec![s("abcd")], "4"),
+            template_function_case("int", vec![s("42")], "42"),
+            template_function_case("len", vec![s("abcd")], "4"),
             // Comparisons: both polarities, so a flipped operator shows.
-            ("eq", vec![s("a"), s("a")], "true"),
-            ("eq", vec![s("a"), s("b")], "false"),
-            ("ne", vec![s("a"), s("b")], "true"),
-            ("ne", vec![s("a"), s("a")], "false"),
-            ("lt", vec![s("3"), s("7")], "true"),
-            ("lt", vec![s("7"), s("3")], "false"),
-            ("gt", vec![s("7"), s("3")], "true"),
-            ("gt", vec![s("3"), s("7")], "false"),
+            template_function_case("eq", vec![s("a"), s("a")], "true"),
+            template_function_case("eq", vec![s("a"), s("b")], "false"),
+            template_function_case("ne", vec![s("a"), s("b")], "true"),
+            template_function_case("ne", vec![s("a"), s("a")], "false"),
+            template_function_case("lt", vec![s("3"), s("7")], "true"),
+            template_function_case("lt", vec![s("7"), s("3")], "false"),
+            template_function_case("gt", vec![s("7"), s("3")], "true"),
+            template_function_case("gt", vec![s("3"), s("7")], "false"),
             // Boundaries, where `<` and `<=` part company.
-            ("le", vec![s("3"), s("3")], "true"),
-            ("lt", vec![s("3"), s("3")], "false"),
-            ("ge", vec![s("3"), s("3")], "true"),
-            ("gt", vec![s("3"), s("3")], "false"),
+            template_function_case("le", vec![s("3"), s("3")], "true"),
+            template_function_case("lt", vec![s("3"), s("3")], "false"),
+            template_function_case("ge", vec![s("3"), s("3")], "true"),
+            template_function_case("gt", vec![s("3"), s("3")], "false"),
         ];
 
-        for (name, args, want) in cases {
-            let got = evaluate_template_function(name, args).as_rendered_string();
-            assert2::check!(got == *want, "{name}({args:?})");
+        for case in cases {
+            let got = evaluate_template_function(case.name, &case.arguments).as_rendered_string();
+            assert2::check!(got == case.expected, "{}({:?})", case.name, case.arguments);
         }
     }
     use std::{cmp::Ordering, collections::BTreeMap};
 
     use super::{
-        LineFormat, TemplatePart, TemplateRuntimeValue, ensure_template_parenthesized_token,
-        ensure_template_quoted_token, evaluate_template_function, evaluate_template_index,
-        evaluate_template_slice, format_go_time_layout, format_template_bytes,
-        format_template_date, format_template_float, format_template_float_round,
-        format_template_integer_binary, format_template_ordering, format_template_to_date,
-        format_template_to_date_in_zone, is_template_control_assignment_variable_char,
-        is_template_variable_name_char_invalid, js_escape_template_string,
-        parse_go_time_layout_value, parse_template_bytes, parse_template_fractional_nanoseconds,
-        parse_template_parenthesized_token, parse_template_parts, parse_template_quoted_token,
-        parse_template_timezone_offset, parse_variable_template_digits,
-        push_template_unicode_escape, quoted_template_token_value,
+        LineFormat, ParsedTemplateToken, TemplatePart, TemplateRuntimeValue,
+        ensure_template_parenthesized_token, ensure_template_quoted_token,
+        evaluate_template_function, evaluate_template_index, evaluate_template_slice,
+        format_go_time_layout, format_template_bytes, format_template_date, format_template_float,
+        format_template_float_round, format_template_integer_binary, format_template_ordering,
+        format_template_to_date, format_template_to_date_in_zone,
+        is_template_control_assignment_variable_char, is_template_variable_name_char_invalid,
+        js_escape_template_string, parse_go_time_layout_value, parse_template_bytes,
+        parse_template_fractional_nanoseconds, parse_template_parenthesized_token,
+        parse_template_parts, parse_template_quoted_token, parse_template_timezone_offset,
+        parse_variable_template_digits, push_template_unicode_escape, quoted_template_token_value,
         skip_leading_template_whitespace, substring_template_string, template_compare_values,
-        template_index_value, template_slice_bounds, template_value_is_collection,
-        tokenize_template_command, trim_template_body_end, urldecode_template_string,
+        template_index_value, template_slice_bounds, template_slice_bounds::TemplateSliceBounds,
+        template_value_is_collection, tokenize_template_command, trim_template_body_end,
+        urldecode_template_string,
     };
 
     #[test]
@@ -85,7 +104,7 @@ mod tests {
         assert_eq!(trim_template_body_end("prefix body \n\t", 7, 14), 11);
         assert_eq!(trim_template_body_end("prefix \n\t", 7, 9), 7);
 
-        assert!(parse_template_parts("").unwrap().is_empty());
+        assert_eq!(parse_template_parts("").unwrap(), []);
         assert_eq!(
             parse_template_parts("literal").unwrap(),
             vec![TemplatePart::Literal("literal".to_string())]
@@ -99,64 +118,68 @@ mod tests {
         assert_eq!(skip_leading_template_whitespace("abc", 10), 3);
     }
 
-    #[test]
-    fn template_helpers_classify_invalid_variable_boundaries() {
-        for (ch, expected) in [('|', true), (' ', true), ('\n', true), ('_', false)] {
-            assert_eq!(
-                is_template_control_assignment_variable_char(ch),
-                expected,
-                "control-assignment boundary: {ch:?}"
-            );
-        }
-
-        for (ch, expected) in [('.', true), (' ', true), ('\t', true), ('_', false)] {
-            assert_eq!(
-                is_template_variable_name_char_invalid(ch),
-                expected,
-                "variable-name boundary: {ch:?}"
-            );
-        }
+    #[yare::parameterized(
+        pipe = { '|', true },
+        space = { ' ', true },
+        newline = { '\n', true },
+        underscore = { '_', false },
+    )]
+    fn control_assignment_variable_boundary(ch: char, expected: bool) {
+        assert_eq!(is_template_control_assignment_variable_char(ch), expected);
     }
 
-    #[test]
-    fn template_token_guards_reject_non_advancing_or_unwrapped_results() {
-        for (token, end, expected_ok) in [
-            ("`ok`", 4, true),
-            ("`ok`", 0, false),
-            ("`ok`", 5, false),
-            ("`ok", 3, false),
-        ] {
-            assert_eq!(
-                ensure_template_quoted_token("`ok`", 0, token, end, '`').is_ok(),
-                expected_ok,
-                "quoted token {token:?} ending at {end}"
-            );
-        }
+    #[yare::parameterized(
+        dot = { '.', true },
+        space = { ' ', true },
+        tab = { '\t', true },
+        underscore = { '_', false },
+    )]
+    fn invalid_variable_name_boundary(ch: char, expected: bool) {
+        assert_eq!(is_template_variable_name_char_invalid(ch), expected);
+    }
 
-        for (token, end, expected_ok) in [
-            ("(ok)", 4, true),
-            ("(ok)", 0, false),
-            ("(ok)", 5, false),
-            ("ok)", 3, false),
-            ("(ok", 3, false),
-        ] {
-            assert_eq!(
-                ensure_template_parenthesized_token("(ok)", 0, token, end).is_ok(),
-                expected_ok,
-                "parenthesized token {token:?} ending at {end}"
-            );
-        }
+    #[yare::parameterized(
+        good = { "`ok`", 4, true },
+        no_progress = { "`ok`", 0, false },
+        past_end = { "`ok`", 5, false },
+        unclosed = { "`ok", 3, false },
+    )]
+    fn quoted_token_guard(token: &str, end: usize, expected_ok: bool) {
+        assert_eq!(
+            ensure_template_quoted_token("`ok`", 0, token, end, '`').is_ok(),
+            expected_ok
+        );
+    }
+
+    #[yare::parameterized(
+        good = { "(ok)", 4, true },
+        no_progress = { "(ok)", 0, false },
+        past_end = { "(ok)", 5, false },
+        unmatched_start = { "ok)", 3, false },
+        unclosed = { "(ok", 3, false },
+    )]
+    fn parenthesized_token_guard(token: &str, end: usize, expected_ok: bool) {
+        assert_eq!(
+            ensure_template_parenthesized_token("(ok)", 0, token, end).is_ok(),
+            expected_ok
+        );
     }
 
     #[test]
     fn template_parenthesized_tokens_ignore_parentheses_inside_strings() {
         assert_eq!(
             parse_template_parenthesized_token(r#"(printf "a)b") tail"#, 0).unwrap(),
-            (r#"(printf "a)b")"#.to_string(), 14)
+            ParsedTemplateToken {
+                token: r#"(printf "a)b")"#.to_string(),
+                next_position: 14
+            }
         );
         assert_eq!(
             parse_template_parenthesized_token(r"(printf `c)d`) tail", 0).unwrap(),
-            ("(printf `c)d`)".to_string(), 14)
+            ParsedTemplateToken {
+                token: "(printf `c)d`)".to_string(),
+                next_position: 14
+            }
         );
         assert_eq!(
             tokenize_template_command(r#"print (printf "a)b") (printf `c)d`)"#).unwrap(),
@@ -172,11 +195,17 @@ mod tests {
     fn template_quoted_tokens_advance_from_the_opening_quote() {
         assert_eq!(
             parse_template_quoted_token(r#"x "a\"b" tail"#, 2, '"').unwrap(),
-            (r#""a\"b""#.to_string(), 8)
+            ParsedTemplateToken {
+                token: r#""a\"b""#.to_string(),
+                next_position: 8
+            }
         );
         assert_eq!(
             parse_template_quoted_token("x `a b` tail", 2, '`').unwrap(),
-            ("`a b`".to_string(), 7)
+            ParsedTemplateToken {
+                token: "`a b`".to_string(),
+                next_position: 7
+            }
         );
         assert_eq!(
             tokenize_template_command(r#"print "a b" `c d`"#).unwrap(),
@@ -213,36 +242,31 @@ mod tests {
         assert_eq!(format.render("line", &BTreeMap::new()), "oktail");
     }
 
-    #[test]
-    fn template_helpers_report_wrong_arity_without_rendering_values() {
-        for (template, expected) in [
-            ("{{ alignLeft 5 }}", ""),
-            ("{{ alignRight 5 }}", ""),
-            ("{{ replace \"a\" \"b\" }}", ""),
-            ("{{ default \"fallback\" }}", "fallback"),
-            ("{{ contains \"needle\" }}", ""),
-            ("{{ eq \"x\" }}", ""),
-            ("{{ ne \"x\" }}", ""),
-            ("{{ hasPrefix \"api\" }}", ""),
-            ("{{ hasSuffix \"api\" }}", ""),
-            ("{{ indent 2 }}", ""),
-            ("{{ nindent 2 }}", ""),
-            ("{{ repeat 3 }}", ""),
-            ("{{ count \"o\" }}", ""),
-            ("{{ regexReplaceAll \"o\" \"foo\" }}", ""),
-            ("{{ regexReplaceAllLiteral \"o\" \"foo\" }}", ""),
-            ("{{ trunc 3 }}", ""),
-            ("{{ substr 1 3 }}", ""),
-            ("{{ trimAll \"/\" }}", ""),
-            ("{{ trimPrefix \"/\" }}", ""),
-            ("{{ trimSuffix \"/\" }}", ""),
-        ] {
-            let format = LineFormat::new(template).unwrap();
-            assert2::assert!(
-                format.render("raw", &BTreeMap::new()) == expected,
-                "{template}"
-            );
-        }
+    #[yare::parameterized(
+        align_left = { "{{ alignLeft 5 }}", "" },
+        align_right = { "{{ alignRight 5 }}", "" },
+        replace = { "{{ replace \"a\" \"b\" }}", "" },
+        default = { "{{ default \"fallback\" }}", "fallback" },
+        contains = { "{{ contains \"needle\" }}", "" },
+        eq = { "{{ eq \"x\" }}", "" },
+        ne = { "{{ ne \"x\" }}", "" },
+        has_prefix = { "{{ hasPrefix \"api\" }}", "" },
+        has_suffix = { "{{ hasSuffix \"api\" }}", "" },
+        indent = { "{{ indent 2 }}", "" },
+        nindent = { "{{ nindent 2 }}", "" },
+        repeat = { "{{ repeat 3 }}", "" },
+        count = { "{{ count \"o\" }}", "" },
+        regex_replace = { "{{ regexReplaceAll \"o\" \"foo\" }}", "" },
+        regex_replace_literal = { "{{ regexReplaceAllLiteral \"o\" \"foo\" }}", "" },
+        trunc = { "{{ trunc 3 }}", "" },
+        substr = { "{{ substr 1 3 }}", "" },
+        trim_all = { "{{ trimAll \"/\" }}", "" },
+        trim_prefix = { "{{ trimPrefix \"/\" }}", "" },
+        trim_suffix = { "{{ trimSuffix \"/\" }}", "" },
+    )]
+    fn template_helper_wrong_arity(template: &str, expected: &str) {
+        let format = LineFormat::new(template).unwrap();
+        assert2::assert!(format.render("raw", &BTreeMap::new()) == expected);
     }
 
     #[test]
@@ -266,16 +290,36 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn template_collection_helpers_index_and_slice_strings() {
         let plain = TemplateRuntimeValue::String("abc".to_string());
         let json_string = TemplateRuntimeValue::Json(serde_json::Value::String("xyz".to_string()));
         let scalar = TemplateRuntimeValue::Integer(7);
 
-        for (value, expected) in [(&plain, true), (&json_string, true), (&scalar, false)] {
+        struct CollectionExpectation<'a> {
+            value: &'a TemplateRuntimeValue,
+            expected: bool,
+        }
+
+        for case in [
+            CollectionExpectation {
+                value: &plain,
+                expected: true,
+            },
+            CollectionExpectation {
+                value: &json_string,
+                expected: true,
+            },
+            CollectionExpectation {
+                value: &scalar,
+                expected: false,
+            },
+        ] {
             assert_eq!(
-                template_value_is_collection(value),
-                expected,
-                "collection check: {value:?}"
+                template_value_is_collection(case.value),
+                case.expected,
+                "collection check: {:?}",
+                case.value
             );
         }
 
@@ -321,11 +365,20 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(template_slice_bounds(5, &bounds(&[0, 2, 5])), Some((0, 2)));
+        assert_eq!(
+            template_slice_bounds(5, &bounds(&[0, 2, 5])),
+            Some(TemplateSliceBounds { start: 0, end: 2 })
+        );
         assert_eq!(template_slice_bounds(5, &bounds(&[0, 2, 5, 5])), None);
 
-        assert_eq!(template_slice_bounds(5, &bounds(&[0, 3, 3])), Some((0, 3)));
-        assert_eq!(template_slice_bounds(5, &bounds(&[0, 5, 5])), Some((0, 5)));
+        assert_eq!(
+            template_slice_bounds(5, &bounds(&[0, 3, 3])),
+            Some(TemplateSliceBounds { start: 0, end: 3 })
+        );
+        assert_eq!(
+            template_slice_bounds(5, &bounds(&[0, 5, 5])),
+            Some(TemplateSliceBounds { start: 0, end: 5 })
+        );
         assert_eq!(template_slice_bounds(5, &bounds(&[0, 4, 3])), None);
         assert_eq!(template_slice_bounds(5, &bounds(&[0, 3, 6])), None);
 
@@ -511,6 +564,26 @@ mod current_template_timestamp;
 mod decode_quoted_fragment;
 mod ensure_template_parenthesized_token;
 mod ensure_template_quoted_token;
+
+fn ensure_template_token(
+    command: &str,
+    pos: usize,
+    token: &str,
+    next: usize,
+    validate: impl FnOnce(&str) -> Result<(), ParseError>,
+) -> Result<(), ParseError> {
+    if next <= pos {
+        return Err(template_parse_error(
+            "template token parser did not advance",
+        ));
+    }
+    if next > command.len() {
+        return Err(template_parse_error(
+            "template token parser advanced past command",
+        ));
+    }
+    validate(token)
+}
 mod epoch_template_timestamp;
 mod evaluate_common_string_function;
 mod evaluate_template_byte_function;
@@ -550,6 +623,19 @@ mod is_unexpected_template_control_action;
 mod is_wrapped_template_token;
 mod js_escape_template_string;
 mod line_format;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ParsedTemplateToken {
+    pub(crate) token: String,
+    pub(crate) next_position: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ParsedTemplateValue<T> {
+    pub(crate) value: T,
+    pub(crate) next_position: usize,
+}
+
 #[cfg(test)]
 mod match_template_literal;
 #[cfg(test)]
@@ -603,7 +689,6 @@ mod template_index_value;
 mod template_integer_args;
 mod template_json_value_to_string;
 mod template_json_value_truthy;
-mod template_parse_error;
 mod template_part;
 mod template_quote_scanner;
 mod template_range;
@@ -695,7 +780,7 @@ use parse_template_float::parse_template_float;
 use parse_template_fractional_nanoseconds::parse_template_fractional_nanoseconds;
 use parse_template_integer::parse_template_integer;
 use parse_template_parenthesized_token::parse_template_parenthesized_token;
-use parse_template_parts::parse_template_parts;
+use parse_template_parts::{parse_template_control_body, parse_template_parts};
 use parse_template_quoted_token::parse_template_quoted_token;
 use parse_template_range::parse_template_range;
 use parse_template_range_expression::parse_template_range_expression;
@@ -711,8 +796,9 @@ use parsed_template_date::ParsedTemplateDate;
 pub use prometheus_functions::{
     histogram::{TemplateFloatHistogram, TemplateHistogramBucket, TemplateHistogramSpan},
     histogram_value::{
-        TemplateBucket, TemplateBucketIterator, TemplateHistogram, TemplateHistogramError,
-        TemplateHistogramReference, TemplateHistogramSlice, TemplateHistogramView,
+        TemplateBucket, TemplateBucketIterator, TemplateBucketStep, TemplateHistogram,
+        TemplateHistogramError, TemplateHistogramField, TemplateHistogramReference,
+        TemplateHistogramSlice, TemplateHistogramView,
     },
     query_result::TemplateQueryResult,
 };
@@ -728,7 +814,7 @@ use template_assignment::TemplateAssignment;
 use template_collection_first_args::template_collection_first_args;
 use template_command::TemplateCommand;
 use template_compare_values::template_compare_values;
-use template_conditional::TemplateConditional;
+use template_conditional::{TemplateConditional, TemplateConditionalBranch};
 use template_control_action::{TemplateControlAction, template_control_action};
 use template_control_expression::TemplateControlExpression;
 use template_expression::TemplateExpression;
@@ -737,7 +823,6 @@ use template_index_value::template_index_value;
 use template_integer_args::template_integer_args;
 use template_json_value_to_string::template_json_value_to_string;
 use template_json_value_truthy::template_json_value_truthy;
-pub(crate) use template_parse_error::template_parse_error;
 use template_part::TemplatePart;
 use template_range::TemplateRange;
 use template_range_binding::TemplateRangeBinding;
@@ -763,3 +848,5 @@ use unix_to_template_timestamp::unix_to_template_timestamp;
 use urldecode_template_string::urldecode_template_string;
 use urlencode_template_string::urlencode_template_string;
 use urlquery_template_string::urlquery_template_string;
+
+pub(crate) use crate::error::syntax_parse_error as template_parse_error;

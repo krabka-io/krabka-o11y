@@ -32,9 +32,11 @@ pub(crate) async fn execute_http_query(
 // Loki reports the parse error first. Krabka reports the tenant error, with the
 // same 400.
 fn query_tenant_error_surface(params: &QueryParams, kind: QueryKind) -> TenantErrorSurface {
-    match (kind, parse_query(&params.query).is_ok()) {
-        (_, false) => TenantErrorSurface::Read,
-        (QueryKind::Range, true) => TenantErrorSurface::QuerierRead,
-        (QueryKind::Instant, true) => TenantErrorSurface::InstantLogQuery,
+    if parse_query(&params.query).is_err() {
+        TenantErrorSurface::Read
+    } else if matches!(kind, QueryKind::Range) {
+        TenantErrorSurface::QuerierRead
+    } else {
+        TenantErrorSurface::InstantLogQuery
     }
 }

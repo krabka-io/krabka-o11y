@@ -1,8 +1,7 @@
 use super::{
-    AnalyticsQuery, HeaderMap, HttpQueryError, QuerierState, RequestSecurity, TenantErrorSurface,
-    TimeRange, Value, VolumeKind, VolumeRangeLimit, add_loki_query_stats_for_stream_plan,
-    authorized_tenant, index_volume_samples, json, loki_volume_matrix_response,
-    loki_volume_vector_response, parse_volume_params, plan_analytics_query,
+    HeaderMap, HttpQueryError, QuerierState, RequestSecurity, TenantErrorSurface, Value,
+    VolumeKind, VolumeRangeLimit, add_loki_query_stats_for_stream_plan, index_volume_samples, json,
+    loki_volume_matrix_response, loki_volume_vector_response, parse_volume_params,
 };
 
 pub(crate) async fn execute_index_volume_query(
@@ -13,18 +12,19 @@ pub(crate) async fn execute_index_volume_query(
     kind: VolumeKind,
 ) -> Result<Value, HttpQueryError> {
     let params = parse_volume_params(raw_query)?;
-    let tenant = authorized_tenant(state, security, headers, TenantErrorSurface::Read).await?;
-    let time_range = TimeRange::new(params.start, params.end)?;
-    let (state, plan, _) = plan_analytics_query(
+    let (tenant, planned) = crate::querier::analytics::authorize_and_plan_analytics_query(
         state,
-        AnalyticsQuery {
-            tenant: &tenant,
-            time_range,
-            query: &params.query,
-            volume_range_limit: VolumeRangeLimit::Check,
-        },
+        security,
+        headers,
+        TenantErrorSurface::Read,
+        params.start,
+        params.end,
+        &params.query,
+        VolumeRangeLimit::Check,
     )
     .await?;
+    let state = planned.state;
+    let plan = planned.plan;
     let tenant = tenant.as_str();
     let volumes = index_volume_samples(&state, tenant, &plan, &params);
     let mut response = match kind {

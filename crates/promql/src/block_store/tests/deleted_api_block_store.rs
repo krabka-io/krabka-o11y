@@ -1,16 +1,38 @@
 use super::*;
 
+#[derive(bon::Builder)]
+pub(crate) struct DeletedApiBlockStoreFixture {
+    pub(crate) block_store: BlockStore,
+    pub(crate) kept_series: Labels,
+    pub(crate) object_store: Arc<dyn ObjectStore>,
+}
+
 /// A block store of two float blocks at 1s, `up{job="api"}` = 1 in
 /// `metrics/float/0001.parquet` and `up{job="db"}` = 2 in
 /// `metrics/float/0002.parquet`, whose first block object has been deleted.
 /// Returns the store and the surviving `job="db"` series labels.
-pub(crate) async fn deleted_api_block_store() -> (BlockStore, Labels) {
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let base = url::Url::parse("memory:///").unwrap();
-    let mut block_store = BlockStore::new(object_store.clone(), base);
+pub(crate) async fn deleted_api_block_store() -> DeletedApiBlockStoreFixture {
+    let fixture = api_db_block_store().await;
+    fixture
+        .object_store
+        .delete(&ObjectPath::from("metrics/float/0001.parquet"))
+        .await
+        .unwrap();
+    fixture
+}
 
-    let deleted_series = labels(&[("__name__", "up"), ("job", "api")]);
-    let kept_series = labels(&[("__name__", "up"), ("job", "db")]);
+pub(crate) async fn api_db_block_store() -> DeletedApiBlockStoreFixture {
+    let fixture = MemoryBlockStoreFixture::build();
+    let mut block_store = fixture.writer();
+
+    let deleted_series = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
+    let kept_series = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "up"),
+        crate::test_support::TestLabelPair::new("job", "db"),
+    ]);
     write_float_block(
         &mut block_store,
         "metrics/float/0001.parquet",
@@ -27,9 +49,9 @@ pub(crate) async fn deleted_api_block_store() -> (BlockStore, Labels) {
         2.0,
     )
     .await;
-    object_store
-        .delete(&ObjectPath::from("metrics/float/0001.parquet"))
-        .await
-        .unwrap();
-    (block_store, kept_series)
+    DeletedApiBlockStoreFixture::builder()
+        .block_store(block_store)
+        .kept_series(kept_series)
+        .object_store(fixture.object_store)
+        .build()
 }

@@ -1,5 +1,20 @@
 use super::*;
 
+struct InstanceFactorCase {
+    instance: &'static str,
+    factor: f64,
+}
+
+struct InstanceValueCase {
+    instance: &'static str,
+    value: f64,
+}
+
+struct AggregationQueryCase {
+    query: &'static str,
+    time_ms: i64,
+}
+
 /// Divergences A + B: a collapsed `sum` or `avg` must be deterministic and exact.
 ///
 /// The aggregation runs over a multi-series group. The result must be
@@ -42,37 +57,55 @@ pub(crate) async fn sum_avg_collapsed_is_deterministic_and_matches_interpreter()
         -1e10,
         42.0,
     ];
-    for (idx, value) in bz_values.iter().enumerate() {
+    for index in 0..bz_values.len() {
         let lbls = labels(&[
-            ("__name__", "bz_total"),
-            ("g", "all"),
-            ("instance", &idx.to_string()),
+            crate::test_support::TestLabelPair::new("__name__", "bz_total"),
+            crate::test_support::TestLabelPair::new("g", "all"),
+            crate::test_support::TestLabelPair::new("instance", &index.to_string()),
         ]);
-        store.push_float("t", lbls, 120_000, *value);
+        store.push_float("t", lbls, 120_000, bz_values[index]);
     }
 
     // Counters for the rate-then-sum/avg case, mirroring the audit's 2m-window
     // rates: a multi-series group whose per-series rates sum with
     // float-rounding sensitivity.
-    for (instance, factor) in [
-        ("0", 1.0),
-        ("1", 1e8),
-        ("2", 1e-8),
-        ("3", 7.0),
-        ("4", 1234.567),
-        ("5", -3.5),
+    for case in [
+        InstanceFactorCase {
+            instance: "0",
+            factor: 1.0,
+        },
+        InstanceFactorCase {
+            instance: "1",
+            factor: 1e8,
+        },
+        InstanceFactorCase {
+            instance: "2",
+            factor: 1e-8,
+        },
+        InstanceFactorCase {
+            instance: "3",
+            factor: 7.0,
+        },
+        InstanceFactorCase {
+            instance: "4",
+            factor: 1234.567,
+        },
+        InstanceFactorCase {
+            instance: "5",
+            factor: -3.5,
+        },
     ] {
         let lbls = labels(&[
-            ("__name__", "bz_reqs_total"),
-            ("g", "all"),
-            ("instance", instance),
+            crate::test_support::TestLabelPair::new("__name__", "bz_reqs_total"),
+            crate::test_support::TestLabelPair::new("g", "all"),
+            crate::test_support::TestLabelPair::new("instance", case.instance),
         ]);
         for step in 0..=2_i32 {
             store.push_float(
                 "t",
                 lbls.clone(),
                 i64::from(step) * 60_000,
-                f64::from(step) * factor,
+                f64::from(step) * case.factor,
             );
         }
     }
@@ -83,34 +116,81 @@ pub(crate) async fn sum_avg_collapsed_is_deterministic_and_matches_interpreter()
     // payload NaN (`0x7ff8…`). The fold order determines which NaN's bits
     // survive, so the operator path must agree with the interpreter bit-for-
     // bit on the sign bit.
-    for (instance, value) in [
-        ("a", f64::INFINITY),
-        ("b", f64::NEG_INFINITY),
-        ("c", f64::NAN),
-        ("d", 5.0),
+    for case in [
+        InstanceValueCase {
+            instance: "a",
+            value: f64::INFINITY,
+        },
+        InstanceValueCase {
+            instance: "b",
+            value: f64::NEG_INFINITY,
+        },
+        InstanceValueCase {
+            instance: "c",
+            value: f64::NAN,
+        },
+        InstanceValueCase {
+            instance: "d",
+            value: 5.0,
+        },
     ] {
-        let lbls = labels(&[("__name__", "naninf"), ("instance", instance)]);
-        store.push_float("t", lbls, 120_000, value);
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "naninf"),
+            crate::test_support::TestLabelPair::new("instance", case.instance),
+        ]);
+        store.push_float("t", lbls, 120_000, case.value);
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    // (query, time_ms). Each is a collapsed/global or `by (g)` sum/avg over a
-    // multi-series group, plus the rate-wrapped and naninf cases.
+    // Each query is a collapsed/global or `by (g)` sum/avg over a multi-series
+    // group, plus the rate-wrapped and naninf cases.
     let cases = [
-        ("sum(bz_total)", 120_000_i64),
-        ("avg(bz_total)", 120_000),
-        ("sum by (g) (bz_total)", 120_000),
-        ("avg by (g) (bz_total)", 120_000),
-        ("sum(rate(bz_reqs_total[2m]))", 120_000),
-        ("avg(rate(bz_reqs_total[2m]))", 120_000),
-        ("sum by (g) (rate(bz_reqs_total[2m]))", 120_000),
-        ("avg by (g) (rate(bz_reqs_total[2m]))", 120_000),
-        ("sum(naninf)", 120_000),
-        ("avg(naninf)", 120_000),
+        AggregationQueryCase {
+            query: "sum(bz_total)",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "avg(bz_total)",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "sum by (g) (bz_total)",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "avg by (g) (bz_total)",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "sum(rate(bz_reqs_total[2m]))",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "avg(rate(bz_reqs_total[2m]))",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "sum by (g) (rate(bz_reqs_total[2m]))",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "avg by (g) (rate(bz_reqs_total[2m]))",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "sum(naninf)",
+            time_ms: 120_000,
+        },
+        AggregationQueryCase {
+            query: "avg(naninf)",
+            time_ms: 120_000,
+        },
     ];
 
-    for (query, time_ms) in cases {
+    for case in cases {
+        let query = case.query;
+        let time_ms = case.time_ms;
         let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
             .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
 

@@ -1,4 +1,4 @@
-use super::{ParseError, is_wrapped_template_token, template_parse_error};
+use super::{ParseError, ensure_template_token, is_wrapped_template_token, template_parse_error};
 
 pub(crate) fn ensure_template_quoted_token(
     command: &str,
@@ -7,20 +7,13 @@ pub(crate) fn ensure_template_quoted_token(
     next: usize,
     quote: char,
 ) -> Result<(), ParseError> {
-    if next <= pos {
-        return Err(template_parse_error(
-            "template token parser did not advance",
-        ));
-    }
-    if next > command.len() {
-        return Err(template_parse_error(
-            "template token parser advanced past command",
-        ));
-    }
-    if !is_wrapped_template_token(token, quote) {
-        return Err(template_parse_error(
-            "template token parser returned unwrapped quoted token",
-        ));
-    }
-    Ok(())
+    ensure_template_token(command, pos, token, next, |token| {
+        if is_wrapped_template_token(token, quote) {
+            Ok(())
+        } else {
+            Err(template_parse_error(
+                "template token parser returned unwrapped quoted token",
+            ))
+        }
+    })
 }

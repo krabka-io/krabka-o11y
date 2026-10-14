@@ -1,5 +1,11 @@
 use super::{Message, ProfileError};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SampleType {
+    pub name: String,
+    pub unit: String,
+}
+
 /// A decoded perftools.profiles profile.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PprofProfile {
@@ -39,28 +45,27 @@ impl PprofProfile {
     }
 
     #[must_use]
-    pub fn sample_types(&self) -> Vec<(String, String)> {
+    pub fn sample_types(&self) -> Vec<SampleType> {
         self.inner
             .sample_type
             .iter()
-            .map(|sample_type| {
-                (
-                    self.string(sample_type.r#type).unwrap_or("").to_string(),
-                    self.string(sample_type.unit).unwrap_or("").to_string(),
-                )
+            .map(|sample_type| SampleType {
+                name: self.string(sample_type.r#type).unwrap_or("").to_string(),
+                unit: self.string(sample_type.unit).unwrap_or("").to_string(),
             })
             .collect()
     }
 
     #[must_use]
-    pub fn period_type_strings(&self) -> (String, String) {
+    pub fn period_type_strings(&self) -> SampleType {
         self.inner.period_type.map_or_else(
-            || (String::new(), String::new()),
-            |period_type| {
-                (
-                    self.string(period_type.r#type).unwrap_or("").to_string(),
-                    self.string(period_type.unit).unwrap_or("").to_string(),
-                )
+            || SampleType {
+                name: String::new(),
+                unit: String::new(),
+            },
+            |period_type| SampleType {
+                name: self.string(period_type.r#type).unwrap_or("").to_string(),
+                unit: self.string(period_type.unit).unwrap_or("").to_string(),
             },
         )
     }

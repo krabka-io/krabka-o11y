@@ -204,7 +204,10 @@ mod tests {
     /// one -- so both are checked from both sides.
     #[test]
     fn relabel_drop_and_keep_are_mirror_images() {
-        let mut series = labels(&[("env", "prod")]);
+        let mut series = labels(&[LabelInput {
+            name: "env",
+            value: "prod",
+        }]);
 
         assert!(!apply_relabel(
             &mut series,
@@ -240,7 +243,16 @@ mod tests {
         ));
 
         // Several source labels are joined with ';' before matching.
-        let mut two = labels(&[("a", "x"), ("b", "y")]);
+        let mut two = labels(&[
+            LabelInput {
+                name: "a",
+                value: "x",
+            },
+            LabelInput {
+                name: "b",
+                value: "y",
+            },
+        ]);
         assert!(!apply_relabel(
             &mut two,
             &[relabel(RelabelAction::Drop, &["a", "b"], "x;y")]
@@ -262,21 +274,50 @@ mod tests {
     /// instead of setting it to the empty string, and touches nothing else.
     #[test]
     fn relabel_replace_sets_or_removes_only_the_target() {
-        let mut series = labels(&[("env", "prod"), ("target", "old"), ("keep", "me")]);
+        let mut series = labels(&[
+            LabelInput {
+                name: "env",
+                value: "prod",
+            },
+            LabelInput {
+                name: "target",
+                value: "old",
+            },
+            LabelInput {
+                name: "keep",
+                value: "me",
+            },
+        ]);
         let mut config = relabel(RelabelAction::Replace, &["env"], "prod");
 
         assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
-        assert!(series == labels(&[("env", "prod"), ("target", "new"), ("keep", "me")]));
+        assert!(
+            series
+                == labels(&[
+                    LabelInput {
+                        name: "env",
+                        value: "prod"
+                    },
+                    LabelInput {
+                        name: "target",
+                        value: "new"
+                    },
+                    LabelInput {
+                        name: "keep",
+                        value: "me"
+                    }
+                ])
+        );
 
         config.replacement = String::new();
         assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
-        assert!(series == labels(&[("env", "prod"), ("keep", "me")]));
+        assert_env_and_keep_labels(&series);
 
         // A rule that does not match leaves the labels alone.
         config.replacement = "other".to_string();
         config.regex = "dev".to_string();
         assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
-        assert!(series == labels(&[("env", "prod"), ("keep", "me")]));
+        assert_env_and_keep_labels(&series);
     }
 
     fn ingest_limits(name: u32, names_per_series: u64, value: u32) -> Limits {
@@ -296,18 +337,46 @@ mod tests {
         let limits = ingest_limits(3, 2, 4);
 
         // Two labels, a three-byte name and a four-byte value: all at the edge.
-        let at_edge = labels(&[("abc", "wxyz"), ("de", "fg")]);
+        let at_edge = labels(&[
+            LabelInput {
+                name: "abc",
+                value: "wxyz",
+            },
+            LabelInput {
+                name: "de",
+                value: "fg",
+            },
+        ]);
         assert!(enforce_limits(&at_edge, &limits).is_ok());
 
-        let too_many = labels(&[("a", "b"), ("c", "d"), ("e", "f")]);
+        let too_many = labels(&[
+            LabelInput {
+                name: "a",
+                value: "b",
+            },
+            LabelInput {
+                name: "c",
+                value: "d",
+            },
+            LabelInput {
+                name: "e",
+                value: "f",
+            },
+        ]);
         let err = enforce_limits(&too_many, &limits).unwrap_err().to_string();
         assert!(err.contains("too many label names: 3 > 2"));
 
-        let long_name = labels(&[("abcd", "x")]);
+        let long_name = labels(&[LabelInput {
+            name: "abcd",
+            value: "x",
+        }]);
         let err = enforce_limits(&long_name, &limits).unwrap_err().to_string();
         assert!(err.contains("`abcd` name exceeds 3 bytes"));
 
-        let long_value = labels(&[("a", "wxyz!")]);
+        let long_value = labels(&[LabelInput {
+            name: "a",
+            value: "wxyz!",
+        }]);
         let err = enforce_limits(&long_value, &limits)
             .unwrap_err()
             .to_string();
@@ -320,8 +389,14 @@ mod tests {
     #[test]
     fn a_zero_structural_cap_is_unlimited() {
         let wide = labels(&[
-            ("a_very_long_label_name", "a_very_long_label_value"),
-            ("b", "c"),
+            LabelInput {
+                name: "a_very_long_label_name",
+                value: "a_very_long_label_value",
+            },
+            LabelInput {
+                name: "b",
+                value: "c",
+            },
         ]);
 
         check!(
@@ -342,24 +417,57 @@ mod tests {
         );
     }
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
+    struct LabelInput {
+        name: &'static str,
+        value: &'static str,
+    }
+
+    fn labels(pairs: &[LabelInput]) -> Labels {
         let mut labels = Labels::new();
-        for (name, value) in pairs {
-            labels.insert(*name, *value);
+        for pair in pairs {
+            labels.insert(pair.name, pair.value);
         }
         labels
     }
 
+    fn assert_env_and_keep_labels(series: &Labels) {
+        assert!(
+            series
+                == &labels(&[
+                    LabelInput {
+                        name: "env",
+                        value: "prod",
+                    },
+                    LabelInput {
+                        name: "keep",
+                        value: "me",
+                    },
+                ])
+        );
+    }
+
     #[test]
     fn require_service_name_injects_unknown() {
-        let mut labels = labels(&[("__name__", "process_cpu")]);
+        let mut labels = labels(&[LabelInput {
+            name: "__name__",
+            value: "process_cpu",
+        }]);
         require_service_name(&mut labels);
         assert!(labels.get("service_name") == Some("unknown_service"));
     }
 
     #[test]
     fn require_service_name_keeps_existing() {
-        let mut labels = labels(&[("__name__", "process_cpu"), ("service_name", "api")]);
+        let mut labels = labels(&[
+            LabelInput {
+                name: "__name__",
+                value: "process_cpu",
+            },
+            LabelInput {
+                name: "service_name",
+                value: "api",
+            },
+        ]);
         require_service_name(&mut labels);
         assert!(labels.get("service_name") == Some("api"));
     }
@@ -367,13 +475,19 @@ mod tests {
     #[test]
     fn session_id_is_modulo_hashed() {
         let limits = session_limits(16);
-        let mut a = labels(&[("__session_id__", "deadbeefcafef00d")]);
+        let mut a = labels(&[LabelInput {
+            name: "__session_id__",
+            value: "deadbeefcafef00d",
+        }]);
         cap_session_id(&mut a, &limits);
         let value = a.get("__session_id__").unwrap();
         let bucket: u64 = value.parse().unwrap();
         assert!(bucket < 16);
 
-        let mut b = labels(&[("__session_id__", "deadbeefcafef00d")]);
+        let mut b = labels(&[LabelInput {
+            name: "__session_id__",
+            value: "deadbeefcafef00d",
+        }]);
         cap_session_id(&mut b, &limits);
         assert!(b.get("__session_id__") == a.get("__session_id__"));
     }
@@ -384,7 +498,10 @@ mod tests {
     /// nothing.
     #[test]
     fn a_zero_session_cardinality_leaves_the_session_id_alone() {
-        let mut labels = labels(&[("__session_id__", "deadbeefcafef00d")]);
+        let mut labels = labels(&[LabelInput {
+            name: "__session_id__",
+            value: "deadbeefcafef00d",
+        }]);
 
         cap_session_id(&mut labels, &session_limits(0));
 
@@ -393,7 +510,10 @@ mod tests {
 
     #[test]
     fn a_series_without_a_session_id_is_untouched() {
-        let mut labels = labels(&[("__name__", "process_cpu")]);
+        let mut labels = labels(&[LabelInput {
+            name: "__name__",
+            value: "process_cpu",
+        }]);
 
         cap_session_id(&mut labels, &session_limits(16));
 
@@ -413,7 +533,16 @@ mod tests {
             max_label_names_per_series: 1,
             ..Limits::default()
         };
-        let labels = labels(&[("a", "1"), ("b", "2")]);
+        let labels = labels(&[
+            LabelInput {
+                name: "a",
+                value: "1",
+            },
+            LabelInput {
+                name: "b",
+                value: "2",
+            },
+        ]);
         assert!(enforce_limits(&labels, &limits).is_err());
     }
 
@@ -423,13 +552,25 @@ mod tests {
             max_label_name: krabka_units::bytes(3),
             ..Limits::default()
         };
-        let labels = labels(&[("too_long", "1")]);
+        let labels = labels(&[LabelInput {
+            name: "too_long",
+            value: "1",
+        }]);
         assert!(enforce_limits(&labels, &limits).is_err());
     }
 
     #[test]
     fn relabel_drop_rejects_series() {
-        let mut labels = labels(&[("env", "dev"), ("__name__", "cpu")]);
+        let mut labels = labels(&[
+            LabelInput {
+                name: "env",
+                value: "dev",
+            },
+            LabelInput {
+                name: "__name__",
+                value: "cpu",
+            },
+        ]);
         let config = RelabelConfig {
             source_labels: vec!["env".to_string()],
             regex: "dev".to_string(),
@@ -469,4 +610,14 @@ pub use relabel_action::RelabelAction;
 pub use relabel_config::RelabelConfig;
 use remove_label::remove_label;
 use replace_label::replace_label;
+
+fn labels_without_target(labels: &Labels, target: &str) -> Labels {
+    labels
+        .iter()
+        .filter(|pair| pair.name != target)
+        .fold(Labels::new(), |mut rebuilt, pair| {
+            rebuilt.insert(pair.name, pair.value);
+            rebuilt
+        })
+}
 pub use require_service_name::require_service_name;

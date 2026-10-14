@@ -14,8 +14,8 @@ pub(crate) fn append_nested_attr(
         attributes
             .into_iter()
             .flatten()
-            .filter(|(key, _)| key == attr.key)
-            .map(|(_, value)| value.clone())
+            .filter(|attribute| attribute.key == attr.key)
+            .map(|attribute| attribute.value.clone())
             .collect(),
     );
 }

@@ -14,11 +14,6 @@ pub(crate) struct MissingPrincipal;
 
 impl IntoResponse for MissingPrincipal {
     fn into_response(self) -> Response {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            [("content-type", "text/plain; charset=utf-8")],
-            format!("{self}\n"),
-        )
-            .into_response()
+        crate::text_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{self}\n"))
     }
 }

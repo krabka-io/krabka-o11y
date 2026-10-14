@@ -2,12 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_predict_linear_extrapolates_gauge_series() {
-    let store = SeriesFixture::new(labels(&[("__name__", "disk_free_bytes"), ("job", "api")]))
-        .at(0_i64, 1.0)
-        .at(60_000, 3.0)
-        .at(120_000, 5.0)
-        .store();
-
+    let store = three_point_gauge_store("disk_free_bytes");
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let samples = instant_vector(&engine, "predict_linear(disk_free_bytes[2m], 60)", 120_000).await;
     assert_one_unnamed_float(

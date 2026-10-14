@@ -18,7 +18,7 @@ mod ingest;
 pub(crate) mod matcher;
 mod store_impl;
 
-pub use head::WalHead;
+pub use head::{WalHead, WalRecordAt};
 pub(crate) use matcher::{prepare_matchers, row_matches};
 
 #[cfg(test)]

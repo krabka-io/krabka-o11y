@@ -1,3 +1,22 @@
+use std::collections::BTreeMap;
+
+/// Reads a named UTF-8 label from either storage or query labels.
+pub trait LabelValueLookup {
+    fn label_value(&self, name: &str) -> Option<&str>;
+}
+
+impl LabelValueLookup for crate::Labels {
+    fn label_value(&self, name: &str) -> Option<&str> {
+        self.get(name)
+    }
+}
+
+impl LabelValueLookup for BTreeMap<String, String> {
+    fn label_value(&self, name: &str) -> Option<&str> {
+        self.get(name).map(String::as_str)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MatchOp {
     Equal,
@@ -7,6 +26,18 @@ pub enum MatchOp {
 }
 
 impl MatchOp {
+    /// Tests this matcher against a named label, including an absent value.
+    #[must_use]
+    pub fn accepts_named_label<L: LabelValueLookup>(
+        self,
+        name: &str,
+        expected: &str,
+        labels: &L,
+        regex_matches: impl Fn(&str) -> bool,
+    ) -> bool {
+        self.accepts(expected, labels.label_value(name), regex_matches)
+    }
+
     /// Reports whether a label value satisfies this operator.
     ///
     /// `candidate` is the label's value, or `None` when the label is absent.

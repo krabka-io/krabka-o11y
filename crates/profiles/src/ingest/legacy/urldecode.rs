@@ -5,15 +5,16 @@ pub(crate) fn urldecode(s: &str) -> String {
         match byte {
             b'+' => out.push(' '),
             b'%' => {
-                let (first, second) = (bytes.next(), bytes.next());
-                let (Some(hi), Some(lo)) = (first, second) else {
+                let Some(hi) = bytes.next() else {
                     // An escape cut short by the end of the input keeps
                     // whatever it consumed, the same way an unparseable one
                     // below does.
                     out.push('%');
-                    if let Some(first) = first {
-                        out.push(char::from(first));
-                    }
+                    continue;
+                };
+                let Some(lo) = bytes.next() else {
+                    out.push('%');
+                    out.push(char::from(hi));
                     continue;
                 };
                 let hex = [hi, lo];

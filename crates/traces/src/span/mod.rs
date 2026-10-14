@@ -63,6 +63,7 @@ mod span_kind;
 mod span_type;
 mod status_code;
 pub(crate) mod typed_value_parts;
+mod wire_span_status;
 
 pub use attr_value::AttrValue;
 pub use event_record::EventRecord;
@@ -71,3 +72,4 @@ pub use link_record::LinkRecord;
 pub use span_kind::SpanKind;
 pub use span_type::Span;
 pub use status_code::StatusCode;
+pub(crate) use wire_span_status::WireSpanStatus;

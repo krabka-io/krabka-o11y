@@ -6,14 +6,23 @@ pub(crate) fn metric_vector_matching_key(
 ) -> Labels {
     match matching {
         None => labels.clone(),
-        Some(MetricVectorMatching::On { labels: names, .. }) => names
-            .iter()
-            .filter_map(|name| labels.get(name).map(|value| (name.clone(), value.clone())))
-            .collect(),
-        Some(MetricVectorMatching::Ignoring { labels: names, .. }) => labels
-            .iter()
-            .filter(|(name, _)| !names.contains(name))
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect(),
+        Some(MetricVectorMatching::On { labels: names, .. }) => {
+            let mut key = Labels::new();
+            for name in names {
+                if let Some(value) = labels.get(name) {
+                    key.insert(name.clone(), value.clone());
+                }
+            }
+            key
+        }
+        Some(MetricVectorMatching::Ignoring { labels: names, .. }) => {
+            let mut key = Labels::new();
+            for entry in labels {
+                if !names.contains(entry.0) {
+                    key.insert(entry.0.clone(), entry.1.clone());
+                }
+            }
+            key
+        }
     }
 }

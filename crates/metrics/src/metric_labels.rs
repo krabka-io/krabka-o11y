@@ -8,24 +8,46 @@ use crate::MetricString;
 )]
 pub struct MetricLabels(BTreeMap<String, MetricString>);
 
+/// An owned name and value used to build metric labels.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct MetricLabelPair<V> {
+    pub name: String,
+    pub value: V,
+}
+
+impl<V> MetricLabelPair<V> {
+    #[must_use]
+    pub fn new(name: impl Into<String>, value: V) -> Self {
+        Self {
+            name: name.into(),
+            value,
+        }
+    }
+}
+
+/// A borrowed name and value from a metric label set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MetricLabelRef<'a> {
+    pub name: &'a String,
+    pub value: &'a MetricString,
+}
+
 impl MetricLabels {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
     #[must_use]
-    pub fn from_pairs<I, K, V>(pairs: I) -> Self
+    pub fn from_pairs<I, V>(pairs: I) -> Self
     where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
+        I: IntoIterator<Item = MetricLabelPair<V>>,
         V: Into<MetricString>,
     {
-        Self(
-            pairs
-                .into_iter()
-                .map(|(key, value)| (key.into(), value.into()))
-                .collect(),
-        )
+        let mut labels = BTreeMap::new();
+        for pair in pairs {
+            labels.insert(pair.name, pair.value.into());
+        }
+        Self(labels)
     }
     pub fn insert(&mut self, name: impl Into<String>, value: impl Into<MetricString>) {
         self.0.insert(name.into(), value.into());
@@ -42,8 +64,11 @@ impl MetricLabels {
     pub fn get_value(&self, name: &str) -> Option<&MetricString> {
         self.0.get(name)
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &MetricString)> {
-        self.0.iter()
+    pub fn iter(&self) -> impl Iterator<Item = MetricLabelRef<'_>> {
+        self.0.iter().map(|pair| MetricLabelRef {
+            name: pair.0,
+            value: pair.1,
+        })
     }
     #[must_use]
     pub fn len(&self) -> usize {
@@ -61,11 +86,16 @@ impl MetricLabels {
     /// Returns an error if a label value cannot be stored as UTF-8.
     pub fn to_storage_labels(&self) -> Result<krabka_blockstore::Labels, String> {
         self.iter()
-            .map(|(name, value)| {
+            .map(|pair| {
+                let name = pair.name;
+                let value = pair.value;
                 let value = value
                     .utf8()
                     .ok_or_else(|| "metric storage requires UTF-8 label values".to_owned())?;
-                Ok((name.clone(), value.to_owned()))
+                Ok(krabka_blockstore::LabelPair::new(
+                    name.clone(),
+                    value.to_owned(),
+                ))
             })
             .collect()
     }
@@ -74,18 +104,26 @@ impl MetricLabels {
     #[must_use]
     pub fn utf8_projection(&self) -> krabka_blockstore::Labels {
         self.iter()
-            .filter_map(|(name, value)| value.utf8().map(|value| (name.clone(), value.to_owned())))
+            .filter_map(|pair| {
+                let name = pair.name;
+                let value = pair.value;
+                value
+                    .utf8()
+                    .map(|value| krabka_blockstore::LabelPair::new(name.clone(), value.to_owned()))
+            })
             .collect()
     }
     #[must_use]
     pub fn has_byte_values(&self) -> bool {
-        self.iter().any(|(_, value)| value.utf8().is_none())
+        self.iter().any(|pair| pair.value.utf8().is_none())
     }
     /// Canonical length-prefixed byte identity, shared by collision and matching keys.
     #[must_use]
     pub fn byte_key(&self) -> Vec<u8> {
         let mut key = Vec::new();
-        for (name, value) in self.iter() {
+        for pair in self.iter() {
+            let name = pair.name;
+            let value = pair.value;
             key.extend_from_slice(&(name.len() as u64).to_le_bytes());
             key.extend_from_slice(name.as_bytes());
             key.extend_from_slice(&(value.as_bytes().len() as u64).to_le_bytes());
@@ -100,7 +138,9 @@ impl MetricLabels {
     pub fn order_key(&self) -> String {
         use std::fmt::Write;
         let mut key = String::new();
-        for (name, value) in self.iter() {
+        for pair in self.iter() {
+            let name = pair.name;
+            let value = pair.value;
             for bytes in [name.as_bytes(), value.as_bytes()] {
                 for byte in bytes {
                     write!(key, "{byte:02x}").expect("writing a string cannot fail");
@@ -114,7 +154,9 @@ impl MetricLabels {
     #[must_use]
     pub fn fingerprint(&self) -> krabka_blockstore::SeriesFingerprint {
         let mut hash = 0xcbf2_9ce4_8422_2325;
-        for (name, value) in self.iter() {
+        for pair in self.iter() {
+            let name = pair.name;
+            let value = pair.value;
             for bytes in [name.as_bytes(), value.as_bytes()] {
                 for byte in (bytes.len() as u64).to_le_bytes().iter().chain(bytes) {
                     hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
@@ -126,7 +168,11 @@ impl MetricLabels {
 }
 impl From<krabka_blockstore::Labels> for MetricLabels {
     fn from(labels: krabka_blockstore::Labels) -> Self {
-        Self::from_pairs(labels)
+        Self::from_pairs(
+            labels
+                .into_iter()
+                .map(|pair| MetricLabelPair::new(pair.name, pair.value)),
+        )
     }
 }
 impl From<&krabka_blockstore::Labels> for MetricLabels {
@@ -134,16 +180,15 @@ impl From<&krabka_blockstore::Labels> for MetricLabels {
         Self::from_pairs(
             labels
                 .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
+                .map(|pair| MetricLabelPair::new(pair.name.to_owned(), pair.value.to_owned())),
         )
     }
 }
-impl<K, V> FromIterator<(K, V)> for MetricLabels
+impl<V> FromIterator<MetricLabelPair<V>> for MetricLabels
 where
-    K: Into<String>,
     V: Into<MetricString>,
 {
-    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = MetricLabelPair<V>>>(iter: I) -> Self {
         Self::from_pairs(iter)
     }
 }
@@ -180,7 +225,11 @@ impl IntoMetricLabelsArc for std::sync::Arc<krabka_blockstore::Labels> {
 
 impl From<BTreeMap<String, String>> for MetricLabels {
     fn from(labels: BTreeMap<String, String>) -> Self {
-        Self::from_pairs(labels)
+        let mut metric_labels = Self::new();
+        for pair in labels {
+            metric_labels.insert(pair.0, pair.1);
+        }
+        metric_labels
     }
 }
 impl From<BTreeMap<String, MetricString>> for MetricLabels {
@@ -188,83 +237,100 @@ impl From<BTreeMap<String, MetricString>> for MetricLabels {
         Self(labels)
     }
 }
-impl IntoIterator for MetricLabels {
-    type Item = (String, MetricString);
-    type IntoIter = std::collections::btree_map::IntoIter<String, MetricString>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-impl<'a> IntoIterator for &'a MetricLabels {
-    type Item = (&'a String, &'a MetricString);
-    type IntoIter = std::collections::btree_map::Iter<'a, String, MetricString>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::assert;
 
     use super::*;
 
+    struct LabelFixture {
+        pairs: Vec<MetricLabelPair<&'static str>>,
+        expected: serde_json::Value,
+        fingerprint: u64,
+    }
+
+    struct StringBuffers {
+        name: String,
+        name_pointer: *const u8,
+        value_pointer: *const u8,
+        has_value: bool,
+    }
+
     #[test]
     fn owned_storage_labels_keep_values_wire_identity_and_string_buffers() {
-        for (pairs, expected, fingerprint) in [
-            (vec![], serde_json::json!({}), 0xcbf2_9ce4_8422_2325),
-            (
-                vec![("z", "discard"), ("a", "first"), ("z", "last")],
-                serde_json::json!({"a": "first", "z": "last"}),
-                0x787e_8a04_6823_a559,
-            ),
-            (
-                vec![("", "")],
-                serde_json::json!({"": ""}),
-                0x8820_1fb9_60ff_6465,
-            ),
-            (
-                vec![("region", "東京"), ("α", "snow ☃")],
-                serde_json::json!({"region": "東京", "α": "snow ☃"}),
-                0xdaf3_0222_8f67_fbd8,
-            ),
-            (
-                vec![("a\0", "v\0x")],
-                serde_json::json!({"a\0": "v\0x"}),
-                0x0a08_c93e_4600_3999,
-            ),
-            (
-                vec![("a=b", "c\nd"), ("x", "y=z\n")],
-                serde_json::json!({"a=b": "c\nd", "x": "y=z\n"}),
-                0xdf65_4ec5_30f1_30f1,
-            ),
+        for fixture in [
+            LabelFixture {
+                pairs: vec![],
+                expected: serde_json::json!({}),
+                fingerprint: 0xcbf2_9ce4_8422_2325,
+            },
+            LabelFixture {
+                pairs: vec![
+                    MetricLabelPair::new("z", "discard"),
+                    MetricLabelPair::new("a", "first"),
+                    MetricLabelPair::new("z", "last"),
+                ],
+                expected: serde_json::json!({"a": "first", "z": "last"}),
+                fingerprint: 0x787e_8a04_6823_a559,
+            },
+            LabelFixture {
+                pairs: vec![MetricLabelPair::new("", "")],
+                expected: serde_json::json!({"": ""}),
+                fingerprint: 0x8820_1fb9_60ff_6465,
+            },
+            LabelFixture {
+                pairs: vec![
+                    MetricLabelPair::new("region", "東京"),
+                    MetricLabelPair::new("α", "snow ☃"),
+                ],
+                expected: serde_json::json!({"region": "東京", "α": "snow ☃"}),
+                fingerprint: 0xdaf3_0222_8f67_fbd8,
+            },
+            LabelFixture {
+                pairs: vec![MetricLabelPair::new("a\0", "v\0x")],
+                expected: serde_json::json!({"a\0": "v\0x"}),
+                fingerprint: 0x0a08_c93e_4600_3999,
+            },
+            LabelFixture {
+                pairs: vec![
+                    MetricLabelPair::new("a=b", "c\nd"),
+                    MetricLabelPair::new("x", "y=z\n"),
+                ],
+                expected: serde_json::json!({"a=b": "c\nd", "x": "y=z\n"}),
+                fingerprint: 0xdf65_4ec5_30f1_30f1,
+            },
         ] {
-            let storage = krabka_blockstore::Labels::from_pairs(pairs);
-            assert!(storage.fingerprint() == fingerprint);
+            let storage = krabka_blockstore::Labels::from_pairs(
+                fixture
+                    .pairs
+                    .into_iter()
+                    .map(|pair| krabka_blockstore::LabelPair::new(pair.name, pair.value)),
+            );
+            assert!(storage.fingerprint() == fixture.fingerprint);
             let buffers = storage
                 .iter()
-                .map(|(name, value)| {
-                    (
-                        name.clone(),
-                        name.as_ptr(),
-                        value.as_ptr(),
-                        !value.is_empty(),
-                    )
+                .map(|pair| StringBuffers {
+                    name: pair.name.to_owned(),
+                    name_pointer: pair.name.as_ptr(),
+                    value_pointer: pair.value.as_ptr(),
+                    has_value: !pair.value.is_empty(),
                 })
                 .collect::<Vec<_>>();
             let borrowed = MetricLabels::from(&storage);
             let owned = MetricLabels::from(storage);
             assert!(owned == borrowed);
-            assert!(serde_json::to_value(&owned).unwrap() == expected);
-            assert!(owned.fingerprint() == fingerprint);
-            for (name, name_buffer, value_buffer, nonempty_value) in buffers {
-                let (actual_name, value) = owned.iter().find(|(key, _)| **key == name).unwrap();
+            assert!(serde_json::to_value(&owned).unwrap() == fixture.expected);
+            assert!(owned.fingerprint() == fixture.fingerprint);
+            for buffer in buffers {
+                let pair = owned.iter().find(|pair| *pair.name == buffer.name).unwrap();
+                let actual_name = pair.name;
+                let value = pair.value;
                 assert!(value.as_bytes() == value.as_str().as_bytes());
-                if !name.is_empty() {
-                    assert!(actual_name.as_ptr() == name_buffer);
+                if !buffer.name.is_empty() {
+                    assert!(actual_name.as_ptr() == buffer.name_pointer);
                 }
-                if nonempty_value {
-                    assert!(value.as_str().as_ptr() == value_buffer);
+                if buffer.has_value {
+                    assert!(value.as_str().as_ptr() == buffer.value_pointer);
                 }
             }
         }

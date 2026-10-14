@@ -1,29 +1,35 @@
 use super::{
-    Array, AttrValue, BTreeMap, DataType, Field, Intrinsic, RecordBatch, Result, Scope,
-    TraceMetricLabelType, UnixNano, compare_row, compare_row_attr_values, i32_value, i64_value,
-    kind_enum_name, metric_duration_label, metric_field_column, metric_label_key,
+    Array, AttrValue, BTreeMap, DataType, Field, Intrinsic, MetricLabel, RecordBatch, Result,
+    Scope, TraceMetricLabelType, UnixNano, compare_row, compare_row_attr_values, i32_value,
+    i64_value, kind_enum_name, metric_duration_label, metric_field_column, metric_label_key,
     metric_label_value, status_enum_name,
 };
 
 /// Keep the display labels and scalar types together in the grouping key.
 /// Without the type component, integer 1 and string "1" share a bucket.
-pub(crate) type MetricLabels = (
-    Vec<(String, String)>,
-    BTreeMap<String, TraceMetricLabelType>,
-);
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MetricLabels {
+    pub(crate) labels: Vec<MetricLabel>,
+    pub(crate) types: BTreeMap<String, TraceMetricLabelType>,
+}
+
+struct TypedMetricLabelValue {
+    value: String,
+    kind: Option<TraceMetricLabelType>,
+}
 
 /// Tempo 3.0.3's frontend `StaticFromAnyValue` decodes only scalar values.
 /// Its raw worker serializes arrays, but frontend decoding turns them into
 /// `StaticNil`, retaining the label key. Keep this conversion out of raw
 /// metric grouping, selectors, and search attribute export.
 pub(crate) fn decode_frontend_metric_labels(
-    labels: &mut [(String, String)],
+    labels: &mut [MetricLabel],
     types: &mut BTreeMap<String, TraceMetricLabelType>,
 ) {
-    for (key, value) in labels {
-        if types.get(key) == Some(&TraceMetricLabelType::Array) {
-            *value = "nil".into();
-            types.insert(key.clone(), TraceMetricLabelType::Nil);
+    for label in labels {
+        if types.get(&label.key) == Some(&TraceMetricLabelType::Array) {
+            label.value = "nil".into();
+            types.insert(label.key.clone(), TraceMetricLabelType::Nil);
         }
     }
 }
@@ -48,23 +54,35 @@ pub(crate) fn metric_labels(
         };
         if let Some(elements) = elements {
             types.insert(key.clone(), TraceMetricLabelType::Array);
-            labels.push((key, serde_json::json!({"arrayValue":{"values":elements.into_iter().map(attribute_json).collect::<Vec<_>>()}}).to_string()));
+            labels.push(MetricLabel::new(key, serde_json::json!({"arrayValue":{"values":elements.into_iter().map(attribute_json).collect::<Vec<_>>()}}).to_string()));
             continue;
         }
         if let Some(value) = raw.first() {
-            let (value, kind) = match value {
+            let label_value = match value {
                 AttrValue::Unsupported(_) | AttrValue::Array(_) => {
                     unreachable!("array labels are handled above")
                 }
-                AttrValue::Str(value) => (value.clone(), None),
-                AttrValue::Int(value) => (value.to_string(), Some(TraceMetricLabelType::Int)),
-                AttrValue::Float(value) => (value.to_string(), Some(TraceMetricLabelType::Double)),
-                AttrValue::Bool(value) => (value.to_string(), Some(TraceMetricLabelType::Bool)),
+                AttrValue::Str(value) => TypedMetricLabelValue {
+                    value: value.clone(),
+                    kind: None,
+                },
+                AttrValue::Int(value) => TypedMetricLabelValue {
+                    value: value.to_string(),
+                    kind: Some(TraceMetricLabelType::Int),
+                },
+                AttrValue::Float(value) => TypedMetricLabelValue {
+                    value: value.to_string(),
+                    kind: Some(TraceMetricLabelType::Double),
+                },
+                AttrValue::Bool(value) => TypedMetricLabelValue {
+                    value: value.to_string(),
+                    kind: Some(TraceMetricLabelType::Bool),
+                },
             };
-            if let Some(kind) = kind {
+            if let Some(kind) = label_value.kind {
                 types.insert(key.clone(), kind);
             }
-            labels.push((key, value));
+            labels.push(MetricLabel::new(key, label_value.value));
             continue;
         }
         let column = metric_field_column(field)?;
@@ -104,9 +122,9 @@ pub(crate) fn metric_labels(
         if let Some(kind) = kind {
             types.insert(key.clone(), kind);
         }
-        labels.push((key, value));
+        labels.push(MetricLabel::new(key, value));
     }
-    Ok((labels, types))
+    Ok(MetricLabels { labels, types })
 }
 
 fn attribute_json(value: &AttrValue) -> serde_json::Value {

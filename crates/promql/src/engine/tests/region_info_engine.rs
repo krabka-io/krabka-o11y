@@ -18,9 +18,9 @@ pub(crate) fn region_info_engine(
         store.push_float(
             "tenant-a",
             labels(&[
-                ("__name__", "http_requests_total"),
-                ("job", series.job),
-                ("instance", series.instance),
+                crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
+                crate::test_support::TestLabelPair::new("job", series.job),
+                crate::test_support::TestLabelPair::new("instance", series.instance),
             ]),
             10_000,
             series.total,
@@ -29,9 +29,9 @@ pub(crate) fn region_info_engine(
     store.push_float(
         "tenant-a",
         labels(&[
-            ("__name__", "target_info"),
-            ("job", "api"),
-            ("region", "east"),
+            crate::test_support::TestLabelPair::new("__name__", "target_info"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("region", "east"),
         ]),
         10_000,
         10.0,

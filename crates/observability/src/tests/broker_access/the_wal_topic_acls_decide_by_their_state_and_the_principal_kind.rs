@@ -38,70 +38,101 @@ pub(crate) fn the_wal_topic_acls_decide_by_their_state_and_the_principal_kind() 
         || AclSet::Configured(vec![grant_for_test("User:tenant-a", AclOperation::All)]);
     let for_grafana =
         || AclSet::Configured(vec![grant_for_test("User:grafana", AclOperation::All)]);
+    struct AclDecisionCase<'a> {
+        name: &'static str,
+        acls: AclSet,
+        principal: &'a Principal,
+        read_allowed: bool,
+        write_allowed: bool,
+    }
     let cases = [
-        (
-            "security disabled",
-            AclSet::SecurityDisabled,
-            &unauthenticated,
-            (true, true),
-        ),
-        (
-            "security disabled",
-            AclSet::SecurityDisabled,
-            &grafana,
-            (true, true),
-        ),
-        (
-            "empty",
-            AclSet::Configured(Vec::new()),
-            &unauthenticated,
-            (true, true),
-        ),
-        (
-            "empty",
-            AclSet::Configured(Vec::new()),
-            &grafana,
-            (false, false),
-        ),
-        (
-            "granted to the tenant",
-            for_tenant(),
-            &unauthenticated,
-            (true, true),
-        ),
-        (
-            "granted to the tenant",
-            for_tenant(),
-            &grafana,
-            (false, false),
-        ),
-        (
-            "granted to grafana",
-            for_grafana(),
-            &unauthenticated,
-            (false, false),
-        ),
-        ("granted to grafana", for_grafana(), &grafana, (true, true)),
-        (
-            "a read grant to grafana",
-            AclSet::Configured(vec![grant_for_test("User:grafana", AclOperation::Read)]),
-            &grafana,
-            (true, false),
-        ),
-        (
-            "a write grant to grafana",
-            AclSet::Configured(vec![grant_for_test("User:grafana", AclOperation::Write)]),
-            &grafana,
-            (false, true),
-        ),
+        AclDecisionCase {
+            name: "security disabled",
+            acls: AclSet::SecurityDisabled,
+            principal: &unauthenticated,
+            read_allowed: true,
+            write_allowed: true,
+        },
+        AclDecisionCase {
+            name: "security disabled",
+            acls: AclSet::SecurityDisabled,
+            principal: &grafana,
+            read_allowed: true,
+            write_allowed: true,
+        },
+        AclDecisionCase {
+            name: "empty",
+            acls: AclSet::Configured(Vec::new()),
+            principal: &unauthenticated,
+            read_allowed: true,
+            write_allowed: true,
+        },
+        AclDecisionCase {
+            name: "empty",
+            acls: AclSet::Configured(Vec::new()),
+            principal: &grafana,
+            read_allowed: false,
+            write_allowed: false,
+        },
+        AclDecisionCase {
+            name: "granted to the tenant",
+            acls: for_tenant(),
+            principal: &unauthenticated,
+            read_allowed: true,
+            write_allowed: true,
+        },
+        AclDecisionCase {
+            name: "granted to the tenant",
+            acls: for_tenant(),
+            principal: &grafana,
+            read_allowed: false,
+            write_allowed: false,
+        },
+        AclDecisionCase {
+            name: "granted to grafana",
+            acls: for_grafana(),
+            principal: &unauthenticated,
+            read_allowed: false,
+            write_allowed: false,
+        },
+        AclDecisionCase {
+            name: "granted to grafana",
+            acls: for_grafana(),
+            principal: &grafana,
+            read_allowed: true,
+            write_allowed: true,
+        },
+        AclDecisionCase {
+            name: "a read grant to grafana",
+            acls: AclSet::Configured(vec![grant_for_test("User:grafana", AclOperation::Read)]),
+            principal: &grafana,
+            read_allowed: true,
+            write_allowed: false,
+        },
+        AclDecisionCase {
+            name: "a write grant to grafana",
+            acls: AclSet::Configured(vec![grant_for_test("User:grafana", AclOperation::Write)]),
+            principal: &grafana,
+            read_allowed: false,
+            write_allowed: true,
+        },
     ];
 
-    for (name, acls, principal, expected) in cases {
-        let decided = (
-            check_tenant_wal_read_acl(principal, &tenant, WAL_TOPIC, &acls).is_ok(),
-            check_tenant_wal_write_acl(principal, &tenant, WAL_TOPIC, &acls).is_ok(),
+    for case in cases {
+        check!(
+            check_tenant_wal_read_acl(case.principal, &tenant, WAL_TOPIC, &case.acls).is_ok()
+                == case.read_allowed,
+            "{} read, {:?}",
+            case.name,
+            case.principal
         );
-        check!(decided == expected, "{name}, {principal:?}");
+        check!(
+            check_tenant_wal_write_acl(case.principal, &tenant, WAL_TOPIC, &case.acls).is_ok()
+                == case.write_allowed,
+            "{} write, {:?}",
+            case.name,
+            case.principal
+        );
     }
 
     let empty = AclSet::Configured(Vec::new());

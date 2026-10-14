@@ -1,6 +1,8 @@
 use super::{
     BitReader, ChunkError, HistogramChunkState, HistogramLayout, NativeHistogram, STALE_NAN_BITS,
-    XorState, decode_histogram_samples, i64_to_f64, stale_histogram, u64_to_f64,
+    XorState, decode_histogram_samples,
+    histogram_chunk_state::{read_initial_timestamp, read_next_timestamp},
+    i64_to_f64, stale_histogram, u64_to_f64,
 };
 
 /// Decodes a Prometheus integer native-histogram chunk.
@@ -11,7 +13,7 @@ use super::{
 pub fn decode_histogram_chunk(
     chunk: &[u8],
     max_buckets: u64,
-) -> Result<Vec<(i64, NativeHistogram)>, ChunkError> {
+) -> Result<Vec<super::TimestampedHistogramSample>, ChunkError> {
     decode_histogram_samples::<IntegerState>(chunk, max_buckets)
 }
 
@@ -57,7 +59,7 @@ impl HistogramChunkState for IntegerState {
     }
 
     fn read_first(&mut self, reader: &mut BitReader<'_>) -> Result<(), ChunkError> {
-        self.timestamp = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
+        self.timestamp = read_initial_timestamp(reader)?;
         self.count = reader.read_varbit_uint().ok_or(ChunkError::Truncated)?;
         self.zero_count = reader.read_varbit_uint().ok_or(ChunkError::Truncated)?;
         self.sum = f64::from_bits(reader.read_bits(64).ok_or(ChunkError::Truncated)?);
@@ -70,9 +72,7 @@ impl HistogramChunkState for IntegerState {
     /// Reads one later sample and reports whether it is a stale marker, which
     /// carries no buckets.
     fn read_next(&mut self, reader: &mut BitReader<'_>) -> Result<bool, ChunkError> {
-        let dod = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
-        self.timestamp_delta = self.timestamp_delta.wrapping_add(dod);
-        self.timestamp = self.timestamp.wrapping_add(self.timestamp_delta);
+        read_next_timestamp(reader, &mut self.timestamp_delta, &mut self.timestamp)?;
         let dod = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
         self.count_delta = self.count_delta.wrapping_add(dod);
         self.count = self
@@ -93,15 +93,15 @@ impl HistogramChunkState for IntegerState {
         if self.sum.to_bits() == STALE_NAN_BITS {
             return Ok(true);
         }
-        for (bucket, delta) in self
+        for bucket_delta in self
             .positive
             .iter_mut()
             .zip(self.positive_delta.iter_mut())
             .chain(self.negative.iter_mut().zip(self.negative_delta.iter_mut()))
         {
             let dod = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
-            *delta = delta.wrapping_add(dod);
-            *bucket = bucket.wrapping_add(*delta);
+            *bucket_delta.1 = bucket_delta.1.wrapping_add(dod);
+            *bucket_delta.0 = bucket_delta.0.wrapping_add(*bucket_delta.1);
         }
         Ok(false)
     }

@@ -12,11 +12,11 @@ pub(crate) fn aggregate_labels(input: &Labels, modifier: Option<&LabelModifier>)
         }
         Some(LabelModifier::Exclude(exclude)) => {
             let excluded = exclude.labels.iter().collect::<BTreeSet<_>>();
-            for (name, value) in input.iter() {
-                if name == "__name__" || excluded.contains(name) {
+            for pair in input.iter() {
+                if pair.name == "__name__" || excluded.contains(pair.name) {
                     continue;
                 }
-                labels.insert(name, value);
+                labels.insert(pair.name, pair.value);
             }
         }
         None => {}

@@ -58,6 +58,17 @@ pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
         .await
         .expect("the scripted consumer does not fail")
     };
+    async fn poll_consumer(consumer: &mut ScriptedConsumer) -> Vec<WalRecordForTest> {
+        super::super::prelude::poll_accumulated_log_compaction_records(
+            consumer,
+            secs(1),
+            secs(5),
+            millis(10),
+            NonZeroUsize::new(3).expect("a positive cap"),
+        )
+        .await
+        .expect("the scripted consumer does not fail")
+    }
 
     // An empty first poll is the answer, not the start of a wait: the
     // batch waiting behind it must not be drawn in.
@@ -79,24 +90,8 @@ pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
         batches: vec![vec![], vec![record(5)], vec![]].into_iter().collect(),
         revoked: [0].into_iter().collect(),
     };
-    let empty = super::super::prelude::poll_accumulated_log_compaction_records(
-        &mut consumer,
-        secs(1),
-        secs(5),
-        millis(10),
-        NonZeroUsize::new(3).expect("a positive cap"),
-    )
-    .await
-    .expect("the scripted consumer does not fail");
+    let empty = poll_consumer(&mut consumer).await;
     check!(empty.is_empty(), "the rebalance poll remains empty");
-    let replayed = super::super::prelude::poll_accumulated_log_compaction_records(
-        &mut consumer,
-        secs(1),
-        secs(5),
-        millis(10),
-        NonZeroUsize::new(3).expect("a positive cap"),
-    )
-    .await
-    .expect("the scripted consumer does not fail");
+    let replayed = poll_consumer(&mut consumer).await;
     check!(replayed.len() == 1, "the later record survives");
 }

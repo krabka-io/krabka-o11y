@@ -11,6 +11,16 @@ pub struct BitReader<'a> {
     position: usize,
 }
 
+struct VarbitValue {
+    width: u8,
+    raw: u64,
+}
+
+struct XorWindow {
+    leading: u8,
+    significant: u8,
+}
+
 impl<'a> BitReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, position: 0 }
@@ -65,30 +75,30 @@ impl<'a> BitReader<'a> {
     /// Reads a Prometheus `varbit` integer: a unary prefix picks the width,
     /// and the value is two's complement within that width.
     pub fn read_varbit_int(&mut self) -> Option<i64> {
-        let (width, raw) = self.read_varbit_raw()?;
-        if width == 64 || width == 0 {
-            return Some(raw.cast_signed());
+        let value = self.read_varbit_raw()?;
+        if value.width == 64 || value.width == 0 {
+            return Some(value.raw.cast_signed());
         }
-        let signed = if raw > 1 << (width - 1) {
-            raw.wrapping_sub(1 << width)
+        let signed = if value.raw > 1 << (value.width - 1) {
+            value.raw.wrapping_sub(1 << value.width)
         } else {
-            raw
+            value.raw
         };
         Some(signed.cast_signed())
     }
 
     /// Reads a Prometheus unsigned `varbit` value.
     pub fn read_varbit_uint(&mut self) -> Option<u64> {
-        self.read_varbit_raw().map(|(_, raw)| raw)
+        self.read_varbit_raw().map(|value| value.raw)
     }
 
-    fn read_varbit_raw(&mut self) -> Option<(u8, u64)> {
+    fn read_varbit_raw(&mut self) -> Option<VarbitValue> {
         let mut ones = 0_u8;
         while ones < 8 && self.read_bit()? {
             ones += 1;
         }
         let width = match ones {
-            0 => return Some((0, 0)),
+            0 => return Some(VarbitValue { width: 0, raw: 0 }),
             1 => 3,
             2 => 6,
             3 => 9,
@@ -98,7 +108,10 @@ impl<'a> BitReader<'a> {
             7 => 56,
             _ => 64,
         };
-        Some((width, self.read_bits(width)?))
+        Some(VarbitValue {
+            width,
+            raw: self.read_bits(width)?,
+        })
     }
 
     /// Reads a timestamp delta-of-delta in the XOR chunk encoding.
@@ -132,7 +145,7 @@ impl<'a> BitReader<'a> {
         if !self.read_bit()? {
             return Some(());
         }
-        let (leading, significant) = if self.read_bit()? {
+        let window = if self.read_bit()? {
             let leading = u8::try_from(self.read_bits(5)?).ok()?;
             let significant = match u8::try_from(self.read_bits(6)?).ok()? {
                 0 => 64,
@@ -140,15 +153,21 @@ impl<'a> BitReader<'a> {
             };
             let trailing = 64_u8.checked_sub(leading)?.checked_sub(significant)?;
             *state = XorState { leading, trailing };
-            (leading, significant)
+            XorWindow {
+                leading,
+                significant,
+            }
         } else {
             let significant = 64_u8
                 .checked_sub(state.leading)?
                 .checked_sub(state.trailing)?;
-            (state.leading, significant)
+            XorWindow {
+                leading: state.leading,
+                significant,
+            }
         };
-        let bits = self.read_bits(significant)?;
-        let trailing = 64 - leading - significant;
+        let bits = self.read_bits(window.significant)?;
+        let trailing = 64 - window.leading - window.significant;
         let shifted = bits.checked_shl(u32::from(trailing)).unwrap_or(0);
         *value = f64::from_bits(value.to_bits() ^ shifted);
         Some(())

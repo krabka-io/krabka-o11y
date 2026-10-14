@@ -1,5 +1,28 @@
 use super::*;
 
+struct AggregateMemberCase {
+    job: &'static str,
+    instance: &'static str,
+    value: f64,
+}
+
+struct SingleMemberCase {
+    job: &'static str,
+    value: f64,
+}
+
+struct RepeatedValueCase {
+    instance: &'static str,
+    value: f64,
+}
+
+struct CounterPathCase {
+    path: &'static str,
+    factor: f64,
+}
+
+type ParameterizedQueryCase = QueryAt;
+
 #[tokio::test]
 pub(crate) async fn param_aggregate_planner_path_matches_interpreter() {
     // A float-only store exercising the parameterized aggregations:
@@ -13,39 +36,110 @@ pub(crate) async fn param_aggregate_planner_path_matches_interpreter() {
     //    (two members share value 1, one is 2).
     //  - `reqs_total`: counters for the nested `topk(.., rate(...))` case.
     let mut store = InMemoryMetricStore::new();
-    for (job, instance, value) in [
-        ("api", "0", 5.0),
-        ("api", "1", 5.0), // ties with api/0 under topk/bottomk
-        ("api", "2", 2.0),
-        ("api", "3", 8.0),
-        ("api", "4", f64::NAN), // genuine NaN member
-        ("db", "0", 1.0),
-        ("db", "1", 9.0),
+    for case in [
+        AggregateMemberCase {
+            job: "api",
+            instance: "0",
+            value: 5.0,
+        },
+        AggregateMemberCase {
+            job: "api",
+            instance: "1",
+            value: 5.0,
+        }, // ties with api/0 under topk/bottomk
+        AggregateMemberCase {
+            job: "api",
+            instance: "2",
+            value: 2.0,
+        },
+        AggregateMemberCase {
+            job: "api",
+            instance: "3",
+            value: 8.0,
+        },
+        AggregateMemberCase {
+            job: "api",
+            instance: "4",
+            value: f64::NAN,
+        }, // genuine NaN member
+        AggregateMemberCase {
+            job: "db",
+            instance: "0",
+            value: 1.0,
+        },
+        AggregateMemberCase {
+            job: "db",
+            instance: "1",
+            value: 9.0,
+        },
     ] {
-        let lbls = labels(&[("__name__", "m"), ("job", job), ("instance", instance)]);
-        store.push_float("t", lbls, 120_000, value);
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "m"),
+            crate::test_support::TestLabelPair::new("job", case.job),
+            crate::test_support::TestLabelPair::new("instance", case.instance),
+        ]);
+        store.push_float("t", lbls, 120_000, case.value);
     }
     // A single-member group per job (single-element quantile/stddev/stdvar).
-    for (job, value) in [("api", 4.0), ("db", 7.0)] {
-        let lbls = labels(&[("__name__", "single"), ("job", job)]);
-        store.push_float("t", lbls, 120_000, value);
+    for case in [
+        SingleMemberCase {
+            job: "api",
+            value: 4.0,
+        },
+        SingleMemberCase {
+            job: "db",
+            value: 7.0,
+        },
+    ] {
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "single"),
+            crate::test_support::TestLabelPair::new("job", case.job),
+        ]);
+        store.push_float("t", lbls, 120_000, case.value);
     }
     // Repeated values for count_values: 1, 1, 2 within job=api.
-    for (instance, value) in [("0", 1.0), ("1", 1.0), ("2", 2.0)] {
-        let lbls = labels(&[("__name__", "cv"), ("job", "api"), ("instance", instance)]);
-        store.push_float("t", lbls, 120_000, value);
+    for case in [
+        RepeatedValueCase {
+            instance: "0",
+            value: 1.0,
+        },
+        RepeatedValueCase {
+            instance: "1",
+            value: 1.0,
+        },
+        RepeatedValueCase {
+            instance: "2",
+            value: 2.0,
+        },
+    ] {
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "cv"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("instance", case.instance),
+        ]);
+        store.push_float("t", lbls, 120_000, case.value);
     }
     // Counters for `topk(.., rate(...))` (slope = factor / 60s).
-    for (path, factor) in [("a", 1.0), ("b", 2.0), ("c", 5.0)] {
-        let lbls = labels(&[("__name__", "reqs_total"), ("job", "api"), ("path", path)]);
-        for step in 0..=3_i32 {
-            store.push_float(
-                "t",
-                lbls.clone(),
-                i64::from(step) * 60_000,
-                f64::from(step) * factor,
-            );
-        }
+    for case in [
+        CounterPathCase {
+            path: "a",
+            factor: 1.0,
+        },
+        CounterPathCase {
+            path: "b",
+            factor: 2.0,
+        },
+        CounterPathCase {
+            path: "c",
+            factor: 5.0,
+        },
+    ] {
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "reqs_total"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+            crate::test_support::TestLabelPair::new("path", case.path),
+        ]);
+        push_float_counter_series(&mut store, lbls, case.factor, 3);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
@@ -54,63 +148,153 @@ pub(crate) async fn param_aggregate_planner_path_matches_interpreter() {
     let queries = [
         // topk/bottomk: original series kept (labels incl. __name__), tie-break
         // by labels_key, k clamping (k > group size, k = 0). by and without.
-        ("topk(2, m)", 120_000_i64),
-        ("bottomk(2, m)", 120_000),
-        ("topk(2, m) by (job)", 120_000),
-        ("bottomk(2, m) by (job)", 120_000),
-        ("topk(2, m) without (instance)", 120_000),
+        ParameterizedQueryCase {
+            query: "topk(2, m)",
+            time_ms: 120_000_i64,
+        },
+        ParameterizedQueryCase {
+            query: "bottomk(2, m)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "topk(2, m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "bottomk(2, m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "topk(2, m) without (instance)",
+            time_ms: 120_000,
+        },
         // k larger than a group's size clamps to the whole group.
-        ("topk(10, m) by (job)", 120_000),
+        ParameterizedQueryCase {
+            query: "topk(10, m) by (job)",
+            time_ms: 120_000,
+        },
         // k = 0 yields the empty vector.
-        ("topk(0, m)", 120_000),
-        ("bottomk(0, m) by (job)", 120_000),
+        ParameterizedQueryCase {
+            query: "topk(0, m)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "bottomk(0, m) by (job)",
+            time_ms: 120_000,
+        },
         // Ties across the whole vector: api/0 and api/1 both 5.0.
-        ("topk(3, m)", 120_000),
+        ParameterizedQueryCase {
+            query: "topk(3, m)",
+            time_ms: 120_000,
+        },
         // quantile: phi = 0 / 0.5 / 0.9 / 1, by and without.
-        ("quantile(0, m) by (job)", 120_000),
-        ("quantile(0.5, m) by (job)", 120_000),
-        ("quantile(0.9, m) by (job)", 120_000),
-        ("quantile(1, m) by (job)", 120_000),
-        ("quantile(0.5, m) without (instance)", 120_000),
+        ParameterizedQueryCase {
+            query: "quantile(0, m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "quantile(0.5, m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "quantile(0.9, m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "quantile(1, m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "quantile(0.5, m) without (instance)",
+            time_ms: 120_000,
+        },
         // Single-element group: quantile equals the lone value.
-        ("quantile(0.5, single) by (job)", 120_000),
+        ParameterizedQueryCase {
+            query: "quantile(0.5, single) by (job)",
+            time_ms: 120_000,
+        },
         // count_values: one series per distinct value, value -> label, count.
-        (r#"count_values("v", cv)"#, 120_000),
-        (r#"count_values("v", cv) by (job)"#, 120_000),
-        (r#"count_values("v", cv) without (instance)"#, 120_000),
+        ParameterizedQueryCase {
+            query: r#"count_values("v", cv)"#,
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: r#"count_values("v", cv) by (job)"#,
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: r#"count_values("v", cv) without (instance)"#,
+            time_ms: 120_000,
+        },
         // stddev/stdvar: population std-dev / variance, by and without.
-        ("stddev(m) by (job)", 120_000),
-        ("stdvar(m) by (job)", 120_000),
-        ("stddev(m) without (instance)", 120_000),
-        ("stdvar without (instance) (m)", 120_000),
+        ParameterizedQueryCase {
+            query: "stddev(m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "stdvar(m) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "stddev(m) without (instance)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "stdvar without (instance) (m)",
+            time_ms: 120_000,
+        },
         // Single-element group -> stddev/stdvar = 0.
-        ("stddev(single) by (job)", 120_000),
-        ("stdvar(single) by (job)", 120_000),
+        ParameterizedQueryCase {
+            query: "stddev(single) by (job)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "stdvar(single) by (job)",
+            time_ms: 120_000,
+        },
         // No modifier (collapse all).
-        ("stddev(m)", 120_000),
-        ("quantile(0.5, m)", 120_000),
+        ParameterizedQueryCase {
+            query: "stddev(m)",
+            time_ms: 120_000,
+        },
+        ParameterizedQueryCase {
+            query: "quantile(0.5, m)",
+            time_ms: 120_000,
+        },
         // Nested: a parameterized aggregation over a rate inner already on the
         // operator path.
-        ("topk(1, rate(reqs_total[3m]))", 180_000),
-        ("quantile(0.5, rate(reqs_total[3m]))", 180_000),
-        ("stddev by (job) (rate(reqs_total[3m]))", 180_000),
-        (r#"count_values("v", rate(reqs_total[3m]))"#, 180_000),
+        ParameterizedQueryCase {
+            query: "topk(1, rate(reqs_total[3m]))",
+            time_ms: 180_000,
+        },
+        ParameterizedQueryCase {
+            query: "quantile(0.5, rate(reqs_total[3m]))",
+            time_ms: 180_000,
+        },
+        ParameterizedQueryCase {
+            query: "stddev by (job) (rate(reqs_total[3m]))",
+            time_ms: 180_000,
+        },
+        ParameterizedQueryCase {
+            query: r#"count_values("v", rate(reqs_total[3m]))"#,
+            time_ms: 180_000,
+        },
         // Nested: a parameterized aggregation over a SUBQUERY-range inner,
         // which now routes through the planner (subquery sub-grid evaluated
         // per-step through the recursive planner, shared outer fold).
-        ("quantile(0.5, max_over_time((m)[5m:1m]))", 120_000),
+        ParameterizedQueryCase {
+            query: "quantile(0.5, max_over_time((m)[5m:1m]))",
+            time_ms: 120_000,
+        },
         // Unary-negation subquery inner: `Expr::Unary` now routes through the
         // planner, so the subquery's structural gate accepts it.
-        ("quantile(0.5, max_over_time((-m)[5m:1m]))", 120_000),
+        ParameterizedQueryCase {
+            query: "quantile(0.5, max_over_time((-m)[5m:1m]))",
+            time_ms: 120_000,
+        },
     ];
 
-    for (query, time_ms) in queries {
-        let SortedParity {
-            via_operators,
-            via_interpreter,
-        } = sorted_planned_and_interpreted(&engine, query, time_ms).await;
-        assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
-    }
+    assert_call_planner_matches_interpreter(&engine, &queries).await;
 
     // The experimental `limitk`/`limit_ratio` param aggregations now route
     // through the planner via the shared interpreter kernels (incl.

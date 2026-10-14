@@ -157,10 +157,12 @@ const NOT32: &[u32] = &[
 
 pub(super) fn printable(ch: char) -> bool {
     let value = ch as u32;
-    let (ranges, exclusions, excluded_value) = if value < 0x1_0000 {
-        (PRINT16, NOT16, value)
+    let ranges = if value < 0x1_0000 { PRINT16 } else { PRINT32 };
+    let exclusions = if value < 0x1_0000 { NOT16 } else { NOT32 };
+    let excluded_value = if value < 0x1_0000 {
+        value
     } else {
-        (PRINT32, NOT32, value - 0x1_0000)
+        value - 0x1_0000
     };
     let index = ranges.partition_point(|bound| *bound < value);
     if index == ranges.len() || value < ranges[index & !1] || value > ranges[index | 1] {

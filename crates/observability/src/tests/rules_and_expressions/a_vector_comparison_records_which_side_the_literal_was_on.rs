@@ -1,4 +1,10 @@
 use super::*;
+use crate::parse_metric_vector_comparison_expression;
+
+struct OperatorCase {
+    query: &'static str,
+    operator: krabka_logql::ComparisonOp,
+}
 
 /// `parse_metric_vector_comparison_expression` recognises a comparison
 /// between a metric query and a `vector(...)` literal, and records WHICH
@@ -12,7 +18,7 @@ use super::*;
 pub(crate) fn a_vector_comparison_records_which_side_the_literal_was_on() {
     use krabka_logql::ComparisonOp;
 
-    let parse = super::super::prelude::parse_metric_vector_comparison_expression;
+    let parse = parse_metric_vector_comparison_expression;
 
     let right = parse("up > vector(1)").expect("a vector on the right");
     check!(right.metric_query == "up");
@@ -36,20 +42,25 @@ pub(crate) fn a_vector_comparison_records_which_side_the_literal_was_on() {
     );
     check!(modified.metric_query == "up");
 
-    // Every comparison operator reaches the expression.
-    for (query, op) in [
-        ("up == vector(1)", ComparisonOp::Equal),
-        ("up != vector(1)", ComparisonOp::NotEqual),
-        ("up < vector(1)", ComparisonOp::Less),
-        ("up <= vector(1)", ComparisonOp::LessEqual),
-        ("up >= vector(1)", ComparisonOp::GreaterEqual),
-    ] {
-        check!(parse(query).expect("parses").op == op, "{query}");
-    }
-
     // Two vectors, or none, is not this kind of expression.
     check!(parse("vector(1) > vector(2)").is_none(), "two literals");
     check!(parse("up > down").is_none(), "no literal");
     check!(parse("up").is_none(), "no comparison at all");
     check!(parse("").is_none());
+}
+
+#[yare::parameterized(
+    equal = { OperatorCase { query: "up == vector(1)", operator: krabka_logql::ComparisonOp::Equal } },
+    not_equal = { OperatorCase { query: "up != vector(1)", operator: krabka_logql::ComparisonOp::NotEqual } },
+    less = { OperatorCase { query: "up < vector(1)", operator: krabka_logql::ComparisonOp::Less } },
+    less_equal = { OperatorCase { query: "up <= vector(1)", operator: krabka_logql::ComparisonOp::LessEqual } },
+    greater_equal = { OperatorCase { query: "up >= vector(1)", operator: krabka_logql::ComparisonOp::GreaterEqual } },
+)]
+fn every_comparison_operator_reaches_the_expression(case: OperatorCase) {
+    let parse = parse_metric_vector_comparison_expression;
+    check!(
+        parse(case.query).expect("parses").op == case.operator,
+        "{}",
+        case.query
+    );
 }

@@ -10,6 +10,33 @@ pub struct Fixture {
     pub end_ns: i64,
 }
 
+struct IndexKeys {
+    index: &'static str,
+    keys: Vec<&'static str>,
+}
+
+struct EventMarker {
+    prefix: &'static str,
+    status: &'static str,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CatalogueCoverage {
+    definitions: usize,
+    metric_cases: usize,
+    log_cases: usize,
+}
+
+impl CatalogueCoverage {
+    fn total_cases(&self) -> usize {
+        self.metric_cases + self.log_cases
+    }
+}
+
+fn after_marker<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    line.find(marker).map(|index| &line[index + marker.len()..])
+}
+
 fn rfc3339(seconds: i64) -> TestResult<String> {
     let time = time::OffsetDateTime::from_unix_timestamp(seconds)?;
     Ok(format!(
@@ -74,7 +101,7 @@ pub fn fixture(end_seconds: i64) -> TestResult<Fixture> {
         let values = (start_seconds..=end_seconds)
             .step_by(10)
             .enumerate()
-            .map(|(tick, seconds)| entry(format, seconds * 1_000_000_000, tick))
+            .map(|sample| entry(format, sample.1 * 1_000_000_000, sample.0))
             .collect::<Vec<_>>();
         batches.extend(
             values
@@ -83,18 +110,18 @@ pub fn fixture(end_seconds: i64) -> TestResult<Fixture> {
         );
     }
     metadata["all_selectors"] = json!(selectors);
-    for (index, keys) in [
-        (
-            "by_label_key",
-            vec!["cluster", "container", "namespace", "pod", "service_name"],
-        ),
-        (
-            "by_keyword",
-            vec!["debug", "duration", "error", "failed", "level", "refused"],
-        ),
-        (
-            "by_detected_field",
-            vec![
+    for index_keys in [
+        IndexKeys {
+            index: "by_label_key",
+            keys: vec!["cluster", "container", "namespace", "pod", "service_name"],
+        },
+        IndexKeys {
+            index: "by_keyword",
+            keys: vec!["debug", "duration", "error", "failed", "level", "refused"],
+        },
+        IndexKeys {
+            index: "by_detected_field",
+            keys: vec![
                 "level",
                 "error",
                 "msg",
@@ -106,10 +133,10 @@ pub fn fixture(end_seconds: i64) -> TestResult<Fixture> {
                 "status_code",
                 "duration_seconds",
             ],
-        ),
-        (
-            "by_unwrappable_field",
-            vec![
+        },
+        IndexKeys {
+            index: "by_unwrappable_field",
+            keys: vec![
                 "duration",
                 "duration_ms",
                 "duration_seconds",
@@ -118,11 +145,14 @@ pub fn fixture(end_seconds: i64) -> TestResult<Fixture> {
                 "status",
                 "status_code",
             ],
-        ),
-        ("by_structured_metadata", vec!["detected_level"]),
+        },
+        IndexKeys {
+            index: "by_structured_metadata",
+            keys: vec!["detected_level"],
+        },
     ] {
-        for key in keys {
-            metadata[index][key] = json!(selectors);
+        for key in index_keys.keys {
+            metadata[index_keys.index][key] = json!(selectors);
         }
     }
     Ok(Fixture {
@@ -147,16 +177,20 @@ fn is_remote_leaf(name: &str) -> TestResult<bool> {
     if !name.starts_with("TestRemoteStorageEquality/") {
         return Ok(false);
     }
-    let Some((definition, classification)) = name.rsplit_once("/kind=") else {
+    let Some(kind_separator) = name.rfind("/kind=") else {
         return if name.contains("/direction=") {
             Err("malformed leaf classification".into())
         } else {
             Ok(false)
         };
     };
-    let Some((kind, direction)) = classification.split_once("/direction=") else {
+    let definition = &name[..kind_separator];
+    let classification = &name[kind_separator + "/kind=".len()..];
+    let Some(direction_separator) = classification.find("/direction=") else {
         return Err("malformed leaf classification".into());
     };
+    let kind = &classification[..direction_separator];
+    let direction = &classification[direction_separator + "/direction=".len()..];
     if definition == "TestRemoteStorageEquality/"
         || !matches!(kind, "metric" | "log")
         || !matches!(direction, "FORWARD" | "BACKWARD")
@@ -176,7 +210,7 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
     let mut metadata = BTreeMap::new();
     let mut compared = BTreeSet::new();
     for line in output.lines().map(str::trim) {
-        if let Some((_, encoded)) = line.split_once("KRABKA_QUERY_CASE ") {
+        if let Some(encoded) = after_marker(line, "KRABKA_QUERY_CASE ") {
             let case: Value = serde_json::from_str(encoded)?;
             let name = case["name"]
                 .as_str()
@@ -205,12 +239,12 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
                 return Err("duplicate query case metadata".into());
             }
         }
-        if let Some((_, name)) = line.split_once("KRABKA_QUERY_VERDICT ")
+        if let Some(name) = after_marker(line, "KRABKA_QUERY_VERDICT ")
             && (!is_remote_leaf(name)? || !compared.insert(name.to_owned()))
         {
             return Err("invalid or duplicate semantic comparison verdict".into());
         }
-        if let Some((_, remaining)) = line.split_once("Loaded ")
+        if let Some(remaining) = after_marker(line, "Loaded ")
             && remaining.contains(&format!("remote test cases (range-type={mode})"))
         {
             let count = remaining
@@ -222,13 +256,25 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
                 return Err("duplicate loaded case event".into());
             }
         }
-        for (prefix, status, events) in [
-            ("=== RUN", "running", &mut started),
-            ("--- PASS:", "pass", &mut passed),
-            ("--- FAIL:", "fail", &mut failed),
-            ("--- SKIP:", "skip", &mut skipped),
+        for marker in [
+            EventMarker {
+                prefix: "=== RUN",
+                status: "running",
+            },
+            EventMarker {
+                prefix: "--- PASS:",
+                status: "pass",
+            },
+            EventMarker {
+                prefix: "--- FAIL:",
+                status: "fail",
+            },
+            EventMarker {
+                prefix: "--- SKIP:",
+                status: "skip",
+            },
         ] {
-            let Some(remaining) = line.strip_prefix(prefix) else {
+            let Some(remaining) = line.strip_prefix(marker.prefix) else {
                 continue;
             };
             let name = remaining
@@ -236,7 +282,7 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
                 .next()
                 .ok_or("missing Go test name")?;
             if name == "TestRemoteStorageEquality" {
-                if status != "running" && root_status.replace(status).is_some() {
+                if marker.status != "running" && root_status.replace(marker.status).is_some() {
                     return Err("duplicate root completion event".into());
                 }
                 continue;
@@ -244,6 +290,13 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
             if !is_remote_leaf(name)? {
                 continue;
             }
+            let events = match marker.status {
+                "running" => &mut started,
+                "pass" => &mut passed,
+                "fail" => &mut failed,
+                "skip" => &mut skipped,
+                _ => unreachable!("every marker has a known status"),
+            };
             if !events.insert(name.to_string()) {
                 return Err("duplicate test event".into());
             }
@@ -288,15 +341,23 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
 /// Semantic failures remain structured reports with `success=false`.
 pub fn execution_report(output: &str, mode: &str) -> TestResult<Value> {
     let expected = match mode {
-        "range" => (101, 81, 23),
-        "instant" => (81, 81, 0),
+        "range" => CatalogueCoverage {
+            definitions: 101,
+            metric_cases: 81,
+            log_cases: 23,
+        },
+        "instant" => CatalogueCoverage {
+            definitions: 81,
+            metric_cases: 81,
+            log_cases: 0,
+        },
         _ => return Err("unknown remote query mode".into()),
     };
     let events = parse_events(output, mode)?;
-    if events.loaded != expected.1 + expected.2 {
+    if events.loaded != expected.total_cases() {
         return Err(format!(
             "pinned catalogue expected {} cases, loaded {}",
-            expected.1 + expected.2,
+            expected.total_cases(),
             events.loaded
         )
         .into());
@@ -317,12 +378,15 @@ pub fn execution_report(output: &str, mode: &str) -> TestResult<Value> {
         .map(|name| name.split("/kind=").next().unwrap())
         .collect::<BTreeSet<_>>()
         .len();
-    if events.started.len() == events.loaded && (definitions, metric_cases, log_cases) != expected {
-        return Err(format!(
-            "pinned catalogue coverage expected {expected:?}, got {:?}",
-            (definitions, metric_cases, log_cases)
-        )
-        .into());
+    let actual = CatalogueCoverage {
+        definitions,
+        metric_cases,
+        log_cases,
+    };
+    if events.started.len() == events.loaded && actual != expected {
+        return Err(
+            format!("pinned catalogue coverage expected {expected:?}, got {actual:?}").into(),
+        );
     }
     let finished = events
         .passed
@@ -340,11 +404,13 @@ pub fn execution_report(output: &str, mode: &str) -> TestResult<Value> {
         && events.failed.is_empty()
         && events.skipped.is_empty()
         && events.passed.len() == events.loaded
-        && (definitions, metric_cases, log_cases) == expected;
+        && actual == expected;
     let cases = events
         .metadata
         .into_iter()
-        .map(|(name, mut case)| {
+        .map(|entry| {
+            let name = entry.0;
+            let mut case = entry.1;
             case["status"] = json!(if events.passed.contains(&name) {
                 "passed"
             } else if events.failed.contains(&name) {
@@ -363,7 +429,7 @@ pub fn execution_report(output: &str, mode: &str) -> TestResult<Value> {
         "original_declared_definitions": {"total": 101, "metrics": 73, "logs": 28, "marked_skipped_but_enabled": 15},
         "adapted_semantic_definitions": {"total": 101, "metrics": 81, "logs": 20, "inferred_metric_kinds": 8},
         "instant_log_definitions_not_applicable": if mode == "instant" {20} else {0},
-        "expected": {"definitions": expected.0, "metric_cases": expected.1, "log_cases": expected.2},
+        "expected": {"definitions": expected.definitions, "metric_cases": expected.metric_cases, "log_cases": expected.log_cases},
         "executed_definitions": definitions, "planned": events.loaded, "executed": finished.len(),
         "started_count": events.started.len(), "metric_cases": metric_cases, "log_cases": log_cases,
         "passed_count": events.passed.len(), "failed_count": events.failed.len(),
@@ -410,7 +476,10 @@ mod tests {
                 assert!(first[1].as_str().unwrap().contains("duration="));
             }
         }
-        assert!(counts == BTreeMap::from([("json", 8_641), ("logfmt", 8_641)]));
+        let mut expected_counts = BTreeMap::new();
+        expected_counts.insert("json", 8_641);
+        expected_counts.insert("logfmt", 8_641);
+        assert!(counts == expected_counts);
         let last = fixture.batches.last().unwrap()["streams"][0]["values"]
             .as_array()
             .unwrap()

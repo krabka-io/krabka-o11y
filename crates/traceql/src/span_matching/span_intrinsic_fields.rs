@@ -15,34 +15,25 @@ pub struct SpanIntrinsicFields<'a> {
     pub instrumentation_version: &'a str,
 }
 
-impl<'a> From<&'a InputSpan> for SpanIntrinsicFields<'a> {
-    fn from(span: &'a InputSpan) -> Self {
-        Self {
-            span_id: span.span_id,
-            parent_span_id: span.parent_span_id,
-            name: &span.name,
-            kind: span.kind,
-            duration: span.duration,
-            status_code: span.status_code,
-            status_message: &span.status_message,
-            instrumentation_name: &span.instrumentation_name,
-            instrumentation_version: &span.instrumentation_version,
+macro_rules! impl_span_intrinsic_fields_from {
+    ($span:ty) => {
+        impl<'a> From<&'a $span> for SpanIntrinsicFields<'a> {
+            fn from(span: &'a $span) -> Self {
+                Self {
+                    span_id: span.span_id,
+                    parent_span_id: span.parent_span_id,
+                    name: &span.name,
+                    kind: span.kind,
+                    duration: span.duration,
+                    status_code: span.status_code,
+                    status_message: &span.status_message,
+                    instrumentation_name: &span.instrumentation_name,
+                    instrumentation_version: &span.instrumentation_version,
+                }
+            }
         }
-    }
+    };
 }
 
-impl<'a> From<&'a SpanRef> for SpanIntrinsicFields<'a> {
-    fn from(span: &'a SpanRef) -> Self {
-        Self {
-            span_id: span.span_id,
-            parent_span_id: span.parent_span_id,
-            name: &span.name,
-            kind: span.kind,
-            duration: span.duration,
-            status_code: span.status_code,
-            status_message: &span.status_message,
-            instrumentation_name: &span.instrumentation_name,
-            instrumentation_version: &span.instrumentation_version,
-        }
-    }
-}
+impl_span_intrinsic_fields_from!(InputSpan);
+impl_span_intrinsic_fields_from!(SpanRef);

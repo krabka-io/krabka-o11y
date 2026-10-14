@@ -151,11 +151,12 @@ mod tests {
         let AttrValue::Array(values) = decoded else {
             panic!("expected array")
         };
-        for (value, expected) in
-            values
-                .iter()
-                .zip([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0])
+        for entry in values
+            .iter()
+            .zip([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0])
         {
+            let value = entry.0;
+            let expected = entry.1;
             let AttrValue::Double(actual) = value else {
                 panic!("expected double")
             };

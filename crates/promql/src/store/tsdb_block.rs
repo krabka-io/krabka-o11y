@@ -7,3 +7,12 @@ pub struct TsdbBlock {
     pub num_samples: usize,
     pub num_series: usize,
 }
+
+pub(crate) fn sort_tsdb_blocks(blocks: &mut [TsdbBlock]) {
+    blocks.sort_by(|left, right| {
+        left.min_time
+            .cmp(&right.min_time)
+            .then_with(|| left.max_time.cmp(&right.max_time))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}

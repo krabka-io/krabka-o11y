@@ -21,41 +21,23 @@ fn snappy_batch(readings: Vec<pb::clocks::ClockReading>) -> Vec<u8> {
 
 /// A reading that passes every validation rule.
 fn well_formed_reading() -> impl Strategy<Value = pb::clocks::ClockReading> {
-    (
-        "[a-z][a-z0-9-]{0,20}",
-        "[A-Za-z0-9/_]{1,20}",
-        1i32..=5,
-        i64::MIN..=MAX_READING_NANOS,
-        0i64..=i64::MAX,
-        any::<i64>(),
-        1i32..=5,
-        "[a-z0-9.:]{0,16}",
-        any::<i64>(),
-        any::<u32>(),
-        0i32..=3,
-    )
-        .prop_map(
-            |(
-                node,
-                clock,
-                source_kind,
-                reading_unix_nanos,
-                uncertainty_nanos,
-                offset_nanos,
-                sync_state,
-                reference_id,
-                magnitude,
-                count,
-                gnss_fix,
-            )| pb::clocks::ClockReading {
-                node,
-                clock,
-                source_kind,
-                reading_unix_nanos,
-                uncertainty_nanos,
-                offset_nanos,
-                sync_state,
-                reference_id,
+    prop_compose! {
+        fn well_formed_generated()(
+            node in "[a-z][a-z0-9-]{0,20}",
+            clock in "[A-Za-z0-9/_]{1,20}",
+            source_kind in 1i32..=5,
+            reading_unix_nanos in i64::MIN..=MAX_READING_NANOS,
+            uncertainty_nanos in 0i64..=i64::MAX,
+            offset_nanos in any::<i64>(),
+            sync_state in 1i32..=5,
+            reference_id in "[a-z0-9.:]{0,16}",
+            magnitude in any::<i64>(),
+            count in any::<u32>(),
+            gnss_fix in 0i32..=3,
+        ) -> pb::clocks::ClockReading {
+            pb::clocks::ClockReading {
+                node, clock, source_kind, reading_unix_nanos, uncertainty_nanos,
+                offset_nanos, sync_state, reference_id,
                 last_sync_unix_nanos: magnitude,
                 frequency_ppb: magnitude,
                 last_step_nanos: magnitude,
@@ -71,31 +53,24 @@ fn well_formed_reading() -> impl Strategy<Value = pb::clocks::ClockReading> {
                 unsynchronized: count % 2 == 0,
                 satellites_used: count,
                 gnss_fix,
-            },
-        )
+            }
+        }
+    }
+    well_formed_generated()
 }
 
 /// A reading with no constraints at all, so most of them are rejections.
 fn arbitrary_reading() -> impl Strategy<Value = pb::clocks::ClockReading> {
-    (
-        ".{0,8}",
-        ".{0,8}",
-        any::<i32>(),
-        any::<i64>(),
-        any::<i64>(),
-        any::<i32>(),
-        any::<i32>(),
-    )
-        .prop_map(
-            |(
-                node,
-                clock,
-                source_kind,
-                reading_unix_nanos,
-                uncertainty_nanos,
-                sync_state,
-                gnss_fix,
-            )| {
+    prop_compose! {
+        fn arbitrary_generated()(
+            node in ".{0,8}",
+            clock in ".{0,8}",
+            source_kind in any::<i32>(),
+            reading_unix_nanos in any::<i64>(),
+            uncertainty_nanos in any::<i64>(),
+            sync_state in any::<i32>(),
+            gnss_fix in any::<i32>(),
+        ) -> pb::clocks::ClockReading {
                 pb::clocks::ClockReading {
                     node,
                     clock,
@@ -106,8 +81,9 @@ fn arbitrary_reading() -> impl Strategy<Value = pb::clocks::ClockReading> {
                     gnss_fix,
                     ..Default::default()
                 }
-            },
-        )
+        }
+    }
+    arbitrary_generated()
 }
 
 proptest! {

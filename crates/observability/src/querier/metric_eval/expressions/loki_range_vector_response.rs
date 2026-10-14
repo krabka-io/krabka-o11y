@@ -9,8 +9,13 @@ pub(crate) fn loki_range_vector_response(
     result: ScalarVectorExpressionResult,
 ) -> Value {
     let (sample, metric) = match result {
-        ScalarVectorExpressionResult::Scalar { sample } => (Some(sample), BTreeMap::new()),
-        ScalarVectorExpressionResult::Vector { sample, metric } => (sample, metric),
+        ScalarVectorExpressionResult::Scalar {
+            sample: scalar_sample,
+        } => (Some(scalar_sample), BTreeMap::new()),
+        ScalarVectorExpressionResult::Vector {
+            sample: vector_sample,
+            metric: vector_metric,
+        } => (vector_sample, vector_metric),
     };
     let result = sample.map_or_else(Vec::new, |sample| {
         vec![json!({

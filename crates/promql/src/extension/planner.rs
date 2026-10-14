@@ -38,7 +38,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::{
-        array::{Array, Float64Array, Int64Array, StringArray},
+        array::{Float64Array, Int64Array, StringArray},
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
@@ -49,9 +49,12 @@ mod tests {
     };
 
     use super::*;
-    use crate::extension::{
-        instant_manipulate::InstantManipulate, normalize::SeriesNormalize,
-        series_divide::SeriesDivide,
+    use crate::{
+        extension::{
+            instant_manipulate::InstantManipulate, normalize::SeriesNormalize,
+            series_divide::SeriesDivide,
+        },
+        planner::{JobValue as PlannerSample, job_values},
     };
 
     #[tokio::test]
@@ -112,37 +115,23 @@ mod tests {
             }),
         });
 
-        let batches = ctx
-            .execute_logical_plan(instant)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        let mut got = Vec::new();
-        for batch in &batches {
-            let job = batch
-                .column_by_name("job")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap();
-            let value = batch
-                .column_by_name("value")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap();
-            for row in 0..batch.num_rows() {
-                got.push((job.value(row).to_string(), value.value(row)));
-            }
-        }
-        got.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut got = job_values(&ctx, instant, "value").await;
+        got.sort_by(|left, right| left.job.cmp(&right.job));
 
         // At grid step 120_000 within a 300_000 lookback, the latest sample for
         // each series (ts=60_000) is selected.
-        assert2::assert!(got == vec![("a".to_string(), 2.0), ("b".to_string(), 20.0)]);
+        assert2::assert!(
+            got == vec![
+                PlannerSample {
+                    job: "a".to_string(),
+                    value: 2.0,
+                },
+                PlannerSample {
+                    job: "b".to_string(),
+                    value: 20.0,
+                },
+            ]
+        );
     }
 }
 

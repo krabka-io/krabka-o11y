@@ -1,8 +1,8 @@
 use super::{
-    BTreeMap, COL_SPAN_ID, COL_TRACE_ID, CompareCounts, CompareGroup, CompareRegexCache,
-    CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange, RecordBatch, Result, TraceqlError,
-    UnixNano, collect_selection_regexes, compare_group_for_row, compare_row, fixed_8, fixed_16,
-    span_start_column,
+    BTreeMap, COL_SPAN_ID, COL_TRACE_ID, CompareAttributeKey, CompareCountKey, CompareCounts,
+    CompareRegexCache, CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange, RecordBatch,
+    Result, SpanIdentity, TraceqlError, UnixNano, collect_selection_regexes, compare_group_for_row,
+    compare_row, fixed_8, fixed_16, span_start_column,
 };
 
 /// Scans the batches and accumulates per-bucket span counts.
@@ -13,19 +13,24 @@ use super::{
 /// When the count reaches that bound, this function drops new distinct values,
 /// and the values it already tracks keep counting. Memory stays at
 /// `O(attrs * cap * buckets)` for any attribute cardinality.
+pub(crate) struct CompareAccumulation {
+    pub(crate) counts: CompareCounts,
+    pub(crate) totals: CompareTotals,
+}
+
 pub(crate) fn accumulate_compare_counts(
     batches: &[RecordBatch],
     compare: &CompareSpec,
     range: MetricsRange,
     bucket_count: usize,
     max_values_per_attr: usize,
-    selected_spans: Option<&HashSet<([u8; 16], [u8; 8])>>,
-) -> Result<(CompareCounts, CompareTotals)> {
+    selected_spans: Option<&HashSet<SpanIdentity>>,
+) -> Result<CompareAccumulation> {
     let mut counts: CompareCounts = BTreeMap::new();
     let mut totals: CompareTotals = BTreeMap::new();
     // Distinct values already tracked per (group, attr_key), to enforce
     // the configured per-attribute cap during accumulation.
-    let mut distinct_per_attr: BTreeMap<(CompareGroup, String), usize> = BTreeMap::new();
+    let mut distinct_per_attr: BTreeMap<CompareAttributeKey, usize> = BTreeMap::new();
     // The cap must never fall below top_n or the final cut would be starved.
     let value_cap = max_values_per_attr.max(compare.top_n);
     // Compile every selection regex once, up front, and reuse across all rows.
@@ -47,10 +52,10 @@ pub(crate) fn accumulate_compare_counts(
             };
             let compare_row = compare_row(batch, row, ts)?;
             let selected_by_plan = if let Some(selected) = selected_spans {
-                Some(selected.contains(&(
-                    fixed_16(batch, COL_TRACE_ID, row)?,
-                    fixed_8(batch, COL_SPAN_ID, row)?,
-                )))
+                Some(selected.contains(&SpanIdentity {
+                    trace_id: fixed_16(batch, COL_TRACE_ID, row)?,
+                    span_id: fixed_8(batch, COL_SPAN_ID, row)?,
+                }))
             } else {
                 None
             };
@@ -59,13 +64,20 @@ pub(crate) fn accumulate_compare_counts(
             if let Some(slot) = group_totals.get_mut(bucket) {
                 *slot += 1;
             }
-            for (attr_key, value) in &compare_row.attrs {
-                let key = (group, attr_key.clone(), value.clone());
+            for attribute in &compare_row.attrs {
+                let key = CompareCountKey {
+                    group,
+                    attr_key: attribute.key.clone(),
+                    value: attribute.value.clone(),
+                };
                 // An already-tracked value keeps counting regardless of cap; a
                 // new distinct value is only tracked while under the per-attr cap.
                 if !counts.contains_key(&key) {
                     let distinct = distinct_per_attr
-                        .entry((group, attr_key.clone()))
+                        .entry(CompareAttributeKey {
+                            group,
+                            attr_key: attribute.key.clone(),
+                        })
                         .or_insert(0);
                     if *distinct >= value_cap {
                         continue;
@@ -79,5 +91,5 @@ pub(crate) fn accumulate_compare_counts(
             }
         }
     }
-    Ok((counts, totals))
+    Ok(CompareAccumulation { counts, totals })
 }

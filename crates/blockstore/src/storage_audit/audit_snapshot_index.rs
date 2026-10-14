@@ -6,6 +6,11 @@ use super::{
     shard_payload_object_key, snapshot_tenant_blocks,
 };
 
+pub struct SnapshotIndexAudit {
+    pub live: LiveBlockSet,
+    pub findings: Vec<StorageFinding>,
+}
+
 /// Reads the snapshot index of traces or profiles and returns the blocks it
 /// makes live.
 ///
@@ -34,7 +39,7 @@ pub async fn audit_snapshot_index(
     key: &str,
     inventory: &StorageInventory,
     options: &StorageAuditOptions,
-) -> Result<(LiveBlockSet, Vec<StorageFinding>), StorageAuditError> {
+) -> Result<SnapshotIndexAudit, StorageAuditError> {
     let label = format!("{signal} index snapshot");
     let latest = list_index_snapshot_objects(store, key)
         .await
@@ -46,7 +51,10 @@ pub async fn audit_snapshot_index(
             Ok(Some(manifest)) => manifest,
             Ok(None) => {
                 if inventory.blocks(signal).next().is_none() {
-                    return Ok((LiveBlockSet::default(), Vec::new()));
+                    return Ok(SnapshotIndexAudit {
+                        live: LiveBlockSet::default(),
+                        findings: Vec::new(),
+                    });
                 }
                 let finding = StorageFinding::new(
                     StorageFindingKind::UnreadableManifest,
@@ -55,11 +63,17 @@ pub async fn audit_snapshot_index(
                     key,
                     "the store holds blocks and no index generation",
                 );
-                return Ok((LiveBlockSet::unknown(), vec![finding]));
+                return Ok(SnapshotIndexAudit {
+                    live: LiveBlockSet::unknown(),
+                    findings: vec![finding],
+                });
             }
             Err(error) => {
                 let finding = manifest_finding(signal, None, latest, &error.to_string());
-                return Ok((LiveBlockSet::unknown(), vec![finding]));
+                return Ok(SnapshotIndexAudit {
+                    live: LiveBlockSet::unknown(),
+                    findings: vec![finding],
+                });
             }
         };
 
@@ -137,7 +151,7 @@ pub async fn audit_snapshot_index(
             }
         }
     }
-    Ok((live, findings))
+    Ok(SnapshotIndexAudit { live, findings })
 }
 
 /// Why `block`, which the index of `tenant` names, is not a block of

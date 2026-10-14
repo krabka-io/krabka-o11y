@@ -2,11 +2,13 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn metadata_reads_compacted_metadata_sidecar_blocks() {
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let base = url::Url::parse("memory:///").unwrap();
-    let writer_store = BlockStore::new(object_store.clone(), base.clone());
+    let fixture = MemoryBlockStoreFixture::build();
+    let writer_store = fixture.writer();
 
-    let series_labels = labels(&[("__name__", "http_requests_total")]);
+    let series_labels = labels(&[crate::test_support::TestLabelPair::new(
+        "__name__",
+        "http_requests_total",
+    )]);
     let fp = series_labels.fingerprint();
     let batch = encode_metadata_rows(&[MetadataRow {
         fingerprint: fp,
@@ -42,7 +44,7 @@ pub(crate) async fn metadata_reads_compacted_metadata_sidecar_blocks() {
         }],
     );
 
-    let fresh_store = BlockStore::new(object_store, base);
+    let fresh_store = fixture.reader();
     let store = MetricBlockStore::from_compaction_manifests(fresh_store, None, &[manifest]);
     let filtered = store
         .metadata("tenant-a", Some("http_requests_total"))

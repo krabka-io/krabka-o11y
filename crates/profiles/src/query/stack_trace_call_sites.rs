@@ -5,12 +5,11 @@ pub(crate) fn stack_trace_call_sites(
 ) -> Vec<String> {
     selector
         .filter(|selector| selector.go_pgo.is_none())
-        .map(|selector| {
+        .map_or_else(Default::default, |selector| {
             selector
                 .call_site
                 .iter()
                 .map(|location| location.name.clone())
                 .collect()
         })
-        .unwrap_or_default()
 }

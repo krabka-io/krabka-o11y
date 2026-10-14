@@ -248,7 +248,7 @@ mod tests {
         }
     }
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
+    fn labels(pairs: &[(&'static str, &'static str)]) -> Labels {
         let mut labels = Labels::new();
         for (name, value) in pairs {
             labels.insert(*name, *value);

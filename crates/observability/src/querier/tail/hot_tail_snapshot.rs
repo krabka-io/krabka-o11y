@@ -2,6 +2,11 @@ use std::sync::Arc;
 
 use super::{CompactionFrontier, QuerierState, TimeRange, WalLogRecord};
 
+pub(crate) struct HotTailSnapshot {
+    pub(crate) records: Vec<Arc<WalLogRecord>>,
+    pub(crate) frontier: CompactionFrontier,
+}
+
 /// Snapshots the hot-tail records that overlap `time_range`, plus the
 /// compaction frontier.
 ///
@@ -12,19 +17,17 @@ use super::{CompactionFrontier, QuerierState, TimeRange, WalLogRecord};
 /// plan range drops only records the downstream filter would reject
 /// anyway. Results are identical to a full-buffer scan, and a narrow window
 /// avoids a touch of the whole retained buffer.
-pub(crate) fn hot_tail_snapshot(
-    state: &QuerierState,
-    time_range: TimeRange,
-) -> (Vec<Arc<WalLogRecord>>, CompactionFrontier) {
+pub(crate) fn hot_tail_snapshot(state: &QuerierState, time_range: TimeRange) -> HotTailSnapshot {
     state.hot_tail.as_ref().map_or(
-        (Vec::new(), CompactionFrontier::new(i64::MAX)),
-        |hot_tail| {
-            (
-                hot_tail
-                    .source
-                    .records_shared_in_range(time_range.start_ns, time_range.end_ns),
-                hot_tail.frontier.snapshot(),
-            )
+        HotTailSnapshot {
+            records: Vec::new(),
+            frontier: CompactionFrontier::new(i64::MAX),
+        },
+        |hot_tail| HotTailSnapshot {
+            records: hot_tail
+                .source
+                .records_shared_in_range(time_range.start_ns, time_range.end_ns),
+            frontier: hot_tail.frontier.snapshot(),
         },
     )
 }

@@ -32,8 +32,9 @@ use object_store::{
     GetOptions, GetResult, ObjectStore, ObjectStoreExt as _, PutPayload, path::Path,
 };
 use storage_fixtures::{
-    PROFILE_INDEX, TRACE_INDEX, block_key, foreign_entry, healthy, later, listed_keys,
-    missing_shard, publish, put_block, put_bytes, sidecar_key, store, upper_case_manifest,
+    PROFILE_INDEX, TRACE_INDEX, TenantBlocks, block_key, foreign_entry, healthy, later,
+    listed_keys, missing_shard, publish, put_block, put_bytes, sidecar_key, store,
+    upper_case_manifest,
 };
 
 #[derive(Clone, Debug)]
@@ -111,15 +112,20 @@ krabka_blockstore::delegate_object_store! {
     }
 }
 
-fn interfering(
-    inner: &Arc<dyn ObjectStore>,
-    interference: Interference,
-) -> (Arc<dyn ObjectStore>, Arc<InterferingStore>) {
+struct InterferingStoreHandle {
+    store: Arc<dyn ObjectStore>,
+    handle: Arc<InterferingStore>,
+}
+
+fn interfering(inner: &Arc<dyn ObjectStore>, interference: Interference) -> InterferingStoreHandle {
     let store = Arc::new(InterferingStore {
         inner: Arc::clone(inner),
         interference: Mutex::new(Some(interference)),
     });
-    (Arc::clone(&store) as Arc<dyn ObjectStore>, store)
+    InterferingStoreHandle {
+        store: Arc::clone(&store) as Arc<dyn ObjectStore>,
+        handle: store,
+    }
 }
 
 // A log that takes `lines` lines and refuses every line after them. The
@@ -177,16 +183,21 @@ fn action(kind: StorageFindingKind, path: &str, outcome: RepairOutcome) -> Repai
     }
 }
 
-async fn repair(
-    store: &Arc<dyn ObjectStore>,
-    options: &RepairOptions,
-) -> (RepairReport, Vec<RepairLogEntry>) {
+struct RepairRun {
+    report: RepairReport,
+    entries: Vec<RepairLogEntry>,
+}
+
+async fn repair(store: &Arc<dyn ObjectStore>, options: &RepairOptions) -> RepairRun {
     let mut log = Vec::new();
     let mut report = repair_store(store, options, &mut log).await.unwrap();
     for action in &mut report.actions {
         action.detail = None;
     }
-    (report, entries(&log))
+    RepairRun {
+        report,
+        entries: entries(&log),
+    }
 }
 
 fn report(
@@ -251,28 +262,49 @@ fn with_outcome(actions: &[RepairAction], outcome: RepairOutcome) -> Vec<RepairA
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn a_repair_without_an_explicit_scope_is_refused() {
     let store = store();
     let every_kind = BTreeSet::from(StorageFindingKind::ALL);
+    struct ScopeCase {
+        tenant: &'static str,
+        kinds: BTreeSet<StorageFindingKind>,
+    }
     let cases = [
-        ("", BTreeSet::from([StorageFindingKind::Orphan])),
-        ("t", BTreeSet::new()),
-        (
-            "t",
-            BTreeSet::from([StorageFindingKind::DanglingIndexEntry]),
-        ),
-        ("t", BTreeSet::from([StorageFindingKind::Pending])),
-        ("t", every_kind),
+        ScopeCase {
+            tenant: "",
+            kinds: BTreeSet::from([StorageFindingKind::Orphan]),
+        },
+        ScopeCase {
+            tenant: "t",
+            kinds: BTreeSet::new(),
+        },
+        ScopeCase {
+            tenant: "t",
+            kinds: BTreeSet::from([StorageFindingKind::DanglingIndexEntry]),
+        },
+        ScopeCase {
+            tenant: "t",
+            kinds: BTreeSet::from([StorageFindingKind::Pending]),
+        },
+        ScopeCase {
+            tenant: "t",
+            kinds: every_kind,
+        },
     ];
-    for (tenant, kinds) in cases {
-        let mut options =
-            RepairOptions::new(tenant, StorageSignal::Metrics, kinds.clone(), later());
+    for case in cases {
+        let mut options = RepairOptions::new(
+            case.tenant,
+            StorageSignal::Metrics,
+            case.kinds.clone(),
+            later(),
+        );
         options.apply = true;
         let mut log = Vec::new();
 
         let refused = repair_store(&store, &options, &mut log).await;
 
-        assert!(let Err(StorageAuditError::InvalidScope(_)) = refused, "{tenant:?} {kinds:?}");
+        assert!(let Err(StorageAuditError::InvalidScope(_)) = refused, "{:?} {:?}", case.tenant, case.kinds);
         check!(log.is_empty());
     }
 }
@@ -284,7 +316,9 @@ async fn a_plan_deletes_nothing_and_logs_every_planned_action() {
         let orphans = damaged(&store, signal).await;
         let before = listed_keys(&store).await;
 
-        let (plan, log) = repair(&store, &options("t", signal, false)).await;
+        let repaired = repair(&store, &options("t", signal, false)).await;
+        let plan = repaired.report;
+        let log = repaired.entries;
 
         let planned = with_outcome(&orphans, RepairOutcome::Planned);
         check!(
@@ -292,21 +326,16 @@ async fn a_plan_deletes_nothing_and_logs_every_planned_action() {
             "{signal}"
         );
         check!(listed_keys(&store).await == before, "{signal}");
-        let logged: Vec<_> = log
-            .iter()
-            .map(|entry| {
-                (
-                    entry.applied,
-                    entry.tenant.as_str(),
-                    entry.signal,
-                    entry.phase,
-                )
-            })
-            .collect();
-        check!(
-            logged == vec![(false, "t", signal, RepairLogPhase::Outcome); planned.len()],
-            "{signal}"
-        );
+        check!(log.len() == planned.len(), "{signal}");
+        for entry in &log {
+            check!(
+                !entry.applied
+                    && entry.tenant == "t"
+                    && entry.signal == signal
+                    && entry.phase == RepairLogPhase::Outcome,
+                "{signal}"
+            );
+        }
     }
 }
 
@@ -319,11 +348,14 @@ async fn an_applied_repair_deletes_only_the_tenants_orphans_and_is_idempotent() 
         let deleted: BTreeSet<_> = orphans.iter().map(|action| action.path.clone()).collect();
         let options = options("t", signal, true);
 
-        let (first, log) = repair(&store, &options).await;
-        let (second, _) = repair(&store, &options).await;
+        let first = repair(&store, &options).await;
+        let first_report = first.report;
+        let log = first.entries;
+        let run = repair(&store, &options).await;
+        let second = run.report;
 
         check!(
-            first == report(true, signal, orphans.len(), orphans.clone()),
+            first_report == report(true, signal, orphans.len(), orphans.clone()),
             "{signal}"
         );
         check!(second == report(true, signal, 0, Vec::new()), "{signal}");
@@ -332,30 +364,26 @@ async fn an_applied_repair_deletes_only_the_tenants_orphans_and_is_idempotent() 
             .filter(|key| !deleted.contains(key))
             .collect();
         check!(listed_keys(&store).await == remaining, "{signal}");
-        let logged: Vec<_> = log
-            .iter()
-            .map(|entry| (entry.phase, entry.kind, entry.path.clone(), entry.outcome))
-            .collect();
-        let expected: Vec<_> = orphans
-            .iter()
-            .flat_map(|action| {
-                [
-                    (
-                        RepairLogPhase::Intent,
-                        action.kind,
-                        action.path.clone(),
-                        None,
-                    ),
-                    (
-                        RepairLogPhase::Outcome,
-                        action.kind,
-                        action.path.clone(),
-                        Some(action.outcome),
-                    ),
-                ]
-            })
-            .collect();
-        check!(logged == expected, "{signal}");
+        check!(log.len() == orphans.len() * 2, "{signal}");
+        for index in 0..orphans.len() {
+            let action = &orphans[index];
+            let intent = &log[index * 2];
+            let outcome = &log[index * 2 + 1];
+            check!(
+                intent.phase == RepairLogPhase::Intent
+                    && intent.kind == action.kind
+                    && intent.path == action.path
+                    && intent.outcome.is_none(),
+                "{signal}"
+            );
+            check!(
+                outcome.phase == RepairLogPhase::Outcome
+                    && outcome.kind == action.kind
+                    && outcome.path == action.path
+                    && outcome.outcome == Some(action.outcome),
+                "{signal}"
+            );
+        }
     }
 }
 
@@ -366,7 +394,7 @@ async fn a_repair_leaves_an_object_inside_the_grace_window() {
     let mut options = options("t", StorageSignal::Traces, true);
     options.now = SystemTime::now();
 
-    let (report_now, _) = repair(&store, &options).await;
+    let report_now = repair(&store, &options).await.report;
 
     check!(report_now == report(true, StorageSignal::Traces, orphans.len(), Vec::new()));
     check!(listed_keys(&store).await.contains(&orphans[0].path));
@@ -377,9 +405,12 @@ async fn a_repair_leaves_an_object_that_a_writer_rewrote_after_the_audit() {
     let inner = store();
     let orphans = damaged(&inner, StorageSignal::Metrics).await;
     let target = orphans[0].path.clone();
-    let (store, _) = interfering(&inner, Interference::RewriteOnHead(target.clone()));
+    let interfering = interfering(&inner, Interference::RewriteOnHead(target.clone()));
+    let store = &interfering.store;
 
-    let (skipped, log) = repair(&store, &options("t", StorageSignal::Metrics, true)).await;
+    let run = repair(store, &options("t", StorageSignal::Metrics, true)).await;
+    let skipped = run.report;
+    let log = run.entries;
 
     let expected = with_outcome(&orphans, RepairOutcome::SkippedChanged);
     check!(skipped == report(true, StorageSignal::Metrics, 1, expected));
@@ -392,12 +423,14 @@ async fn a_failed_delete_is_reported_and_the_next_run_finishes_it() {
     let inner = store();
     let orphans = damaged(&inner, StorageSignal::Profiles).await;
     let refused = orphans[0].path.clone();
-    let (store, handle) = interfering(&inner, Interference::RefuseDelete(refused.clone()));
+    let interfering = interfering(&inner, Interference::RefuseDelete(refused.clone()));
+    let store = &interfering.store;
+    let handle = &interfering.handle;
     let options = options("t", StorageSignal::Profiles, true);
 
-    let (first, _) = repair(&store, &options).await;
+    let first = repair(store, &options).await.report;
     *handle.interference.lock().unwrap() = None;
-    let (second, _) = repair(&store, &options).await;
+    let second = repair(store, &options).await.report;
 
     let mut partial = orphans.clone();
     partial[0].outcome = RepairOutcome::Failed;
@@ -412,9 +445,12 @@ async fn an_object_that_another_sweep_deleted_first_counts_as_absent() {
     let inner = store();
     let orphans = damaged(&inner, StorageSignal::Logs).await;
     let target = orphans[0].path.clone();
-    let (store, _) = interfering(&inner, Interference::DeleteOnHead(target.clone()));
+    let interfering = interfering(&inner, Interference::DeleteOnHead(target.clone()));
+    let store = &interfering.store;
 
-    let (raced, _) = repair(&store, &options("t", StorageSignal::Logs, true)).await;
+    let raced = repair(store, &options("t", StorageSignal::Logs, true))
+        .await
+        .report;
 
     let expected = with_outcome(&orphans, RepairOutcome::AlreadyAbsent);
     check!(raced == report(true, StorageSignal::Logs, 1, expected));
@@ -472,19 +508,33 @@ enum LiveFault {
 
 // A live block that an audit can mistake for an orphan, and the signal of
 // the repair that must leave it.
-async fn live_fault(store: &Arc<dyn ObjectStore>, fault: LiveFault) -> (StorageSignal, String) {
+struct LiveFaultOutcome {
+    signal: StorageSignal,
+    live_block: String,
+}
+
+async fn live_fault(store: &Arc<dyn ObjectStore>, fault: LiveFault) -> LiveFaultOutcome {
     match fault {
         LiveFault::MissingShard => {
             healthy(store, StorageSignal::Logs, &["t", "u"]).await;
-            (StorageSignal::Logs, missing_shard(store).await.1)
+            LiveFaultOutcome {
+                signal: StorageSignal::Logs,
+                live_block: missing_shard(store).await.block,
+            }
         }
         LiveFault::UpperCaseManifest => {
             healthy(store, StorageSignal::Metrics, &["t", "u"]).await;
-            (StorageSignal::Metrics, upper_case_manifest(store).await)
+            LiveFaultOutcome {
+                signal: StorageSignal::Metrics,
+                live_block: upper_case_manifest(store).await,
+            }
         }
         LiveFault::ForeignIndexEntry(signal) => {
             healthy(store, signal, &["t", "u"]).await;
-            (signal, foreign_entry(store, signal).await)
+            LiveFaultOutcome {
+                signal,
+                live_block: foreign_entry(store, signal).await,
+            }
         }
     }
 }
@@ -498,13 +548,19 @@ async fn a_repair_of_either_tenant_never_deletes_a_block_that_a_reader_can_reach
         LiveFault::ForeignIndexEntry(StorageSignal::Profiles),
     ] {
         let store = store();
-        let (signal, live) = live_fault(&store, fault).await;
+        let fault_outcome = live_fault(&store, fault).await;
+        let signal = fault_outcome.signal;
+        let live = fault_outcome.live_block;
         let before = listed_keys(&store).await;
 
         let mut reports = Vec::new();
         for tenant in ["t", "u"] {
-            let (report, _) = repair(&store, &options(tenant, signal, true)).await;
-            reports.push(report.actions);
+            reports.push(
+                repair(&store, &options(tenant, signal, true))
+                    .await
+                    .report
+                    .actions,
+            );
         }
 
         check!(reports == [Vec::new(), Vec::new()], "{fault:?}");
@@ -566,14 +622,20 @@ async fn live_set(store: &Arc<dyn ObjectStore>, signal: StorageSignal) -> BTreeS
                 }
             }
             StorageSignal::Logs => {
-                let (_, blocks) = read_tenant_log_index_manifest_from_object_store(
+                let indexes = read_tenant_log_index_manifest_from_object_store(
                     store.as_ref(),
                     &Path::default(),
                     tenant,
                 )
                 .await
                 .unwrap();
-                live.extend(blocks.blocks().iter().map(|block| block.key.object_key()));
+                live.extend(
+                    indexes
+                        .blocks
+                        .blocks()
+                        .iter()
+                        .map(|block| block.key.object_key()),
+                );
             }
         }
     }
@@ -605,7 +667,6 @@ async fn after_a_repair_the_indexes_load_and_the_lifecycle_sweep_agrees() {
             .await
             .unwrap();
         let mut under_prefix = BTreeSet::new();
-        let mut swept = Vec::new();
         for tenant in ["t", "u"] {
             let prefix = block_prefix(signal, tenant);
             under_prefix.extend(
@@ -623,19 +684,27 @@ async fn after_a_repair_the_indexes_load_and_the_lifecycle_sweep_agrees() {
             )
             .await
             .unwrap();
-            swept.push((stats.deleted, stats.failed));
+            check!(stats.deleted == 0 && stats.failed == 0, "{signal} {tenant}");
         }
 
         check!(live_after == live_before, "{signal}");
         check!(audit.findings == Vec::new(), "{signal}");
         check!(under_prefix == live_after, "{signal}");
-        check!(swept == [(0, 0), (0, 0)], "{signal}");
     }
 }
 
-fn log_shard_indexes(first_offset: i64) -> (LabelIndex, LogBlockIndex) {
+#[derive(Clone, Debug, PartialEq)]
+struct LogShardIndexes {
+    label_index: LabelIndex,
+    block_index: LogBlockIndex,
+}
+
+fn log_shard_indexes(first_offset: i64) -> LogShardIndexes {
     let mut label_index = LabelIndex::default();
-    let fingerprint = label_index.insert_series("t", labels([("app", "api")]));
+    let fingerprint = label_index.insert_series(
+        "t",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut block_index = LogBlockIndex::default();
     block_index.insert(BlockDescriptor::new(
         BlockKey::new(
@@ -647,11 +716,32 @@ fn log_shard_indexes(first_offset: i64) -> (LabelIndex, LogBlockIndex) {
         ),
         BTreeSet::from([fingerprint]),
     ));
-    (label_index, block_index)
+    LogShardIndexes {
+        label_index,
+        block_index,
+    }
+}
+
+async fn assert_log_shard_matches_fixture(store: &dyn ObjectStore, context: &str) {
+    let loaded = read_tenant_log_index_shard_from_object_store(
+        store,
+        &Path::default(),
+        "t",
+        TimeRange::new(10, 19).unwrap(),
+    )
+    .await
+    .unwrap();
+    let expected = log_shard_indexes(10);
+    check!(
+        loaded.labels == expected.label_index && loaded.blocks == expected.block_index,
+        "{context}"
+    );
 }
 
 async fn publish_log_shard(store: &Arc<dyn ObjectStore>, first_offset: i64) -> String {
-    let (label_index, block_index) = log_shard_indexes(first_offset);
+    let indexes = log_shard_indexes(first_offset);
+    let label_index = indexes.label_index;
+    let block_index = indexes.block_index;
     let block = block_index.blocks()[0].key.object_key();
     put_block(store, StorageSignal::Logs, &block).await;
     write_tenant_log_index_shard_to_object_store(
@@ -705,12 +795,17 @@ async fn a_log_repair_keeps_the_newest_shard_blocks_and_removes_old_generation_o
                     publish(
                         &store,
                         StorageSignal::Logs,
-                        &[("t", &[full_block])],
+                        &[TenantBlocks {
+                            tenant: "t",
+                            blocks: &[full_block],
+                        }],
                         &BTreeSet::new(),
                     )
                     .await;
                 } else {
-                    let (label_index, block_index) = log_shard_indexes(20);
+                    let indexes = log_shard_indexes(20);
+                    let label_index = indexes.label_index;
+                    let block_index = indexes.block_index;
                     write_log_index_manifest_to_object_store(
                         store.as_ref(),
                         &Path::default(),
@@ -728,7 +823,7 @@ async fn a_log_repair_keeps_the_newest_shard_blocks_and_removes_old_generation_o
         let audit = audit_store(&store, &options.audit_options()).await.unwrap();
         check!(audit.objects_unclassified == 0, "{layout}");
 
-        let (applied, _) = repair(&store, &options).await;
+        let applied = repair(&store, &options).await.report;
 
         assert!(
             applied
@@ -747,75 +842,76 @@ async fn a_log_repair_keeps_the_newest_shard_blocks_and_removes_old_generation_o
         let remaining: Vec<_> = before.into_iter().filter(|key| key != &orphan).collect();
         check!(listed_keys(&store).await == remaining, "{layout}");
         check!(store.head(&Path::from(live)).await.is_ok(), "{layout}");
-        check!(
-            read_tenant_log_index_shard_from_object_store(
-                store.as_ref(),
-                &Path::default(),
-                "t",
-                TimeRange::new(10, 19).unwrap(),
-            )
-            .await
-            .unwrap()
-                == log_shard_indexes(10),
-            "{layout}"
-        );
+        assert_log_shard_matches_fixture(store.as_ref(), layout).await;
     }
 }
 
 #[tokio::test]
 async fn an_unreadable_newest_log_shard_suppresses_orphan_repair() {
-    for (file, bytes, kind) in [
-        (
-            "00000000000000000001.json",
-            b"not json".as_slice(),
-            StorageFindingKind::UnreadableManifest,
-        ),
-        (
-            "00000000000000000001.json",
-            br#"{"format_version":99,"series":[],"blocks":[]}"#.as_slice(),
-            StorageFindingKind::UnsupportedFormat,
-        ),
-        (
-            "invalid.json",
-            b"not json".as_slice(),
-            StorageFindingKind::UnreadableManifest,
-        ),
-        (
-            "invalid.JSON",
-            b"not json".as_slice(),
-            StorageFindingKind::UnreadableManifest,
-        ),
-        (
-            "invalid/nested.json",
-            b"not json".as_slice(),
-            StorageFindingKind::UnreadableManifest,
-        ),
+    struct UnreadableShardCase {
+        file: &'static str,
+        bytes: &'static [u8],
+        kind: StorageFindingKind,
+    }
+    for case in [
+        UnreadableShardCase {
+            file: "00000000000000000001.json",
+            bytes: b"not json",
+            kind: StorageFindingKind::UnreadableManifest,
+        },
+        UnreadableShardCase {
+            file: "00000000000000000001.json",
+            bytes: br#"{"format_version":99,"series":[],"blocks":[]}"#,
+            kind: StorageFindingKind::UnsupportedFormat,
+        },
+        UnreadableShardCase {
+            file: "invalid.json",
+            bytes: b"not json",
+            kind: StorageFindingKind::UnreadableManifest,
+        },
+        UnreadableShardCase {
+            file: "invalid.JSON",
+            bytes: b"not json",
+            kind: StorageFindingKind::UnreadableManifest,
+        },
+        UnreadableShardCase {
+            file: "invalid/nested.json",
+            bytes: b"not json",
+            kind: StorageFindingKind::UnreadableManifest,
+        },
     ] {
         let store = store();
         publish_log_shard(&store, 0).await;
         publish_log_shard(&store, 10).await;
         // A valid full manifest does not override an unreadable shard.
-        publish(&store, StorageSignal::Logs, &[("t", &[])], &BTreeSet::new()).await;
-        put_bytes(&store, &log_shard_snapshot(file), bytes).await;
+        publish(
+            &store,
+            StorageSignal::Logs,
+            &[TenantBlocks {
+                tenant: "t",
+                blocks: &[],
+            }],
+            &BTreeSet::new(),
+        )
+        .await;
+        put_bytes(&store, &log_shard_snapshot(case.file), case.bytes).await;
         let before = listed_keys(&store).await;
         let options = options("t", StorageSignal::Logs, true);
         let audit = audit_store(&store, &options.audit_options()).await.unwrap();
-        assert!(audit.objects_unclassified == 0, "{file}");
-        let findings: Vec<_> = audit
-            .findings
-            .iter()
-            .map(|finding| (finding.kind, finding.path.as_str()))
-            .collect();
-        let newest = log_shard_snapshot(file);
-        assert!(findings == vec![(kind, newest.as_str())], "{file}");
+        assert!(audit.objects_unclassified == 0, "{}", case.file);
+        let findings = audit.findings.iter().all(|finding| {
+            finding.kind == case.kind && finding.path == log_shard_snapshot(case.file)
+        });
+        assert!(findings, "{}", case.file);
 
-        let (applied, _) = repair(&store, &options).await;
+        let applied = repair(&store, &options).await.report;
 
         assert!(
             applied == report(true, StorageSignal::Logs, 1, Vec::new()),
-            "{file}"
+            "{}",
+            case.file
         );
-        check!(listed_keys(&store).await == before, "{file}");
+        check!(listed_keys(&store).await == before, "{}", case.file);
     }
 }
 
@@ -825,7 +921,16 @@ async fn an_unreadable_log_shard_range_suppresses_orphan_repair() {
         let store = store();
         publish_log_shard(&store, 0).await;
         publish_log_shard(&store, 10).await;
-        publish(&store, StorageSignal::Logs, &[("t", &[])], &BTreeSet::new()).await;
+        publish(
+            &store,
+            StorageSignal::Logs,
+            &[TenantBlocks {
+                tenant: "t",
+                blocks: &[],
+            }],
+            &BTreeSet::new(),
+        )
+        .await;
         let shard = format!(
             "tenant=t/index/logs/shards/time={range}/manifest/snapshots/00000000000000000000.json"
         );
@@ -837,31 +942,19 @@ async fn an_unreadable_log_shard_range_suppresses_orphan_repair() {
         let findings: Vec<_> = audit
             .findings
             .iter()
-            .map(|finding| (finding.kind, finding.path.as_str()))
+            .map(|finding| {
+                finding.kind == StorageFindingKind::UnreadableManifest && finding.path == shard
+            })
             .collect();
-        assert!(
-            findings == vec![(StorageFindingKind::UnreadableManifest, shard.as_str())],
-            "{range}"
-        );
+        assert!(findings.len() == 1 && findings[0], "{range}");
 
-        let (applied, _) = repair(&store, &options).await;
+        let applied = repair(&store, &options).await.report;
 
         assert!(
             applied == report(true, StorageSignal::Logs, 1, Vec::new()),
             "{range}"
         );
         check!(listed_keys(&store).await == before, "{range}");
-        check!(
-            read_tenant_log_index_shard_from_object_store(
-                store.as_ref(),
-                &Path::default(),
-                "t",
-                TimeRange::new(10, 19).unwrap(),
-            )
-            .await
-            .unwrap()
-                == log_shard_indexes(10),
-            "{range}"
-        );
+        assert_log_shard_matches_fixture(store.as_ref(), range).await;
     }
 }

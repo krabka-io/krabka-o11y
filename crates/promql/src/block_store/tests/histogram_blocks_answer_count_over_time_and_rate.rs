@@ -1,54 +1,65 @@
 use krabka_metrics::{
-    BucketSpan, NativeHistogram, NativeHistogramRow, ObjectStoreCompactionIndexSink, ResetHint,
-    TenantCompactionRows, list_compaction_manifests, write_compacted_tenant_blocks,
+    NativeHistogram, NativeHistogramRow, ObjectStoreCompactionIndexSink, ResetHint,
+    list_compaction_manifests, write_compacted_tenant_blocks,
 };
 
 use super::*;
+use crate::test_support::nh;
+
+struct HistogramPoint {
+    timestamp_ms: i64,
+    count: f64,
+}
+
+struct AvailabilityWindow {
+    start_ms: i64,
+    end_ms: i64,
+    expected: bool,
+}
+
+struct HistogramQueryCase {
+    query: &'static str,
+    expected: SampleValue,
+}
 
 fn histogram(count: f64) -> NativeHistogram {
-    NativeHistogram {
-        schema: 0,
-        is_float: true,
-        reset_hint: ResetHint::No,
-        zero_threshold: 0.0,
-        zero_count: 0.0,
+    nh(
         count,
-        sum: count,
-        positive_spans: vec![BucketSpan {
-            offset: 0,
-            length: 1,
-        }],
-        positive_counts: vec![count],
-        negative_spans: Vec::new(),
-        negative_counts: Vec::new(),
-        custom_values: None,
-        start_timestamp_ms: None,
-    }
+        count,
+        0,
+        &[crate::test_support::BucketCount { index: 0, count }],
+    )
 }
 
 /// A store whose only blocks hold native histograms, written the way the
 /// compactor writes them, so no float block exists.
 async fn histogram_only_store(series: &Labels) -> MetricBlockStore {
     let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let rows = TenantCompactionRows {
-        tenant: "tenant-a".to_string(),
-        series_labels: std::collections::BTreeMap::from([(
-            series.fingerprint(),
-            series.clone().into(),
-        )]),
-        float_rows: Vec::new(),
-        histogram_rows: [(30_000, 1.0), (60_000, 3.0), (90_000, 5.0)]
-            .into_iter()
-            .map(|(timestamp_ms, count)| NativeHistogramRow {
-                fingerprint: series.fingerprint(),
-                timestamp_ms,
-                hist: histogram(count),
-            })
-            .collect(),
-        exemplar_rows: Vec::new(),
-        metadata_rows: Vec::new(),
-        clock_rows: Vec::new(),
-    };
+    let rows = compaction_rows_for_series(
+        series,
+        Vec::new(),
+        [
+            HistogramPoint {
+                timestamp_ms: 30_000,
+                count: 1.0,
+            },
+            HistogramPoint {
+                timestamp_ms: 60_000,
+                count: 3.0,
+            },
+            HistogramPoint {
+                timestamp_ms: 90_000,
+                count: 5.0,
+            },
+        ]
+        .into_iter()
+        .map(|point| NativeHistogramRow {
+            fingerprint: series.fingerprint(),
+            timestamp_ms: point.timestamp_ms,
+            hist: histogram(point.count),
+        })
+        .collect(),
+    );
     write_compacted_tenant_blocks(
         &krabka_blockstore::BlockWriter::new(Arc::clone(&object_store)),
         &ObjectStoreCompactionIndexSink::new(Arc::clone(&object_store)),
@@ -69,7 +80,10 @@ async fn histogram_only_store(series: &Labels) -> MetricBlockStore {
 
 #[tokio::test]
 pub(crate) async fn histogram_blocks_answer_count_over_time_and_rate() {
-    let series = labels(&[("__name__", "request_duration_seconds"), ("job", "api")]);
+    let series = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "request_duration_seconds"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
     let store = histogram_only_store(&series).await;
     let matchers = [crate::PromqlMatcher {
         name: "__name__".to_string(),
@@ -78,48 +92,59 @@ pub(crate) async fn histogram_blocks_answer_count_over_time_and_rate() {
     }];
 
     // The store says where histograms can be, and says it from its index.
-    for (start_ms, end_ms, expected) in [(0, 100_000, true), (100_001, 200_000, false)] {
+    for window in [
+        AvailabilityWindow {
+            start_ms: 0,
+            end_ms: 100_000,
+            expected: true,
+        },
+        AvailabilityWindow {
+            start_ms: 100_001,
+            end_ms: 200_000,
+            expected: false,
+        },
+    ] {
         check!(
             store
-                .may_have_histograms("tenant-a", &matchers, start_ms, end_ms)
+                .may_have_histograms("tenant-a", &matchers, window.start_ms, window.end_ms)
                 .await
                 .unwrap()
-                == expected,
-            "[{start_ms}, {end_ms}]"
+                == window.expected,
+            "[{}, {}]",
+            window.start_ms,
+            window.end_ms
         );
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let job = labels(&[("job", "api")]);
-    for (query, expected) in [
-        (
-            "count_over_time(request_duration_seconds[2m])",
-            SampleValue::Float(3.0),
-        ),
+    let job = labels(&[crate::test_support::TestLabelPair::new("job", "api")]);
+    for case in [
+        HistogramQueryCase {
+            query: "count_over_time(request_duration_seconds[2m])",
+            expected: SampleValue::Float(3.0),
+        },
         // The samples rise by 4 over 60s. Prometheus extrapolates the rise
         // by half a sample interval toward the window start, to 5 over the
         // 120s window.
-        (
-            "rate(request_duration_seconds[2m])",
-            SampleValue::Histogram(NativeHistogram {
+        HistogramQueryCase {
+            query: "rate(request_duration_seconds[2m])",
+            expected: SampleValue::Histogram(NativeHistogram {
                 reset_hint: ResetHint::Gauge,
                 ..histogram(5.0 / 120.0)
             }),
-        ),
+        },
     ] {
         let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 90_000)
+            .query_instant(&tenant_id("tenant-a"), case.query, 90_000)
             .await
             .unwrap();
-        check!(
-            result
-                == QueryResult::InstantVector(vec![InstantSample {
-                    labels: job.clone().into(),
-                    ts_ms: 90_000,
-                    value: expected,
-                    drop_name: false,
-                }]),
-            "{query}"
-        );
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("{}: expected vector", case.query);
+        };
+        assert2::assert!(samples.len() == 1, "{}", case.query);
+        let expected_labels: crate::PromqlLabels = job.clone().into();
+        assert2::assert!(samples[0].labels == expected_labels);
+        assert2::assert!(samples[0].ts_ms == 90_000);
+        assert2::assert!(samples[0].value == case.expected, "{}", case.query);
     }
 }

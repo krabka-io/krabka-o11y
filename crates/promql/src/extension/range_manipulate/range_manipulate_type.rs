@@ -58,17 +58,11 @@ impl RangeManipulate {
             output_schema,
         })
     }
-
-    /// The logical parameters that define node identity: every field except the
-    /// derived `output_schema`.
-    pub(crate) fn identity(&self) -> (&RangeManipulateSettings, &LogicalPlan) {
-        (&self.settings, &self.input)
-    }
 }
 
 impl PartialEq for RangeManipulate {
     fn eq(&self, other: &Self) -> bool {
-        self.identity() == other.identity()
+        self.settings == other.settings && self.input == other.input
     }
 }
 
@@ -76,7 +70,8 @@ impl Eq for RangeManipulate {}
 
 impl std::hash::Hash for RangeManipulate {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.identity().hash(state);
+        self.settings.hash(state);
+        self.input.hash(state);
     }
 }
 

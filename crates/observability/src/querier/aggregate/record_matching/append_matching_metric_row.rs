@@ -34,7 +34,7 @@ pub(crate) fn append_matching_metric_row(
     ) {
         return Ok(());
     }
-    if let Some((metric_labels, line, unwrap_sample)) = matching_loki_metric_sample(
+    if let Some(sample) = matching_loki_metric_sample(
         query,
         labels,
         row.line,
@@ -46,9 +46,9 @@ pub(crate) fn append_matching_metric_row(
             window,
             MatchedEntry {
                 timestamp_ns: row.timestamp_ns,
-                metric_labels,
-                line,
-                unwrap_sample,
+                metric_labels: sample.labels,
+                line: sample.line,
+                unwrap_sample: sample.unwrap_sample,
             },
         );
     }

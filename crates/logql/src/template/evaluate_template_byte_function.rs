@@ -32,7 +32,7 @@ pub(crate) fn evaluate_template_byte_function(
     let boolean = |value| TemplateRuntimeValue::Json(serde_json::Value::Bool(value));
     let result = match name {
         "regexReplaceAll" | "regexReplaceAllLiteral" | "count" => {
-            let (result, count) = byte_regex::regex_apply(
+            let result = byte_regex::regex_apply(
                 name,
                 bytes(0),
                 bytes(1),
@@ -40,23 +40,38 @@ pub(crate) fn evaluate_template_byte_function(
             )?;
             if name == "count" {
                 return Some(TemplateRuntimeValue::Integer(
-                    i64::try_from(count).expect("regex matches fit int64"),
+                    i64::try_from(result.matches).expect("regex matches fit int64"),
                 ));
             }
-            result
+            result.value
         }
-        "reReplaceAll" => byte_regex::regex_apply(name, bytes(0), bytes(2), bytes(1))?.0,
+        "reReplaceAll" => byte_regex::regex_apply(name, bytes(0), bytes(2), bytes(1))?.value,
         "urlquery" => query_escape(&super::format_template_print_bytes(args, false)),
         "html" => {
             let mut result = super::format_template_print_bytes(args, false);
-            for (from, to) in [
-                (b"&".as_slice(), b"&amp;".as_slice()),
-                (b"<", b"&lt;"),
-                (b">", b"&gt;"),
-                (b"\"", b"&#34;"),
-                (b"'", b"&#39;"),
+            for replacement in [
+                HtmlReplacement {
+                    source: b"&",
+                    replacement: b"&amp;",
+                },
+                HtmlReplacement {
+                    source: b"<",
+                    replacement: b"&lt;",
+                },
+                HtmlReplacement {
+                    source: b">",
+                    replacement: b"&gt;",
+                },
+                HtmlReplacement {
+                    source: b"\"",
+                    replacement: b"&#34;",
+                },
+                HtmlReplacement {
+                    source: b"'",
+                    replacement: b"&#39;",
+                },
             ] {
-                result = replace_bytes(&result, from, to);
+                result = replace_bytes(&result, replacement.source, replacement.replacement);
             }
             result
         }
@@ -72,14 +87,15 @@ pub(crate) fn evaluate_template_byte_function(
         "trimAll" => {
             let set = runes(bytes(0))
                 .into_iter()
-                .map(|(ch, _, _)| ch)
+                .map(|rune| rune.character)
                 .collect::<Vec<_>>();
             trim_runes(bytes(1), |ch| set.contains(&ch))
         }
         "lower" | "upper" | "title" => {
             let mut previous = ' ';
             let mut result = String::new();
-            for (ch, _, _) in runes(bytes(0)) {
+            for rune in runes(bytes(0)) {
+                let ch = rune.character;
                 let mapped = match name {
                     "lower" => go_unicode_case::convert(ch, 1),
                     "upper" => go_unicode_case::convert(ch, 0),
@@ -123,8 +139,8 @@ pub(crate) fn evaluate_template_byte_function(
                 result.push(b'\n');
             }
             result.extend(&padding);
-            for (index, part) in bytes(1).split(|byte| *byte == b'\n').enumerate() {
-                if index > 0 {
+            for (line_index, part) in bytes(1).split(|byte| *byte == b'\n').enumerate() {
+                if line_index > 0 {
                     result.push(b'\n');
                     result.extend(&padding);
                 }
@@ -154,7 +170,7 @@ pub(crate) fn evaluate_template_byte_function(
                 };
                 selected
                     .iter()
-                    .map(|(ch, _, _)| ch)
+                    .map(|rune| rune.character)
                     .collect::<String>()
                     .into_bytes()
             }
@@ -197,8 +213,8 @@ fn replace_bytes(value: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
     let mut result = Vec::new();
     if needle.is_empty() {
         result.extend(replacement);
-        for (_, start, length) in runes(value) {
-            result.extend(&value[start..start + length]);
+        for rune in runes(value) {
+            result.extend(&value[rune.start..rune.start + rune.length]);
             result.extend(replacement);
         }
         return result;
@@ -213,7 +229,29 @@ fn replace_bytes(value: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
     result
 }
 
-pub(super) fn runes(value: &[u8]) -> Vec<(char, usize, usize)> {
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Rune {
+    pub character: char,
+    pub start: usize,
+    pub length: usize,
+}
+
+struct DecodedRune {
+    character: char,
+    length: usize,
+}
+
+struct BytePosition {
+    index: usize,
+    byte: u8,
+}
+
+struct HtmlReplacement {
+    source: &'static [u8],
+    replacement: &'static [u8],
+}
+
+pub(super) fn runes(value: &[u8]) -> Vec<Rune> {
     let mut chars = Vec::new();
     let mut pos = 0;
     while pos < value.len() {
@@ -227,23 +265,33 @@ pub(super) fn runes(value: &[u8]) -> Vec<(char, usize, usize)> {
             .get(pos..pos + length)
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .and_then(|text| text.chars().next());
-        let (ch, length) = valid.map_or(('\u{fffd}', 1), |ch| (ch, length));
-        chars.push((ch, pos, length));
-        pos += length;
+        let decoded = valid.map_or(
+            DecodedRune {
+                character: '\u{fffd}',
+                length: 1,
+            },
+            |character| DecodedRune { character, length },
+        );
+        chars.push(Rune {
+            character: decoded.character,
+            start: pos,
+            length: decoded.length,
+        });
+        pos += decoded.length;
     }
     chars
 }
 
 fn trim_runes(value: &[u8], predicate: impl Fn(char) -> bool) -> Vec<u8> {
     let chars = runes(value);
-    let Some(first) = chars.iter().position(|(ch, _, _)| !predicate(*ch)) else {
+    let Some(first) = chars.iter().position(|rune| !predicate(rune.character)) else {
         return Vec::new();
     };
     let last = chars
         .iter()
-        .rposition(|(ch, _, _)| !predicate(*ch))
+        .rposition(|rune| !predicate(rune.character))
         .expect("nonempty trimmed value");
-    value[chars[first].1..chars[last].1 + chars[last].2].to_vec()
+    value[chars[first].start..chars[last].start + chars[last].length].to_vec()
 }
 
 fn is_separator(ch: char) -> bool {
@@ -274,12 +322,16 @@ fn query_escape(value: &[u8]) -> Vec<u8> {
 }
 
 fn decode_base64(value: &[u8]) -> Vec<u8> {
-    let positions = value
+    let mut positions = Vec::new();
+    for (index, byte) in value.iter().copied().enumerate() {
+        if byte != b'\r' && byte != b'\n' {
+            positions.push(BytePosition { index, byte });
+        }
+    }
+    let input = positions
         .iter()
-        .enumerate()
-        .filter(|(_, byte)| **byte != b'\r' && **byte != b'\n')
+        .map(|position| position.byte)
         .collect::<Vec<_>>();
-    let input = positions.iter().map(|(_, byte)| **byte).collect::<Vec<_>>();
     BASE64_STANDARD.decode(&input).unwrap_or_else(|error| {
         let index = match error {
             base64::DecodeError::InvalidByte(index, _)
@@ -292,7 +344,7 @@ fn decode_base64(value: &[u8]) -> Vec<u8> {
         };
         let index = positions
             .get(index)
-            .map_or(value.len(), |(index, _)| *index);
+            .map_or(value.len(), |position| position.index);
         format!("illegal base64 data at input byte {index}").into_bytes()
     })
 }
@@ -300,11 +352,16 @@ fn decode_base64(value: &[u8]) -> Vec<u8> {
 // Go's UTF-8 decoder replaces every invalid byte, including each byte of an
 // incomplete sequence; Rust's lossy decoder coalesces some sequences.
 pub(crate) fn template_bytes_to_string(value: &[u8]) -> String {
-    runes(value).into_iter().map(|(ch, _, _)| ch).collect()
+    runes(value)
+        .into_iter()
+        .map(|rune| rune.character)
+        .collect()
 }
 
 #[cfg(test)]
 mod fold_tests {
+    use super::go_string_equal_fold;
+
     #[test]
     fn canonical_fold_matches_the_independent_go_unicode_15_ledger() {
         // FNV-1a over little-endian Go 1.26.5 ToLower(ToUpper(r)) values,
@@ -320,21 +377,23 @@ mod fold_tests {
         assert2::assert!(digest == 12_005_982_000_727_758_298);
     }
 
-    #[test]
-    fn simple_folding_keeps_unicode_orbits_and_rejects_expansions() {
-        // Independent Go 1.26.5 strings.EqualFold results; the pinned case table
-        // and canonicalization were also checked over every Unicode 15 scalar.
-        for (left, right, expected) in [
-            ("ſeverity", "Severity", true),
-            ("\u{212a}ey", "key", true),
-            ("Σ", "ς", true),
-            ("ẞ", "ß", true),
-            ("ß", "SS", false),
-            ("İ", "i", false),
-            ("ı", "I", false),
-            ("key", "keys", false),
-        ] {
-            assert2::assert!(super::go_string_equal_fold(left, right) == expected);
-        }
+    // Independent Go 1.26.5 strings.EqualFold results; the pinned cases and
+    // canonicalization were checked over every Unicode 15 scalar.
+    #[yare::parameterized(
+        long_s = { "ſeverity", "Severity", true },
+        kelvin = { "\u{212a}ey", "key", true },
+        sigma = { "Σ", "ς", true },
+        sharp_s = { "ẞ", "ß", true },
+        no_expansion = { "ß", "SS", false },
+        dotted_i = { "İ", "i", false },
+        dotless_i = { "ı", "I", false },
+        length_mismatch = { "key", "keys", false },
+    )]
+    fn simple_folding_keeps_unicode_orbits_and_rejects_expansions(
+        left: &str,
+        right: &str,
+        expected: bool,
+    ) {
+        assert2::assert!(go_string_equal_fold(left, right) == expected);
     }
 }

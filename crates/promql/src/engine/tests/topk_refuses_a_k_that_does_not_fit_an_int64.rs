@@ -36,10 +36,12 @@ pub(crate) async fn topk_refuses_a_k_that_does_not_fit_an_int64() {
     let QueryResult::InstantVector(samples) = result else {
         panic!("expected a vector");
     };
-    let mut projection = samples
-        .iter()
-        .map(|sample| (sample.labels.get("instance"), float_value(&sample.value)))
-        .collect::<Vec<_>>();
-    projection.sort_by_key(|(instance, _)| *instance);
-    check!(projection == vec![(Some("a"), 1.0), (Some("b"), 3.0), (Some("c"), 2.0)]);
+    let projection = topk_projection(&samples);
+    assert2::assert!(projection.len() == 3);
+    assert2::assert!(projection[0].instance == Some("a"));
+    assert2::assert!(projection[0].value == 1.0);
+    assert2::assert!(projection[1].instance == Some("b"));
+    assert2::assert!(projection[1].value == 3.0);
+    assert2::assert!(projection[2].instance == Some("c"));
+    assert2::assert!(projection[2].value == 2.0);
 }

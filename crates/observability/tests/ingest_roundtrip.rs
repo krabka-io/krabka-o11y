@@ -11,6 +11,8 @@
 //! This is that check, and it is an ordinary `bazel test` target because the
 //! broker runs in this process rather than in a container.
 
+#[path = "support/loki_push_body.rs"]
+mod loki_push_body;
 #[path = "support/wal_broker.rs"]
 mod wal_broker;
 
@@ -93,7 +95,7 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
                 .uri("/loki/api/v1/push")
                 .header("content-type", "application/json")
                 .header("X-Scope-OrgID", tenant)
-                .body(Body::from(push_body().to_string()))
+                .body(Body::from(loki_push_body::push_body().to_string()))
                 .expect("push request"),
         )
     };
@@ -152,9 +154,9 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     check!(
         descriptors[0].fingerprints
             == BTreeSet::from([series_fingerprint(&labels([
-                ("app", "api"),
-                ("env", "prod"),
-                ("service_name", "api"),
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
             ]))])
     );
 
@@ -261,9 +263,9 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
 /// call. Only a scrape after real work separates them, so this reads the
 /// encoded text rather than the handles.
 async fn check_compactor_instruments_moved(metrics: &ServiceMetrics, wal_topic: &str) {
-    let mut buffer = String::new();
-    let registry = metrics.registry.lock().await;
-    prometheus_client::encoding::text::encode(&mut buffer, &registry).expect("encode the registry");
+    let buffer = krabka_observability::service_metrics::encode_registry(&metrics.registry)
+        .await
+        .expect("encode the registry");
 
     for needle in [
         // Two WAL records were produced above, and the compactor read both.
@@ -311,18 +313,6 @@ async fn check_compactor_instruments_moved(metrics: &ServiceMetrics, wal_topic: 
 
 /// The push body: two entries in one stream, one of them carrying structured
 /// metadata, so the WAL assertion covers both shapes of record.
-fn push_body() -> Value {
-    json!({
-        "streams": [{
-            "stream": {"app": "api", "env": "prod"},
-            "values": [
-                ["10", "api error", {"trace_id": "abc"}],
-                ["20", "api recovered"],
-            ],
-        }],
-    })
-}
-
 /// What the broker must hand back for that body, whole records rather than a
 /// chain of field assertions.
 ///
@@ -330,35 +320,45 @@ fn push_body() -> Value {
 /// that both entries landed on one partition in the order they were pushed.
 fn expected_wal_records() -> Vec<WalLogRecord> {
     vec![
-        WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-            timestamp_ns: 10,
-            line: "api error".to_string(),
-            structured_metadata: BTreeMap::from([
+        expected_wal_record(
+            10,
+            "api error",
+            BTreeMap::from([
                 ("trace_id".to_string(), "abc".to_string()),
                 ("detected_level".to_string(), "error".to_string()),
             ]),
-            position: Some(WalPosition {
-                partition: PartitionIndex(0),
-                offset: Offset(0),
-            }),
-        },
-        WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-            timestamp_ns: 20,
-            line: "api recovered".to_string(),
-            structured_metadata: BTreeMap::from([(
-                "detected_level".to_string(),
-                "unknown".to_string(),
-            )]),
-            position: Some(WalPosition {
-                partition: PartitionIndex(0),
-                offset: Offset(1),
-            }),
-        },
+            0,
+        ),
+        expected_wal_record(
+            20,
+            "api recovered",
+            BTreeMap::from([("detected_level".to_string(), "unknown".to_string())]),
+            1,
+        ),
     ]
+}
+
+fn expected_wal_record(
+    timestamp_ns: i64,
+    line: &str,
+    structured_metadata: BTreeMap<String, String>,
+    offset: i64,
+) -> WalLogRecord {
+    WalLogRecord {
+        tenant: TENANT.to_string(),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("service_name", "api"),
+        ]),
+        timestamp_ns,
+        line: line.to_string(),
+        structured_metadata,
+        position: Some(WalPosition {
+            partition: PartitionIndex(0),
+            offset: Offset(offset),
+        }),
+    }
 }
 
 /// One `ServiceConfig` shape for both roles the round trip runs.

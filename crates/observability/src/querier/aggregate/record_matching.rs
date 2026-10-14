@@ -1,5 +1,3 @@
-use datafusion::arrow::array::Array as _;
-
 use crate::{
     ActiveLogDeleteFilter, BTreeMap, BTreeSet, CompactionFrontier, LabelFormatAssignment,
     LabelIndex, Labels, LokiStreamEntry, MapArray, MetricQuery, MetricSamples, MetricValue,

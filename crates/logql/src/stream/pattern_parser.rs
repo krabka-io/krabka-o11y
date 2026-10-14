@@ -4,6 +4,12 @@ use super::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PatternCapture {
+    pub(crate) name: String,
+    pub(crate) value: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PatternParser {
     pub(crate) pattern: String,
     pub(crate) parts: Vec<PatternPart>,
@@ -29,14 +35,14 @@ impl PatternParser {
             return;
         };
 
-        for (name, value) in captures {
-            if name != "_" {
-                insert_raw_parsed_field(fields, &name, value);
+        for capture in captures {
+            if capture.name != "_" {
+                insert_raw_parsed_field(fields, &capture.name, capture.value);
             }
         }
     }
 
-    pub(crate) fn captures(&self, line: &str) -> Option<Vec<(String, String)>> {
+    pub(crate) fn captures(&self, line: &str) -> Option<Vec<PatternCapture>> {
         let mut pos = 0;
         let mut captures = Vec::new();
         for (index, part) in self.parts.iter().enumerate() {
@@ -61,14 +67,20 @@ impl PatternParser {
                             });
                     let value_end = if let Some(next_literal) = next_literal {
                         let Some(offset) = line[pos..].find(next_literal) else {
-                            captures.push((name.clone(), line[pos..].to_string()));
+                            captures.push(PatternCapture {
+                                name: name.clone(),
+                                value: line[pos..].to_string(),
+                            });
                             return Some(captures);
                         };
                         pos.saturating_add(offset)
                     } else {
                         line.len()
                     };
-                    captures.push((name.clone(), line[pos..value_end].to_string()));
+                    captures.push(PatternCapture {
+                        name: name.clone(),
+                        value: line[pos..value_end].to_string(),
+                    });
                     pos = value_end;
                 }
             }

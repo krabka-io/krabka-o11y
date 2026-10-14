@@ -1,12 +1,12 @@
-use std::collections::BTreeMap;
-
-use super::{Deserialize, Labels, MetricString, SamplePayload, Serialize, WalError, WalExemplar};
+use super::{
+    Deserialize, Labels, MetricLabelPair, SamplePayload, Serialize, WalError, WalExemplar,
+};
 
 /// A single metrics WAL record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WalRecord {
     pub tenant: String,
-    pub labels: Vec<(String, MetricString)>,
+    pub labels: Vec<MetricLabelPair<crate::MetricString>>,
     pub payload: SamplePayload,
     pub exemplars: Vec<WalExemplar>,
 }
@@ -36,12 +36,20 @@ impl WalRecord {
         let pairs = self
             .labels
             .iter()
-            .map(|(name, value)| (name.as_str(), value));
-        if self.labels.windows(2).all(|pair| pair[0].0 < pair[1].0) {
+            .map(|pair| (pair.name.as_str(), &pair.value));
+        if self
+            .labels
+            .windows(2)
+            .all(|pair| pair[0].name < pair[1].name)
+        {
             fingerprint_label_pairs(pairs)
         } else {
             // The label map sorts names and keeps the last duplicate value.
-            fingerprint_label_pairs(pairs.collect::<BTreeMap<_, _>>().into_iter())
+            fingerprint_label_pairs(
+                pairs
+                    .collect::<std::collections::BTreeMap<_, _>>()
+                    .into_iter(),
+            )
         }
     }
 
@@ -52,15 +60,14 @@ impl WalRecord {
     }
 }
 
-fn fingerprint_label_pairs<'a>(pairs: impl Iterator<Item = (&'a str, &'a MetricString)>) -> u64 {
+fn fingerprint_label_pairs<'a>(
+    pairs: impl Iterator<Item = (&'a str, &'a crate::MetricString)>,
+) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325;
     for (name, value) in pairs {
         for bytes in [name.as_bytes(), value.as_bytes()] {
-            for byte in (bytes.len() as u64).to_le_bytes() {
-                hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            for &byte in bytes {
-                hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+            for byte in (bytes.len() as u64).to_le_bytes().iter().chain(bytes) {
+                hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
             }
         }
     }

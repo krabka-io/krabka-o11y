@@ -7,15 +7,16 @@ pub(crate) fn yaml_mapping_json(value: &serde_yaml::Value, key: &str) -> Value {
         .map_or_else(
             || json!({}),
             |mapping| {
-                let object = mapping
-                    .iter()
-                    .filter_map(|(name, value)| {
-                        Some((
-                            name.as_str()?.to_string(),
-                            Value::String(value.as_str().unwrap_or_default().to_string()),
-                        ))
-                    })
-                    .collect::<Map<_, _>>();
+                let mut object = Map::new();
+                for entry in mapping {
+                    let Some(name) = entry.0.as_str() else {
+                        continue;
+                    };
+                    object.insert(
+                        name.to_string(),
+                        Value::String(entry.1.as_str().unwrap_or_default().to_string()),
+                    );
+                }
                 Value::Object(object)
             },
         )

@@ -6,28 +6,24 @@ use super::{
 pub(crate) fn extract_symbols(profile: &PprofProfile) -> Result<WalSymbolSet, ProfilesError> {
     validate_strings(profile)?;
     let inner = profile.inner();
-    let function_refs = inner
-        .function
-        .iter()
-        .enumerate()
-        .map(|(idx, function)| {
-            let idx = u32::try_from(idx).map_err(|err| {
-                ProfilesError::Decode(format!("function index does not fit u32: {err}"))
-            })?;
-            Ok((function.id, idx))
-        })
-        .collect::<Result<HashMap<_, _>, ProfilesError>>()?;
-    let mapping_refs = inner
-        .mapping
-        .iter()
-        .enumerate()
-        .map(|(idx, mapping)| {
-            let idx = u32::try_from(idx).map_err(|err| {
-                ProfilesError::Decode(format!("mapping index does not fit u32: {err}"))
-            })?;
-            Ok((mapping.id, idx))
-        })
-        .collect::<Result<HashMap<_, _>, ProfilesError>>()?;
+    let mut function_refs = HashMap::default();
+    let mut function_idx = 0_usize;
+    for function in &inner.function {
+        let reference = u32::try_from(function_idx).map_err(|err| {
+            ProfilesError::Decode(format!("function index does not fit u32: {err}"))
+        })?;
+        function_refs.insert(function.id, reference);
+        function_idx = function_idx.saturating_add(1);
+    }
+    let mut mapping_refs = HashMap::default();
+    let mut mapping_idx = 0_usize;
+    for mapping in &inner.mapping {
+        let reference = u32::try_from(mapping_idx).map_err(|err| {
+            ProfilesError::Decode(format!("mapping index does not fit u32: {err}"))
+        })?;
+        mapping_refs.insert(mapping.id, reference);
+        mapping_idx = mapping_idx.saturating_add(1);
+    }
     Ok(WalSymbolSet {
         strings: inner.string_table.clone(),
         functions: inner
@@ -57,14 +53,14 @@ pub(crate) fn extract_symbols(profile: &PprofProfile) -> Result<WalSymbolSet, Pr
                         .line
                         .iter()
                         .map(|line| {
-                            Ok((
-                                normalize_required_pprof_id(
+                            Ok(crate::wal::WalLine {
+                                function_id: normalize_required_pprof_id(
                                     line.function_id,
                                     &function_refs,
                                     "line.function_id",
                                 )?,
-                                line.line,
-                            ))
+                                line: line.line,
+                            })
                         })
                         .collect::<Result<Vec<_>, ProfilesError>>()?,
                 })

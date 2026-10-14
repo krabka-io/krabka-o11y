@@ -2,7 +2,8 @@ use axum::{extract::FromRequestParts, http::request::Parts};
 
 use super::{
     Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Principal, QuerierBackend,
-    QueryFrontend, Response, TenantRequest, Uri,
+    QueryFrontend, Response, TenantRequest, TenantTimeBounds, Uri, optional_time_bounds,
+    tenant_and_bounds,
 };
 
 /// What every query-frontend read handler extracts from its request: the
@@ -23,6 +24,11 @@ impl<B: QuerierBackend, C: BlockCatalog> FrontendRequest<B, C> {
             policy: &self.qf.cfg.tenant_policy,
             uri: &self.uri,
         }
+    }
+
+    /// The tenant and optional time bounds used by read endpoints.
+    pub(crate) fn tenant_and_optional_bounds(&self) -> Result<TenantTimeBounds, Box<Response>> {
+        tenant_and_bounds(self.tenant_request(), optional_time_bounds)
     }
 }
 

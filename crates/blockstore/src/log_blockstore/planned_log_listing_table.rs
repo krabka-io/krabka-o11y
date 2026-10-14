@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BlockDescriptor, BlockStoreError, ListingTable, ListingTableUrl, Path, Schema, block_path,
+    log_listing_table_from_paths, validate_planned_blocks,
+};
 
 pub(crate) fn planned_log_listing_table(
     root: impl AsRef<Path>,
@@ -18,8 +21,5 @@ pub(crate) fn planned_log_listing_table(
             .map_err(BlockStoreError::from)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let config = ListingTableConfig::new_with_multi_paths(table_paths)
-        .with_listing_options(log_listing_options())
-        .with_schema(schema);
-    Ok(ListingTable::try_new(config)?)
+    log_listing_table_from_paths(table_paths, schema)
 }

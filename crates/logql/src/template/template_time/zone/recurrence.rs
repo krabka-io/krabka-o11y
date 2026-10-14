@@ -3,8 +3,30 @@ use super::super::calendar;
 
 #[derive(Clone, Debug)]
 pub(super) struct Recurrence {
-    standard: (String, i32),
-    daylight: Option<((String, i32), Rule, Rule)>,
+    standard: ZoneInfo,
+    daylight: Option<DaylightRules>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::template) struct ZoneInfo {
+    pub name: String,
+    pub offset: i32,
+}
+#[derive(Clone, Debug)]
+pub(in crate::template::template_time) struct ZoneLookup {
+    pub name: String,
+    pub offset: i32,
+    pub daylight: bool,
+}
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CacheBounds {
+    pub start: i64,
+    pub end: i64,
+}
+#[derive(Clone, Debug)]
+struct DaylightRules {
+    zone: ZoneInfo,
+    start: Rule,
+    end: Rule,
 }
 #[derive(Clone, Debug)]
 struct Rule {
@@ -20,7 +42,10 @@ enum Day {
 
 impl Recurrence {
     pub(super) fn parse(mut value: &str) -> Option<Self> {
-        let standard = (name(&mut value)?.into(), -offset(&mut value)?);
+        let standard = ZoneInfo {
+            name: name(&mut value)?.into(),
+            offset: -offset(&mut value)?,
+        };
         if value.is_empty() || value.starts_with(',') {
             return Some(Self {
                 standard,
@@ -29,7 +54,7 @@ impl Recurrence {
         }
         let daylight_name = name(&mut value)?.to_string();
         let daylight_offset = if value.is_empty() || value.starts_with(',') {
-            standard.1 + 3600
+            standard.offset + 3600
         } else {
             -offset(&mut value)?
         };
@@ -45,46 +70,80 @@ impl Recurrence {
         }
         Some(Self {
             standard,
-            daylight: Some(((daylight_name, daylight_offset), start, end)),
+            daylight: Some(DaylightRules {
+                zone: ZoneInfo {
+                    name: daylight_name,
+                    offset: daylight_offset,
+                },
+                start,
+                end,
+            }),
         })
     }
     // Go time.tzset returns coarse year bounds outside DST transitions.
-    pub(super) fn cache_bounds(&self, last: i64, seconds: i64) -> (i64, i64) {
-        let Some((daylight, start, end)) = &self.daylight else {
-            return (last, i64::MAX);
+    pub(super) fn cache_bounds(&self, last: i64, seconds: i64) -> CacheBounds {
+        let Some(daylight) = &self.daylight else {
+            return CacheBounds {
+                start: last,
+                end: i64::MAX,
+            };
         };
         let parts = calendar::parts(seconds);
         let year_seconds = i64::from(parts.yearday - 1) * 86400 + seconds % 86400;
         let year_start = seconds.wrapping_sub(year_seconds);
-        let a = start.seconds(parts.year, self.standard.1);
-        let b = end.seconds(parts.year, daylight.1);
-        let (start, end) = (a.min(b), a.max(b));
-        let (start, end) = if year_seconds < start {
-            (0, start)
-        } else if year_seconds >= end {
-            (end, 365 * 86400)
-        } else {
-            (start, end)
+        let a = daylight.start.seconds(parts.year, self.standard.offset);
+        let b = daylight.end.seconds(parts.year, daylight.zone.offset);
+        let transition = CacheBounds {
+            start: a.min(b),
+            end: a.max(b),
         };
-        (year_start.wrapping_add(start), year_start.wrapping_add(end))
+        let bounds = if year_seconds < transition.start {
+            CacheBounds {
+                start: 0,
+                end: transition.start,
+            }
+        } else if year_seconds >= transition.end {
+            CacheBounds {
+                start: transition.end,
+                end: 365 * 86400,
+            }
+        } else {
+            transition
+        };
+        CacheBounds {
+            start: year_start.wrapping_add(bounds.start),
+            end: year_start.wrapping_add(bounds.end),
+        }
     }
-    pub(super) fn lookup_full(&self, seconds: i64) -> (String, i32, bool) {
-        let Some((daylight, start, end)) = &self.daylight else {
-            return (self.standard.0.clone(), self.standard.1, false);
+    pub(super) fn lookup_full(&self, seconds: i64) -> ZoneLookup {
+        let Some(daylight) = &self.daylight else {
+            return ZoneLookup {
+                name: self.standard.name.clone(),
+                offset: self.standard.offset,
+                daylight: false,
+            };
         };
         let parts = calendar::parts(seconds);
         let year_seconds = i64::from(parts.yearday - 1) * 86400 + seconds % 86400;
-        let start = start.seconds(parts.year, self.standard.1);
-        let end = end.seconds(parts.year, daylight.1);
+        let start = daylight.start.seconds(parts.year, self.standard.offset);
+        let end = daylight.end.seconds(parts.year, daylight.zone.offset);
         let is_daylight = if start < end {
             year_seconds >= start && year_seconds < end
         } else {
             year_seconds < end || year_seconds >= start
         };
         if is_daylight {
-            (daylight.0.clone(), daylight.1, true)
+            ZoneLookup {
+                name: daylight.zone.name.clone(),
+                offset: daylight.zone.offset,
+                daylight: true,
+            }
         } else {
-            (self.standard.0.clone(), self.standard.1, false)
+            ZoneLookup {
+                name: self.standard.name.clone(),
+                offset: self.standard.offset,
+                daylight: false,
+            }
         }
     }
 }

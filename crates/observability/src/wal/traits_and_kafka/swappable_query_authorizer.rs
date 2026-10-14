@@ -12,18 +12,23 @@ pub(crate) struct SwappableQueryAuthorizer {
     pub(crate) inner: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>,
 }
 
+pub(crate) struct SwappableQueryAuthorizerParts {
+    pub(crate) authorizer: SwappableQueryAuthorizer,
+    pub(crate) slot: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>,
+}
+
 impl SwappableQueryAuthorizer {
     /// Creates a new swappable authorizer that starts unavailable.
-    pub(crate) fn new() -> (Self, Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>) {
+    pub(crate) fn unavailable() -> SwappableQueryAuthorizerParts {
         let inner: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>> = Arc::new(
             tokio::sync::RwLock::new(Arc::new(UnavailableQueryAuthorizer)),
         );
-        (
-            Self {
+        SwappableQueryAuthorizerParts {
+            authorizer: Self {
                 inner: inner.clone(),
             },
-            inner,
-        )
+            slot: inner,
+        }
     }
 }
 

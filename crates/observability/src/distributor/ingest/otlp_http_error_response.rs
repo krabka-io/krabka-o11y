@@ -5,12 +5,11 @@ pub(crate) fn otlp_http_error_response(error: DistributorError) -> Response {
         error,
         DistributorError::TimestampTooOld { .. } | DistributorError::TimestampTooNew { .. }
     ) {
-        return (
-            StatusCode::BAD_REQUEST,
-            [("content-type", "application/x-protobuf")],
-            encode_otlp_status_message(&error.to_string()),
-        )
-            .into_response();
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header("content-type", "application/x-protobuf")
+            .body(encode_otlp_status_message(&error.to_string()).into())
+            .expect("OTLP response headers are valid");
     }
 
     error.into_response()

@@ -1,7 +1,4 @@
-use super::{
-    BlockKey, BlockStoreError, File, LogRow, ParquetRecordBatchReaderBuilder, Path, batch_to_rows,
-    block_path, instrument,
-};
+use super::{BlockKey, BlockStoreError, File, LogRow, Path, block_path, instrument};
 
 #[instrument(
     level = "debug",
@@ -16,13 +13,5 @@ pub fn read_log_block(
     key: &BlockKey,
 ) -> Result<Vec<LogRow>, BlockStoreError> {
     let file = File::open(block_path(root, key))?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    crate::validate_persisted_block_format(builder.metadata())
-        .map_err(BlockStoreError::UnsupportedBlockFormat)?;
-    let reader = builder.build()?;
-    let mut rows = Vec::new();
-    for batch in reader {
-        rows.extend(batch_to_rows(&batch?)?);
-    }
-    Ok(rows)
+    super::read_log_block_from_reader(file)
 }

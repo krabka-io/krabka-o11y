@@ -12,17 +12,34 @@ const METRIC_KINDS: [&str; 5] = [
     "clock-readings",
 ];
 
+struct SnapshotIndexKey<'a> {
+    signal: StorageSignal,
+    key: &'a str,
+}
+
+struct MetricsPathParts<'a> {
+    lane: &'a str,
+    partition: Option<i32>,
+    file: &'a str,
+}
+
 /// Matches `key` against the key grammar of every signal.
 ///
 /// Returns `None` for a key that no grammar matches. The audit counts such a
 /// key and does not report it, because a key it does not understand is not
 /// evidence of damage.
 pub fn classify_object_key(key: &str, options: &StorageAuditOptions) -> Option<ClassifiedObject> {
-    for (signal, index_key) in [
-        (StorageSignal::Traces, options.trace_index_key.as_str()),
-        (StorageSignal::Profiles, options.profile_index_key.as_str()),
+    for entry in [
+        SnapshotIndexKey {
+            signal: StorageSignal::Traces,
+            key: options.trace_index_key.as_str(),
+        },
+        SnapshotIndexKey {
+            signal: StorageSignal::Profiles,
+            key: options.profile_index_key.as_str(),
+        },
     ] {
-        if let Some(object) = snapshot_index_object(key, index_key, signal) {
+        if let Some(object) = snapshot_index_object(key, entry.key, entry.signal) {
             return Some(object);
         }
     }
@@ -143,27 +160,43 @@ fn metrics_index(key: &str, rest: &[&str]) -> ClassifiedObject {
 }
 
 fn metrics_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
-    let (lane, partition, file) = match rest {
+    let parts = match rest {
         // A Prometheus TSDB import writes its blocks and its `_published`
         // marker in a directory of their own, `uploaded/<ulid>-<hash>/`.
         ["uploaded", _, "_published"] => {
             return tenant_object(StorageSignal::Metrics, tenant, ObjectRole::Staging);
         }
-        ["uploaded", file] | ["uploaded", _, file] => ("uploaded", None, *file),
-        [kind, file] if METRIC_KINDS.contains(kind) => (*kind, None, *file),
-        [kind, "compacted", file] if METRIC_KINDS.contains(kind) => (*kind, None, *file),
+        ["uploaded", file] | ["uploaded", _, file] => MetricsPathParts {
+            lane: "uploaded",
+            partition: None,
+            file,
+        },
+        [kind, file] if METRIC_KINDS.contains(kind) => MetricsPathParts {
+            lane: kind,
+            partition: None,
+            file,
+        },
+        [kind, "compacted", file] if METRIC_KINDS.contains(kind) => MetricsPathParts {
+            lane: kind,
+            partition: None,
+            file,
+        },
         [kind, partition, file] if METRIC_KINDS.contains(kind) => {
             let partition = partition.strip_prefix("partition=")?.parse().ok()?;
-            (*kind, Some(partition), *file)
+            MetricsPathParts {
+                lane: kind,
+                partition: Some(partition),
+                file,
+            }
         }
         _ => return None,
     };
     let compacted = rest.contains(&"compacted");
-    let stem = file.strip_suffix(".parquet")?;
+    let stem = parts.file.strip_suffix(".parquet")?;
     let role = ObjectRole::Block(BlockShape {
-        partition,
-        lane: lane.to_string(),
-        offsets: (!compacted && lane != "uploaded")
+        partition: parts.partition,
+        lane: parts.lane.to_string(),
+        offsets: (!compacted && parts.lane != "uploaded")
             .then(|| offset_range(stem))
             .flatten(),
         time_range: None,
@@ -173,18 +206,11 @@ fn metrics_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
 
 fn traces_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
     let shape = match rest {
-        ["compacted", file] => {
-            file.strip_suffix(".parquet")?;
-            BlockShape {
-                partition: None,
-                lane: String::new(),
-                offsets: None,
-                time_range: None,
-            }
-        }
+        ["compacted", file] => compacted_block_shape(file)?,
         [partition, file] => {
             let stem = file.strip_suffix(".parquet")?;
-            let (offsets, _window_start) = stem.rsplit_once('-')?;
+            let separator = stem.rfind('-')?;
+            let offsets = &stem[..separator];
             BlockShape {
                 partition: Some(partition.parse().ok()?),
                 lane: String::new(),
@@ -209,15 +235,7 @@ fn profiles_object(key: &str, tenant: &str, rest: &[&str]) -> Option<ClassifiedO
         );
     }
     let shape = match rest {
-        ["compacted", file] => {
-            file.strip_suffix(".parquet")?;
-            BlockShape {
-                partition: None,
-                lane: String::new(),
-                offsets: None,
-                time_range: None,
-            }
-        }
+        ["compacted", file] => compacted_block_shape(file)?,
         [partition, file] => {
             let stem = file.strip_suffix(".parquet")?;
             let mut fields = stem.splitn(3, '-');
@@ -234,6 +252,16 @@ fn profiles_object(key: &str, tenant: &str, rest: &[&str]) -> Option<ClassifiedO
         _ => return None,
     };
     tenant_object(StorageSignal::Profiles, tenant, ObjectRole::Block(shape))
+}
+
+fn compacted_block_shape(file: &str) -> Option<BlockShape> {
+    file.strip_suffix(".parquet")?;
+    Some(BlockShape {
+        partition: None,
+        lane: String::new(),
+        offsets: None,
+        time_range: None,
+    })
 }
 
 fn logs_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
@@ -256,8 +284,14 @@ fn logs_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
         {
             // Match every JSON object the snapshot reader can select. Invalid
             // generation names make the tenant unknown when the reader fails.
-            let (start_ns, end_ns) = offset_range(time.strip_prefix("time=")?)?;
-            ObjectRole::LogShardManifest { start_ns, end_ns }
+            // Keep syntactically valid but reversed ranges classified: the
+            // audit must report their unreadable manifest instead of treating
+            // the object as unknown.
+            let range = offset_range(time.strip_prefix("time=")?)?;
+            ObjectRole::LogShardManifest {
+                start_ns: range.min,
+                end_ns: range.max,
+            }
         }
         ["index", "logs", "shards", time] => {
             time.strip_prefix("time=")?.parse::<i64>().ok()?;
@@ -271,7 +305,7 @@ fn logs_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
                 partition: Some(partition),
                 lane: String::new(),
                 offsets: Some(offsets),
-                time_range: offset_range(time),
+                time_range: time_range(time),
             })
         }
         _ => return None,
@@ -281,12 +315,22 @@ fn logs_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
 
 /// Parses `A-B` into an inclusive range. Either bound may be negative, so the
 /// split is at the first `-` that leaves two integers.
-fn offset_range(raw: &str) -> Option<(i64, i64)> {
-    raw.match_indices('-')
-        .filter(|(at, _)| *at > 0)
-        .find_map(|(at, _)| {
-            let first = raw[..at].parse().ok()?;
-            let last = raw[at + 1..].parse().ok()?;
-            Some((first, last))
-        })
+fn offset_range(raw: &str) -> Option<crate::OffsetRange> {
+    for at in raw
+        .match_indices('-')
+        .map(|entry| entry.0)
+        .filter(|at| *at > 0)
+    {
+        if let Ok(first) = raw[..at].parse()
+            && let Ok(last) = raw[at + 1..].parse()
+        {
+            return Some(crate::OffsetRange::new(first, last));
+        }
+    }
+    None
+}
+
+fn time_range(raw: &str) -> Option<crate::log_blockstore::TimeRange> {
+    let offsets = offset_range(raw)?;
+    crate::log_blockstore::TimeRange::new(offsets.min, offsets.max).ok()
 }

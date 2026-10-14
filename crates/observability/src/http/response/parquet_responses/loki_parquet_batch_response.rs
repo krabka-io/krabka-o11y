@@ -1,6 +1,5 @@
 use super::{
-    ArrowWriter, HttpQueryError, IntoResponse, LOKI_PARQUET_CONTENT_TYPE, RecordBatch, Response,
-    StatusCode,
+    ArrowWriter, HttpQueryError, LOKI_PARQUET_CONTENT_TYPE, RecordBatch, Response, StatusCode,
 };
 
 pub(crate) fn loki_parquet_batch_response(batch: &RecordBatch) -> Result<Response, HttpQueryError> {
@@ -10,10 +9,9 @@ pub(crate) fn loki_parquet_batch_response(batch: &RecordBatch) -> Result<Respons
         writer.write(batch)?;
         writer.close()?;
     }
-    Ok((
-        StatusCode::OK,
-        [("content-type", LOKI_PARQUET_CONTENT_TYPE)],
-        body,
-    )
-        .into_response())
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", LOKI_PARQUET_CONTENT_TYPE)
+        .body(body.into())
+        .expect("Parquet response headers are valid"))
 }

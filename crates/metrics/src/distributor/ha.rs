@@ -10,6 +10,21 @@ use krabka_units::prelude::*;
 
 use crate::wire::DecodedSeries;
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct HaElectionIdentity {
+    tenant: String,
+    cluster: String,
+}
+
+impl HaElectionIdentity {
+    fn new(tenant: impl Into<String>, cluster: impl Into<String>) -> Self {
+        Self {
+            tenant: tenant.into(),
+            cluster: cluster.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};

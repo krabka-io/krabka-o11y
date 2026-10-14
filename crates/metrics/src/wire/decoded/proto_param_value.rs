@@ -1,6 +1,7 @@
 pub(crate) fn proto_param_value(param: &str) -> Option<String> {
-    let (name, value) = param.trim().split_once('=')?;
-    name.trim()
+    let pair = param.trim().split_once('=')?;
+    pair.0
+        .trim()
         .eq_ignore_ascii_case("proto")
-        .then(|| value.trim().trim_matches('"').to_string())
+        .then(|| pair.1.trim().trim_matches('"').to_string())
 }

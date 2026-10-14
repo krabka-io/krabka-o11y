@@ -3,19 +3,51 @@ use std::hash::{BuildHasher, RandomState};
 use assert2::assert;
 use krabka_metrics::MetricString;
 
+struct StringCase {
+    bytes: Vec<u8>,
+    json: &'static str,
+}
+
+struct ByteRangeCase {
+    start: usize,
+    end: usize,
+    expected: Option<&'static [u8]>,
+}
+
 #[test]
 fn owned_utf8_reuses_one_buffer_and_byte_strings_keep_their_wire_identity() {
     let cases = [
-        (Vec::new(), ""),
-        (b"temperature".to_vec(), "temperature"),
-        ("a\0é🦀".as_bytes().to_vec(), "a\0é🦀"),
-        (vec![0xff], "\u{fffd}"),
-        (vec![0xfe], "\u{fffd}"),
-        (vec![0xe2, 0x82], "\u{fffd}\u{fffd}"),
-        (b"a\xff\xc3\xa9\xfez".to_vec(), "a\u{fffd}é\u{fffd}z"),
+        StringCase {
+            bytes: Vec::new(),
+            json: "",
+        },
+        StringCase {
+            bytes: b"temperature".to_vec(),
+            json: "temperature",
+        },
+        StringCase {
+            bytes: "a\0é🦀".as_bytes().to_vec(),
+            json: "a\0é🦀",
+        },
+        StringCase {
+            bytes: vec![0xff],
+            json: "\u{fffd}",
+        },
+        StringCase {
+            bytes: vec![0xfe],
+            json: "\u{fffd}",
+        },
+        StringCase {
+            bytes: vec![0xe2, 0x82],
+            json: "\u{fffd}\u{fffd}",
+        },
+        StringCase {
+            bytes: b"a\xff\xc3\xa9\xfez".to_vec(),
+            json: "a\u{fffd}é\u{fffd}z",
+        },
     ];
     let hash = RandomState::new();
-    for (bytes, json) in cases {
+    for StringCase { bytes, json } in cases {
         let input = bytes.clone();
         let allocation = input.as_ptr();
         let value = MetricString::from(input);
@@ -51,15 +83,51 @@ fn owned_utf8_reuses_one_buffer_and_byte_strings_keep_their_wire_identity() {
     }
 
     let raw = MetricString::from(b"a\xff\xc3\xa9\xfez".to_vec());
-    for (start, end, expected) in [
-        (0, 1, Some(&b"a"[..])),
-        (1, 4, Some(&b"\xff"[..])),
-        (2, 4, None),
-        (4, 6, Some(&b"\xc3\xa9"[..])),
-        (6, 9, Some(&b"\xfe"[..])),
-        (9, 10, Some(&b"z"[..])),
-        (10, 10, Some(&b""[..])),
-        (10, 11, None),
+    for ByteRangeCase {
+        start,
+        end,
+        expected,
+    } in [
+        ByteRangeCase {
+            start: 0,
+            end: 1,
+            expected: Some(&b"a"[..]),
+        },
+        ByteRangeCase {
+            start: 1,
+            end: 4,
+            expected: Some(&b"\xff"[..]),
+        },
+        ByteRangeCase {
+            start: 2,
+            end: 4,
+            expected: None,
+        },
+        ByteRangeCase {
+            start: 4,
+            end: 6,
+            expected: Some(&b"\xc3\xa9"[..]),
+        },
+        ByteRangeCase {
+            start: 6,
+            end: 9,
+            expected: Some(&b"\xfe"[..]),
+        },
+        ByteRangeCase {
+            start: 9,
+            end: 10,
+            expected: Some(&b"z"[..]),
+        },
+        ByteRangeCase {
+            start: 10,
+            end: 10,
+            expected: Some(&b""[..]),
+        },
+        ByteRangeCase {
+            start: 10,
+            end: 11,
+            expected: None,
+        },
     ] {
         assert!(raw.bytes_for_json_range(start, end) == expected);
     }

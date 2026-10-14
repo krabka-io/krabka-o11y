@@ -1,6 +1,6 @@
 use super::{
-    DEFAULT_HA_FAILOVER_TIMEOUT, DecodedSeries, HaElection, HaElectionRecord, HashMap, Mutex, Time,
-    decide_election, now_ms,
+    DEFAULT_HA_FAILOVER_TIMEOUT, DecodedSeries, HaElection, HaElectionIdentity, HaElectionRecord,
+    HashMap, Mutex, Time, decide_election, now_ms,
 };
 
 /// In-memory elected replica view. The distributor rebuilds it from the
@@ -8,7 +8,7 @@ use super::{
 /// election for unseen pairs.
 #[derive(Debug, Default)]
 pub struct HaTracker {
-    pub(crate) elected: Mutex<HashMap<(String, String), HaElectionRecord>>,
+    pub(super) elected: Mutex<HashMap<HaElectionIdentity, HaElectionRecord>>,
 }
 
 impl HaTracker {
@@ -19,7 +19,7 @@ impl HaTracker {
         self.elected
             .lock()
             .expect("HaTracker mutex poisoned")
-            .get(&(tenant.to_string(), cluster.to_string()))
+            .get(&HaElectionIdentity::new(tenant, cluster))
             .map(|record| record.replica.clone())
     }
 
@@ -30,7 +30,7 @@ impl HaTracker {
         self.elected
             .lock()
             .expect("HaTracker mutex poisoned")
-            .get(&(tenant.to_string(), cluster.to_string()))
+            .get(&HaElectionIdentity::new(tenant, cluster))
             .cloned()
     }
 
@@ -59,7 +59,7 @@ impl HaTracker {
             .lock()
             .expect("HaTracker mutex poisoned")
             .insert(
-                (tenant.clone(), cluster.clone()),
+                HaElectionIdentity::new(tenant.clone(), cluster.clone()),
                 HaElectionRecord {
                     tenant,
                     cluster,
@@ -76,7 +76,7 @@ impl HaTracker {
             .lock()
             .expect("HaTracker mutex poisoned")
             .insert(
-                (record.tenant.clone(), record.cluster.clone()),
+                HaElectionIdentity::new(record.tenant.clone(), record.cluster.clone()),
                 record.clone(),
             );
     }
@@ -124,7 +124,7 @@ impl HaTracker {
         );
         if let HaElection::Elect(record) | HaElection::Update(record) = &decision {
             elected.insert(
-                (record.tenant.clone(), record.cluster.clone()),
+                HaElectionIdentity::new(record.tenant.clone(), record.cluster.clone()),
                 record.clone(),
             );
         }

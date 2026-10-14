@@ -1,3 +1,7 @@
-/// The eval-step grid paired with the `(offset, len)` windows that index the
-/// sorted input rows for each step.
-pub(crate) type StepWindows = (Vec<i64>, Vec<(u32, u32)>);
+use crate::RangeWindow;
+
+/// The eval-step grid and input-row windows for a range-manipulation batch.
+pub(crate) struct StepWindows {
+    pub eval_timestamps_ms: Vec<i64>,
+    pub ranges: Vec<RangeWindow>,
+}

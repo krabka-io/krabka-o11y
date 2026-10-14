@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats, push_dictionary_id,
-    push_ivarint, push_len, push_string, push_uvarint,
+    BTreeMap, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats,
+    assign_sorted_string_ids, push_dictionary_id, push_len, push_string, push_uvarint,
 };
 
 /// Encodes one tenant's trace-block records as a shard payload.
@@ -22,7 +22,8 @@ pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Ve
         for tag in &block.tag_names {
             dictionary.insert(tag.clone(), 0_usize);
         }
-        for (tag, values) in &block.tag_values {
+        for tag in block.tag_values.keys() {
+            let values = &block.tag_values[tag];
             dictionary.insert(tag.clone(), 0);
             for value in values {
                 dictionary.insert(value.clone(), 0);
@@ -31,10 +32,8 @@ pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Ve
     }
     // Ids are assigned on the sorted order rather than on first sight, so the
     // same records encode to the same bytes whichever order they arrived in.
-    let strings = dictionary.keys().cloned().collect::<Vec<_>>();
-    for (id, text) in strings.iter().enumerate() {
-        dictionary.insert(text.clone(), id);
-    }
+    let dictionary = assign_sorted_string_ids(dictionary);
+    let strings = dictionary.strings;
 
     let mut out = Vec::new();
     out.extend_from_slice(&TRACE_SHARD_MAGIC);
@@ -49,24 +48,28 @@ pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Ve
     push_len(&mut out, blocks.len());
     let mut previous_min = 0_i64;
     for block in blocks {
-        push_string(&mut out, &block.object_key);
-        push_ivarint(&mut out, block.min_ts.wrapping_sub(previous_min));
-        push_ivarint(&mut out, block.max_ts.wrapping_sub(block.min_ts));
-        previous_min = block.min_ts;
-        push_len(&mut out, block.row_count);
-        push_uvarint(&mut out, u64::from(block.level.get()));
+        super::push_shard_block_prefix(
+            &mut out,
+            &block.object_key,
+            block.min_ts,
+            block.max_ts,
+            block.row_count,
+            block.level,
+            &mut previous_min,
+        );
 
         push_len(&mut out, block.tag_names.len());
         for tag in &block.tag_names {
-            push_dictionary_id(&mut out, &dictionary, tag);
+            push_dictionary_id(&mut out, &dictionary.ids, tag);
         }
 
         push_len(&mut out, block.tag_values.len());
-        for (tag, values) in &block.tag_values {
-            push_dictionary_id(&mut out, &dictionary, tag);
+        for tag in block.tag_values.keys() {
+            let values = &block.tag_values[tag];
+            push_dictionary_id(&mut out, &dictionary.ids, tag);
             push_len(&mut out, values.len());
             for value in values {
-                push_dictionary_id(&mut out, &dictionary, value);
+                push_dictionary_id(&mut out, &dictionary.ids, value);
             }
         }
 

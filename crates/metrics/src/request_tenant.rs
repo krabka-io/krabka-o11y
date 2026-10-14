@@ -37,6 +37,12 @@ mod tests {
         tenant_from_metadata,
     };
 
+    struct ErrorResponseCase {
+        error: RequestTenantError,
+        status: StatusCode,
+        body: &'static str,
+    }
+
     fn unsupported(tenant: &str, character: char) -> RequestTenantError {
         RequestTenantError::Resolve(TenantResolveError::Invalid(
             TenantIdError::UnsupportedCharacter {
@@ -55,11 +61,23 @@ mod tests {
     }
 
     // A row of the oracle table: its name, the header value, and the answer.
-    type Case<'a> = (
-        &'a str,
-        Option<&'a [u8]>,
-        Result<TenantId, RequestTenantError>,
-    );
+    struct Case<'a> {
+        name: &'a str,
+        value: Option<&'a [u8]>,
+        expected: Result<TenantId, RequestTenantError>,
+    }
+
+    fn case<'a>(
+        name: &'a str,
+        value: Option<&'a [u8]>,
+        expected: Result<TenantId, RequestTenantError>,
+    ) -> Case<'a> {
+        Case {
+            name,
+            value,
+            expected,
+        }
+    }
 
     const MISSING: RequestTenantError = RequestTenantError::Resolve(TenantResolveError::Missing);
 
@@ -73,62 +91,66 @@ mod tests {
         let too_long_and_bad = format!("{too_long}/");
         let too_many = |actual| Err(RequestTenantError::TooManyTenants { actual });
         let cases: [Case<'_>; 22] = [
-            ("named", Some(b"tenant-a"), Ok(tenant("tenant-a"))),
-            ("absent", None, Err(MISSING)),
-            ("empty", Some(b""), Err(MISSING)),
-            ("separator", Some(b"a/b"), Err(unsupported("a/b", '/'))),
-            ("space", Some(b"a b"), Err(unsupported("a b", ' '))),
-            (
+            case("named", Some(b"tenant-a"), Ok(tenant("tenant-a"))),
+            case("absent", None, Err(MISSING)),
+            case("empty", Some(b""), Err(MISSING)),
+            case("separator", Some(b"a/b"), Err(unsupported("a/b", '/'))),
+            case("space", Some(b"a b"), Err(unsupported("a b", ' '))),
+            case(
                 "too long",
                 Some(too_long.as_bytes()),
                 Err(invalid(TenantIdError::TooLong)),
             ),
-            (
+            case(
                 "too long and unsupported",
                 Some(too_long_and_bad.as_bytes()),
                 Err(unsupported(&too_long_and_bad, '/')),
             ),
-            (
+            case(
                 "dot dot",
                 Some(b".."),
                 Err(invalid(TenantIdError::RelativePathSegment)),
             ),
-            ("two tenants", Some(b"a|b"), too_many(2)),
-            ("three tenants", Some(b"a|b|c"), too_many(3)),
-            ("one tenant twice", Some(b"a|a"), Ok(tenant("a"))),
-            ("a repeat among two", Some(b"a|a|b"), too_many(2)),
-            ("repeats out of order", Some(b"b|a|b"), too_many(2)),
-            ("a trailing empty part", Some(b"a|"), too_many(2)),
-            ("a leading empty part", Some(b"|a"), too_many(2)),
-            ("a repeat and an empty part", Some(b"a|a|"), too_many(2)),
-            (
+            case("two tenants", Some(b"a|b"), too_many(2)),
+            case("three tenants", Some(b"a|b|c"), too_many(3)),
+            case("one tenant twice", Some(b"a|a"), Ok(tenant("a"))),
+            case("a repeat among two", Some(b"a|a|b"), too_many(2)),
+            case("repeats out of order", Some(b"b|a|b"), too_many(2)),
+            case("a trailing empty part", Some(b"a|"), too_many(2)),
+            case("a leading empty part", Some(b"|a"), too_many(2)),
+            case("a repeat and an empty part", Some(b"a|a|"), too_many(2)),
+            case(
                 "an invalid second part",
                 Some(b"a|b/c"),
                 Err(unsupported("b/c", '/')),
             ),
-            (
+            case(
                 "an invalid first part",
                 Some(b"a/b|c"),
                 Err(unsupported("a/b", '/')),
             ),
-            (
+            case(
                 "a dot part",
                 Some(b".|a"),
                 Err(invalid(TenantIdError::RelativePathSegment)),
             ),
-            (
+            case(
                 "a dot dot part",
                 Some(b"a|.."),
                 Err(invalid(TenantIdError::RelativePathSegment)),
             ),
             // Mimir answers these two with a 500 on a query and accepts a push
             // under an empty tenant. Krabka cannot hold an empty tenant.
-            ("only a separator", Some(b"|"), Err(MISSING)),
-            ("only separators", Some(b"||"), Err(MISSING)),
+            case("only a separator", Some(b"|"), Err(MISSING)),
+            case("only separators", Some(b"||"), Err(MISSING)),
         ];
 
-        for (name, value, expected) in cases {
-            check!(resolve_request_tenant(value) == expected, "{name}");
+        for test_case in cases {
+            check!(
+                resolve_request_tenant(test_case.value) == test_case.expected,
+                "{}",
+                test_case.name
+            );
         }
     }
 
@@ -138,30 +160,39 @@ mod tests {
     #[tokio::test]
     async fn an_error_response_is_mimirs_status_and_plain_text_body() {
         let cases = [
-            (MISSING, StatusCode::UNAUTHORIZED, "no org id\n"),
-            (
-                unsupported("a/b", '/'),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID 'a/b' contains unsupported character '/'\n",
-            ),
-            (
-                invalid(TenantIdError::TooLong),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID is too long: max 150 characters\n",
-            ),
-            (
-                invalid(TenantIdError::RelativePathSegment),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID is '.' or '..'\n",
-            ),
-            (
-                RequestTenantError::TooManyTenants { actual: 3 },
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "too many tenant IDs present in the request. max: 1 actual: 3\n",
-            ),
+            ErrorResponseCase {
+                error: MISSING,
+                status: StatusCode::UNAUTHORIZED,
+                body: "no org id\n",
+            },
+            ErrorResponseCase {
+                error: unsupported("a/b", '/'),
+                status: StatusCode::UNAUTHORIZED,
+                body: "tenant ID 'a/b' contains unsupported character '/'\n",
+            },
+            ErrorResponseCase {
+                error: invalid(TenantIdError::TooLong),
+                status: StatusCode::UNAUTHORIZED,
+                body: "tenant ID is too long: max 150 characters\n",
+            },
+            ErrorResponseCase {
+                error: invalid(TenantIdError::RelativePathSegment),
+                status: StatusCode::UNAUTHORIZED,
+                body: "tenant ID is '.' or '..'\n",
+            },
+            ErrorResponseCase {
+                error: RequestTenantError::TooManyTenants { actual: 3 },
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                body: "too many tenant IDs present in the request. max: 1 actual: 3\n",
+            },
         ];
 
-        for (error, status, body) in cases {
+        for ErrorResponseCase {
+            error,
+            status,
+            body,
+        } in cases
+        {
             let response = error.into_response();
             check!(response.status() == status, "{body}");
             check!(

@@ -183,7 +183,7 @@ overrides:
                     "tenant-a",
                     serde_json::json!({"max_spans_per_trace": null, "max_traces_per_search": 9}),
                 )
-                .map(|(_, version)| version)
+                .map(|snapshot| snapshot.version)
                 == Ok("2".into())
         );
         assert2::assert!(
@@ -224,7 +224,7 @@ overrides:
             .with_api_file(path)
             .unwrap();
         assert2::check!(restarted.for_tenant("tenant-a").max_spans_per_trace == 7);
-        assert2::check!(restarted.api_get("tenant-a").unwrap().1 == "1");
+        assert2::check!(restarted.api_get("tenant-a").unwrap().version == "1");
     }
 
     #[test]

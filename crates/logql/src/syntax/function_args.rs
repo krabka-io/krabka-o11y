@@ -22,11 +22,11 @@ pub(crate) fn function_args<'a>(
     starts.extend(commas.iter().map(|x| x + 1));
     let mut ends = commas;
     ends.push(inner.len());
-    Ok(Some(
-        starts
-            .into_iter()
-            .zip(ends)
-            .map(|(a, b)| inner[a..b].trim())
-            .collect(),
-    ))
+    let mut args = Vec::with_capacity(starts.len());
+    for index in 0..starts.len() {
+        let start = starts[index];
+        let end = ends[index];
+        args.push(inner[start..end].trim());
+    }
+    Ok(Some(args))
 }

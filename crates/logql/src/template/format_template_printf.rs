@@ -88,7 +88,7 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
     };
     let format = format.rendered_bytes();
     let units = raw::runes(&format);
-    let chars: Vec<_> = units.iter().map(|unit| unit.0).collect();
+    let chars: Vec<_> = units.iter().map(|unit| unit.character).collect();
     let values = &args[1..];
     let mut cursor = 0;
     let mut arg = 0;
@@ -96,7 +96,7 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
     let mut output = Vec::new();
     while cursor < chars.len() {
         if chars[cursor] != '%' {
-            output.extend_from_slice(&format[units[cursor].1.clone()]);
+            output.extend_from_slice(&format[units[cursor].range.clone()]);
             cursor += 1;
             continue;
         }
@@ -114,7 +114,7 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
             cursor += 1;
         }
         let mut good = true;
-        let mut indexed = index(
+        let mut indexed = index_for_spec(
             &chars,
             &mut cursor,
             &mut arg,
@@ -122,26 +122,27 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
             &mut reordered,
             &mut good,
         );
-        if chars.get(cursor) == Some(&'*') {
-            cursor += 1;
-            match star(values, &mut arg) {
-                Some(width) => {
-                    spec.width = Some(
-                        usize::try_from(width.unsigned_abs())
-                            .expect("validated formatter width fits usize"),
-                    );
-                    if width < 0 {
-                        spec.flags[Spec::MINUS] = true;
-                        spec.flags[Spec::ZERO] = false;
-                    }
+        match star_value(&chars, &mut cursor, values, &mut arg) {
+            StarFormatValue::Integer(width) => {
+                spec.width = Some(
+                    usize::try_from(width.unsigned_abs())
+                        .expect("validated formatter width fits usize"),
+                );
+                if width < 0 {
+                    spec.flags[Spec::MINUS] = true;
+                    spec.flags[Spec::ZERO] = false;
                 }
-                None => output.extend_from_slice(b"%!(BADWIDTH)"),
+                indexed = false;
             }
-            indexed = false;
-        } else {
-            spec.width = number(&chars, &mut cursor);
-            if indexed && spec.width.is_some() {
-                good = false;
+            StarFormatValue::Invalid => {
+                output.extend_from_slice(b"%!(BADWIDTH)");
+                indexed = false;
+            }
+            StarFormatValue::NotPresent => {
+                spec.width = number(&chars, &mut cursor);
+                if indexed && spec.width.is_some() {
+                    good = false;
+                }
             }
         }
         if chars.get(cursor) == Some(&'.') && cursor + 1 < chars.len() {
@@ -149,7 +150,7 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
             if indexed {
                 good = false;
             }
-            indexed = index(
+            indexed = index_for_spec(
                 &chars,
                 &mut cursor,
                 &mut arg,
@@ -157,24 +158,25 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
                 &mut reordered,
                 &mut good,
             );
-            if chars.get(cursor) == Some(&'*') {
-                cursor += 1;
-                match star(values, &mut arg) {
-                    Some(precision) if precision >= 0 => {
-                        spec.precision = Some(
-                            usize::try_from(precision)
-                                .expect("validated formatter precision fits usize"),
-                        );
-                    }
-                    _ => output.extend_from_slice(b"%!(BADPREC)"),
+            match star_value(&chars, &mut cursor, values, &mut arg) {
+                StarFormatValue::Integer(precision) if precision >= 0 => {
+                    spec.precision = Some(
+                        usize::try_from(precision)
+                            .expect("validated formatter precision fits usize"),
+                    );
+                    indexed = false;
                 }
-                indexed = false;
-            } else {
-                spec.precision = Some(number(&chars, &mut cursor).unwrap_or(0));
+                StarFormatValue::Integer(_) | StarFormatValue::Invalid => {
+                    output.extend_from_slice(b"%!(BADPREC)");
+                    indexed = false;
+                }
+                StarFormatValue::NotPresent => {
+                    spec.precision = Some(number(&chars, &mut cursor).unwrap_or(0));
+                }
             }
         }
         if !indexed {
-            index(
+            index_for_spec(
                 &chars,
                 &mut cursor,
                 &mut arg,
@@ -207,7 +209,8 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
     }
     if !reordered && arg < values.len() {
         output.extend_from_slice(b"%!(EXTRA ");
-        for (i, value) in values[arg..].iter().enumerate() {
+        for i in 0..values[arg..].len() {
+            let value = &values[arg + i];
             if i > 0 {
                 output.extend_from_slice(b", ");
             }
@@ -239,6 +242,17 @@ fn number(chars: &[char], cursor: &mut usize) -> Option<usize> {
         *cursor += 1;
     }
     value
+}
+
+fn index_for_spec(
+    chars: &[char],
+    cursor: &mut usize,
+    arg: &mut usize,
+    count: usize,
+    reordered: &mut bool,
+    good: &mut bool,
+) -> bool {
+    index(chars, cursor, arg, count, reordered, good)
 }
 
 fn index(
@@ -296,6 +310,28 @@ fn star(values: &[TemplateRuntimeValue], arg: &mut usize) -> Option<i64> {
     (integer.unsigned_abs() <= 1_000_000).then_some(integer)
 }
 
+enum StarFormatValue {
+    NotPresent,
+    Invalid,
+    Integer(i64),
+}
+
+fn star_value(
+    chars: &[char],
+    cursor: &mut usize,
+    values: &[TemplateRuntimeValue],
+    arg: &mut usize,
+) -> StarFormatValue {
+    if chars.get(*cursor) != Some(&'*') {
+        return StarFormatValue::NotPresent;
+    }
+    *cursor += 1;
+    match star(values, arg) {
+        Some(integer) => StarFormatValue::Integer(integer),
+        None => StarFormatValue::Invalid,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -330,18 +366,18 @@ mod tests {
                 value.clone()
             ]) == [vec![0xff], bytes.clone()].concat()
         );
-        let object = TemplateRuntimeValue::Object(std::collections::BTreeMap::from([
-            ("raw".into(), value),
-            ("n".into(), TemplateRuntimeValue::Integer64(7)),
-            (
-                "nil".into(),
-                TemplateRuntimeValue::Json(serde_json::Value::Null),
-            ),
-            (
-                "time".into(),
-                TemplateRuntimeValue::Time(super::super::TemplateTime::zero()),
-            ),
-        ]));
+        let mut object_fields = std::collections::BTreeMap::new();
+        object_fields.insert("raw".into(), value);
+        object_fields.insert("n".into(), TemplateRuntimeValue::Integer64(7));
+        object_fields.insert(
+            "nil".into(),
+            TemplateRuntimeValue::Json(serde_json::Value::Null),
+        );
+        object_fields.insert(
+            "time".into(),
+            TemplateRuntimeValue::Time(super::super::TemplateTime::zero()),
+        );
+        let object = TemplateRuntimeValue::Object(object_fields);
         check!(
             printf("%#v", std::slice::from_ref(&object))
                 == "map[string]interface {}{\"n\":7, \"nil\":interface {}(nil), \"raw\":\"\\xff\\xc3(€\", \"time\":time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)}"
@@ -362,6 +398,7 @@ mod tests {
         );
     }
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn go_time_stringer_go_string_and_reflected_fields_keep_their_types() {
         let time = super::super::TemplateTime::parse(
             "2006-01-02 15:04:05.000000000",
@@ -370,23 +407,46 @@ mod tests {
         )
         .unwrap();
         let value = TemplateRuntimeValue::Time(time);
-        for (format, expected) in [
-            ("%T", "time.Time"),
-            ("%s", "2024-01-02 12:04:05.123456789 +0000 UTC"),
-            ("%.3v", "202"),
-            (
-                "%#v",
-                "time.Date(2024, time.January, 2, 12, 4, 5, 123456789, time.UTC)",
-            ),
-            ("%d", "{123456789 63839793845 0}"),
-            ("%p", "%!p(time.Time={123456789 63839793845 <nil>})"),
-            ("%c", "{� � %!c(*time.Location=<nil>)}"),
-            (
-                "%f",
-                "{%!f(uint64=123456789) %!f(int64=63839793845) %!f(*time.Location=<nil>)}",
-            ),
-        ] {
-            check!(printf(format, std::slice::from_ref(&value)) == expected);
+        struct FormatExpectationCase {
+            format: &'static str,
+            expected: &'static str,
+        }
+        let cases = [
+            FormatExpectationCase {
+                format: "%T",
+                expected: "time.Time",
+            },
+            FormatExpectationCase {
+                format: "%s",
+                expected: "2024-01-02 12:04:05.123456789 +0000 UTC",
+            },
+            FormatExpectationCase {
+                format: "%.3v",
+                expected: "202",
+            },
+            FormatExpectationCase {
+                format: "%#v",
+                expected: "time.Date(2024, time.January, 2, 12, 4, 5, 123456789, time.UTC)",
+            },
+            FormatExpectationCase {
+                format: "%d",
+                expected: "{123456789 63839793845 0}",
+            },
+            FormatExpectationCase {
+                format: "%p",
+                expected: "%!p(time.Time={123456789 63839793845 <nil>})",
+            },
+            FormatExpectationCase {
+                format: "%c",
+                expected: "{� � %!c(*time.Location=<nil>)}",
+            },
+            FormatExpectationCase {
+                format: "%f",
+                expected: "{%!f(uint64=123456789) %!f(int64=63839793845) %!f(*time.Location=<nil>)}",
+            },
+        ];
+        for case in &cases {
+            check!(printf(case.format, std::slice::from_ref(&value)) == case.expected);
         }
     }
     #[test]

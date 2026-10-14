@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct ClassicBucketSample {
+    upper_bound: &'static str,
+    value: f64,
+}
+
 /// Differential parity for the native-histogram constructs in the planner.
 ///
 /// The recursive planner routes a bare native-histogram selector, native
@@ -11,19 +17,6 @@ use super::*;
 pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
     use crate::{DurationExprContext, parse_promql_with_duration_context};
 
-    // Build a non-trivial native histogram (schema 0, two positive buckets
-    // [1,2] and [2,4] carrying counts 1 and 3) with a real count/sum so the
-    // quantile, fraction, and stddev/stdvar folds all produce finite values.
-    fn seed_histogram(count: f64, sum: f64) -> NativeHistogram {
-        let mut histogram = native_histogram(count, sum);
-        histogram.positive_spans = vec![BucketSpan {
-            offset: 0,
-            length: 2,
-        }];
-        histogram.positive_counts = vec![1.0, 3.0];
-        histogram
-    }
-
     // Two native-histogram groups (job=api / job=db) so multi-series output and
     // the `__name__` drop are both observable, plus a classic `cls_bucket{le}`
     // float histogram to exercise the classic+native co-routing inside the
@@ -31,55 +24,102 @@ pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "t",
-        labels(&[("__name__", "nh"), ("job", "api")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "nh"),
+            crate::test_support::TestLabelPair::new("job", "api"),
+        ]),
         300_000,
-        seed_histogram(4.0, 6.5),
+        two_positive_bucket_histogram(4.0, 6.5),
     );
     store.push_histogram(
         "t",
-        labels(&[("__name__", "nh"), ("job", "db")]),
+        labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "nh"),
+            crate::test_support::TestLabelPair::new("job", "db"),
+        ]),
         300_000,
-        seed_histogram(8.0, 20.0),
+        two_positive_bucket_histogram(8.0, 20.0),
     );
-    for (le, value) in [("1", 1.0), ("2", 3.0), ("+Inf", 4.0)] {
-        let lbls = labels(&[("__name__", "cls_bucket"), ("le", le)]);
-        store.push_float("t", lbls, 300_000, value);
+    for bucket in [
+        ClassicBucketSample::builder()
+            .upper_bound("1")
+            .value(1.0)
+            .build(),
+        ClassicBucketSample::builder()
+            .upper_bound("2")
+            .value(3.0)
+            .build(),
+        ClassicBucketSample::builder()
+            .upper_bound("+Inf")
+            .value(4.0)
+            .build(),
+    ] {
+        let lbls = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "cls_bucket"),
+            crate::test_support::TestLabelPair::new("le", bucket.upper_bound),
+        ]);
+        store.push_float("t", lbls, 300_000, bucket.value);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let queries = [
         // The bare native-histogram selector itself (carries the histogram
         // payload + full labelset, including `__name__`).
-        ("nh", 300_000_i64),
+        QueryAt {
+            query: "nh",
+            time_ms: 300_000,
+        },
         // Native histogram_quantile at two phis.
-        ("histogram_quantile(0.5, nh)", 300_000),
-        ("histogram_quantile(0.9, nh)", 300_000),
+        QueryAt {
+            query: "histogram_quantile(0.5, nh)",
+            time_ms: 300_000,
+        },
+        QueryAt {
+            query: "histogram_quantile(0.9, nh)",
+            time_ms: 300_000,
+        },
         // Every native accessor.
-        ("histogram_count(nh)", 300_000),
-        ("histogram_sum(nh)", 300_000),
-        ("histogram_avg(nh)", 300_000),
-        ("histogram_stddev(nh)", 300_000),
-        ("histogram_stdvar(nh)", 300_000),
+        QueryAt {
+            query: "histogram_count(nh)",
+            time_ms: 300_000,
+        },
+        QueryAt {
+            query: "histogram_sum(nh)",
+            time_ms: 300_000,
+        },
+        QueryAt {
+            query: "histogram_avg(nh)",
+            time_ms: 300_000,
+        },
+        QueryAt {
+            query: "histogram_stddev(nh)",
+            time_ms: 300_000,
+        },
+        QueryAt {
+            query: "histogram_stdvar(nh)",
+            time_ms: 300_000,
+        },
         // histogram_fraction carries two scalar bounds.
-        ("histogram_fraction(1, 2, nh)", 300_000),
-        ("histogram_fraction(-Inf, +Inf, nh)", 300_000),
+        QueryAt {
+            query: "histogram_fraction(1, 2, nh)",
+            time_ms: 300_000,
+        },
+        QueryAt {
+            query: "histogram_fraction(-Inf, +Inf, nh)",
+            time_ms: 300_000,
+        },
         // The shared folds also work over the classic float buckets.
-        ("histogram_quantile(0.5, cls_bucket)", 300_000),
-        ("histogram_fraction(1, 2, cls_bucket)", 300_000),
+        QueryAt {
+            query: "histogram_quantile(0.5, cls_bucket)",
+            time_ms: 300_000,
+        },
+        QueryAt {
+            query: "histogram_fraction(1, 2, cls_bucket)",
+            time_ms: 300_000,
+        },
     ];
 
-    for (query, time_ms) in queries {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, time_ms).await;
-
-        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
-
-        let via_interpreter = normalize(via_interpreter);
-        let via_operators = normalize(via_operators);
-        // `instant_samples_match` compares histogram payloads structurally
-        // (via `SampleValue` `PartialEq`) and floats bit-exactly.
-        assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
-    }
+    assert_call_planner_matches_interpreter(&engine, &queries).await;
 
     // The bare-selector case must surface the native histogram payload (proving
     // the histogram-aware selection actually carried it, not a dropped/empty
@@ -113,8 +153,9 @@ pub(crate) async fn native_histogram_planner_path_matches_interpreter() {
         "histogram_quantiles(nh, \"q\", 0.5, 0.9)",
         "histogram_quantiles(cls_bucket, \"q\", 0.5)",
     ] {
-        let (via_operators, via_interpreter) =
-            planned_and_interpreted(&engine, query, 300_000).await;
+        let parity = planned_and_interpreted(&engine, query, 300_000).await;
+        let via_operators = parity.via_operators;
+        let via_interpreter = parity.via_interpreter;
         let normalize = |result: QueryResult| fingerprint_sorted(result, query);
         assert2::assert!(instant_samples_match(
             &normalize(via_interpreter),

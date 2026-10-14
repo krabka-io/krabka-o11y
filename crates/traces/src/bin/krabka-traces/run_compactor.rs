@@ -1,4 +1,4 @@
-use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_observability::{RoleReadiness, SupervisedTasks};
 use krabka_units::fmt::Human as _;
 
 use super::{
@@ -72,15 +72,9 @@ pub(crate) async fn run_compactor(
             shutdown.clone(),
         ),
     );
-    let outcome = tokio::select! {
-        () = shutdown.cancelled() => Ok(()),
-        name = tasks.first_unexpected_exit() => Err(
-            Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)),
-        ),
-    };
     // A pass already under way finishes before this returns, so `--target all`
     // stops this stage and moves to the next one rather than leaving a loop
     // running behind the drain.
-    tasks.shutdown().await;
-    outcome
+    tasks.run_until_shutdown().await?;
+    Ok(())
 }

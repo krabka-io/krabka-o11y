@@ -14,6 +14,9 @@ pub(crate) fn unlabeled_partial(query: &FrontendRangeQuery, partial: f64) -> Ann
         drop_name: false,
         start_timestamps_ms: std::collections::BTreeMap::new(),
         labels: labels(&[]).into(),
-        samples: vec![(query.start_ms, SampleValue::Float(partial))],
+        samples: vec![RangeSeriesSample::new(
+            query.start_ms,
+            SampleValue::Float(partial),
+        )],
     }]))
 }

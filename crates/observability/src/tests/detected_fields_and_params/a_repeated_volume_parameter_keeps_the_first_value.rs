@@ -11,10 +11,7 @@ use super::*;
 pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     let parse = |q: &str| super::super::prelude::parse_volume_params(Some(q)).expect("valid query");
 
-    check!(parse("query=a&query=b").query == "a");
-    check!(parse("query=a&limit=5&limit=9").limit == 5);
-    check!(parse("query=a&start=100&start=200").start == 100_000_000_000);
-    check!(parse("query=a&end=500&end=900").end == 500_000_000_000);
+    super::assert_common_repeated_fields(parse);
     check!(parse("query=a&step=5s&step=9s").step == parse("query=a&step=5s").step);
     check!(
         parse("query=a&targetLabels=x&targetLabels=y").target_labels == Some(vec!["x".to_string()])

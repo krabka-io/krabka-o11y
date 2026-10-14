@@ -63,7 +63,12 @@ pub fn wal_records(count: usize) -> Vec<WalRecord> {
             tenant: TENANT.to_string(),
             labels: series_labels(which)
                 .iter()
-                .map(|(name, value)| (name.clone(), value.clone().into()))
+                .map(|pair| {
+                    krabka_metrics::MetricLabelPair::new(
+                        pair.name.to_string(),
+                        krabka_metrics::MetricString::from(pair.value.to_string()),
+                    )
+                })
                 .collect(),
             payload: SamplePayload::Float {
                 timestamp_ms: FIRST_APPLIED_MS

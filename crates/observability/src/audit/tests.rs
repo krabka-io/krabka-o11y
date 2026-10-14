@@ -29,6 +29,34 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 
+struct InvalidFlagCase<'a> {
+    name: &'a str,
+    arguments: &'a [&'a str],
+    expected_kind: ErrorKind,
+}
+
+struct ClosedSetCase<'a> {
+    name: &'a str,
+    values: &'a [&'a str],
+    pattern: &'a regex::Regex,
+}
+
+struct AuditEnvironmentOverride {
+    variable: &'static str,
+    value: &'static str,
+}
+
+fn with_environment<T>(overrides: &[AuditEnvironmentOverride], run: impl FnOnce() -> T) -> T {
+    if overrides.is_empty() {
+        return run();
+    }
+    let override_value = &overrides[0];
+    let remaining = &overrides[1..];
+    temp_env::with_var(override_value.variable, Some(override_value.value), || {
+        with_environment(remaining, run)
+    })
+}
+
 /// Every environment variable the audit flags read.
 const ENVIRONMENT: [&str; 9] = [
     "KRABKA_AUDIT_TOPIC",
@@ -89,6 +117,21 @@ fn mock_time() -> Arc<ManualMonotonicClock> {
     ManualMonotonicClock::new_shared()
 }
 
+struct MemoryAuditLayer {
+    sink: Arc<MemorySink>,
+    layer: RunningAuditLayer,
+}
+
+fn memory_audit_layer(time: &Arc<ManualMonotonicClock>) -> MemoryAuditLayer {
+    let sink = Arc::new(MemorySink::default());
+    let layer = RunningAuditLayer::start(
+        &enabled_args(),
+        Arc::clone(&sink) as Arc<dyn AuditSink>,
+        time,
+    );
+    MemoryAuditLayer { sink, layer }
+}
+
 fn clocks(time: &Arc<ManualMonotonicClock>) -> AuditClocks {
     AuditClocks {
         clock: Arc::new(ManualWallClock::from_clock(
@@ -147,8 +190,10 @@ fn expected_records(events: &[AuditEvent], mut chain: ChainState) -> Vec<AuditRe
         .iter()
         .map(|event| {
             let mut record = AuditRecord::from_event(event, &product());
-            let (seq, prev_head) = chain.extend(&record.value);
-            record.push_chain_headers(seq, &prev_head);
+            let advance = chain.extend(&record.value);
+            let sequence = advance.0;
+            let previous_head = advance.1;
+            record.push_chain_headers(sequence, &previous_head);
             record
         })
         .collect()
@@ -158,18 +203,19 @@ fn header(record: &AuditRecord, key: &str) -> Option<String> {
     record
         .headers
         .iter()
-        .find(|(name, _)| name == key)
-        .map(|(_, value)| String::from_utf8_lossy(value).into_owned())
+        .find(|header| header.0 == key)
+        .map(|header| String::from_utf8_lossy(&header.1).into_owned())
 }
 
 /// Walks the chain the way the verifier does: each record's `seq` is the
 /// next number, and its `prev_hash` is the head after the record before it.
 fn check_chain(records: &[AuditRecord]) {
     let mut head = GENESIS_HEAD;
-    for (seq, record) in (0_u64..).zip(records) {
+    for (index, record) in records.iter().enumerate() {
+        let seq = u64::try_from(index).expect("record count fits the audit sequence");
         let prev_hash = header(record, "prev_hash").and_then(|hex| from_hex32(&hex));
         check!(
-            (header(record, "seq"), prev_hash) == (Some(seq.to_string()), Some(head)),
+            header(record, "seq") == Some(seq.to_string()) && prev_hash == Some(head),
             "record {seq}"
         );
         head = chain_hash(&head, seq, &record.value);
@@ -187,13 +233,13 @@ struct RunningAuditLayer {
 impl RunningAuditLayer {
     fn start(args: &AuditArgs, sink: Arc<dyn AuditSink>, time: &Arc<ManualMonotonicClock>) -> Self {
         let shutdown = CancellationToken::new();
-        let (handle, writer) =
+        let parts =
             AuditService::start_with_sink(args, product(), sink, clocks(time), shutdown.clone())
                 .expect("the layer starts")
                 .into_parts();
         Self {
-            handle,
-            writer,
+            handle: parts.handle,
+            writer: parts.writer,
             shutdown,
         }
     }
@@ -291,26 +337,47 @@ fn every_audit_flag_parses_into_its_field() {
         "audit-2026",
     ])
     .expect("every flag is valid");
-    let from_environment = temp_env::with_vars(
-        [
-            ("KRABKA_AUDIT_TOPIC", Some("krabka-audit")),
-            ("KRABKA_AUDIT_BOOTSTRAP", Some("broker:9092")),
-            ("KRABKA_AUDIT_PARTITION", Some("3")),
-            (
-                "KRABKA_AUDIT_SPOOL_DIR",
-                Some("/var/lib/krabka/audit-spool"),
-            ),
-            ("KRABKA_AUDIT_SPOOL_MAX", Some("512MiB")),
-            ("KRABKA_AUDIT_QUEUE_CAPACITY", Some("16")),
-            ("KRABKA_AUDIT_CHECKPOINT_EVERY", Some("5m")),
-            (
-                "KRABKA_AUDIT_SIGNING_KEY_PATH",
-                Some("/etc/krabka/audit.pk8"),
-            ),
-            ("KRABKA_AUDIT_SIGNING_KEY_ID", Some("audit-2026")),
-        ],
-        || Cli::try_parse_from(["krabka-audit-test"]).map(|cli| cli.audit),
-    )
+    let environment = [
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_TOPIC",
+            value: "krabka-audit",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_BOOTSTRAP",
+            value: "broker:9092",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_PARTITION",
+            value: "3",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_SPOOL_DIR",
+            value: "/var/lib/krabka/audit-spool",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_SPOOL_MAX",
+            value: "512MiB",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_QUEUE_CAPACITY",
+            value: "16",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_CHECKPOINT_EVERY",
+            value: "5m",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_SIGNING_KEY_PATH",
+            value: "/etc/krabka/audit.pk8",
+        },
+        AuditEnvironmentOverride {
+            variable: "KRABKA_AUDIT_SIGNING_KEY_ID",
+            value: "audit-2026",
+        },
+    ];
+    let from_environment = with_environment(&environment, || {
+        Cli::try_parse_from(["krabka-audit-test"]).map(|cli| cli.audit)
+    })
     .expect("every variable is valid");
 
     check!(from_flags == expected);
@@ -320,57 +387,61 @@ fn every_audit_flag_parses_into_its_field() {
 
 #[test]
 fn invalid_audit_flags_are_refused() {
-    let cases: [(&str, &[&str], ErrorKind); 9] = [
-        (
-            "empty topic",
-            &["--audit-topic", ""],
-            ErrorKind::InvalidValue,
-        ),
-        (
-            "empty bootstrap",
-            &["--audit-bootstrap", ""],
-            ErrorKind::InvalidValue,
-        ),
-        (
-            "negative partition",
-            &["--audit-partition=-1"],
-            ErrorKind::ValueValidation,
-        ),
-        (
-            "zero spool cap",
-            &["--audit-spool-max", "0B"],
-            ErrorKind::ValueValidation,
-        ),
-        (
-            "spool cap with no unit",
-            &["--audit-spool-max", "1024"],
-            ErrorKind::ValueValidation,
-        ),
-        (
-            "zero queue",
-            &["--audit-queue-capacity", "0"],
-            ErrorKind::ValueValidation,
-        ),
-        (
-            "zero checkpoint interval",
-            &["--audit-checkpoint-every", "0s"],
-            ErrorKind::ValueValidation,
-        ),
-        (
-            "key path with no key id",
-            &["--audit-signing-key-path", "/etc/krabka/audit.pk8"],
-            ErrorKind::MissingRequiredArgument,
-        ),
-        (
-            "key id with no key path",
-            &["--audit-signing-key-id", "audit-2026"],
-            ErrorKind::MissingRequiredArgument,
-        ),
+    let cases: [InvalidFlagCase<'_>; 9] = [
+        InvalidFlagCase {
+            name: "empty topic",
+            arguments: &["--audit-topic", ""],
+            expected_kind: ErrorKind::InvalidValue,
+        },
+        InvalidFlagCase {
+            name: "empty bootstrap",
+            arguments: &["--audit-bootstrap", ""],
+            expected_kind: ErrorKind::InvalidValue,
+        },
+        InvalidFlagCase {
+            name: "negative partition",
+            arguments: &["--audit-partition=-1"],
+            expected_kind: ErrorKind::ValueValidation,
+        },
+        InvalidFlagCase {
+            name: "zero spool cap",
+            arguments: &["--audit-spool-max", "0B"],
+            expected_kind: ErrorKind::ValueValidation,
+        },
+        InvalidFlagCase {
+            name: "spool cap with no unit",
+            arguments: &["--audit-spool-max", "1024"],
+            expected_kind: ErrorKind::ValueValidation,
+        },
+        InvalidFlagCase {
+            name: "zero queue",
+            arguments: &["--audit-queue-capacity", "0"],
+            expected_kind: ErrorKind::ValueValidation,
+        },
+        InvalidFlagCase {
+            name: "zero checkpoint interval",
+            arguments: &["--audit-checkpoint-every", "0s"],
+            expected_kind: ErrorKind::ValueValidation,
+        },
+        InvalidFlagCase {
+            name: "key path with no key id",
+            arguments: &["--audit-signing-key-path", "/etc/krabka/audit.pk8"],
+            expected_kind: ErrorKind::MissingRequiredArgument,
+        },
+        InvalidFlagCase {
+            name: "key id with no key path",
+            arguments: &["--audit-signing-key-id", "audit-2026"],
+            expected_kind: ErrorKind::MissingRequiredArgument,
+        },
     ];
 
-    for (name, argv, kind) in cases {
-        let result = parse(argv);
-        check!(result.map_err(|error| error.kind()) == Err(kind), "{name}");
+    for case in cases {
+        let result = parse(case.arguments);
+        check!(
+            result.map_err(|error| error.kind()) == Err(case.expected_kind),
+            "{}",
+            case.name
+        );
     }
 }
 
@@ -380,30 +451,48 @@ fn the_audit_bootstrap_flag_wins_over_the_service_bootstrap() {
         bootstrap: Some("audit-broker:9092".to_owned()),
         ..enabled_args()
     };
+    struct BootstrapCase<'a> {
+        name: &'static str,
+        args: &'a AuditArgs,
+        service_bootstrap: Option<&'a str>,
+        expected: Result<&'static str, ()>,
+    }
+    let service_args = enabled_args();
     let cases = [
-        (
-            "flag and service",
-            &with_flag,
-            Some("wal-broker:9092"),
-            Ok("audit-broker:9092"),
-        ),
-        ("flag only", &with_flag, None, Ok("audit-broker:9092")),
-        (
-            "service only",
-            &enabled_args(),
-            Some("wal-broker:9092"),
-            Ok("wal-broker:9092"),
-        ),
-        ("neither", &enabled_args(), None, Err(())),
+        BootstrapCase {
+            name: "flag and service",
+            args: &with_flag,
+            service_bootstrap: Some("wal-broker:9092"),
+            expected: Ok("audit-broker:9092"),
+        },
+        BootstrapCase {
+            name: "flag only",
+            args: &with_flag,
+            service_bootstrap: None,
+            expected: Ok("audit-broker:9092"),
+        },
+        BootstrapCase {
+            name: "service only",
+            args: &service_args,
+            service_bootstrap: Some("wal-broker:9092"),
+            expected: Ok("wal-broker:9092"),
+        },
+        BootstrapCase {
+            name: "neither",
+            args: &service_args,
+            service_bootstrap: None,
+            expected: Err(()),
+        },
     ];
 
-    for (name, args, service_bootstrap, expected) in cases {
-        let resolved = args.resolve_bootstrap(service_bootstrap);
+    for case in cases {
+        let resolved = case.args.resolve_bootstrap(case.service_bootstrap);
         check!(
-            resolved.as_ref().map_err(|_| ()).copied() == expected,
-            "{name}"
+            resolved.as_ref().map_err(|_| ()).copied() == case.expected,
+            "{}",
+            case.name
         );
-        if expected.is_err() {
+        if case.expected.is_err() {
             assert!(let Err(AuditBuildError::MissingBootstrap) = resolved);
         }
     }
@@ -471,21 +560,43 @@ fn each_constructor_builds_the_exact_event() {
 
 #[test]
 fn a_source_endpoint_gives_one_address_form_for_each_client() {
+    struct EndpointCase {
+        name: &'static str,
+        address: &'static str,
+        ip: &'static str,
+        port: u16,
+    }
     let cases = [
-        ("ipv4", "10.0.0.7:51000", "10.0.0.7", 51000),
-        ("ipv6", "[2001:db8::7]:443", "2001:db8::7", 443),
-        ("ipv4 in ipv6 form", "[::ffff:10.0.0.7]:80", "10.0.0.7", 80),
+        EndpointCase {
+            name: "ipv4",
+            address: "10.0.0.7:51000",
+            ip: "10.0.0.7",
+            port: 51000,
+        },
+        EndpointCase {
+            name: "ipv6",
+            address: "[2001:db8::7]:443",
+            ip: "2001:db8::7",
+            port: 443,
+        },
+        EndpointCase {
+            name: "ipv4 in ipv6 form",
+            address: "[::ffff:10.0.0.7]:80",
+            ip: "10.0.0.7",
+            port: 80,
+        },
     ];
 
-    for (name, address, ip, port) in cases {
-        let address: SocketAddr = address.parse().expect("the address is valid");
+    for case in cases {
+        let address: SocketAddr = case.address.parse().expect("the address is valid");
         check!(
             source_endpoint(address)
                 == AuditEndpoint {
-                    ip: ip.to_owned(),
-                    port,
+                    ip: case.ip.to_owned(),
+                    port: case.port,
                 },
-            "{name}"
+            "{}",
+            case.name
         );
     }
     check!(
@@ -515,17 +626,33 @@ fn the_product_is_krabka_and_the_named_service() {
 fn every_closed_set_holds_distinct_names_in_one_form() {
     let dotted = regex::Regex::new(r"^[a-z_]+(\.[a-z_]+)+$").expect("the pattern is valid");
     let plain = regex::Regex::new(r"^[a-z_]+$").expect("the pattern is valid");
-    let sets: [(&str, &[&str], &regex::Regex); 3] = [
-        ("operations", &OPERATIONS, &dotted),
-        ("resource types", &RESOURCE_TYPES, &plain),
-        ("mechanisms", &MECHANISMS, &plain),
+    let sets: [ClosedSetCase<'_>; 3] = [
+        ClosedSetCase {
+            name: "operations",
+            values: &OPERATIONS,
+            pattern: &dotted,
+        },
+        ClosedSetCase {
+            name: "resource types",
+            values: &RESOURCE_TYPES,
+            pattern: &plain,
+        },
+        ClosedSetCase {
+            name: "mechanisms",
+            values: &MECHANISMS,
+            pattern: &plain,
+        },
     ];
 
-    for (name, set, form) in sets {
-        let distinct: std::collections::BTreeSet<_> = set.iter().collect();
-        check!(distinct.len() == set.len(), "{name} holds a duplicate");
-        for value in set {
-            check!(form.is_match(value), "{name}: {value}");
+    for set in sets {
+        let distinct: std::collections::BTreeSet<_> = set.values.iter().collect();
+        check!(
+            distinct.len() == set.values.len(),
+            "{} holds a duplicate",
+            set.name
+        );
+        for value in set.values {
+            check!(set.pattern.is_match(value), "{}: {value}", set.name);
         }
     }
 }
@@ -533,7 +660,9 @@ fn every_closed_set_holds_distinct_names_in_one_form() {
 #[tokio::test]
 async fn each_handle_method_stamps_the_clock_time_and_queues_the_event() {
     let time = mock_time();
-    let (log, mut queue) = AuditLog::new(8);
+    let queue_parts = AuditLog::new(8);
+    let log = queue_parts.0;
+    let mut queue = queue_parts.1;
     let handle = AuditHandle::new(log, Arc::new(AuditStats::new()), clocks(&time).clock);
 
     handle.admin_operation(
@@ -593,9 +722,9 @@ async fn each_handle_method_stamps_the_clock_time_and_queues_the_event() {
                 ),
             ]
     );
-    check!(
-        (handle.is_enabled(), handle.now(), handle.dropped()) == (true, EpochMs(START_MS + 5), 0)
-    );
+    check!(handle.is_enabled());
+    check!(handle.now() == EpochMs(START_MS + 5));
+    check!(handle.dropped() == 0);
 }
 
 /// The listeners report their decisions through `SecurityEvents`, and the
@@ -608,7 +737,9 @@ fn the_security_decisions_of_a_listener_become_audit_events() {
     use crate::server_security::{AuthFailureReason, AuthMethod, SecurityEvents};
 
     let time = mock_time();
-    let (log, mut queue) = AuditLog::new(8);
+    let queue_parts = AuditLog::new(8);
+    let log = queue_parts.0;
+    let mut queue = queue_parts.1;
     let handle = AuditHandle::new(log, Arc::new(AuditStats::new()), clocks(&time).clock);
     let tenant = krabka_blockstore::TenantId::new("tenant-b").expect("a valid tenant id");
     let source: SocketAddr = "10.0.0.7:51000".parse().expect("the address is valid");
@@ -682,30 +813,39 @@ fn a_request_principal_becomes_the_audit_principal_it_names() {
         admin: false,
         events: SecurityEventSink::new(Arc::new(NoSecurityEvents)),
     };
+    struct PrincipalCase {
+        name: &'static str,
+        request: Principal,
+        expected: AuditPrincipal,
+    }
     let cases = [
-        (
-            "unauthenticated",
-            Principal::Unauthenticated,
-            unauthenticated_principal(),
-        ),
-        (
-            "bearer",
-            authenticated(AuthMethod::Bearer),
-            principal("grafana", MECHANISM_BEARER),
-        ),
-        (
-            "basic",
-            authenticated(AuthMethod::Basic),
-            principal("grafana", MECHANISM_BASIC),
-        ),
-        (
-            "client certificate",
-            authenticated(AuthMethod::ClientCertificate),
-            principal("grafana", MECHANISM_MTLS),
-        ),
+        PrincipalCase {
+            name: "unauthenticated",
+            request: Principal::Unauthenticated,
+            expected: unauthenticated_principal(),
+        },
+        PrincipalCase {
+            name: "bearer",
+            request: authenticated(AuthMethod::Bearer),
+            expected: principal("grafana", MECHANISM_BEARER),
+        },
+        PrincipalCase {
+            name: "basic",
+            request: authenticated(AuthMethod::Basic),
+            expected: principal("grafana", MECHANISM_BASIC),
+        },
+        PrincipalCase {
+            name: "client certificate",
+            request: authenticated(AuthMethod::ClientCertificate),
+            expected: principal("grafana", MECHANISM_MTLS),
+        },
     ];
-    for (name, request_principal, expected) in cases {
-        check!(audit_principal_of(&request_principal) == expected, "{name}");
+    for case in cases {
+        check!(
+            audit_principal_of(&case.request) == case.expected,
+            "{}",
+            case.name
+        );
     }
 }
 
@@ -723,17 +863,28 @@ async fn a_disabled_audit_layer_spawns_no_writer_and_discards_events() {
     .await
     .expect("a disabled layer always starts");
 
-    for (name, service) in [
-        ("started from default flags", started),
-        ("built disabled", AuditService::disabled()),
+    struct DisabledServiceCase {
+        name: &'static str,
+        service: AuditService,
+    }
+    for case in [
+        DisabledServiceCase {
+            name: "started from default flags",
+            service: started,
+        },
+        DisabledServiceCase {
+            name: "built disabled",
+            service: AuditService::disabled(),
+        },
     ] {
-        let (handle, writer) = service.into_parts();
+        let parts = case.service.into_parts();
         for event in three_events() {
-            handle.emit(event);
+            parts.handle.emit(event);
         }
         check!(
-            (writer.is_none(), handle.is_enabled(), handle.dropped()) == (true, false, 0),
-            "{name}"
+            parts.writer.is_none() && !parts.handle.is_enabled() && parts.handle.dropped() == 0,
+            "{}",
+            case.name
         );
     }
 }
@@ -797,12 +948,9 @@ async fn an_audit_layer_with_bad_flags_does_not_start() {
 #[tokio::test]
 async fn events_reach_the_sink_in_order_on_one_valid_chain() {
     let time = mock_time();
-    let sink = Arc::new(MemorySink::default());
-    let mut layer = RunningAuditLayer::start(
-        &enabled_args(),
-        Arc::clone(&sink) as Arc<dyn AuditSink>,
-        &time,
-    );
+    let fixture = memory_audit_layer(&time);
+    let sink = fixture.sink;
+    let mut layer = fixture.layer;
     let events = three_events();
 
     for event in &events {
@@ -925,17 +1073,15 @@ async fn a_full_queue_drops_events_and_never_blocks_the_caller() {
 #[tokio::test]
 async fn an_event_after_shutdown_counts_as_dropped() {
     let time = mock_time();
-    let sink = Arc::new(MemorySink::default());
-    let mut layer = RunningAuditLayer::start(
-        &enabled_args(),
-        Arc::clone(&sink) as Arc<dyn AuditSink>,
-        &time,
-    );
+    let fixture = memory_audit_layer(&time);
+    let sink = fixture.sink;
+    let mut layer = fixture.layer;
 
     layer.stop().await;
     layer.handle.emit(three_events().remove(0));
 
-    check!((layer.handle.dropped(), sink.records().len()) == (1, 0));
+    check!(layer.handle.dropped() == 1);
+    check!(sink.records().is_empty());
 }
 
 #[tokio::test]

@@ -1,7 +1,8 @@
 use super::{
-    Arc, ArrayRef, ColumnarValue, DataFusionError, DataType, DfResult, Float64Builder,
-    OverTimeFamily, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
-    WindowColumns, scalar_f64,
+    super::{check_udf_execution_args, coerce_udf_arg_types},
+    ColumnarValue, DataType, DfResult, OverTimeFamily, ScalarFunctionArgs, ScalarUDF,
+    ScalarUDFImpl, Signature, Volatility, WindowColumns, append_window_values,
+    impl_window_udf_identity, scalar_f64,
 };
 
 /// A `ScalarUDFImpl` over `RangeManipulate`'s windowed columns.
@@ -35,17 +36,7 @@ impl OverTimeUdf {
 }
 
 impl ScalarUDFImpl for OverTimeUdf {
-    fn name(&self) -> &str {
-        self.family.udf_name()
-    }
-
-    fn signature(&self) -> &Signature {
-        &self.signature
-    }
-
-    fn return_type(&self, _arg_types: &[DataType]) -> DfResult<DataType> {
-        Ok(DataType::Float64)
-    }
+    impl_window_udf_identity!();
 
     /// `Signature::user_defined` needs its own coercion.
     ///
@@ -53,58 +44,33 @@ impl ScalarUDFImpl for OverTimeUdf {
     /// columns and the scalars are already the exact types the planner supplies.
     /// This method checks the arity and returns the types unchanged.
     fn coerce_types(&self, arg_types: &[DataType]) -> DfResult<Vec<DataType>> {
-        if arg_types.len() != self.arity() {
-            return Err(DataFusionError::Plan(format!(
-                "{} expects {} arguments, got {}",
-                self.name(),
-                self.arity(),
-                arg_types.len()
-            )));
-        }
-        Ok(arg_types.to_vec())
+        coerce_udf_arg_types(self.name(), self.arity(), arg_types)
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DfResult<ColumnarValue> {
         let name = self.name();
-        if args.args.len() != self.arity() {
-            return Err(DataFusionError::Execution(format!(
-                "{name} expects {} arguments, got {}",
-                self.arity(),
-                args.args.len()
-            )));
-        }
+        check_udf_execution_args(name, self.arity(), args.args.len())?;
         let rows = args.number_rows;
 
         // For the quantile family the leading argument is the `phi` scalar; the
         // three windowed columns follow. For every other family the windowed
         // columns start at index 0.
-        let (phi, base) = if self.family.takes_quantile_param() {
-            (scalar_f64(&args.args[0], "phi", name)?, 1)
+        let base = usize::from(self.family.takes_quantile_param());
+        let phi = if self.family.takes_quantile_param() {
+            scalar_f64(&args.args[0], "phi", name)?
         } else {
-            (f64::NAN, 0)
+            f64::NAN
         };
 
         let windows = WindowColumns::decode(&args.args[base..], rows, name)?;
         windows.check_rows(rows, name)?;
 
-        let mut builder = Float64Builder::with_capacity(rows);
-        for row in 0..rows {
-            let (timestamps, values) = windows.window(row, name)?;
-            match self.family.eval_window(timestamps, values, phi) {
-                // A genuinely-computed reduction (including a legitimately-NaN
-                // result, e.g. a quantile over a NaN sample) is kept as a non-null
-                // float so it propagates through downstream aggregates exactly as
-                // the interpreter propagates it.
-                Some(value) => builder.append_value(value),
-                // Empty window: Prometheus emits no sample. Emit NULL — not a NaN
-                // sentinel — so the assembler drops the series and aggregates skip
-                // it, matching the interpreter, which omits no-value series before
-                // aggregating.
-                None => builder.append_null(),
-            }
-        }
-
-        Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
+        append_window_values(rows, |row| {
+            let window_values = windows.window(row, name)?;
+            Ok(self
+                .family
+                .eval_window(window_values.timestamps, window_values.values, phi))
+        })
     }
 }
 

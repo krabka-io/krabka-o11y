@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, Labels,
-    push_dictionary_id, push_ivarint, push_len, push_string, push_uvarint,
+    assign_sorted_string_ids, push_dictionary_id, push_len, push_string, push_uvarint,
 };
 
 /// Encodes one shard.
@@ -20,21 +20,18 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
         let Some(labels) = payload.series.get(fingerprint) else {
             continue;
         };
-        for (name, value) in labels.iter() {
+        for pair in labels {
             let next = dictionary.len();
-            dictionary.entry(name.clone()).or_insert(next);
+            dictionary.entry(pair.name.to_string()).or_insert(next);
             let next = dictionary.len();
-            dictionary.entry(value.clone()).or_insert(next);
+            dictionary.entry(pair.value.to_string()).or_insert(next);
         }
     }
     // Ids are assigned on the sorted order rather than on first sight, so the
     // same index encodes to the same bytes whichever order its series were
     // registered in.
-    let mut strings = dictionary.keys().cloned().collect::<Vec<_>>();
-    strings.sort();
-    for (id, text) in strings.iter().enumerate() {
-        dictionary.insert(text.clone(), id);
-    }
+    let dictionary = assign_sorted_string_ids(dictionary);
+    let strings = dictionary.strings;
 
     let mut out = Vec::new();
     out.extend_from_slice(&INDEX_SHARD_MAGIC);
@@ -53,9 +50,9 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
         let count = labels.map_or(0, Labels::len);
         push_len(&mut out, count);
         if let Some(labels) = labels {
-            for (name, value) in labels.iter() {
-                push_dictionary_id(&mut out, &dictionary, name);
-                push_dictionary_id(&mut out, &dictionary, value);
+            for pair in labels {
+                push_dictionary_id(&mut out, &dictionary.ids, pair.name);
+                push_dictionary_id(&mut out, &dictionary.ids, pair.value);
             }
         }
     }
@@ -63,18 +60,22 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
     push_len(&mut out, payload.blocks.len());
     let mut previous_min = 0_i64;
     for block in &payload.blocks {
-        push_string(&mut out, &block.object_key);
-        push_ivarint(&mut out, block.min_ts.wrapping_sub(previous_min));
-        push_ivarint(&mut out, block.max_ts.wrapping_sub(block.min_ts));
-        previous_min = block.min_ts;
-        push_len(&mut out, block.row_count);
+        super::push_shard_block_prefix(
+            &mut out,
+            &block.object_key,
+            block.min_ts,
+            block.max_ts,
+            block.row_count,
+            block.level,
+            &mut previous_min,
+        );
         push_len(&mut out, block.fingerprint_count);
         out.extend_from_slice(&block.fingerprint_digest.to_le_bytes());
-        push_uvarint(&mut out, u64::from(block.level.get()));
     }
 
     push_len(&mut out, payload.postings.len());
-    for (fingerprint, ordinals) in &payload.postings {
+    for fingerprint in payload.postings.keys() {
+        let ordinals = &payload.postings[fingerprint];
         out.extend_from_slice(&fingerprint.to_le_bytes());
         push_len(&mut out, ordinals.len());
         let mut previous = 0_u32;

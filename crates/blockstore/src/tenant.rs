@@ -21,24 +21,76 @@ mod tests {
         TenantResolveError,
     };
 
+    struct TenantResolutionCase<'a> {
+        name: &'a str,
+        value: Option<&'a [u8]>,
+        required: Result<TenantId, TenantResolveError>,
+        fallback: Result<TenantId, TenantResolveError>,
+    }
+
+    struct ValidTenantCase<'a> {
+        description: &'a str,
+        id: &'a str,
+    }
+
+    struct InvalidTenantCase<'a> {
+        description: &'a str,
+        id: &'a str,
+        expected: String,
+    }
+
     #[test]
     fn every_valid_shape_is_accepted() {
         let valid = [
-            ("plain", "tenant-a"),
-            ("underscore", "team_42"),
-            ("interior dots", "user.name"),
-            ("one byte", "a"),
-            ("upper case", "ALL-CAPS"),
-            ("every punctuation mark", "ascii!-_.*'()"),
-            ("digits only", "0123456789"),
-            ("leading dot", ".hidden"),
-            ("three dots", "..."),
-            ("anonymous", ANONYMOUS_TENANT),
+            ValidTenantCase {
+                description: "plain",
+                id: "tenant-a",
+            },
+            ValidTenantCase {
+                description: "underscore",
+                id: "team_42",
+            },
+            ValidTenantCase {
+                description: "interior dots",
+                id: "user.name",
+            },
+            ValidTenantCase {
+                description: "one byte",
+                id: "a",
+            },
+            ValidTenantCase {
+                description: "upper case",
+                id: "ALL-CAPS",
+            },
+            ValidTenantCase {
+                description: "every punctuation mark",
+                id: "ascii!-_.*'()",
+            },
+            ValidTenantCase {
+                description: "digits only",
+                id: "0123456789",
+            },
+            ValidTenantCase {
+                description: "leading dot",
+                id: ".hidden",
+            },
+            ValidTenantCase {
+                description: "three dots",
+                id: "...",
+            },
+            ValidTenantCase {
+                description: "anonymous",
+                id: ANONYMOUS_TENANT,
+            },
         ];
 
-        for (name, id) in valid {
-            let parsed = TenantId::new(id);
-            check!(parsed.as_ref().map(TenantId::as_str) == Ok(id), "{name}");
+        for case in valid {
+            let parsed = TenantId::new(case.id);
+            check!(
+                parsed.as_ref().map(TenantId::as_str) == Ok(case.id),
+                "{}",
+                case.description
+            );
         }
     }
 
@@ -54,52 +106,117 @@ mod tests {
             format!("tenant ID '{id}' contains unsupported character '{character}'")
         };
         let invalid = [
-            ("empty", "", "tenant ID is empty".to_string()),
-            (
-                "one over the limit",
-                too_long.as_str(),
-                "tenant ID is too long: max 150 characters".to_string(),
-            ),
-            ("dot", ".", "tenant ID is '.' or '..'".to_string()),
-            ("dot dot", "..", "tenant ID is '.' or '..'".to_string()),
-            ("separator", "a/b", unsupported("a/b", '/')),
-            ("traversal", "../other", unsupported("../other", '/')),
-            ("absolute", "/etc/passwd", unsupported("/etc/passwd", '/')),
-            ("backslash", "a\\b", unsupported("a\\b", '\\')),
-            ("space", "with space", unsupported("with space", ' ')),
-            ("leading space", " lead", unsupported(" lead", ' ')),
-            ("trailing space", "trail ", unsupported("trail ", ' ')),
-            ("tab", "a\tb", unsupported("a\tb", '\t')),
-            ("null", "a\0b", unsupported("a\0b", '\0')),
-            ("delete", "ctl\u{7f}", unsupported("ctl\u{7f}", '\u{7f}')),
+            InvalidTenantCase {
+                description: "empty",
+                id: "",
+                expected: "tenant ID is empty".to_string(),
+            },
+            InvalidTenantCase {
+                description: "one over the limit",
+                id: too_long.as_str(),
+                expected: "tenant ID is too long: max 150 characters".to_string(),
+            },
+            InvalidTenantCase {
+                description: "dot",
+                id: ".",
+                expected: "tenant ID is '.' or '..'".to_string(),
+            },
+            InvalidTenantCase {
+                description: "dot dot",
+                id: "..",
+                expected: "tenant ID is '.' or '..'".to_string(),
+            },
+            InvalidTenantCase {
+                description: "separator",
+                id: "a/b",
+                expected: unsupported("a/b", '/'),
+            },
+            InvalidTenantCase {
+                description: "traversal",
+                id: "../other",
+                expected: unsupported("../other", '/'),
+            },
+            InvalidTenantCase {
+                description: "absolute",
+                id: "/etc/passwd",
+                expected: unsupported("/etc/passwd", '/'),
+            },
+            InvalidTenantCase {
+                description: "backslash",
+                id: "a\\b",
+                expected: unsupported("a\\b", '\\'),
+            },
+            InvalidTenantCase {
+                description: "space",
+                id: "with space",
+                expected: unsupported("with space", ' '),
+            },
+            InvalidTenantCase {
+                description: "leading space",
+                id: " lead",
+                expected: unsupported(" lead", ' '),
+            },
+            InvalidTenantCase {
+                description: "trailing space",
+                id: "trail ",
+                expected: unsupported("trail ", ' '),
+            },
+            InvalidTenantCase {
+                description: "tab",
+                id: "a\tb",
+                expected: unsupported("a\tb", '\t'),
+            },
+            InvalidTenantCase {
+                description: "null",
+                id: "a\0b",
+                expected: unsupported("a\0b", '\0'),
+            },
+            InvalidTenantCase {
+                description: "delete",
+                id: "ctl\u{7f}",
+                expected: unsupported("ctl\u{7f}", '\u{7f}'),
+            },
             // `dskit` names the first byte of `é`, read as a code point, and so
             // does not name `é`. The pinned Mimir image answers `Ã` here.
-            (
-                "non ASCII",
-                "unicode-\u{e9}",
-                unsupported("unicode-\u{e9}", '\u{c3}'),
-            ),
-            (
-                "euro sign",
-                "a\u{20ac}b",
-                unsupported("a\u{20ac}b", '\u{e2}'),
-            ),
-            ("percent", "a%2Fb", unsupported("a%2Fb", '%')),
-            ("comma", "comma,tenant", unsupported("comma,tenant", ',')),
-            ("pipe", "a|b", unsupported("a|b", '|')),
+            InvalidTenantCase {
+                description: "non ASCII",
+                id: "unicode-\u{e9}",
+                expected: unsupported("unicode-\u{e9}", '\u{c3}'),
+            },
+            InvalidTenantCase {
+                description: "euro sign",
+                id: "a\u{20ac}b",
+                expected: unsupported("a\u{20ac}b", '\u{e2}'),
+            },
+            InvalidTenantCase {
+                description: "percent",
+                id: "a%2Fb",
+                expected: unsupported("a%2Fb", '%'),
+            },
+            InvalidTenantCase {
+                description: "comma",
+                id: "comma,tenant",
+                expected: unsupported("comma,tenant", ','),
+            },
+            InvalidTenantCase {
+                description: "pipe",
+                id: "a|b",
+                expected: unsupported("a|b", '|'),
+            },
             // `dskit` checks the characters before the length, so an id that
             // breaks both rules names the character.
-            (
-                "too long and unsupported",
-                too_long_and_bad.as_str(),
-                unsupported(&too_long_and_bad, '/'),
-            ),
+            InvalidTenantCase {
+                description: "too long and unsupported",
+                id: too_long_and_bad.as_str(),
+                expected: unsupported(&too_long_and_bad, '/'),
+            },
         ];
 
-        for (name, id, expected) in invalid {
+        for case in invalid {
             check!(
-                TenantId::new(id).map_err(|error| error.to_string()) == Err(expected),
-                "{name}"
+                TenantId::new(case.id).map_err(|error| error.to_string()) == Err(case.expected),
+                "{}",
+                case.description
             );
         }
     }
@@ -162,34 +279,49 @@ mod tests {
             ))
         };
 
-        let cases: [(&str, Option<&[u8]>, _, _); 5] = [
-            ("named", Some(b"tenant-a"), tenant_a.clone(), tenant_a),
-            (
-                "absent",
-                None,
-                Err(TenantResolveError::Missing),
-                single.clone(),
-            ),
-            ("empty", Some(b""), Err(TenantResolveError::Missing), single),
-            (
-                "malformed",
-                Some(b"a/b"),
-                unsupported("a/b", '/'),
-                unsupported("a/b", '/'),
-            ),
-            (
-                "not UTF-8",
-                Some(b"a\xff"),
-                unsupported("a\u{fffd}", '\u{ff}'),
-                unsupported("a\u{fffd}", '\u{ff}'),
-            ),
+        let cases = [
+            TenantResolutionCase {
+                name: "named",
+                value: Some(b"tenant-a"),
+                required: tenant_a.clone(),
+                fallback: tenant_a,
+            },
+            TenantResolutionCase {
+                name: "absent",
+                value: None,
+                required: Err(TenantResolveError::Missing),
+                fallback: single.clone(),
+            },
+            TenantResolutionCase {
+                name: "empty",
+                value: Some(b""),
+                required: Err(TenantResolveError::Missing),
+                fallback: single,
+            },
+            TenantResolutionCase {
+                name: "malformed",
+                value: Some(b"a/b"),
+                required: unsupported("a/b", '/'),
+                fallback: unsupported("a/b", '/'),
+            },
+            TenantResolutionCase {
+                name: "not UTF-8",
+                value: Some(b"a\xff"),
+                required: unsupported("a\u{fffd}", '\u{ff}'),
+                fallback: unsupported("a\u{fffd}", '\u{ff}'),
+            },
         ];
-        for (name, value, required, fallen_back) in cases {
+        for case in cases {
             check!(
-                TenantId::resolve(value, &TenantPolicy::Required) == required,
-                "{name}"
+                TenantId::resolve(case.value, &TenantPolicy::Required) == case.required,
+                "{}",
+                case.name
             );
-            check!(TenantId::resolve(value, &fallback) == fallen_back, "{name}");
+            check!(
+                TenantId::resolve(case.value, &fallback) == case.fallback,
+                "{}",
+                case.name
+            );
         }
     }
 

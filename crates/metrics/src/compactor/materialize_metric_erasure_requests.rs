@@ -8,18 +8,36 @@ use super::{
 };
 use crate::clock_reading_decl;
 
+pub(super) struct MaterializedErasureRequests {
+    pub(super) pass: MetricCompactionPass,
+    pub(super) retired_blocks: Vec<String>,
+}
+
+struct ApplicableErasureRequest<'a> {
+    request: &'a ErasureRequest,
+    fingerprints: BTreeSet<u64>,
+}
+
+struct RetiredCompactionBlock {
+    block_key: String,
+    index_key: String,
+}
+
 pub(super) async fn materialize_metric_erasure_requests<S>(
     store: &Arc<dyn ObjectStore>,
     block_writer: &BlockWriter,
     index_sink: &S,
     block_read_max: ByteSize,
-) -> Result<(MetricCompactionPass, Vec<String>), MetricCompactionError>
+) -> Result<MaterializedErasureRequests, MetricCompactionError>
 where
     S: CompactionIndexSink + ?Sized,
 {
     let requests = list_erasure_requests(store, ERASURE_REQUEST_PREFIX).await?;
     if requests.is_empty() {
-        return Ok((MetricCompactionPass::default(), Vec::new()));
+        return Ok(MaterializedErasureRequests {
+            pass: MetricCompactionPass::default(),
+            retired_blocks: Vec::new(),
+        });
     }
 
     let manifests = list_compaction_manifests(store).await?;
@@ -37,7 +55,10 @@ where
         let mut applicable = Vec::new();
         for request in &requests {
             if let Some(fingerprints) = request_fingerprints(request, &manifest, &index)? {
-                applicable.push((request, fingerprints));
+                applicable.push(ApplicableErasureRequest {
+                    request,
+                    fingerprints,
+                });
             }
         }
         if applicable.is_empty() {
@@ -53,12 +74,15 @@ where
             index_sink.write_manifest(&output).await?;
             pass.outputs.push(output);
         }
-        retired.push((manifest.block_key, manifest.index_key));
+        retired.push(RetiredCompactionBlock {
+            block_key: manifest.block_key,
+            index_key: manifest.index_key,
+        });
     }
     let deletions = retired
         .iter()
-        .map(|(_, index_key)| BlockDeletion {
-            object_key: index_key.clone(),
+        .map(|retired| BlockDeletion {
+            object_key: retired.index_key.clone(),
             sidecars: Vec::new(),
         })
         .collect::<Vec<_>>();
@@ -70,11 +94,14 @@ where
         .collect::<BTreeSet<_>>();
     let retired_blocks = retired
         .into_iter()
-        .filter(|(_, index_key)| !failed.contains(index_key.as_str()))
-        .map(|(block_key, _)| block_key)
+        .filter(|retired| !failed.contains(retired.index_key.as_str()))
+        .map(|retired| retired.block_key)
         .collect();
     pass.manifests_retired = report.into();
-    Ok((pass, retired_blocks))
+    Ok(MaterializedErasureRequests {
+        pass,
+        retired_blocks,
+    })
 }
 
 fn request_fingerprints(
@@ -100,19 +127,13 @@ fn request_fingerprints(
             .any(|series| series.labels.has_byte_values())
     {
         let sets = if request.byte_matcher_sets.is_empty() {
-            request
-                .matcher_sets
-                .iter()
-                .map(|set| {
-                    set.iter()
-                        .map(|matcher| krabka_blockstore::ByteLabelMatcher {
-                            name: matcher.name.clone(),
-                            op: matcher.op,
-                            value: matcher.value.as_bytes().to_vec(),
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
+            krabka_blockstore::map_byte_matcher_sets(request.matcher_sets.iter(), |matcher| {
+                krabka_blockstore::ByteLabelMatcher::new(
+                    matcher.name.clone(),
+                    matcher.op,
+                    matcher.value.as_bytes().to_vec(),
+                )
+            })
         } else {
             request.byte_matcher_sets.clone()
         };
@@ -147,16 +168,19 @@ async fn rewrite_metric_block(
     store: &Arc<dyn ObjectStore>,
     block_writer: &BlockWriter,
     manifest: &CompactionIndexManifest,
-    requests: &[(&ErasureRequest, BTreeSet<u64>)],
+    requests: &[ApplicableErasureRequest<'_>],
     block_read_max: ByteSize,
 ) -> Result<Option<Option<CompactionIndexManifest>>, MetricCompactionError> {
-    let (source_meta, schema, mut batches) = open_block_stream(
+    let opened = open_block_stream(
         store.clone(),
         &manifest.block_key,
         block_read_max,
         super::MERGE_READ_BATCH_ROWS,
     )
     .await?;
+    let source_meta = opened.meta;
+    let schema = opened.schema;
+    let mut batches = opened.batches;
     let base = manifest.block_key.strip_suffix(".parquet").map_or_else(
         || format!("{}-erased", manifest.block_key),
         |stem| format!("{stem}-erased.parquet"),
@@ -192,10 +216,10 @@ async fn rewrite_metric_block(
             .map(|row| {
                 let fingerprint = fingerprints.value(row);
                 let timestamp_ns = timestamps.value(row).saturating_mul(1_000_000);
-                !requests.iter().any(|(request, targeted)| {
-                    request.start_ns <= timestamp_ns
-                        && request.end_ns >= timestamp_ns
-                        && targeted.contains(&fingerprint)
+                !requests.iter().any(|applicable| {
+                    applicable.request.start_ns <= timestamp_ns
+                        && applicable.request.end_ns >= timestamp_ns
+                        && applicable.fingerprints.contains(&fingerprint)
                 })
             })
             .collect::<Vec<_>>();

@@ -1,10 +1,15 @@
 use super::Heatmap;
+use crate::ProfileLabel;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabeledHeatmap {
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<ProfileLabel>,
     pub heatmap: Heatmap,
 }
 
 /// Label group and unbinned profile totals `(timestamp_ms, value)`.
-pub type LabeledHeatmapPoints = (Vec<(String, String)>, Vec<(i64, i64)>);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabeledHeatmapPoints {
+    pub labels: Vec<ProfileLabel>,
+    pub points: Vec<crate::TimestampTotalPoint>,
+}

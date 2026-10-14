@@ -1,18 +1,17 @@
-use super::{Array, AttrValue, ListArray, StringArray, TraceqlError};
+use super::{Array, AttrValue, Attribute, ListArray, StringArray, TraceqlError};
 
 pub(crate) fn nested_string_attrs(
     keys: &ListArray,
     values: &ListArray,
     row: usize,
-) -> Result<Vec<(String, AttrValue)>, TraceqlError> {
+) -> Result<Vec<Attribute>, TraceqlError> {
     if keys.is_null(row) || values.is_null(row) {
         return Ok(Vec::new());
     }
     let key_values = keys.value(row);
-    let key_values = key_values
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| TraceqlError::Store("nested attribute keys are not strings".into()))?;
+    let key_values = krabka_traceql::string_array_from_arrow(key_values.as_ref(), || {
+        TraceqlError::Store("nested attribute keys are not strings".into())
+    })?;
     let value_lists = values.value(row);
     let value_lists = value_lists
         .as_any()
@@ -36,8 +35,8 @@ pub(crate) fn nested_string_attrs(
         if scalar_values.is_empty() || scalar_values.is_null(0) {
             continue;
         }
-        out.push((
-            key_values.value(idx).to_string(),
+        out.push(Attribute::new(
+            key_values.value(idx),
             AttrValue::Str(scalar_values.value(0).to_string()),
         ));
     }

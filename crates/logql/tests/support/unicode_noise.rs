@@ -14,6 +14,7 @@ pub fn arbitrary_text() -> impl Strategy<Value = String> {
         prop_oneof![
             2 => any::<char>(),
             3 => prop::char::range('\u{0}', '\u{7f}'),
+            1 => Just('%'),
             1 => Just('\u{10ffff}'),
             1 => Just('é'),
             1 => Just('\u{1f600}'),

@@ -61,6 +61,25 @@ mod tests {
         jobs.iter().map(|job| job.input_keys.clone()).collect()
     }
 
+    fn apply_compaction_jobs(
+        live: &mut Vec<CompactionCandidate>,
+        jobs: Vec<CompactionJob>,
+        output_key_prefix: &str,
+    ) {
+        for job in jobs {
+            let merged = CompactionCandidate {
+                tenant: job.tenant.clone(),
+                object_key: format!("{output_key_prefix}{}", job.input_keys.join("+")),
+                min_ts: job.min_ts,
+                max_ts: job.max_ts,
+                row_count: job.row_count,
+                level: job.output_level,
+            };
+            live.retain(|block| !job.input_keys.contains(&block.object_key));
+            live.push(merged);
+        }
+    }
+
     #[test]
     fn a_single_block_is_never_a_job() {
         let candidates = vec![candidate("t", "a", 0, 10, 1, 0)];
@@ -225,13 +244,29 @@ mod tests {
     /// stops and how far it climbs.
     #[test]
     fn repeated_planning_reaches_an_empty_plan() {
-        for (_name, block_count, policy) in [
-            ("fan-in two", 64_usize, policy(2, usize::MAX, 8)),
-            ("fan-in eight", 64, policy(8, usize::MAX, 8)),
-            ("short ladder", 64, policy(2, usize::MAX, 2)),
-            ("odd count", 37, policy(4, usize::MAX, 6)),
+        struct PlanningCase {
+            block_count: usize,
+            policy: CompactionPolicy,
+        }
+        for case in [
+            PlanningCase {
+                block_count: 64,
+                policy: policy(2, usize::MAX, 8),
+            },
+            PlanningCase {
+                block_count: 64,
+                policy: policy(8, usize::MAX, 8),
+            },
+            PlanningCase {
+                block_count: 64,
+                policy: policy(2, usize::MAX, 2),
+            },
+            PlanningCase {
+                block_count: 37,
+                policy: policy(4, usize::MAX, 6),
+            },
         ] {
-            let mut live = (0..block_count)
+            let mut live = (0..case.block_count)
                 .map(|n| {
                     candidate(
                         "t",
@@ -246,32 +281,24 @@ mod tests {
 
             let mut rounds = 0_usize;
             loop {
-                let jobs = plan_compactions(&live, policy);
+                let jobs = plan_compactions(&live, case.policy);
                 if jobs.is_empty() {
                     break;
                 }
                 rounds += 1;
                 check!(rounds <= 64, "planning did not converge");
-                for job in jobs {
+                for job in &jobs {
                     check!(job.input_keys.len() >= 2, "a job of one rewrites a block");
-                    let merged = CompactionCandidate {
-                        tenant: job.tenant.clone(),
-                        object_key: format!("c{rounds}-{}", job.input_keys.join("+")),
-                        min_ts: job.min_ts,
-                        max_ts: job.max_ts,
-                        row_count: job.row_count,
-                        level: job.output_level,
-                    };
-                    live.retain(|block| !job.input_keys.contains(&block.object_key));
-                    live.push(merged);
                 }
+                apply_compaction_jobs(&mut live, jobs, &format!("c{rounds}-"));
             }
 
             // A block is rewritten at most once per level, so the number of
             // rounds cannot exceed the ladder height.
-            check!(rounds <= usize::try_from(policy.max_level().get()).unwrap_or(usize::MAX));
+            check!(rounds <= usize::try_from(case.policy.max_level().get()).unwrap_or(usize::MAX));
             check!(
-                live.iter().all(|block| block.level <= policy.max_level()),
+                live.iter()
+                    .all(|block| block.level <= case.policy.max_level()),
                 "no block climbs past the cap"
             );
         }
@@ -294,18 +321,7 @@ mod tests {
             }
             rounds += 1;
             check!(rounds <= 8);
-            for job in jobs {
-                let merged = CompactionCandidate {
-                    tenant: job.tenant.clone(),
-                    object_key: format!("c-{}", job.input_keys.join("+")),
-                    min_ts: job.min_ts,
-                    max_ts: job.max_ts,
-                    row_count: job.row_count,
-                    level: job.output_level,
-                };
-                live.retain(|block| !job.input_keys.contains(&block.object_key));
-                live.push(merged);
-            }
+            apply_compaction_jobs(&mut live, jobs, "c-");
         }
 
         // Every block reached the 100-row target at level 1 and was sealed
@@ -317,16 +333,29 @@ mod tests {
 
     #[test]
     fn a_compacted_block_sits_one_level_above_the_highest_of_its_sources() {
-        for (sources, want) in [
-            (vec![], BlockLevel::INGESTED),
-            (
-                vec![BlockLevel::INGESTED, BlockLevel::INGESTED],
-                BlockLevel(1),
-            ),
-            (vec![BlockLevel(1), BlockLevel::INGESTED], BlockLevel(2)),
-            (vec![BlockLevel(3), BlockLevel(1)], BlockLevel(4)),
+        struct LevelCase {
+            sources: Vec<BlockLevel>,
+            expected: BlockLevel,
+        }
+        for case in [
+            LevelCase {
+                sources: vec![],
+                expected: BlockLevel::INGESTED,
+            },
+            LevelCase {
+                sources: vec![BlockLevel::INGESTED, BlockLevel::INGESTED],
+                expected: BlockLevel(1),
+            },
+            LevelCase {
+                sources: vec![BlockLevel(1), BlockLevel::INGESTED],
+                expected: BlockLevel(2),
+            },
+            LevelCase {
+                sources: vec![BlockLevel(3), BlockLevel(1)],
+                expected: BlockLevel(4),
+            },
         ] {
-            check!(level_above(sources) == want);
+            check!(level_above(case.sources) == case.expected);
         }
     }
 
@@ -371,17 +400,34 @@ mod tests {
     fn one_wall_clock_window_buckets_millis_and_nanos_the_same_way() {
         const HOUR_MS: i64 = 60 * 60 * 1_000;
 
-        for (unit, per_ms) in [
-            (BlockTimestampUnit::Millis, 1_i64),
-            (BlockTimestampUnit::Nanos, 1_000_000),
+        struct TimestampCase {
+            unit: BlockTimestampUnit,
+            ticks_per_ms: i64,
+        }
+        for case in [
+            TimestampCase {
+                unit: BlockTimestampUnit::Millis,
+                ticks_per_ms: 1,
+            },
+            TimestampCase {
+                unit: BlockTimestampUnit::Nanos,
+                ticks_per_ms: 1_000_000,
+            },
         ] {
-            let policy = CompactionPolicy::new(4, 1_000, BlockLevel(4), hours(2), unit);
+            let policy = CompactionPolicy::new(4, 1_000, BlockLevel(4), hours(2), case.unit);
             // Two blocks inside the first two-hour bucket, two inside the next.
             let candidates = vec![
                 candidate("t", "first-early", 0, 0, 1, 0),
-                candidate("t", "first-late", HOUR_MS * per_ms, 0, 1, 0),
-                candidate("t", "second-early", 2 * HOUR_MS * per_ms, 0, 1, 0),
-                candidate("t", "second-late", 3 * HOUR_MS * per_ms, 0, 1, 0),
+                candidate("t", "first-late", HOUR_MS * case.ticks_per_ms, 0, 1, 0),
+                candidate(
+                    "t",
+                    "second-early",
+                    2 * HOUR_MS * case.ticks_per_ms,
+                    0,
+                    1,
+                    0,
+                ),
+                candidate("t", "second-late", 3 * HOUR_MS * case.ticks_per_ms, 0, 1, 0),
             ];
 
             check!(
@@ -390,7 +436,8 @@ mod tests {
                         vec!["first-early".to_string(), "first-late".to_string()],
                         vec!["second-early".to_string(), "second-late".to_string()],
                     ],
-                "{unit:?}"
+                "{:?}",
+                case.unit
             );
         }
     }

@@ -39,16 +39,24 @@ pub struct Minio {
 /// Panics when `KRABKA_MINIO_IMAGE_REF` is unset or holds no tag. The build
 /// sets it for `bazel test --config=scale`; under cargo, set it to the
 /// `minio` reference in `//bazel/images/images.bzl` after loading that image.
-fn minio_image() -> (String, String) {
+struct MinioImage {
+    repository: String,
+    tag: String,
+}
+
+fn minio_image() -> MinioImage {
     let reference = std::env::var("KRABKA_MINIO_IMAGE_REF").expect(
         "KRABKA_MINIO_IMAGE_REF is unset. This suite runs under `bazel test --config=scale`, \
          which loads the pinned image and sets this. To run it under cargo, set it to the \
          `minio` reference in //bazel/images/images.bzl.",
     );
-    let (repository, tag) = reference
-        .rsplit_once(':')
+    let separator = reference
+        .rfind(':')
         .expect("the MinIO image reference carries a tag");
-    (repository.to_string(), tag.to_string())
+    MinioImage {
+        repository: reference[..separator].to_string(),
+        tag: reference[separator + 1..].to_string(),
+    }
 }
 
 /// Starts `MinIO` with the bucket already made, signing in as `root_user`
@@ -66,7 +74,7 @@ pub async fn start_minio(root_user: &str) -> Minio {
     // pinned bytes. The whole reference comes from the build, repository
     // included: the image is assembled from a package lock rather than pulled
     // from a registry, so no registry name belongs in this file.
-    let (repository, tag) = minio_image();
+    let image = minio_image();
 
     // The bucket is a directory under the data root, made before MinIO reads
     // it. MinIO has no "create this bucket at startup" switch, `object_store`
@@ -76,7 +84,7 @@ pub async fn start_minio(root_user: &str) -> Minio {
     // tool in the image and no extra crate in the manifest.
     let container = tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new(repository, tag)
+        GenericImage::new(image.repository, image.tag)
             .with_exposed_port(ContainerPort::Tcp(MINIO_API_PORT))
             // MinIO writes its whole banner to stderr, the `API:` line
             // included. Waiting on stdout waits for a stream that stays empty,

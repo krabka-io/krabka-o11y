@@ -1,13 +1,13 @@
-use std::{fmt, sync::Arc};
-
-use arrow::{array::Float64Array, record_batch::RecordBatch};
-use datafusion::{
-    common::{DataFusionError, Result as DfResult},
-    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
+use super::{NanSamples, SeriesNormalizeSettings};
+use crate::extension::physical_exec_common::{
+    Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, Float64Array,
+    PlanProperties, RecordBatch, RowSelection, TimeColumn, fmt, take_rows_with_timestamps,
 };
 
-use super::{NanSamples, SeriesNormalizeSettings};
-use crate::extension::{RowSelection, TimeColumn, take_rows_with_timestamps};
+struct NormalizedRow {
+    row: usize,
+    timestamp: i64,
+}
 
 /// Physical node that normalizes single-series batches.
 #[derive(Debug, Clone)]
@@ -29,11 +29,13 @@ impl SeriesNormalizeExec {
     }
 
     pub(crate) fn normalize_batch(&self, batch: &RecordBatch) -> DfResult<RecordBatch> {
-        let (time_column_index, timestamps) = TimeColumn {
+        let found_time_column = TimeColumn {
             node: "SeriesNormalize",
             name: &self.settings.time_index,
         }
         .find(batch)?;
+        let time_column_index = found_time_column.index;
+        let timestamps = found_time_column.timestamps;
         let values = batch
             .column_by_name("value")
             .and_then(|column| column.as_any().downcast_ref::<Float64Array>());
@@ -47,7 +49,7 @@ impl SeriesNormalizeExec {
                 timestamps
                     .value(row)
                     .checked_add(self.settings.offset_ms)
-                    .map(|ts| (row, ts))
+                    .map(|timestamp| NormalizedRow { row, timestamp })
                     .ok_or_else(|| {
                         DataFusionError::Execution(format!(
                             "timestamp offset overflow at row {row}"
@@ -55,11 +57,15 @@ impl SeriesNormalizeExec {
                     })
             })
             .collect::<DfResult<Vec<_>>>()?;
-        rows.sort_by_key(|&(row, ts)| (ts, row));
+        rows.sort_by(|left, right| {
+            left.timestamp
+                .cmp(&right.timestamp)
+                .then_with(|| left.row.cmp(&right.row))
+        });
 
         let take_rows = rows
             .iter()
-            .map(|&(row, _)| u32::try_from(row))
+            .map(|normalized| u32::try_from(normalized.row))
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|error| DataFusionError::Execution(error.to_string()))?;
         take_rows_with_timestamps(
@@ -67,7 +73,7 @@ impl SeriesNormalizeExec {
             time_column_index,
             RowSelection {
                 rows: take_rows,
-                timestamps: rows.iter().map(|&(_, ts)| ts).collect(),
+                timestamps: rows.iter().map(|normalized| normalized.timestamp).collect(),
             },
         )
     }

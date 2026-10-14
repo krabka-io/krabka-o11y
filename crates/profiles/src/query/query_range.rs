@@ -1,1 +1,1 @@
-pub(crate) type QueryRange = (i64, i64);
+pub(crate) use krabka_pprof::MillisRange as QueryRange;

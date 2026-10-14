@@ -30,50 +30,46 @@ pub(crate) fn a_parser_stage_fills_the_parsed_bucket_and_not_the_metadata_one() 
     )
     .expect("the plan names the series");
 
-    check!(
-        loki_streams_response(streams.clone(), LokiStreamEncoding::Folded)
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {
-                                "app": "api",
-                                "status": "500",
-                                "trace_id": "abc"
-                            },
-                            "values": [["10", r#"{"status":"500"}"#]]
-                        }
-                    ]
-                }
-            })
-    );
-
-    check!(
-        loki_streams_response(streams, LokiStreamEncoding::CategorizeLabels)
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "streams",
-                    "result": [
-                        {
-                            "stream": {"app": "api"},
-                            "values": [
-                                [
-                                    "10",
-                                    r#"{"status":"500"}"#,
-                                    {
-                                        "structuredMetadata": {
-                                            "trace_id": "abc"
-                                        },
-                                        "parsed": {"status": "500"}
-                                    }
-                                ]
+    assert_stream_response_encodings(
+        streams,
+        json!({
+            "status": "success",
+            "data": {
+                "resultType": "streams",
+                "result": [
+                    {
+                        "stream": {
+                            "app": "api",
+                            "status": "500",
+                            "trace_id": "abc"
+                        },
+                        "values": [["10", r#"{"status":"500"}"#]]
+                    }
+                ]
+            }
+        }),
+        json!({
+            "status": "success",
+            "data": {
+                "resultType": "streams",
+                "result": [
+                    {
+                        "stream": {"app": "api"},
+                        "values": [
+                            [
+                                "10",
+                                r#"{"status":"500"}"#,
+                                {
+                                    "structuredMetadata": {
+                                        "trace_id": "abc"
+                                    },
+                                    "parsed": {"status": "500"}
+                                }
                             ]
-                        }
-                    ]
-                }
-            })
+                        ]
+                    }
+                ]
+            }
+        }),
     );
 }

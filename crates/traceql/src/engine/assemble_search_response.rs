@@ -74,7 +74,9 @@ pub(crate) fn assemble_search_response(
 
     let mut out: Vec<TraceResult> = traces
         .into_iter()
-        .map(|(trace_id, mut acc)| {
+        .map(|trace_entry| {
+            let trace_id = trace_entry.0;
+            let mut acc = trace_entry.1;
             deduplicate_search_spans(&mut acc.spans);
             let matched = u32::try_from(acc.spans.len()).unwrap_or(u32::MAX);
             let grouped = groups
@@ -119,7 +121,11 @@ pub(crate) fn assemble_search_response(
                 .then_with(|| a.trace_id.cmp(&b.trace_id))
         });
     } else {
-        out.sort_by_key(|t| (t.start_time_unix_nano, t.trace_id));
+        out.sort_by(|left, right| {
+            left.start_time_unix_nano
+                .cmp(&right.start_time_unix_nano)
+                .then_with(|| left.trace_id.cmp(&right.trace_id))
+        });
     }
     out.truncate(limit);
     Ok(SearchResponse {

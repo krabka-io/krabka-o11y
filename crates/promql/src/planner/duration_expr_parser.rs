@@ -11,6 +11,11 @@ pub(crate) struct DurationExprParser<'a> {
     node: serde_json::Value,
 }
 
+pub(crate) struct ParsedDurationExpr {
+    pub(crate) seconds: f64,
+    pub(crate) expr: serde_json::Value,
+}
+
 impl<'a> DurationExprParser<'a> {
     pub(crate) fn new(src: &'a str, context: DurationExprContext) -> Self {
         Self {
@@ -23,10 +28,10 @@ impl<'a> DurationExprParser<'a> {
     }
 
     pub(crate) fn parse(self) -> Result<f64> {
-        self.parse_with_ast().map(|(value, _)| value)
+        self.parse_with_ast().map(|parsed| parsed.seconds)
     }
 
-    pub(crate) fn parse_with_ast(mut self) -> Result<(f64, serde_json::Value)> {
+    pub(crate) fn parse_with_ast(mut self) -> Result<ParsedDurationExpr> {
         let value = self.parse_add_sub()?;
         self.skip_ws();
         if self.index != self.chars.len() {
@@ -35,7 +40,10 @@ impl<'a> DurationExprParser<'a> {
                 self.chars[self.index], self.src
             )));
         }
-        Ok((value, self.node))
+        Ok(ParsedDurationExpr {
+            seconds: value,
+            expr: self.node,
+        })
     }
 
     fn binary_node(&mut self, op: &str, lhs: &serde_json::Value) {

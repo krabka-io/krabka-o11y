@@ -8,6 +8,11 @@ use super::{
     matching_loki_stream_entry,
 };
 
+struct MatchedLine<'a> {
+    labels: &'a Labels,
+    line: &'a str,
+}
+
 pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + Sync>(
     value: &Value,
     plan: &StreamPlan,
@@ -30,10 +35,10 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + 
         };
         let timestamps = wanted.entry(labels).or_default();
         for value in values {
-            let (Some(timestamp), Some(line)) = (
-                value.get(0).and_then(Value::as_str),
-                value.get(1).and_then(Value::as_str),
-            ) else {
+            let Some(timestamp) = value.get(0).and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(line) = value.get(1).and_then(Value::as_str) else {
                 continue;
             };
             let Ok(ts_ns) = timestamp.parse::<i64>() else {
@@ -67,7 +72,7 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + 
             continue;
         }
         let evaluated;
-        let (labels, line) =
+        let matched_line =
             if plan.query.pipeline.is_empty() && record.structured_metadata.is_empty() {
                 // Without a pipeline or per-record metadata, output labels depend
                 // only on the source labels. Keep the normal evaluator's level
@@ -81,12 +86,15 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + 
                         record.timestamp_ns,
                         false,
                     )
-                    .map(|(labels, _)| labels)
+                    .map(|entry| entry.labels)
                 });
                 let Some(labels) = labels.as_ref() else {
                     continue;
                 };
-                (labels, record.line.as_str())
+                Some(MatchedLine {
+                    labels,
+                    line: record.line.as_str(),
+                })
             } else {
                 evaluated = matching_loki_stream_entry(
                     &plan.query,
@@ -96,15 +104,21 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + 
                     record.timestamp_ns,
                     false,
                 );
-                let Some((labels, entry)) = evaluated.as_ref() else {
+                let Some(evaluated_entry) = evaluated.as_ref() else {
                     continue;
                 };
-                (labels, entry.line.as_str())
+                Some(MatchedLine {
+                    labels: &evaluated_entry.labels,
+                    line: evaluated_entry.entry.line.as_str(),
+                })
             };
+        let Some(matched_line) = matched_line else {
+            continue;
+        };
         let Some(count) = wanted
-            .get_mut(labels)
+            .get_mut(matched_line.labels)
             .and_then(|timestamps| timestamps.get_mut(&record.timestamp_ns))
-            .and_then(|lines| lines.get_mut(line))
+            .and_then(|lines| lines.get_mut(matched_line.line))
         else {
             continue;
         };

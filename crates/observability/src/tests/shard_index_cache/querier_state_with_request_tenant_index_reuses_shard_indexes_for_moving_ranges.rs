@@ -14,8 +14,14 @@ pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes
     let shard_range_b = TimeRange::new(80, 89).unwrap();
 
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
-    let worker = labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "worker")]));
+    let api = labels_index.insert_series(
+        tenant,
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
+    let worker = labels_index.insert_series(
+        tenant,
+        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "worker")]),
+    );
     let mut block_index = BlockIndex::default();
     block_index.insert(BlockDescriptor::new(
         BlockKey::new(tenant, 0, 42, 43, shard_range_a),

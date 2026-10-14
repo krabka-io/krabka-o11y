@@ -4,6 +4,12 @@ use super::{
     yaml_mapping_json, yaml_optional_string, yaml_string, zero_evaluation_time,
 };
 
+struct AlertEvaluationView {
+    health: &'static str,
+    last_error: String,
+    alerts: Vec<Value>,
+}
+
 pub(crate) async fn prometheus_rule_json<S: MetricStore>(
     state: &PrometheusApiState<S>,
     tenant: &TenantId,
@@ -58,18 +64,30 @@ pub(crate) async fn prometheus_rule_json<S: MetricStore>(
         |status| rfc3339_time_string(status.last_evaluation_ms),
     );
     let alert_eval = prometheus_alerts_for_rule_json(state, tenant, rule, eval_time_ms).await;
-    let (health, last_error, alerts) = match alert_eval {
-        Ok(alerts) => (health, last_error, alerts),
-        Err(_) if status.is_some() => (health, last_error, Vec::new()),
-        Err(error) => ("err", error.to_string(), Vec::new()),
+    let evaluation = match alert_eval {
+        Ok(alerts) => AlertEvaluationView {
+            health,
+            last_error,
+            alerts,
+        },
+        Err(_) if status.is_some() => AlertEvaluationView {
+            health,
+            last_error,
+            alerts: Vec::new(),
+        },
+        Err(error) => AlertEvaluationView {
+            health: "err",
+            last_error: error.to_string(),
+            alerts: Vec::new(),
+        },
     };
     let mut rule_json = json!({
         "annotations": yaml_mapping_json(rule, "annotations"),
         "duration": yaml_duration(rule, "for").secs_i64(),
         "keepFiringFor": yaml_duration(rule, "keep_firing_for").secs_i64(),
         "evaluationTime": evaluation_time,
-        "health": health,
-        "lastError": last_error,
+        "health": evaluation.health,
+        "lastError": evaluation.last_error,
         "lastEvaluation": last_evaluation,
         "labels": yaml_mapping_json(rule, "labels"),
         "name": name,
@@ -77,7 +95,7 @@ pub(crate) async fn prometheus_rule_json<S: MetricStore>(
         "type": "alerting",
     });
     if !options.exclude_alerts {
-        rule_json["alerts"] = json!(alerts);
+        rule_json["alerts"] = json!(evaluation.alerts);
     }
     Ok(Some(rule_json))
 }

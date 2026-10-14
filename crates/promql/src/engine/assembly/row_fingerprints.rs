@@ -52,10 +52,14 @@ where
     T::Native: PartialEq,
 {
     let previous = row.saturating_sub(1);
-    match (column.is_null(previous), column.is_null(row)) {
-        (true, true) => true,
-        (false, false) => column.value(previous) == column.value(row),
-        _ => false,
+    let previous_is_null = column.is_null(previous);
+    let current_is_null = column.is_null(row);
+    if previous_is_null {
+        current_is_null
+    } else if current_is_null {
+        false
+    } else {
+        column.value(previous) == column.value(row)
     }
 }
 

@@ -1,12 +1,17 @@
 use super::*;
 
+struct IndexSnapshotConfig {
+    key: String,
+    max_bytes: ByteSize,
+}
+
 /// Query-side span store that merges sealed blocks with an optional live tier.
 pub struct KrabkaSpanStore {
     pub(crate) blocks: Arc<BlockStore>,
     pub(crate) trace_index: SharedTraceIndex,
     pub(crate) live: Option<LiveTier>,
     pub(crate) scan_concat_max: ByteSize,
-    index_snapshot: Option<(String, ByteSize)>,
+    index_snapshot: Option<IndexSnapshotConfig>,
 }
 
 impl KrabkaSpanStore {
@@ -38,7 +43,7 @@ impl KrabkaSpanStore {
     /// Reloads this durable index when compaction retires a cached block.
     #[must_use]
     pub fn with_index_snapshot(mut self, key: String, max_bytes: ByteSize) -> Self {
-        self.index_snapshot = Some((key, max_bytes));
+        self.index_snapshot = Some(IndexSnapshotConfig { key, max_bytes });
         self
     }
 
@@ -46,17 +51,21 @@ impl KrabkaSpanStore {
         &self,
         candidates: impl Fn(&TraceIndex) -> Vec<String> + Send,
     ) -> Result<Vec<RecordBatch>, TraceqlError> {
+        struct ScanFailure {
+            error: TraceqlError,
+            missing: Option<String>,
+        }
         let mut index = self.trace_index.load_full();
         let mut retries = 2;
         loop {
             let keys = candidates(&index);
-            let (failure, missing) = match self
+            let failure = match self
                 .blocks
                 .scan_block_keys(&keys, span_block_schema())
                 .await
             {
-                Ok((ctx, table)) => {
-                    let query = ctx.table(&table).await?;
+                Ok(registered) => {
+                    let query = registered.context.table(&registered.table).await?;
                     match query.collect().await {
                         Ok(batches) => return Ok(batches),
                         Err(error) => {
@@ -65,7 +74,10 @@ impl KrabkaSpanStore {
                                     .find(|key| path == *key || path.ends_with(&format!("/{key}")))
                                     .cloned()
                             });
-                            (TraceqlError::from(error), missing)
+                            ScanFailure {
+                                error: TraceqlError::from(error),
+                                missing,
+                            }
                         }
                     }
                 }
@@ -74,20 +86,23 @@ impl KrabkaSpanStore {
                         error
                             .unreadable_block()
                             .expect("a missing block has its key")
-                            .0
+                            .object_key
                             .to_string()
                     });
-                    (block_err(&error), missing)
+                    ScanFailure {
+                        error: block_err(&error),
+                        missing,
+                    }
                 }
             };
-            let Some((key, max_bytes)) = &self.index_snapshot else {
-                return Err(failure);
+            let Some(IndexSnapshotConfig { key, max_bytes }) = &self.index_snapshot else {
+                return Err(failure.error);
             };
-            let Some(missing) = missing else {
-                return Err(failure);
+            let Some(missing) = failure.missing else {
+                return Err(failure.error);
             };
             if retries == 0 {
-                return Err(failure);
+                return Err(failure.error);
             }
             let latest = TraceIndex::load_latest_snapshot_with_max_bytes(
                 &self.blocks.object_store(),
@@ -99,7 +114,7 @@ impl KrabkaSpanStore {
             // An object still named by the durable index is missing data.
             // Only a retired candidate permits replanning the complete scan.
             if candidates(&latest).contains(&missing) {
-                return Err(failure);
+                return Err(failure.error);
             }
             index = Arc::new(latest);
             self.trace_index.store(Arc::clone(&index));
@@ -123,7 +138,7 @@ impl KrabkaSpanStore {
                 .await;
         };
         let trace_index = self.trace_index.load();
-        let (ctx, table) = {
+        let registered = {
             if !trace_index.trace_blocks(tenant).iter().any(|block| {
                 block.object_key == job.object_key
                     && block.min_ts <= end_ns
@@ -142,7 +157,7 @@ impl KrabkaSpanStore {
                 .await
                 .map_err(|err| block_err(&err))?
         };
-        collect_table(&ctx, &table).await
+        collect_table(&registered.context, &registered.table).await
     }
 
     pub(crate) async fn scan_inner(
@@ -320,7 +335,7 @@ impl TagCatalog for KrabkaSpanStore {
         end_ns: i64,
     ) -> Result<Vec<ScopedTag>, TraceqlError> {
         let trace_index = self.trace_index.load();
-        let mut by_scope: BTreeMap<&'static str, (TagScope, BTreeSet<String>)> = BTreeMap::new();
+        let mut by_scope: BTreeMap<&'static str, TagScopeTags> = BTreeMap::new();
         let has_cold_blocks = !trace_index
             .candidate_blocks(tenant, start_ns, end_ns)
             .is_empty();
@@ -356,10 +371,11 @@ impl TagCatalog for KrabkaSpanStore {
                 cold_scoped.instrumentation,
             );
         } else if matches!(scope, None | Some(TagScope::Span)) {
-            let (_, tags) = by_scope
-                .entry("span")
-                .or_insert((TagScope::Span, BTreeSet::new()));
-            tags.extend(
+            let scope_tags = by_scope.entry("span").or_insert_with(|| TagScopeTags {
+                scope: TagScope::Span,
+                tags: BTreeSet::new(),
+            });
+            scope_tags.tags.extend(
                 cold_index_tags
                     .into_iter()
                     .filter(|tag| !is_intrinsic_tag(tag)),
@@ -379,19 +395,20 @@ impl TagCatalog for KrabkaSpanStore {
         if let Some(live) = &self.live {
             for scoped in live.tag_names(tenant, scope, start_ns, end_ns).await? {
                 let key = tag_scope_key(scoped.scope);
-                let (_, tags) = by_scope
-                    .entry(key)
-                    .or_insert((scoped.scope, BTreeSet::new()));
-                tags.extend(scoped.tags);
+                let scope_tags = by_scope.entry(key).or_insert_with(|| TagScopeTags {
+                    scope: scoped.scope,
+                    tags: BTreeSet::new(),
+                });
+                scope_tags.tags.extend(scoped.tags);
             }
         }
         Ok(SCOPE_ORDER
             .iter()
             .filter_map(|scope| by_scope.remove(tag_scope_key(*scope)))
-            .filter_map(|(scope, tags)| {
-                (!tags.is_empty()).then_some(ScopedTag {
-                    scope,
-                    tags: tags.into_iter().collect(),
+            .filter_map(|scope_tags| {
+                (!scope_tags.tags.is_empty()).then_some(ScopedTag {
+                    scope: scope_tags.scope,
+                    tags: scope_tags.tags.into_iter().collect(),
                 })
             })
             .collect())
@@ -442,6 +459,15 @@ impl TagCatalog for KrabkaSpanStore {
 }
 
 impl KrabkaSpanStore {
+    async fn cold_key_batches(&self, keys: &[String]) -> Result<Vec<RecordBatch>, TraceqlError> {
+        let registered = self
+            .blocks
+            .scan_block_keys(keys, span_block_schema())
+            .await
+            .map_err(|err| block_err(&err))?;
+        collect_table(&registered.context, &registered.table).await
+    }
+
     pub(crate) async fn cold_attribute_tag_names(
         &self,
         tenant: &str,
@@ -450,12 +476,7 @@ impl KrabkaSpanStore {
     ) -> Result<ColdAttributeTagNames, TraceqlError> {
         let trace_index = self.trace_index.load();
         let keys = trace_index.candidate_blocks(tenant, start_ns, end_ns);
-        let (ctx, table) = self
-            .blocks
-            .scan_block_keys(&keys, span_block_schema())
-            .await
-            .map_err(|err| block_err(&err))?;
-        let batches = collect_table(&ctx, &table).await?;
+        let batches = self.cold_key_batches(&keys).await?;
         let mut names = ColdAttributeTagNames::default();
         for batch in &batches {
             collect_attribute_tag_names(batch, &mut names)?;
@@ -468,7 +489,7 @@ impl KrabkaSpanStore {
         tenant: &str,
         requested: RequestedTag<'_>,
         range: TimeRange,
-    ) -> Result<BTreeSet<(String, String)>, TraceqlError> {
+    ) -> Result<BTreeSet<TypedValue>, TraceqlError> {
         let trace_index = self.trace_index.load();
         let keys = trace_index.prune_blocks_by_tag(
             tenant,
@@ -477,12 +498,7 @@ impl KrabkaSpanStore {
             range.start_ns,
             range.end_ns,
         );
-        let (ctx, table) = self
-            .blocks
-            .scan_block_keys(&keys, span_block_schema())
-            .await
-            .map_err(|err| block_err(&err))?;
-        let batches = collect_table(&ctx, &table).await?;
+        let batches = self.cold_key_batches(&keys).await?;
         let mut values = BTreeSet::new();
         for batch in &batches {
             collect_attribute_tag_values(batch, requested, &mut values)?;
@@ -498,10 +514,10 @@ impl KrabkaSpanStore {
         end_ns: i64,
     ) -> Result<Vec<TypedValue>, TraceqlError> {
         let trace_index = self.trace_index.load();
-        let values: BTreeSet<(String, String)> = trace_index
+        let values: BTreeSet<TypedValue> = trace_index
             .tag_values(tenant, tag, start_ns, end_ns)
             .into_iter()
-            .map(|value| ("string".to_string(), value))
+            .map(|value| TypedValue::new("string", value))
             .collect();
         self.with_live_tag_values(
             values,
@@ -517,7 +533,7 @@ impl KrabkaSpanStore {
     /// union.
     async fn with_live_tag_values(
         &self,
-        mut values: BTreeSet<(String, String)>,
+        mut values: BTreeSet<TypedValue>,
         lookup: TagValuesLookup<'_>,
     ) -> Result<Vec<TypedValue>, TraceqlError> {
         if let Some(live) = &self.live {
@@ -528,15 +544,10 @@ impl KrabkaSpanStore {
                     lookup.range.start_ns,
                     lookup.range.end_ns,
                 )
-                .await?
-                .into_iter()
-                .map(|value| (value.type_, value.value)),
+                .await?,
             );
         }
-        Ok(values
-            .into_iter()
-            .map(|(type_, value)| TypedValue { type_, value })
-            .collect())
+        Ok(values.into_iter().collect())
     }
 }
 

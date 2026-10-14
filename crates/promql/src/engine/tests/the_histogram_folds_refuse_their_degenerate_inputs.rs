@@ -1,5 +1,17 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct ClassicFoldBucket {
+    upper_bound: &'static str,
+    count: f64,
+}
+
+#[derive(bon::Builder)]
+struct ClassicFoldSeries {
+    name: &'static str,
+    buckets: Vec<ClassicFoldBucket>,
+}
+
 /// The degenerate inputs to the histogram folds. A classic series without a
 /// `+Inf` bucket has no total to divide by and yields NaN; two buckets are
 /// enough to interpolate between; and a NaN bound, or a histogram holding
@@ -11,30 +23,57 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn the_histogram_folds_refuse_their_degenerate_inputs() {
     let mut store = InMemoryMetricStore::new();
-    for (name, points) in [
+    for series in [
         // Two buckets, closed with +Inf: the smallest series that interpolates.
-        ("c2", vec![("1", 1.0), ("+Inf", 2.0)]),
+        ClassicFoldSeries::builder()
+            .name("c2")
+            .buckets(vec![
+                ClassicFoldBucket::builder()
+                    .upper_bound("1")
+                    .count(1.0)
+                    .build(),
+                ClassicFoldBucket::builder()
+                    .upper_bound("+Inf")
+                    .count(2.0)
+                    .build(),
+            ])
+            .build(),
         // No +Inf bucket at all, so there is no total.
-        ("cf", vec![("1", 1.0), ("2", 2.0)]),
+        ClassicFoldSeries::builder()
+            .name("cf")
+            .buckets(vec![
+                ClassicFoldBucket::builder()
+                    .upper_bound("1")
+                    .count(1.0)
+                    .build(),
+                ClassicFoldBucket::builder()
+                    .upper_bound("2")
+                    .count(2.0)
+                    .build(),
+            ])
+            .build(),
     ] {
-        for (le, count) in points {
+        for bucket in series.buckets {
             store.push_float(
                 "tenant-a",
-                labels(&[("__name__", name), ("le", le)]),
+                labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", series.name),
+                    crate::test_support::TestLabelPair::new("le", bucket.upper_bound),
+                ]),
                 10_000,
-                count,
+                bucket.count,
             );
         }
     }
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "nh")]),
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "nh")]),
         10_000,
         native_histogram(4.0, 8.0),
     );
     store.push_histogram(
         "tenant-a",
-        labels(&[("__name__", "nh0")]),
+        labels(&[crate::test_support::TestLabelPair::new("__name__", "nh0")]),
         10_000,
         native_histogram(0.0, 0.0),
     );

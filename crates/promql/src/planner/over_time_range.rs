@@ -47,7 +47,7 @@ mod tests {
         samples: Vec<LabeledSeries>,
         eval_time_ms: i64,
         fold: OverTimeFold,
-    ) -> Vec<(String, f64)> {
+    ) -> Vec<crate::planner::JobValue> {
         let windows = RangeWindowGrid::since_epoch(eval_time_ms);
         let plan = plan_over_time_range_selector(samples, windows, fold)
             .await
@@ -73,43 +73,38 @@ mod tests {
         )
         .await;
         check!(got.len() == 1);
-        check!(got[0].0 == "a");
-        check!(approx_eq(got[0].1, 4.0));
+        check!(got[0].job == "a");
+        check!(approx_eq(got[0].value, 4.0));
     }
 
-    #[test]
-    fn over_time_family_lookup_covers_operator_families() {
-        let cases = [
-            ("sum_over_time", Some(OverTimeFamily::Sum)),
-            ("avg_over_time", Some(OverTimeFamily::Avg)),
-            ("count_over_time", Some(OverTimeFamily::Count)),
-            ("min_over_time", Some(OverTimeFamily::Min)),
-            ("max_over_time", Some(OverTimeFamily::Max)),
-            ("stddev_over_time", Some(OverTimeFamily::Stddev)),
-            ("stdvar_over_time", Some(OverTimeFamily::Stdvar)),
-            ("last_over_time", Some(OverTimeFamily::Last)),
-            ("present_over_time", Some(OverTimeFamily::Present)),
-            ("quantile_over_time", Some(OverTimeFamily::Quantile)),
-            ("mad_over_time", None),
-            ("first_over_time", None),
-            ("ts_of_min_over_time", None),
-            ("rate", None),
-        ];
-        for (name, want) in cases {
-            assert2::assert!(over_time_family_from_function_name(name) == want);
-        }
+    #[yare::parameterized(
+        sum = { "sum_over_time", Some(OverTimeFamily::Sum) },
+        avg = { "avg_over_time", Some(OverTimeFamily::Avg) },
+        count = { "count_over_time", Some(OverTimeFamily::Count) },
+        min = { "min_over_time", Some(OverTimeFamily::Min) },
+        max = { "max_over_time", Some(OverTimeFamily::Max) },
+        stddev = { "stddev_over_time", Some(OverTimeFamily::Stddev) },
+        stdvar = { "stdvar_over_time", Some(OverTimeFamily::Stdvar) },
+        last = { "last_over_time", Some(OverTimeFamily::Last) },
+        present = { "present_over_time", Some(OverTimeFamily::Present) },
+        quantile = { "quantile_over_time", Some(OverTimeFamily::Quantile) },
+        mad_unsupported = { "mad_over_time", None },
+        first_unsupported = { "first_over_time", None },
+        ts_of_min_unsupported = { "ts_of_min_over_time", None },
+        rate_unsupported = { "rate", None },
+    )]
+    fn over_time_family_lookup_covers_operator_families(name: &str, want: Option<OverTimeFamily>) {
+        assert2::assert!(over_time_family_from_function_name(name) == want);
     }
 
     /// `quantile_over_time(0.5, ...)` over 2,4,4,4,5,5,7,9 gives the median 4.5.
     #[tokio::test]
     async fn quantile_over_time_plan_threads_phi() {
         let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
-        let series = values
-            .iter()
-            .enumerate()
-            .fold(LabeledSeries::with_job("a"), |series, (i, v)| {
-                series.at((i64::try_from(i).unwrap() + 1) * 60_000, *v)
-            });
+        let mut series = LabeledSeries::with_job("a");
+        for index in 0..values.len() {
+            series = series.at((i64::try_from(index).unwrap() + 1) * 60_000, values[index]);
+        }
         let samples = vec![series];
         let got = run(
             samples,
@@ -121,7 +116,7 @@ mod tests {
         )
         .await;
         assert2::assert!(got.len() == 1);
-        assert2::assert!(approx_eq(got[0].1, 4.5));
+        assert2::assert!(approx_eq(got[0].value, 4.5));
     }
 
     /// `present_over_time` gives 1.0 when the window has samples.
@@ -137,7 +132,7 @@ mod tests {
             },
         )
         .await;
-        assert2::assert!(approx_eq(got[0].1, 1.0));
+        assert2::assert!(approx_eq(got[0].value, 1.0));
     }
 
     /// An empty window emits NULL, not a NaN sentinel.

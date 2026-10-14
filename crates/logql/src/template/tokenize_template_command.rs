@@ -7,28 +7,37 @@ pub(crate) fn tokenize_template_command(command: &str) -> Result<Vec<String>, Pa
     let mut tokens = Vec::new();
     let mut pos = 0;
     while let Some(rest) = command.get(pos..) {
-        let Some((offset, ch)) = rest.char_indices().find(|(_, ch)| !ch.is_whitespace()) else {
+        let Some(positioned_char) = rest
+            .char_indices()
+            .find(|candidate| !candidate.1.is_whitespace())
+        else {
             break;
         };
+        let offset = positioned_char.0;
+        let ch = positioned_char.1;
         pos = pos
             .checked_add(offset)
             .expect("template token offset cannot overflow");
         if matches!(ch, '"' | '\'' | '`') {
-            let (token, next) = parse_template_quoted_token(command, pos, ch)?;
-            ensure_template_quoted_token(command, pos, &token, next, ch)?;
-            tokens.push(token);
-            pos = next;
+            let parsed = parse_template_quoted_token(command, pos, ch)?;
+            ensure_template_quoted_token(command, pos, &parsed.token, parsed.next_position, ch)?;
+            tokens.push(parsed.token);
+            pos = parsed.next_position;
         } else if ch == '(' {
-            let (token, next) = parse_template_parenthesized_token(command, pos)?;
-            ensure_template_parenthesized_token(command, pos, &token, next)?;
-            let end = if command.as_bytes().get(next) == Some(&b'.') {
-                command[next..]
+            let parsed = parse_template_parenthesized_token(command, pos)?;
+            ensure_template_parenthesized_token(command, pos, &parsed.token, parsed.next_position)?;
+            let end = if command.as_bytes().get(parsed.next_position) == Some(&b'.') {
+                command[parsed.next_position..]
                     .find(char::is_whitespace)
-                    .map_or(command.len(), |offset| next + offset)
+                    .map_or(command.len(), |offset| parsed.next_position + offset)
             } else {
-                next
+                parsed.next_position
             };
-            tokens.push(format!("{token}{}", &command[next..end]));
+            tokens.push(format!(
+                "{}{}",
+                parsed.token,
+                &command[parsed.next_position..end]
+            ));
             pos = end;
         } else {
             let end = command

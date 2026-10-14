@@ -1,6 +1,8 @@
 use super::{
     BitReader, ChunkError, HistogramChunkState, HistogramLayout, NativeHistogram, ResetHint,
-    STALE_NAN_BITS, XorState, decode_histogram_samples, stale_histogram,
+    STALE_NAN_BITS, XorState, decode_histogram_samples,
+    histogram_chunk_state::{read_initial_timestamp, read_next_timestamp},
+    stale_histogram,
 };
 
 /// Decodes a Prometheus float native-histogram chunk.
@@ -11,7 +13,7 @@ use super::{
 pub fn decode_float_histogram_chunk(
     chunk: &[u8],
     max_buckets: u64,
-) -> Result<Vec<(i64, NativeHistogram)>, ChunkError> {
+) -> Result<Vec<super::TimestampedHistogramSample>, ChunkError> {
     decode_histogram_samples::<FloatState>(chunk, max_buckets)
 }
 
@@ -19,9 +21,15 @@ struct FloatState {
     timestamp: i64,
     timestamp_delta: i64,
     /// The count, zero count and sum, in that order.
-    scalars: [(f64, XorState); 3],
-    positive: Vec<(f64, XorState)>,
-    negative: Vec<(f64, XorState)>,
+    scalars: [FloatXorValue; 3],
+    positive: Vec<FloatXorValue>,
+    negative: Vec<FloatXorValue>,
+}
+
+#[derive(Clone, Copy)]
+struct FloatXorValue {
+    value: f64,
+    state: XorState,
 }
 
 impl HistogramChunkState for FloatState {
@@ -37,40 +45,38 @@ impl HistogramChunkState for FloatState {
         Self {
             timestamp: 0,
             timestamp_delta: 0,
-            scalars: [(0.0, XorState::default()); 3],
-            positive: vec![(0.0, XorState::default()); layout.positive_buckets],
-            negative: vec![(0.0, XorState::default()); layout.negative_buckets],
+            scalars: [FloatXorValue::default(); 3],
+            positive: vec![FloatXorValue::default(); layout.positive_buckets],
+            negative: vec![FloatXorValue::default(); layout.negative_buckets],
         }
     }
 
     fn read_first(&mut self, reader: &mut BitReader<'_>) -> Result<(), ChunkError> {
-        self.timestamp = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
-        for (value, _) in self
+        self.timestamp = read_initial_timestamp(reader)?;
+        for value in self
             .scalars
             .iter_mut()
             .chain(self.positive.iter_mut())
             .chain(self.negative.iter_mut())
         {
-            *value = f64::from_bits(reader.read_bits(64).ok_or(ChunkError::Truncated)?);
+            value.value = f64::from_bits(reader.read_bits(64).ok_or(ChunkError::Truncated)?);
         }
         Ok(())
     }
 
     fn read_next(&mut self, reader: &mut BitReader<'_>) -> Result<bool, ChunkError> {
-        let dod = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
-        self.timestamp_delta = self.timestamp_delta.wrapping_add(dod);
-        self.timestamp = self.timestamp.wrapping_add(self.timestamp_delta);
-        for (value, state) in &mut self.scalars {
+        read_next_timestamp(reader, &mut self.timestamp_delta, &mut self.timestamp)?;
+        for decoded in &mut self.scalars {
             reader
-                .read_xor_value(value, state)
+                .read_xor_value(&mut decoded.value, &mut decoded.state)
                 .ok_or(ChunkError::Truncated)?;
         }
-        if self.scalars[2].0.to_bits() == STALE_NAN_BITS {
+        if self.scalars[2].value.to_bits() == STALE_NAN_BITS {
             return Ok(true);
         }
-        for (value, state) in self.positive.iter_mut().chain(self.negative.iter_mut()) {
+        for decoded in self.positive.iter_mut().chain(self.negative.iter_mut()) {
             reader
-                .read_xor_value(value, state)
+                .read_xor_value(&mut decoded.value, &mut decoded.state)
                 .ok_or(ChunkError::Truncated)?;
         }
         Ok(false)
@@ -86,15 +92,24 @@ impl HistogramChunkState for FloatState {
             is_float: true,
             reset_hint,
             zero_threshold: layout.zero_threshold,
-            zero_count: self.scalars[1].0,
-            count: self.scalars[0].0,
-            sum: self.scalars[2].0,
+            zero_count: self.scalars[1].value,
+            count: self.scalars[0].value,
+            sum: self.scalars[2].value,
             positive_spans: layout.positive_spans.clone(),
-            positive_counts: self.positive.iter().map(|(value, _)| *value).collect(),
+            positive_counts: self.positive.iter().map(|decoded| decoded.value).collect(),
             negative_spans: layout.negative_spans.clone(),
-            negative_counts: self.negative.iter().map(|(value, _)| *value).collect(),
+            negative_counts: self.negative.iter().map(|decoded| decoded.value).collect(),
             custom_values: layout.custom_values.clone(),
             start_timestamp_ms: None,
         })
+    }
+}
+
+impl Default for FloatXorValue {
+    fn default() -> Self {
+        Self {
+            value: 0.0,
+            state: XorState::default(),
+        }
     }
 }

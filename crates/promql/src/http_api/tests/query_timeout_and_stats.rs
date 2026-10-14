@@ -146,7 +146,7 @@ async fn stats_response_keeps_query_annotations() {
         Arc::new(annotation_store()),
         EngineOpts::default(),
     ));
-    let (status, body) = annotated_query_body(
+    let response = annotated_query_body(
         state,
         &format!(
             "{}&stats=1",
@@ -154,6 +154,8 @@ async fn stats_response_keeps_query_annotations() {
         ),
     )
     .await;
+    let status = response.status;
+    let body = response.body;
 
     assert2::assert!(status == StatusCode::OK);
     assert2::assert!(body["data"]["stats"].is_object());

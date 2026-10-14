@@ -11,12 +11,21 @@ use krabka_observability::{
     InMemoryWalSink, WalLogRecord, distributor_router, otlp_grpc_logs_service,
     otlp_grpc_logs_service_with_limiter,
 };
+
+async fn assert_duplicate_otlp_attributes_rejected(
+    response: axum::response::Response,
+    sink: &InMemoryWalSink,
+) {
+    assert!(response.status() == StatusCode::BAD_REQUEST);
+    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
+    assert!(sink.records().is_empty());
+}
 use opentelemetry_proto::tonic::{
     collector::logs::v1::logs_service_server::LogsService, common::v1::any_value,
     logs::v1::LogRecord, resource::v1::Resource,
 };
 use prost::Message as _;
-use serde_json::json;
+use serde_json::{Value, json};
 use support::{
     FailingWalSink, RejectingIngestLimiter, assert_loki_error, json_body, proto_key_value,
     proto_logs_request, send, tenant_a_post,
@@ -25,22 +34,73 @@ use support::{
 /// The record the `checkout` export writes: its resource labels, the line at
 /// 19 ns, and the detected level and instrumentation scope ahead of `metadata`.
 fn checkout_record(metadata: LogLabels) -> WalLogRecord {
-    let mut structured_metadata = BTreeMap::from([
-        ("detected_level".to_string(), "error".to_string()),
-        ("instrumentation_scope".to_string(), "api".to_string()),
-    ]);
+    let mut structured_metadata = BTreeMap::new();
+    structured_metadata.insert("detected_level".to_string(), "error".to_string());
+    structured_metadata.insert("instrumentation_scope".to_string(), "api".to_string());
     structured_metadata.extend(metadata);
     WalLogRecord {
         tenant: "tenant-a".to_string(),
         labels: labels([
-            ("deployment_environment", "prod"),
-            ("service_name", "checkout"),
+            krabka_blockstore::LabelPair::new("deployment_environment", "prod"),
+            krabka_blockstore::LabelPair::new("service_name", "checkout"),
         ]),
         timestamp_ns: 19,
         line: "api error".to_string(),
         structured_metadata,
         position: None,
     }
+}
+
+fn set_proto_log_attributes(
+    log: &mut LogRecord,
+    attributes: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
+) {
+    log.attributes = attributes;
+}
+
+async fn post_checkout_export_with_attributes(
+    app: &axum::Router,
+    resource_attributes: &Value,
+    scope_attributes: &Value,
+    log_records: &Value,
+) -> axum::response::Response {
+    post_json(
+        app,
+        "/v1/logs",
+        &checkout_json_export_with_attributes(resource_attributes, scope_attributes, log_records),
+    )
+    .await
+}
+
+struct CheckoutExportResult {
+    sink: InMemoryWalSink,
+    response: axum::response::Response,
+}
+
+async fn export_checkout(
+    resource_attributes: &Value,
+    scope_attributes: &Value,
+    log_record: &Value,
+) -> CheckoutExportResult {
+    let sink = InMemoryWalSink::default();
+    let app = distributor_router(sink.clone());
+    let response = post_checkout_export_with_attributes(
+        &app,
+        resource_attributes,
+        scope_attributes,
+        log_record,
+    )
+    .await;
+    CheckoutExportResult { sink, response }
+}
+
+fn checkout_proto_log_metadata() -> LogLabels {
+    labels([
+        krabka_blockstore::LabelPair::new("scope_name", "api"),
+        krabka_blockstore::LabelPair::new("scope_version", "1.2.3"),
+        krabka_blockstore::LabelPair::new("status", "500"),
+        krabka_blockstore::LabelPair::new("trace_id", "abc"),
+    ])
 }
 
 /// An OTLP/JSON logs export from the `checkout` service whose one scope holds
@@ -57,6 +117,22 @@ fn checkout_json_export(log_records: &serde_json::Value) -> serde_json::Value {
                 "scopeLogs": [{"logRecords": log_records}]
             }
         ]
+    })
+}
+
+fn checkout_json_export_with_attributes(
+    resource_attributes: &serde_json::Value,
+    scope_attributes: &serde_json::Value,
+    log_records: &serde_json::Value,
+) -> serde_json::Value {
+    json!({
+        "resourceLogs": [{
+            "resource": { "attributes": resource_attributes },
+            "scopeLogs": [{
+                "scope": { "attributes": scope_attributes },
+                "logRecords": log_records
+            }]
+        }]
     })
 }
 
@@ -121,48 +197,30 @@ async fn post_protobuf(
 
 #[tokio::test]
 async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = post_json(&app, "/v1/logs", &json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}},
-                                        {"key": "deployment.environment", "value": {"stringValue": "prod"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "scope": {
-                                            "attributes": [
-                                                {"key": "instrumentation.scope", "value": {"stringValue": "api"}}
-                                            ]
-                                        },
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "body": {"stringValue": "api error"},
-                                                "attributes": [
-                                                    {"key": "status", "value": {"intValue": "500"}},
-                                                    {"key": "trace_id", "value": {"stringValue": "abc"}}
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    })).await;
+    let CheckoutExportResult { sink, response } = export_checkout(
+        &json!([
+            {"key": "service.name", "value": {"stringValue": "checkout"}},
+            {"key": "deployment.environment", "value": {"stringValue": "prod"}}
+        ]),
+        &json!([{"key": "instrumentation.scope", "value": {"stringValue": "api"}}]),
+        &json!([{
+            "timeUnixNano": "19",
+            "body": {"stringValue": "api error"},
+            "attributes": [
+                {"key": "status", "value": {"intValue": "500"}},
+                {"key": "trace_id", "value": {"stringValue": "abc"}}
+            ]
+        }]),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
     assert!(
         records
             == vec![checkout_record(labels([
-                ("status", "500"),
-                ("trace_id", "abc")
+                krabka_blockstore::LabelPair::new("status", "500"),
+                krabka_blockstore::LabelPair::new("trace_id", "abc")
             ]))]
     );
 }
@@ -229,40 +287,22 @@ async fn otlp_logs_endpoint_returns_server_error_when_wal_append_fails() {
 
 #[tokio::test]
 async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metadata() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = post_json(&app, "/v1/logs", &json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}},
-                                        {"key": "cloud/region", "value": {"stringValue": "us-west"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "scope": {
-                                            "attributes": [
-                                                {"key": "instrumentation.scope", "value": {"stringValue": "api"}}
-                                            ]
-                                        },
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "body": {"stringValue": "api error"},
-                                                "attributes": [
-                                                    {"key": "thread.name", "value": {"stringValue": "worker-1"}},
-                                                    {"key": "http.status-code", "value": {"intValue": "500"}}
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    })).await;
+    let CheckoutExportResult { sink, response } = export_checkout(
+        &json!([
+            {"key": "service.name", "value": {"stringValue": "checkout"}},
+            {"key": "cloud/region", "value": {"stringValue": "us-west"}}
+        ]),
+        &json!([{"key": "instrumentation.scope", "value": {"stringValue": "api"}}]),
+        &json!([{
+            "timeUnixNano": "19",
+            "body": {"stringValue": "api error"},
+            "attributes": [
+                {"key": "thread.name", "value": {"stringValue": "worker-1"}},
+                {"key": "http.status-code", "value": {"intValue": "500"}}
+            ]
+        }]),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -270,7 +310,10 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([("service_name", "checkout"),]),
+                labels: labels([krabka_blockstore::LabelPair::new(
+                    "service_name",
+                    "checkout"
+                ),]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
@@ -318,9 +361,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_resource_attributes_wit
     )
     .await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
-    assert!(sink.records().is_empty());
+    assert_duplicate_otlp_attributes_rejected(response, &sink).await;
 }
 
 #[tokio::test]
@@ -344,9 +385,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_log_attributes_without_
     )
     .await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
-    assert!(sink.records().is_empty());
+    assert_duplicate_otlp_attributes_rejected(response, &sink).await;
 }
 
 #[tokio::test]
@@ -377,8 +416,8 @@ async fn otlp_logs_endpoint_discovers_service_name_label_from_resource_attribute
     assert!(
         record.labels
             == labels([
-                ("deployment_environment", "prod"),
-                ("service_name", "unknown_service"),
+                krabka_blockstore::LabelPair::new("deployment_environment", "prod"),
+                krabka_blockstore::LabelPair::new("service_name", "unknown_service"),
             ])
     );
     check!(record.structured_metadata.get("app") == Some(&"checkout".to_string()));
@@ -403,7 +442,13 @@ async fn otlp_logs_endpoint_uses_unknown_service_when_no_service_name_candidate_
         ]
     }))
     .await;
-    assert!(record.labels == labels([("service_name", "unknown_service")]));
+    assert!(
+        record.labels
+            == labels([krabka_blockstore::LabelPair::new(
+                "service_name",
+                "unknown_service"
+            )])
+    );
 }
 
 #[tokio::test]
@@ -459,21 +504,16 @@ async fn otlp_logs_endpoint_accepts_protobuf_payloads() {
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
-    assert!(
-        records
-            == vec![checkout_record(labels([
-                ("scope_name", "api"),
-                ("scope_version", "1.2.3"),
-                ("status", "500"),
-                ("trace_id", "abc"),
-            ]))]
-    );
+    assert!(records == vec![checkout_record(checkout_proto_log_metadata())]);
 }
 
 #[tokio::test]
 async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata() {
     let record = posted_proto_log_record(|log| {
-        log.attributes = vec![proto_key_value("status", any_value::Value::IntValue(500))];
+        set_proto_log_attributes(
+            log,
+            vec![proto_key_value("status", any_value::Value::IntValue(500))],
+        );
         log.trace_id = vec![
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
             0x0f, 0x10,
@@ -484,11 +524,11 @@ async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata
     assert!(
         record.structured_metadata
             == checkout_record(labels([
-                ("scope_name", "api"),
-                ("scope_version", "1.2.3"),
-                ("status", "500"),
-                ("trace_id", "0102030405060708090a0b0c0d0e0f10"),
-                ("span_id", "1112131415161718"),
+                krabka_blockstore::LabelPair::new("scope_name", "api"),
+                krabka_blockstore::LabelPair::new("scope_version", "1.2.3"),
+                krabka_blockstore::LabelPair::new("status", "500"),
+                krabka_blockstore::LabelPair::new("trace_id", "0102030405060708090a0b0c0d0e0f10"),
+                krabka_blockstore::LabelPair::new("span_id", "1112131415161718"),
             ]))
             .structured_metadata
     );
@@ -499,20 +539,23 @@ async fn otlp_logs_endpoint_maps_proto_severity_fields_to_structured_metadata() 
     let record = posted_proto_log_record(|log| {
         log.severity_number = 17;
         log.severity_text = "ERROR".to_string();
-        log.attributes = vec![proto_key_value(
-            "trace_id",
-            any_value::Value::StringValue("abc".into()),
-        )];
+        set_proto_log_attributes(
+            log,
+            vec![proto_key_value(
+                "trace_id",
+                any_value::Value::StringValue("abc".into()),
+            )],
+        );
     })
     .await;
     assert!(
         record.structured_metadata
             == checkout_record(labels([
-                ("scope_name", "api"),
-                ("scope_version", "1.2.3"),
-                ("severity_number", "17"),
-                ("severity_text", "ERROR"),
-                ("trace_id", "abc"),
+                krabka_blockstore::LabelPair::new("scope_name", "api"),
+                krabka_blockstore::LabelPair::new("scope_version", "1.2.3"),
+                krabka_blockstore::LabelPair::new("severity_number", "17"),
+                krabka_blockstore::LabelPair::new("severity_text", "ERROR"),
+                krabka_blockstore::LabelPair::new("trace_id", "abc"),
             ]))
             .structured_metadata
     );
@@ -540,9 +583,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_protobuf_attributes_wit
 
     let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
-    assert!(sink.records().is_empty());
+    assert_duplicate_otlp_attributes_rejected(response, &sink).await;
 }
 
 #[tokio::test]
@@ -573,15 +614,7 @@ async fn otlp_grpc_logs_service_writes_tenant_scoped_wal_records() {
 
     assert!(response.get_ref().partial_success.is_none());
     let records = sink.records();
-    assert!(
-        records
-            == vec![checkout_record(labels([
-                ("scope_name", "api"),
-                ("scope_version", "1.2.3"),
-                ("status", "500"),
-                ("trace_id", "abc"),
-            ]))]
-    );
+    assert!(records == vec![checkout_record(checkout_proto_log_metadata())]);
 }
 
 #[tokio::test]

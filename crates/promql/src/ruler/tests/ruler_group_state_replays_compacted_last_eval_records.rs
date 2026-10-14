@@ -1,3 +1,11 @@
+#[derive(bon::Builder)]
+struct RulerEvalExpectation {
+    tenant: &'static str,
+    namespace: &'static str,
+    group: &'static str,
+    expected: Option<i64>,
+}
+
 #[test]
 pub(crate) fn ruler_group_state_replays_compacted_last_eval_records() {
     let mut state = super::super::RulerGroupState::default();
@@ -22,11 +30,28 @@ pub(crate) fn ruler_group_state_replays_compacted_last_eval_records() {
         },
     ]);
 
-    for (tenant, namespace, group, want) in [
-        ("tenant-a", "team-a", "availability", Some(120_000)),
-        ("tenant-a", "team-b", "latency", Some(90_000)),
-        ("tenant-b", "team-a", "availability", None),
+    for expected in [
+        RulerEvalExpectation::builder()
+            .tenant("tenant-a")
+            .namespace("team-a")
+            .group("availability")
+            .expected(120_000)
+            .build(),
+        RulerEvalExpectation::builder()
+            .tenant("tenant-a")
+            .namespace("team-b")
+            .group("latency")
+            .expected(90_000)
+            .build(),
+        RulerEvalExpectation::builder()
+            .tenant("tenant-b")
+            .namespace("team-a")
+            .group("availability")
+            .build(),
     ] {
-        assert2::assert!(state.last_eval_ms(tenant, namespace, group) == want);
+        assert2::assert!(
+            state.last_eval_ms(expected.tenant, expected.namespace, expected.group)
+                == expected.expected
+        );
     }
 }

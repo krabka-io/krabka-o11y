@@ -15,13 +15,13 @@ pub(crate) async fn append_remote_read_histogram_samples<S: MetricStore>(
     .await?;
 
     for batch in batches {
-        for (fp, timestamp, hist) in decode_native_histograms(&batch)
+        for row in decode_native_histograms(&batch)
             .map_err(|error| ApiError::internal(error.to_string()))?
         {
-            let series = sink.next_sample_series(fp)?;
+            let series = sink.next_sample_series(row.fingerprint)?;
             series
                 .histograms
-                .push(remote_read_histogram(timestamp, &hist));
+                .push(remote_read_histogram(row.timestamp_ms, &row.hist));
         }
     }
     Ok(())

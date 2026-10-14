@@ -14,22 +14,27 @@ use super::natural_chunks;
 pub(crate) fn natural_less(left: &[u8], right: &[u8]) -> bool {
     let left = natural_chunks(left);
     let right = natural_chunks(right);
-    for (index, chunk) in left.iter().enumerate() {
+    for index in 0..left.len() {
+        let chunk = &left[index];
         let Some(other) = right.get(index) else {
             return false;
         };
-        match (
-            std::str::from_utf8(chunk)
-                .ok()
-                .and_then(|chunk| chunk.parse::<i64>().ok()),
-            std::str::from_utf8(other)
-                .ok()
-                .and_then(|other| other.parse::<i64>().ok()),
-        ) {
-            (Some(chunk), Some(other)) if chunk != other => return chunk < other,
-            (Some(_), Some(_)) => {}
-            _ if chunk != other => return chunk < other,
-            _ => {}
+        let chunk_number = std::str::from_utf8(chunk)
+            .ok()
+            .and_then(|chunk| chunk.parse::<i64>().ok());
+        let other_number = std::str::from_utf8(other)
+            .ok()
+            .and_then(|other| other.parse::<i64>().ok());
+        if let Some(chunk_number) = chunk_number {
+            if let Some(other_number) = other_number {
+                if chunk_number != other_number {
+                    return chunk_number < other_number;
+                }
+            } else if chunk != other {
+                return chunk < other;
+            }
+        } else if chunk != other {
+            return chunk < other;
         }
         // The chunks match. `natsort` stops at whichever value runs out of
         // chunks first and calls that one the smaller.

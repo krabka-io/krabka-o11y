@@ -1,5 +1,11 @@
 use super::{BTreeMap, Mutex, MutexGuard, PendingRemoval, PoisonError};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PendingBlockRemoval {
+    pub object_key: String,
+    pub removal: PendingRemoval,
+}
+
 /// Blocks a writer has dropped from its own in-memory index but has not yet
 /// folded into a durable snapshot, each pinned to the record it dropped.
 ///
@@ -35,15 +41,15 @@ pub(crate) struct PendingBlockRemovals {
 impl PendingBlockRemovals {
     /// Records that the `(object key, retired record)` pairs in `blocks` no
     /// longer belong to `tenant`.
-    pub(crate) fn record<'key>(
+    pub(crate) fn record(
         &self,
         tenant: &str,
-        blocks: impl IntoIterator<Item = (&'key str, PendingRemoval)>,
+        blocks: impl IntoIterator<Item = PendingBlockRemoval>,
     ) {
         let mut guard = self.lock();
         let pending = guard.entry(tenant.to_string()).or_default();
-        for (key, removal) in blocks {
-            pending.insert(key.to_string(), removal);
+        for block in blocks {
+            pending.insert(block.object_key, block.removal);
         }
         if pending.is_empty() {
             guard.remove(tenant);
@@ -75,9 +81,11 @@ impl PendingBlockRemovals {
     /// flight retires a different record, so it survives the commit.
     pub(crate) fn commit(&self, applied: &BTreeMap<String, BTreeMap<String, PendingRemoval>>) {
         let mut guard = self.lock();
-        for (tenant, blocks) in applied {
+        for tenant in applied.keys() {
+            let blocks = &applied[tenant];
             if let Some(pending) = guard.get_mut(tenant) {
-                for (key, removal) in blocks {
+                for key in blocks.keys() {
+                    let removal = &blocks[key];
                     if pending.get(key) == Some(removal) {
                         pending.remove(key);
                     }

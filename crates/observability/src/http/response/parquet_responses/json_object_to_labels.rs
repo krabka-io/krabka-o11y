@@ -2,13 +2,12 @@ use super::{Labels, Value};
 
 pub(crate) fn json_object_to_labels(value: &Value) -> Option<Labels> {
     value.as_object().map(|object| {
-        object
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .as_str()
-                    .map(|value| (name.clone(), value.to_string()))
-            })
-            .collect()
+        let mut labels = Labels::new();
+        for entry in object {
+            if let Some(value) = entry.1.as_str() {
+                labels.insert(entry.0.clone(), value.to_string());
+            }
+        }
+        labels
     })
 }

@@ -25,17 +25,18 @@ where
     loop {
         let result =
             poll_wal_head_consumer_once(consumer, head, wal_topic, timeout, metrics).await?;
-        summary.polls += 1;
-        summary.polled_records += result.polled_records;
-        summary.replayed_records += result.replayed_records;
-        summary.committed_offsets.extend(result.committed_offsets);
+        summary.record_poll(
+            result.polled_records,
+            result.replayed_records,
+            result.committed_offsets,
+        );
 
-        if let Some((assigned, caught_up)) = consumer.recovery_state().await {
+        if let Some(recovery) = consumer.recovery_state().await {
             if let Some(metrics) = metrics {
-                metrics.record_assignment(&assigned, caught_up);
+                metrics.record_assignment(&recovery.assignment, recovery.at_log_end);
             }
             if let Some(gate) = catch_up {
-                if caught_up {
+                if recovery.at_log_end {
                     gate.mark_ready();
                 } else {
                     gate.mark_unready();

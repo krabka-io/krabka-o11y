@@ -7,3 +7,17 @@ pub(crate) struct QuerierRequestParts<S: ProfileStore> {
     pub(crate) principal: Principal,
     pub(crate) headers: HeaderMap,
 }
+
+impl<S: ProfileStore> QuerierRequestParts<S> {
+    pub(crate) fn from_extensions(
+        state: super::Extension<Arc<QuerierState<S>>>,
+        principal: super::Extension<Principal>,
+        headers: HeaderMap,
+    ) -> Self {
+        Self {
+            state: state.0,
+            principal: principal.0,
+            headers,
+        }
+    }
+}

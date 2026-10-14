@@ -1,9 +1,14 @@
 use super::{NativeHistogram, spanned_histogram_counts, standard_histogram_bound};
 
+pub(crate) struct ZeroCountAtThreshold {
+    pub(crate) count: f64,
+    pub(crate) threshold: f64,
+}
+
 pub(crate) fn zero_count_at_threshold(
     histogram: &NativeHistogram,
     mut threshold: f64,
-) -> (f64, f64) {
+) -> ZeroCountAtThreshold {
     loop {
         let mut count = histogram.zero_count;
         let mut expanded = threshold;
@@ -11,7 +16,9 @@ pub(crate) fn zero_count_at_threshold(
             spanned_histogram_counts(&histogram.positive_spans, &histogram.positive_counts),
             spanned_histogram_counts(&histogram.negative_spans, &histogram.negative_counts),
         ] {
-            for (index, bucket_count) in buckets {
+            for entry in buckets {
+                let index = entry.0;
+                let bucket_count = entry.1;
                 let lower = standard_histogram_bound(index - 1, histogram.schema);
                 if lower >= threshold {
                     break;
@@ -24,7 +31,7 @@ pub(crate) fn zero_count_at_threshold(
             }
         }
         if expanded.to_bits() == threshold.to_bits() {
-            return (count, threshold);
+            return ZeroCountAtThreshold { count, threshold };
         }
         threshold = expanded;
     }

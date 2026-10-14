@@ -12,7 +12,7 @@ use krabka_blockstore::{LabelIndex, LogBlockIndex as BlockIndex};
 use krabka_observability::{InMemoryWalSink, QuerierState, distributor_router, loki_router};
 use serde_json::Value;
 use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt,
+    ContainerAsync, ContainerRequest, GenericImage, ImageExt,
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
@@ -30,6 +30,27 @@ pub const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Grafana's default HTTP port.
 pub const GRAFANA_PORT: u16 = 3000;
+
+fn pinned_image_tag(variable: &str) -> String {
+    std::env::var(variable).unwrap_or_else(|_| {
+        panic!(
+            "{variable} is unset. These suites run under `bazel test --config=docker`, \
+             which loads the digest-pinned image and sets this. To run one under cargo, set it \
+             to that image's tag in //bazel/images/images.bzl."
+        )
+    })
+}
+
+#[allow(dead_code)]
+pub async fn start_loki(config: &str, port: u16) -> TestResult<ContainerAsync<GenericImage>> {
+    let tag = pinned_image_tag("KRABKA_LOKI_IMAGE_TAG");
+    start_image_with_timeout(
+        GenericImage::new("mirror.gcr.io/grafana/loki".to_string(), tag)
+            .with_exposed_port(port.tcp())
+            .with_copy_to("/etc/loki/local-config.yaml", config.as_bytes().to_vec()),
+    )
+    .await
+}
 
 /// The tenant the provisioned datasources send on every request.
 pub const TENANT: &str = "tenant-a";
@@ -68,18 +89,8 @@ fn form_encode(text: &str) -> String {
 }
 
 pub async fn start_grafana(datasources_yaml: &str) -> TestResult<ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite ran
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under cargo, set it to \
-         that image's tag in //bazel/images/images.bzl.",
-    );
-    Ok(tokio::time::timeout(
-        CONTAINER_START_TIMEOUT,
+    let tag = pinned_image_tag("KRABKA_GRAFANA_IMAGE_TAG");
+    start_image_with_timeout(
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
             .with_exposed_port(GRAFANA_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("HTTP Server Listen"))
@@ -93,10 +104,15 @@ pub async fn start_grafana(datasources_yaml: &str) -> TestResult<ContainerAsync<
             .with_host("host.docker.internal", Host::HostGateway)
             .with_env_var("GF_AUTH_ANONYMOUS_ENABLED", "true")
             .with_env_var("GF_AUTH_ANONYMOUS_ORG_ROLE", "Admin")
-            .with_env_var("GF_AUTH_BASIC_ENABLED", "false")
-            .start(),
+            .with_env_var("GF_AUTH_BASIC_ENABLED", "false"),
     )
-    .await??)
+    .await
+}
+
+pub async fn start_image_with_timeout(
+    image: ContainerRequest<GenericImage>,
+) -> TestResult<ContainerAsync<GenericImage>> {
+    Ok(tokio::time::timeout(CONTAINER_START_TIMEOUT, image.start()).await??)
 }
 
 /// An HTTP server at `base`, read through `client`.
@@ -193,9 +209,12 @@ pub async fn serve_pushed(payload: &Value) -> TestResult<ServedQuerier> {
     let state = QuerierState::new(root, LabelIndex::default(), BlockIndex::default())
         .with_hot_tail(sink, i64::MIN);
 
-    let listener = TcpListener::bind(("0.0.0.0", 0)).await?;
+    let listener =
+        TcpListener::bind(std::net::SocketAddr::new("0.0.0.0".parse().unwrap(), 0)).await?;
     let host_port = listener.local_addr()?.port();
-    let (shutdown, stop) = oneshot::channel();
+    let shutdown_channel = oneshot::channel();
+    let shutdown = shutdown_channel.0;
+    let stop = shutdown_channel.1;
     tokio::spawn(async move {
         let _ = axum::serve(listener, loki_router(state))
             .with_graceful_shutdown(async move {

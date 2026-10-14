@@ -1,5 +1,16 @@
 use super::*;
 
+struct QueryAnnotationCase<'a> {
+    query: &'static str,
+    warnings: &'a [&'a str],
+    infos: &'a [&'a str],
+}
+
+struct QueryRouteCase {
+    route: &'static str,
+    result_type: &'static str,
+}
+
 #[tokio::test]
 pub(crate) async fn query_annotations_reach_the_response_envelope() {
     // Prometheus 3.8.0 answers 200 and adds a top-level `warnings` array for its
@@ -15,44 +26,68 @@ pub(crate) async fn query_annotations_reach_the_response_envelope() {
         "PromQL info: incompatible sample types encountered for binary operator \">\": histogram > float (1:1)",
     ];
     let cases = [
-        ("up{job=\"none\"}", &no_annotations, &no_annotations),
-        (
-            "histogram_quantile(0.5, up)",
-            &bad_bucket_label,
-            &no_annotations,
-        ),
-        ("h > 80", &no_annotations, &incompatible_types),
+        QueryAnnotationCase {
+            query: "up{job=\"none\"}",
+            warnings: &no_annotations,
+            infos: &no_annotations,
+        },
+        QueryAnnotationCase {
+            query: "histogram_quantile(0.5, up)",
+            warnings: &bad_bucket_label,
+            infos: &no_annotations,
+        },
+        QueryAnnotationCase {
+            query: "h > 80",
+            warnings: &no_annotations,
+            infos: &incompatible_types,
+        },
     ];
 
-    for (query, warnings, infos) in cases {
-        for (route, result_type) in [
-            ("/api/v1/query", "vector"),
-            ("/api/v1/query_range", "matrix"),
+    for case in cases {
+        for route_case in [
+            QueryRouteCase {
+                route: "/api/v1/query",
+                result_type: "vector",
+            },
+            QueryRouteCase {
+                route: "/api/v1/query_range",
+                result_type: "matrix",
+            },
         ] {
             let state = Arc::new(PrometheusApiState::new(
                 Arc::new(annotation_store()),
                 EngineOpts::default(),
             ));
-            let (status, body) =
-                annotated_query_body(state, &annotation_query_uri(route, query)).await;
+            let response =
+                annotated_query_body(state, &annotation_query_uri(route_case.route, case.query))
+                    .await;
+            let status = response.status;
+            let body = response.body;
 
             let mut want = serde_json::Map::new();
             want.insert("status".to_string(), serde_json::json!("success"));
             want.insert(
                 "data".to_string(),
-                serde_json::json!({"resultType": result_type, "result": []}),
+                serde_json::json!({"resultType": route_case.result_type, "result": []}),
             );
-            if !warnings.is_empty() {
-                want.insert("warnings".to_string(), serde_json::json!(warnings));
+            if !case.warnings.is_empty() {
+                want.insert("warnings".to_string(), serde_json::json!(case.warnings));
             }
-            if !infos.is_empty() {
-                want.insert("infos".to_string(), serde_json::json!(infos));
+            if !case.infos.is_empty() {
+                want.insert("infos".to_string(), serde_json::json!(case.infos));
             }
 
-            check!(status == StatusCode::OK, "{query} on {route}");
+            check!(
+                status == StatusCode::OK,
+                "{} on {}",
+                case.query,
+                route_case.route
+            );
             check!(
                 body == serde_json::Value::Object(want),
-                "{query} on {route}"
+                "{} on {}",
+                case.query,
+                route_case.route
             );
         }
     }

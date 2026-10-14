@@ -1,14 +1,24 @@
 use krabka_client_consumer::IsolationLevel;
-use krabka_observability::{CriticalTaskError, SupervisedTasks};
+use krabka_observability::{ReadinessGate, SupervisedTasks};
 
 use super::{
     Arc, AutoOffsetReset, BrokerTransport, Cli, Consumer, LeaseConfig, MemberId, Role, RoleLaunch,
-    RoleObjectStore, RulerAlertmanagerSink, RulerShard, ServerSecurity, Shutdown, WalHead,
-    install_bundled_rule_groups, load_runtime_overrides, mimir_alertmanager_router,
+    RoleObjectStore, RulerAlertmanagerSink, RulerShard, RulerTopics, ServerSecurity, Shutdown,
+    WalHead, install_bundled_rule_groups, load_runtime_overrides, mimir_alertmanager_router,
     mimir_ruler_prometheus_router, mimir_ruler_router, poll_ruler_state_consumer_once,
     readiness_router, run_fenced_ruler_evaluation_loop, run_ruler_state_consumer_loop,
     serve_prometheus_router_joinable, serving_api_state, spawn_shutdown_signal_listener,
 };
+
+struct BundledRulesInstallation<'a> {
+    path: &'a std::path::Path,
+    gate: ReadinessGate,
+}
+
+struct RulerStartup<Consumer, Coordination> {
+    state_consumer: Consumer,
+    coordination: Coordination,
+}
 
 #[tracing::instrument(
     level = "info",
@@ -57,7 +67,10 @@ pub(crate) async fn run_ruler(
     let bundled_rules = cli
         .ruler_bundled_rules
         .as_deref()
-        .map(|path| (path, readiness.gate("bundled-rules")));
+        .map(|path| BundledRulesInstallation {
+            path,
+            gate: readiness.gate("bundled-rules"),
+        });
     let wal_broker = readiness.gate("wal-broker");
     let ruler_state_replay = readiness.gate("ruler-state-replay");
     let router = mimir_ruler_prometheus_router(Arc::clone(&state))
@@ -70,9 +83,11 @@ pub(crate) async fn run_ruler(
     // `build` with no handler for the signal that is trying to stop it.
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
-    let (bound, server) =
+    let serving =
         serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
             .await?;
+    let bound = serving.addr;
+    let server = serving.server;
     tracing::info!(
         %bound,
         tls = security.tls_enabled(),
@@ -83,10 +98,11 @@ pub(crate) async fn run_ruler(
     let startup = async {
         // Before the ruler reaches Kafka, so a rule file an operator names but
         // the ruler cannot install stops the start early.
-        if let Some((path, gate)) = bundled_rules {
+        if let Some(bundled_rules) = bundled_rules {
+            let path = bundled_rules.path;
             let groups =
                 install_bundled_rule_groups(bound, security, path, &cli.ruler_tenant).await?;
-            gate.mark_ready();
+            bundled_rules.gate.mark_ready();
             tracing::info!(
                 path = %path.display(),
                 groups = groups.len(),
@@ -127,9 +143,12 @@ pub(crate) async fn run_ruler(
                 .maybe_security(wal_security)
                 .build() => built?,
         };
-        Ok::<_, Box<dyn std::error::Error>>(Some((state_consumer, coordination)))
+        Ok::<_, Box<dyn std::error::Error>>(Some(RulerStartup {
+            state_consumer,
+            coordination,
+        }))
     };
-    let (mut state_consumer, coordination) = match startup.await {
+    let clients = match startup.await {
         Ok(Some(clients)) => clients,
         Ok(None) => {
             server.await?;
@@ -143,6 +162,8 @@ pub(crate) async fn run_ruler(
             return Err(error);
         }
     };
+    let mut state_consumer = clients.state_consumer;
+    let coordination = clients.coordination;
     wal_broker.mark_ready();
     loop {
         tokio::select! {
@@ -169,7 +190,7 @@ pub(crate) async fn run_ruler(
     let poll_timeout = cli.wal_poll_timeout;
 
     let alert_sink = ruler_alert_sink(&cli);
-    let (role, member, lease_config) = ruler_coordination_identity(&cli)?;
+    let coordination_identity = ruler_coordination_identity(&cli)?;
     let coordination = Arc::new(coordination);
 
     // The ruler state consumer and evaluation loop are critical: both feed
@@ -199,12 +220,15 @@ pub(crate) async fn run_ruler(
             state,
             eval_alert_sink,
             coordination,
-            role,
-            member,
+            coordination_identity.role,
+            coordination_identity.member,
             shard,
-            (cli.wal_topic.clone(), cli.ruler_state_topic.clone()),
+            RulerTopics {
+                wal: cli.wal_topic.clone(),
+                state: cli.ruler_state_topic.clone(),
+            },
             interval,
-            lease_config,
+            coordination_identity.lease_config,
             ruler_metrics,
             eval_shutdown.signalled(),
         )
@@ -216,12 +240,7 @@ pub(crate) async fn run_ruler(
 
     // Join the server task so in-flight requests drain (graceful shutdown)
     // before the process exits.
-    let outcome = tokio::select! {
-        result = server => result.map_err(Into::into),
-        name = tasks.first_unexpected_exit() => Err(Box::<dyn std::error::Error>::from(
-            CriticalTaskError(name),
-        )),
-    };
+    let outcome = crate::server_or_critical_task_exit!(server, tasks);
     shutdown.trigger();
     tasks.shutdown().await;
     let drain_result = alert_sink.shutdown().await;
@@ -230,9 +249,15 @@ pub(crate) async fn run_ruler(
     Ok(())
 }
 
+struct RulerCoordinationIdentity {
+    role: Role,
+    member: MemberId,
+    lease_config: LeaseConfig,
+}
+
 fn ruler_coordination_identity(
     cli: &Cli,
-) -> Result<(Role, MemberId, LeaseConfig), Box<dyn std::error::Error>> {
+) -> Result<RulerCoordinationIdentity, Box<dyn std::error::Error>> {
     let role_name = format!(
         "krabka-metrics-ruler-{}-{}-of-{}",
         cli.ruler_state_topic, cli.ruler_shard_index, cli.ruler_shard_total
@@ -241,28 +266,26 @@ fn ruler_coordination_identity(
         .ruler_replica_id
         .clone()
         .unwrap_or_else(|| cli.wal_client_id.clone());
-    Ok((
-        Role::new(&role_name)?,
-        MemberId::new(&replica)?,
-        LeaseConfig::new(
+    Ok(RulerCoordinationIdentity {
+        role: Role::new(&role_name)?,
+        member: MemberId::new(&replica)?,
+        lease_config: LeaseConfig::new(
             cli.ruler_lease_duration,
             cli.ruler_lease_renew_interval,
             cli.ruler_lease_challenge_stagger,
         )?,
-    ))
+    })
 }
 
 fn ruler_alert_sink(cli: &Cli) -> RulerAlertmanagerSink {
-    let external_labels = cli
-        .ruler_external_label
-        .iter()
-        .chain(
-            cli.ruler_external_label_env
-                .iter()
-                .flat_map(|labels| &labels.0),
-        )
-        .cloned()
-        .collect();
+    let mut external_labels = std::collections::BTreeMap::new();
+    for label in cli.ruler_external_label.iter().chain(
+        cli.ruler_external_label_env
+            .iter()
+            .flat_map(|labels| &labels.0),
+    ) {
+        external_labels.insert(label.name.clone(), label.value.clone());
+    }
     RulerAlertmanagerSink::from_endpoints(
         cli.ruler_alertmanager_url.clone(),
         external_labels,

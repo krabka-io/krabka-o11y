@@ -1,7 +1,8 @@
 use super::{
-    Arc, ProfileStore, QuerierState, ServerListener, ServerSecurity, SocketAddr, TcpListener,
-    router, serve_router,
+    Arc, ProfileStore, QuerierState, ServerSecurity, SocketAddr, bind_profile_listener, router,
+    serve_router,
 };
+use crate::ServerTask;
 
 /// Serve the querier, returning the bound address and the accept loop's handle
 /// for the caller to supervise.
@@ -26,13 +27,11 @@ pub async fn serve_supervised<S>(
     readiness: krabka_observability::RoleReadiness,
     security: &ServerSecurity,
     shutdown: tokio_util::sync::CancellationToken,
-) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)>
+) -> std::io::Result<ServerTask>
 where
     S: ProfileStore + 'static,
 {
-    let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
-        .map_err(std::io::Error::other)?;
-    let bound = listener.local_addr();
+    let (listener, bound) = bind_profile_listener(addr, security).await?;
     let app = router(Arc::clone(&state)).merge(krabka_observability::readiness_router(readiness));
     let shutting_down = Arc::clone(&state);
     let server = serve_router(listener, app, security).with_graceful_shutdown(async move {
@@ -45,5 +44,5 @@ where
         }
         state.shutdown_async_queries().await;
     });
-    Ok((bound, handle))
+    Ok(ServerTask::new(bound, handle))
 }

@@ -1,3 +1,7 @@
 use super::EdgeCheckpointEntry;
 
-pub type TenantEdgeCheckpoints = (String, Vec<EdgeCheckpointEntry>);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TenantEdgeCheckpoints {
+    pub tenant: String,
+    pub entries: Vec<EdgeCheckpointEntry>,
+}

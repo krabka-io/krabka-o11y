@@ -1,6 +1,5 @@
-use super::{MatchScope, SpanMatcher};
+use super::SpanMatcher;
 
 pub(crate) fn is_event_matcher(matcher: &SpanMatcher) -> bool {
-    matcher.scope == MatchScope::Event
-        || (matcher.scope == MatchScope::Intrinsic && matcher.key.starts_with("event:"))
+    crate::scope_is_event_matcher(matcher.scope, &matcher.key)
 }

@@ -1,7 +1,31 @@
 use super::{
     Arc, BLOCK_PROBE_CONCURRENCY, BlockMetadataCache, ByteSize, ObjectStore, ProbedBlock, Result,
-    SkippedBlock, StreamExt, TryStreamExt, instrument, probe_block, stream,
+    SkippedBlock, StreamExt, instrument, probe_block, stream,
 };
+
+pub(super) async fn probe_keys(
+    store: &Arc<dyn ObjectStore>,
+    keys: &[String],
+    max_bytes: ByteSize,
+    cache: &BlockMetadataCache,
+) -> Vec<Result<ProbedBlock>> {
+    let mut probes = Vec::with_capacity(keys.len());
+    for object_key in keys {
+        let store = Arc::clone(store);
+        let object_key = object_key.clone();
+        let cache = cache.clone();
+        probes.push(async move { probe_block(&store, &object_key, max_bytes, Some(&cache)).await });
+    }
+    stream::iter(probes)
+        .buffered(BLOCK_PROBE_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await
+}
+
+pub(crate) struct ProbedBlocks {
+    pub readable: Vec<ProbedBlock>,
+    pub skipped: Vec<SkippedBlock>,
+}
 
 /// Splits `keys` into the blocks a scan can read and the blocks it must skip.
 ///
@@ -28,37 +52,17 @@ pub(crate) async fn probe_blocks(
     keys: &[String],
     max_bytes: ByteSize,
     cache: &BlockMetadataCache,
-) -> Result<(Vec<ProbedBlock>, Vec<SkippedBlock>)> {
-    // Owned captures, and no closure; see `require_blocks` for why.
-    let mut probes = Vec::with_capacity(keys.len());
-    for object_key in keys {
-        let store = Arc::clone(store);
-        let object_key = object_key.clone();
-        let cache = cache.clone();
-        probes.push(async move {
-            match probe_block(&store, &object_key, max_bytes, Some(&cache)).await {
-                Ok(block) => Ok(Ok(block)),
-                Err(error) => match error.skipped_block() {
-                    Some(skipped) => Ok(Err(skipped)),
-                    None => Err(error),
-                },
-            }
-        });
-    }
-
-    // `buffered`, not `buffer_unordered`: the readable keys keep the order the
-    // index gave them, so the scan and the report read the same way run to run.
-    let outcomes = stream::iter(probes)
-        .buffered(BLOCK_PROBE_CONCURRENCY)
-        .try_collect::<Vec<std::result::Result<ProbedBlock, SkippedBlock>>>()
-        .await?;
-
+) -> Result<ProbedBlocks> {
+    let outcomes = probe_keys(store, keys, max_bytes, cache).await;
     let mut readable = Vec::with_capacity(outcomes.len());
     let mut skipped = Vec::new();
     for outcome in outcomes {
         match outcome {
             Ok(block) => readable.push(block),
-            Err(block) => skipped.push(block),
+            Err(error) => match error.skipped_block() {
+                Some(block) => skipped.push(block),
+                None => return Err(error),
+            },
         }
     }
     tracing::Span::current().record("skipped", skipped.len());
@@ -70,5 +74,5 @@ pub(crate) async fn probe_blocks(
             "skipping unreadable block"
         );
     }
-    Ok((readable, skipped))
+    Ok(ProbedBlocks { readable, skipped })
 }

@@ -23,6 +23,7 @@ vendored-protoc = ["dep:protoc-bin-vendored"]
 heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
+bon.workspace = true
 num-traits = { workspace = true }
 async-trait = { workspace = true }
 arrow = { workspace = true }
@@ -71,6 +72,7 @@ prost-build = { workspace = true }
 protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
+yare.workspace = true
 assert2 = { workspace = true }
 krabka-broker = { version = "1.0.0" }
 krabka-client-admin = { version = "0.6.0" }

@@ -7,9 +7,9 @@ fn wal_fingerprint_preserves_duplicate_labels_and_wire_payload() {
     let record = ProfileRecord {
         tenant: "tenant".into(),
         labels: vec![
-            ("b".into(), "old".into()),
-            ("a".into(), "=x\n".into()),
-            ("b".into(), "last".into()),
+            krabka_blockstore::LabelPair::new("b", "old"),
+            krabka_blockstore::LabelPair::new("a", "=x\n"),
+            krabka_blockstore::LabelPair::new("b", "last"),
         ],
         profile_type: "cpu".into(),
         samples: Vec::new(),

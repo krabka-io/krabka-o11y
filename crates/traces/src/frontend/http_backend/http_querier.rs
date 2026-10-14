@@ -1,10 +1,10 @@
 use super::{
     BackendError, Duration, InstantMetricsResponseJson, InternalClient, MetricsJobRequest,
-    MetricsPartial, MetricsResponseJson, QuerierBackend, QuerierScheme, SearchJobRequest,
-    SearchPartial, SearchResponseJson, TENANT_HEADER, TagNamesJobRequest, TagNamesPartial,
-    TagValuesBody, TagValuesJobRequest, TagValuesPartial, TagsBody, TraceByIdJobRequest,
-    TraceByIdResponseJson, TracePartial, async_trait, build_url, decode_json_body,
-    internal_http_client, ns_to_seconds, push_shard_params, tag_scope_name,
+    MetricsPartial, MetricsResponseJson, QuerierBackend, QuerierScheme, QueryParam,
+    SearchJobRequest, SearchPartial, SearchResponseJson, TENANT_HEADER, TagNamesJobRequest,
+    TagNamesPartial, TagValuesBody, TagValuesJobRequest, TagValuesPartial, TagsBody,
+    TraceByIdJobRequest, TraceByIdResponseJson, TracePartial, async_trait, build_url,
+    decode_json_body, internal_http_client, ns_to_seconds, push_shard_params, tag_scope_name,
 };
 
 /// The HTTP transport to one querier at a time.
@@ -72,12 +72,12 @@ impl HttpQuerier {
 impl QuerierBackend for HttpQuerier {
     async fn search_job(&self, req: &SearchJobRequest) -> Result<SearchPartial, BackendError> {
         let url = format!("{}://{}/api/search", self.scheme.as_str(), req.querier);
-        let mut params: Vec<(&str, String)> = vec![
-            ("q", req.query.clone()),
-            ("start", ns_to_seconds(req.start_ns)),
-            ("end", ns_to_seconds(req.end_ns)),
-            ("limit", req.limit.to_string()),
-            ("spss", req.spss.to_string()),
+        let mut params: Vec<QueryParam> = vec![
+            QueryParam::new("q", req.query.clone()),
+            QueryParam::new("start", ns_to_seconds(req.start_ns)),
+            QueryParam::new("end", ns_to_seconds(req.end_ns)),
+            QueryParam::new("limit", req.limit.to_string()),
+            QueryParam::new("spss", req.spss.to_string()),
         ];
         push_shard_params(&mut params, &req.shard);
         let resp = self
@@ -100,9 +100,9 @@ impl QuerierBackend for HttpQuerier {
             self.scheme.as_str(),
             req.querier
         );
-        let params: Vec<(&str, String)> = vec![
-            ("start", ns_to_seconds(req.start_ns)),
-            ("end", ns_to_seconds(req.end_ns)),
+        let params: Vec<QueryParam> = vec![
+            QueryParam::new("start", ns_to_seconds(req.start_ns)),
+            QueryParam::new("end", ns_to_seconds(req.end_ns)),
         ];
         let resp = self
             .send_tenant_get(build_url(&url, &params)?, req.tenant.as_str())
@@ -128,12 +128,12 @@ impl QuerierBackend for HttpQuerier {
             self.scheme.as_str(),
             req.querier
         );
-        let mut params: Vec<(&str, String)> = vec![
-            ("start", ns_to_seconds(req.start_ns)),
-            ("end", ns_to_seconds(req.end_ns)),
+        let mut params: Vec<QueryParam> = vec![
+            QueryParam::new("start", ns_to_seconds(req.start_ns)),
+            QueryParam::new("end", ns_to_seconds(req.end_ns)),
         ];
         if let Some(scope) = req.scope {
-            params.push(("scope", tag_scope_name(scope).to_string()));
+            params.push(QueryParam::new("scope", tag_scope_name(scope).to_string()));
         }
         push_shard_params(&mut params, &req.shard);
         let resp = self
@@ -159,15 +159,15 @@ impl QuerierBackend for HttpQuerier {
         url.path_segments_mut()
             .map_err(|()| BackendError::Transport("querier url cannot be a base".to_string()))?
             .extend(["api", "v2", "search", "tag", req.tag.as_str(), "values"]);
-        let mut params: Vec<(&str, String)> = vec![
-            ("start", ns_to_seconds(req.start_ns)),
-            ("end", ns_to_seconds(req.end_ns)),
+        let mut params: Vec<QueryParam> = vec![
+            QueryParam::new("start", ns_to_seconds(req.start_ns)),
+            QueryParam::new("end", ns_to_seconds(req.end_ns)),
         ];
         push_shard_params(&mut params, &req.shard);
         {
             let mut pairs = url.query_pairs_mut();
-            for (key, value) in &params {
-                pairs.append_pair(key, value);
+            for param in &params {
+                pairs.append_pair(&param.key, &param.value);
             }
         }
         let resp = self.send_tenant_get(url, req.tenant.as_str()).await?;
@@ -186,13 +186,13 @@ impl QuerierBackend for HttpQuerier {
             self.scheme.as_str(),
             req.querier
         );
-        let mut params: Vec<(&str, String)> = vec![
-            ("q", req.query.clone()),
-            ("start", metric_timestamp(req.start_ns, req.instant)),
-            ("end", metric_timestamp(req.end_ns, req.instant)),
+        let mut params: Vec<QueryParam> = vec![
+            QueryParam::new("q", req.query.clone()),
+            QueryParam::new("start", metric_timestamp(req.start_ns, req.instant)),
+            QueryParam::new("end", metric_timestamp(req.end_ns, req.instant)),
         ];
         if !req.instant {
-            params.push(("step", ns_to_seconds(req.step_ns)));
+            params.push(QueryParam::new("step", ns_to_seconds(req.step_ns)));
         }
         push_shard_params(&mut params, &req.shard);
         let resp = self
@@ -242,7 +242,13 @@ mod tests {
         .parse()
         .unwrap();
         assert!(
-            crate::querier::http::instant_metric_bounds(&uri) == Ok((start, end, end - start, end))
+            crate::querier::http::instant_metric_bounds(&uri)
+                == Ok(crate::querier::http::InstantMetricBounds {
+                    start_ns: start,
+                    end_ns: end,
+                    step_ns: end - start,
+                    query_end_ns: end,
+                })
         );
         assert!(metric_timestamp(start, false) == "1700000000.123000001");
         assert!(metric_timestamp(1_000_000_000, true) == "1");

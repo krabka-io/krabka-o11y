@@ -5,22 +5,26 @@ use super::{
 
 pub(crate) fn query_shard_execution(query: &str) -> Result<QueryShardExecution, PromqlError> {
     let expr = parse_promql(query)?;
-    if let Some((sum_query, count_query)) = avg_partial_queries(&expr) {
+    if let Some(partials) = avg_partial_queries(&expr) {
         return Ok(QueryShardExecution::Avg {
-            sum_query,
-            count_query,
+            sum_query: partials.sum,
+            count_query: partials.count,
         });
     }
-    if let Some((sum_query, count_query, sum_squares_query, kind)) = moment_partial_queries(&expr) {
+    if let Some(partials) = moment_partial_queries(&expr) {
         return Ok(QueryShardExecution::Moments {
-            sum_query,
-            count_query,
-            sum_squares_query,
-            kind,
+            sum_query: partials.sum,
+            count_query: partials.count,
+            sum_squares_query: partials.sum_squares,
+            kind: partials.reduction,
         });
     }
-    if let Some((k, kind, modifier)) = rank_reduction(&expr) {
-        return Ok(QueryShardExecution::Rank { k, kind, modifier });
+    if let Some(reduction) = rank_reduction(&expr) {
+        return Ok(QueryShardExecution::Rank {
+            k: reduction.k,
+            kind: reduction.kind,
+            modifier: reduction.modifier,
+        });
     }
     Ok(QueryShardExecution::Merge(expr_shard_reducer(&expr)))
 }

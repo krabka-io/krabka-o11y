@@ -5,6 +5,13 @@ use super::{
     ProfilesError, RecordBatch, UInt64Type, encode_profile_samples,
 };
 
+#[derive(Default)]
+struct DownsampleValue {
+    value: i64,
+    total_value: i64,
+    wal_sample_ids: Vec<Vec<u8>>,
+}
+
 /// Sums the samples of `batches` into `policy`-wide time buckets.
 ///
 /// The rows come back ordered by [`DownsampleKey`], which is the block's
@@ -26,7 +33,7 @@ pub(crate) fn downsample_batches(
         ));
     }
 
-    let mut values: BTreeMap<DownsampleKey, (i64, i64, Vec<Vec<u8>>)> = BTreeMap::new();
+    let mut values: BTreeMap<DownsampleKey, DownsampleValue> = BTreeMap::new();
     for batch in batches {
         let fp_idx = batch.schema().column_with_name(COL_FINGERPRINT).unwrap().0;
         let ts_idx = batch.schema().column_with_name(COL_TIMESTAMP).unwrap().0;
@@ -90,30 +97,36 @@ pub(crate) fn downsample_batches(
                     .then(|| trace_identifiers.value(row).to_vec()),
             };
             let entry = values.entry(key).or_default();
-            entry.0 += sample_values.value(row);
-            entry.1 += total_values.value(row);
+            entry.value += sample_values.value(row);
+            entry.total_value += total_values.value(row);
             let ids = identities.value(row);
             let ids = ids.as_binary::<i32>();
-            entry.2.extend(ids.iter().flatten().map(<[u8]>::to_vec));
+            entry
+                .wal_sample_ids
+                .extend(ids.iter().flatten().map(<[u8]>::to_vec));
         }
     }
 
     let rows = values
         .into_iter()
-        .map(
-            |(key, (value, total_value, wal_sample_ids))| ProfileSampleRow {
-                series_fingerprint: key.series_fingerprint,
+        .map(|entry| {
+            let key = entry.0;
+            let sample = entry.1;
+            ProfileSampleRow {
                 timestamp: key.timestamp,
-                profile_type: key.profile_type,
-                stacktrace_id: key.stacktrace_id,
-                value,
-                stacktrace_partition: key.stacktrace_partition,
-                total_value,
-                span_id: key.span_id,
-                trace_id: key.trace_id,
-                wal_sample_ids,
-            },
-        )
+                fields: krabka_blockstore::ProfileSampleFields {
+                    series_fingerprint: key.series_fingerprint,
+                    profile_type: key.profile_type,
+                    stacktrace_id: key.stacktrace_id,
+                    value: sample.value,
+                    stacktrace_partition: key.stacktrace_partition,
+                    total_value: sample.total_value,
+                    span_id: key.span_id,
+                    trace_id: key.trace_id,
+                    wal_sample_ids: sample.wal_sample_ids,
+                },
+            }
+        })
         .collect::<Vec<_>>();
     encode_profile_samples(&rows)
         .map(|batch| vec![batch])

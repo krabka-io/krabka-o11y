@@ -49,3 +49,8 @@ pub(super) use range_scan_cache_inner::RangeScanCacheInner;
 pub(super) use scanned_rows::ScannedRows;
 pub(super) use through_scan_cache::through_scan_cache;
 pub(super) use windowed::Windowed;
+
+pub(crate) struct FloatRowsWithCount {
+    pub(crate) total: usize,
+    pub(crate) rows: Vec<FloatRow>,
+}

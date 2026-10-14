@@ -3,14 +3,16 @@
 //! The `krabka-traces` and `krabka-profiles` binaries' unit tests reach this
 //! file with `#[path]`, so it depends only on `krabka-broker` and `tempfile`.
 
+use std::path::Path;
+
 use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use tempfile::TempDir;
 
 /// A broker on a loopback port, logging to a temporary directory.
 pub struct InProcessBroker {
     // Declared before the directory, so the broker stops before its files go.
-    _handle: BrokerHandle,
-    _directory: TempDir,
+    handle: BrokerHandle,
+    directory: TempDir,
     /// The broker's listen address, as a bootstrap server.
     pub bootstrap: String,
 }
@@ -27,9 +29,21 @@ impl InProcessBroker {
             .expect("broker start");
         let bootstrap = handle.listen_addr().to_string();
         Self {
-            _handle: handle,
-            _directory: directory,
+            handle,
+            directory,
             bootstrap,
         }
+    }
+
+    /// Stops the broker before its temporary directory is dropped.
+    #[allow(dead_code)]
+    pub async fn shutdown(self) {
+        self.handle.shutdown().await;
+    }
+
+    /// Returns the broker's partition data directory.
+    #[allow(dead_code)]
+    pub fn data_dir(&self) -> &Path {
+        self.directory.path()
     }
 }

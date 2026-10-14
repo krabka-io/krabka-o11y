@@ -38,7 +38,7 @@ pub(crate) fn append_matching_log_row(
     ) {
         return Ok(());
     }
-    if let Some((stream_labels, entry)) = matching_loki_stream_entry(
+    if let Some(matched) = matching_loki_stream_entry(
         &plan.query,
         labels,
         line,
@@ -46,7 +46,10 @@ pub(crate) fn append_matching_log_row(
         timestamp_ns,
         false,
     ) {
-        streams.entry(stream_labels).or_default().push(entry);
+        streams
+            .entry(matched.labels)
+            .or_default()
+            .push(matched.entry);
     }
 
     Ok(())

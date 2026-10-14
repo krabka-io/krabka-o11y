@@ -1,9 +1,14 @@
 use super::{
-    Arc, Array, BTreeMap, Int64Array, RecordBatch, SCOL_DURATION_NANOS, SCOL_NAME,
-    SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_START_NANO,
-    SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, StringArray, TracesError,
-    fixed_column, int64_column, set_column, string_column,
+    Arc, Array, Int64Array, RecordBatch, SCOL_DURATION_NANOS, SCOL_NAME, SCOL_PARENT_SPAN_ID,
+    SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_START_NANO, SCOL_TRACE_DURATION_NANOS,
+    SCOL_TRACE_ID, SCOL_TRACE_START_NANO, StringArray, TracesError, fixed_column, int64_column,
+    set_column, string_column,
 };
+
+struct RootNames {
+    service: Option<String>,
+    span_name: Option<String>,
+}
 
 /// Recompute the trace-level denormalized columns over the FULL merged trace.
 ///
@@ -26,15 +31,7 @@ pub(crate) fn recompute_trace_level_columns(
     let name = string_column(batch, SCOL_NAME)?;
     let root_service = string_column(batch, SCOL_ROOT_SERVICE_NAME)?;
 
-    let mut by_trace: BTreeMap<[u8; 16], Vec<usize>> = BTreeMap::new();
-    for row in 0..batch.num_rows() {
-        if trace_ids.is_null(row) {
-            continue;
-        }
-        let mut trace_id = [0_u8; 16];
-        trace_id.copy_from_slice(trace_ids.value(row));
-        by_trace.entry(trace_id).or_default().push(row);
-    }
+    let by_trace = crate::group_rows_by_trace_id::group_rows_by_trace_id(trace_ids);
 
     let rows_n = batch.num_rows();
     let mut trace_start = vec![0_i64; rows_n];
@@ -65,18 +62,22 @@ pub(crate) fn recompute_trace_level_columns(
             .copied()
             .find(|&row| parent_span_ids.is_null(row))
             .or_else(|| rows.iter().copied().min_by_key(|&row| start.value(row)));
-        let (service, span_name) = root_row.map_or((None, None), |row| {
-            (
-                (!root_service.is_null(row)).then(|| root_service.value(row).to_string()),
-                (!name.is_null(row)).then(|| name.value(row).to_string()),
-            )
-        });
+        let root_names = root_row.map_or(
+            RootNames {
+                service: None,
+                span_name: None,
+            },
+            |row| RootNames {
+                service: (!root_service.is_null(row)).then(|| root_service.value(row).to_string()),
+                span_name: (!name.is_null(row)).then(|| name.value(row).to_string()),
+            },
+        );
 
         for &row in rows {
             trace_start[row] = min_start;
             trace_duration[row] = dur;
-            root_service_out[row].clone_from(&service);
-            root_name_out[row].clone_from(&span_name);
+            root_service_out[row].clone_from(&root_names.service);
+            root_name_out[row].clone_from(&root_names.span_name);
         }
     }
 

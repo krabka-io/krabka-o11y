@@ -3,11 +3,14 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn instant_selector_honors_label_matchers_and_tenant() {
     let engine = FloatStore::default()
-        .sample(labels(&[("__name__", "up"), ("job", "api")]), 1.0)
-        .sample(labels(&[("__name__", "up"), ("job", "web")]), 0.0)
+        .up_job_sample("api", 1.0)
+        .up_job_sample("web", 0.0)
         .tenant_sample(
             "tenant-b",
-            labels(&[("__name__", "up"), ("job", "api")]),
+            labels(&[
+                crate::test_support::TestLabelPair::new("__name__", "up"),
+                crate::test_support::TestLabelPair::new("job", "api"),
+            ]),
             9.0,
         )
         .engine();

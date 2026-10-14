@@ -13,9 +13,9 @@ pub(crate) fn structured_metadata_array(rows: &[LogRow]) -> Result<MapArray, Blo
     .with_values_field(Arc::new(Field::new("value", DataType::Utf8, false)));
 
     for row in rows {
-        for (key, value) in &row.structured_metadata {
+        for key in row.structured_metadata.keys() {
             builder.keys().append_value(key);
-            builder.values().append_value(value);
+            builder.values().append_value(&row.structured_metadata[key]);
         }
         builder.append(true)?;
     }

@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(bon::Builder)]
+struct HistogramBucket {
+    upper_bound: &'static str,
+    cumulative_count: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn query_range_annotations_agree_through_the_frontend_and_the_direct_path() {
     // The frontend splits this window into four sub-queries, and each sub-query
@@ -25,8 +31,12 @@ pub(crate) async fn query_range_annotations_agree_through_the_frontend_and_the_d
             }),
     );
 
-    let (direct_status, direct_body) = annotated_query_body(direct, &uri).await;
-    let (frontend_status, frontend_body) = annotated_query_body(frontend, &uri).await;
+    let direct_response = annotated_query_body(direct, &uri).await;
+    let frontend_response = annotated_query_body(frontend, &uri).await;
+    let direct_status = direct_response.status;
+    let direct_body = direct_response.body;
+    let frontend_status = frontend_response.status;
+    let frontend_body = frontend_response.body;
 
     let want = serde_json::json!({
         "status": "success",
@@ -44,16 +54,29 @@ pub(crate) async fn query_range_annotations_agree_through_the_frontend_and_the_d
 #[tokio::test]
 pub(crate) async fn monotonicity_details_survive_frontend_splits_and_cached_responses() {
     let mut store = InMemoryMetricStore::new();
-    for (upper, count) in [("0.5", 40.0), ("1", 30.0), ("+Inf", 35.0)] {
+    for bucket in [
+        HistogramBucket::builder()
+            .upper_bound("0.5")
+            .cumulative_count(40.0)
+            .build(),
+        HistogramBucket::builder()
+            .upper_bound("1")
+            .cumulative_count(30.0)
+            .build(),
+        HistogramBucket::builder()
+            .upper_bound("+Inf")
+            .cumulative_count(35.0)
+            .build(),
+    ] {
         let mut labels = Labels::new();
         labels.insert("__name__", "h_bucket");
-        labels.insert("le", upper);
-        store.push_float("tenant-a", labels, 0, count);
+        labels.insert("le", bucket.upper_bound);
+        store.push_float("tenant-a", labels, 0, bucket.cumulative_count);
     }
     let engine = PromqlEngine::new(Arc::new(store.clone()), EngineOpts::default());
     let query = "histogram_quantile(0.5, h_bucket)";
     let base = "PromQL info: input to histogram_quantile needed to be fixed for monotonicity (see https://prometheus.io/docs/prometheus/latest/querying/functions/#histogram_quantile) for metric name \"h_bucket\"";
-    let (_, annotations) = engine
+    let annotated = engine
         .query_instant_with_annotations(
             &krabka_blockstore::TenantId::new("tenant-a").unwrap(),
             query,
@@ -61,7 +84,7 @@ pub(crate) async fn monotonicity_details_survive_frontend_splits_and_cached_resp
         )
         .await
         .unwrap();
-    check!(annotations.infos == vec![format!("{base} (1:25)")]);
+    check!(annotated.annotations.infos == vec![format!("{base} (1:25)")]);
     let direct = Arc::new(PrometheusApiState::new(
         Arc::new(store.clone()),
         EngineOpts::default(),
@@ -81,7 +104,9 @@ pub(crate) async fn monotonicity_details_survive_frontend_splits_and_cached_resp
         .append_pair("step", "30")
         .finish();
     let uri = format!("/api/v1/query_range?{form}");
-    let (status, direct_body) = annotated_query_body(direct, &uri).await;
+    let direct_response = annotated_query_body(direct, &uri).await;
+    let status = direct_response.status;
+    let direct_body = direct_response.body;
     check!(status == StatusCode::OK);
     check!(
         direct_body["infos"]
@@ -90,7 +115,9 @@ pub(crate) async fn monotonicity_details_survive_frontend_splits_and_cached_resp
             )])
     );
     for _ in 0..2 {
-        let (status, body) = annotated_query_body(frontend.clone(), &uri).await;
+        let response = annotated_query_body(frontend.clone(), &uri).await;
+        let status = response.status;
+        let body = response.body;
         check!(status == StatusCode::OK);
         check!(body == direct_body);
     }

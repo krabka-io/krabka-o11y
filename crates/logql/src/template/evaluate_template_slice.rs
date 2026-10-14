@@ -4,50 +4,53 @@ use super::{
 };
 
 pub(crate) fn evaluate_template_slice(args: &[TemplateRuntimeValue]) -> TemplateRuntimeValue {
-    let Some((value, bounds)) = template_collection_first_args(args) else {
+    let Some(split) = template_collection_first_args(args) else {
         return TemplateRuntimeValue::String(String::new());
     };
-    match value {
-        TemplateRuntimeValue::Bytes(value) => super::template_slice_bounds(value.len(), bounds)
+    match split.collection {
+        TemplateRuntimeValue::Bytes(value) => super::template_slice_bounds(value.len(), split.args)
             .map_or_else(
                 || TemplateRuntimeValue::Bytes(Vec::new()),
-                |(start, end)| TemplateRuntimeValue::Bytes(value[start..end].to_vec()),
+                |bounds| TemplateRuntimeValue::Bytes(value[bounds.start..bounds.end].to_vec()),
             ),
         TemplateRuntimeValue::ByteSlice(values) => {
-            super::template_slice_bounds(values.len(), bounds).map_or_else(
+            super::template_slice_bounds(values.len(), split.args).map_or_else(
                 || TemplateRuntimeValue::ByteSlice(Vec::new()),
-                |(start, end)| TemplateRuntimeValue::ByteSlice(values[start..end].to_vec()),
+                |bounds| TemplateRuntimeValue::ByteSlice(values[bounds.start..bounds.end].to_vec()),
             )
         }
         TemplateRuntimeValue::QueryResult(values) => {
-            super::template_slice_bounds(values.len(), bounds).map_or_else(
+            super::template_slice_bounds(values.len(), split.args).map_or_else(
                 || TemplateRuntimeValue::QueryResult(Vec::new().into()),
-                |(start, end)| TemplateRuntimeValue::QueryResult(values.slice(start, end)),
+                |bounds| TemplateRuntimeValue::QueryResult(values.slice(bounds.start, bounds.end)),
             )
         }
         TemplateRuntimeValue::FloatSlice(values) => {
-            super::template_slice_bounds(values.len(), bounds).map_or_else(
+            super::template_slice_bounds(values.len(), split.args).map_or_else(
                 || TemplateRuntimeValue::FloatSlice(Vec::new().into()),
-                |(start, end)| TemplateRuntimeValue::FloatSlice(values.slice(start, end)),
+                |bounds| TemplateRuntimeValue::FloatSlice(values.slice(bounds.start, bounds.end)),
             )
         }
         TemplateRuntimeValue::HistogramSpans(values) => {
-            super::template_slice_bounds(values.len(), bounds).map_or_else(
+            super::template_slice_bounds(values.len(), split.args).map_or_else(
                 || TemplateRuntimeValue::HistogramSpans(Vec::new().into()),
-                |(start, end)| TemplateRuntimeValue::HistogramSpans(values.slice(start, end)),
+                |bounds| {
+                    TemplateRuntimeValue::HistogramSpans(values.slice(bounds.start, bounds.end))
+                },
             )
         }
-        TemplateRuntimeValue::Array(values) => super::template_slice_bounds(values.len(), bounds)
-            .map_or_else(
+        TemplateRuntimeValue::Array(values) => {
+            super::template_slice_bounds(values.len(), split.args).map_or_else(
                 || TemplateRuntimeValue::Array(Vec::new()),
-                |(start, end)| TemplateRuntimeValue::Array(values[start..end].to_vec()),
-            ),
-        TemplateRuntimeValue::String(value) => template_slice_string(value, bounds),
+                |bounds| TemplateRuntimeValue::Array(values[bounds.start..bounds.end].to_vec()),
+            )
+        }
+        TemplateRuntimeValue::String(value) => template_slice_string(value, split.args),
         TemplateRuntimeValue::Json(serde_json::Value::String(value)) => {
-            template_slice_string(value, bounds)
+            template_slice_string(value, split.args)
         }
         TemplateRuntimeValue::Json(serde_json::Value::Array(values)) => {
-            template_slice_array(values, bounds)
+            template_slice_array(values, split.args)
         }
         _ => TemplateRuntimeValue::String(String::new()),
     }

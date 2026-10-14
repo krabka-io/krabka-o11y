@@ -44,15 +44,30 @@ async fn loki_experimental_queries_match_native_and_independent_ledgers() -> Tes
         } else {
             "/loki/api/v1/query"
         };
-        let mut params = vec![("query", case.query.to_string())];
+        let mut params = vec![QueryParameter {
+            name: "query",
+            value: case.query.to_string(),
+        }];
         if case.range {
             params.extend([
-                ("start", timeline.at(40).to_string()),
-                ("end", timeline.at(41).to_string()),
-                ("step", "1".into()),
+                QueryParameter {
+                    name: "start",
+                    value: timeline.at(40).to_string(),
+                },
+                QueryParameter {
+                    name: "end",
+                    value: timeline.at(41).to_string(),
+                },
+                QueryParameter {
+                    name: "step",
+                    value: "1".into(),
+                },
             ]);
         } else {
-            params.push(("time", timeline.at(40).to_string()));
+            params.push(QueryParameter {
+                name: "time",
+                value: timeline.at(40).to_string(),
+            });
         }
         let oracle = exchange(&client, &loki_url, path, case.tenant, &params).await?;
         let candidate = exchange(&client, &krabka.query_url, path, case.tenant, &params).await?;
@@ -96,16 +111,24 @@ async fn loki_experimental_queries_match_native_and_independent_ledgers() -> Tes
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct QueryParameter {
+    name: &'static str,
+    value: String,
+}
+
 async fn exchange(
     client: &reqwest::Client,
     base: &str,
     path: &str,
     tenant: &str,
-    params: &[(&str, String)],
+    params: &[QueryParameter],
 ) -> TestResult<Value> {
-    let encoded = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(params.iter().map(|(name, value)| (*name, value)))
-        .finish();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for param in params {
+        serializer.append_pair(param.name, &param.value);
+    }
+    let encoded = serializer.finish();
     let response = client
         .get(format!("{base}{path}?{encoded}"))
         .header("X-Scope-OrgID", tenant)

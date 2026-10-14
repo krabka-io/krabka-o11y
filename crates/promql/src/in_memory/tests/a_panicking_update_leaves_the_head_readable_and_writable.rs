@@ -11,9 +11,9 @@ use super::*;
 /// one left it, and the head goes on serving reads and taking writes.
 #[tokio::test]
 pub(crate) async fn a_panicking_update_leaves_the_head_readable_and_writable() {
-    let head = WalHead::new();
-    let series = lbls(&[("__name__", "up"), ("job", "api")]);
-    head.apply_wal_record(&float_record("t", &series, 1_000, 1.0));
+    let initial = head_with_initial_up_sample();
+    let head = initial.head;
+    let series = initial.series;
 
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         head.update(|store| {

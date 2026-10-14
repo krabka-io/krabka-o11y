@@ -52,6 +52,194 @@ const PROFILE_ENV: &str = "pprofdiff";
 const PROFILE_TYPE: &str = "goroutines:goroutine:count:goroutine:count";
 const SELECTOR: &str = r#"{env="pprofdiff"}"#;
 
+struct ProfileTypeFieldCase {
+    field: &'static str,
+    expected: &'static str,
+}
+
+struct ArchitectureConfig {
+    architecture: query::PyroscopeQueryArchitecture,
+    options: Vec<&'static str>,
+    artifact: &'static str,
+}
+
+struct ServiceValuesCase {
+    service: &'static str,
+    values: [i64; 2],
+}
+
+struct ArchitectureControlCase {
+    name: &'static str,
+    field: &'static str,
+    value: &'static str,
+    expected: f64,
+}
+
+struct NamedQueryCase {
+    name: &'static str,
+    query: String,
+}
+
+struct BackendEndpointCase<'a> {
+    name: &'static str,
+    base: &'a str,
+    tenant: Option<&'a str>,
+}
+
+struct BackendExpectedCase<'a> {
+    base: &'a str,
+    tenant: Option<&'a str>,
+    expected: u64,
+}
+
+struct RpcBinaryRequest {
+    method: &'static str,
+    body: Vec<u8>,
+}
+
+struct TransportValue<T> {
+    transport: &'static str,
+    value: T,
+}
+
+struct ExpectedRequestCase<Request, Expected> {
+    name: &'static str,
+    request: Request,
+    expected: Expected,
+}
+
+struct MethodBodyCase {
+    method: &'static str,
+    body: Value,
+}
+
+struct BoundedQueryCase {
+    name: &'static str,
+    query: String,
+    start: i64,
+    end: i64,
+}
+
+struct NamedScalarCase<T> {
+    name: &'static str,
+    value: T,
+}
+
+struct NamedTimeRangeCase {
+    name: &'static str,
+    start: i64,
+    end: i64,
+}
+
+struct DotEdge {
+    caller: String,
+    callee: String,
+    weight: i64,
+}
+
+fn json_http_response(status: StatusCode, body: Value) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+
+    let mut response = axum::Json(body).into_response();
+    *response.status_mut() = status;
+    response
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SeriesLabel {
+    name: String,
+    value: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
+struct NormalizedStack {
+    frames: Vec<String>,
+    value: i64,
+}
+
+struct LegacyFailureCase<'a> {
+    name: &'a str,
+    query: &'a str,
+    content_type: &'a str,
+    body: &'a [u8],
+}
+
+struct OtlpTransportCase {
+    service: &'static str,
+    content_type: &'static str,
+    content_encoding: Option<&'static str>,
+    body: Vec<u8>,
+}
+
+struct AnalysisCase<'a> {
+    name: &'a str,
+    profile_type: &'a str,
+    selector: &'a str,
+    expected: u64,
+}
+
+struct QueryBackendTarget<'a> {
+    base: &'a str,
+    tenant: Option<&'a str>,
+}
+
+struct RenderComparison<'a> {
+    backend: &'static str,
+    render: &'a Value,
+}
+
+struct StatsTimeFields {
+    camel: &'static str,
+    snake: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
+struct NormalizedDiffBar {
+    stack: Vec<String>,
+    values: [i64; 4],
+}
+
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+struct ExemplarSortKey {
+    timestamp: i64,
+    value: i64,
+    profile_id: String,
+    trace_id: String,
+    span_id: String,
+}
+
+struct DiffParent {
+    left_start: i64,
+    left_end: i64,
+    right_start: i64,
+    right_end: i64,
+    stack: Vec<String>,
+}
+
+struct ProfileEvidence {
+    names: BTreeSet<String>,
+    has_positive_value: bool,
+}
+
+struct RunningDistributor {
+    address: std::net::SocketAddr,
+    shutdown: oneshot::Sender<()>,
+}
+
+struct RunningFrontend {
+    base_url: String,
+    shutdown: oneshot::Sender<()>,
+}
+
+impl SeriesLabel {
+    fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
 const TENANT_B: &str = "tenant-b";
 const CPU_PROFILE_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 const WALL_PROFILE_TYPE: &str = "wall:wall:nanoseconds:wall:nanoseconds";
@@ -185,15 +373,26 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
     )
     .await?;
 
-    let cases = [("pyroscope", &pyroscope_render), ("krabka", &krabka_render)];
-    for (backend, render) in cases {
+    let cases = [
+        RenderComparison {
+            backend: "pyroscope",
+            render: &pyroscope_render,
+        },
+        RenderComparison {
+            backend: "krabka",
+            render: &krabka_render,
+        },
+    ];
+    for case in cases {
         assert!(
-            flame_ticks(render).is_some_and(|ticks| ticks > 0),
-            "{backend} render must report positive ticks"
+            flame_ticks(case.render).is_some_and(|ticks| ticks > 0),
+            "{} render must report positive ticks",
+            case.backend
         );
         assert!(
-            flame_names(render).contains("runtime/pprof.profileWriter"),
-            "{backend} render must contain runtime/pprof.profileWriter"
+            flame_names(case.render).contains("runtime/pprof.profileWriter"),
+            "{} render must contain runtime/pprof.profileWriter",
+            case.backend
         );
     }
     assert_flamebearer_equal(&pyroscope_render, &krabka_render)?;
@@ -322,8 +521,8 @@ async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -
     // (the core regression) that krabka returns data for the drilldown's exact
     // call shape, which carries NO time range.
     let shared_tuple = vec![
-        ("service_name".to_string(), "api".to_string()),
-        ("__profile_type__".to_string(), PROFILE_TYPE.to_string()),
+        SeriesLabel::new("service_name", "api"),
+        SeriesLabel::new("__profile_type__", PROFILE_TYPE),
     ];
 
     // (b) Series with the EXACT body the grafana-pyroscope-app drilldown sends:
@@ -341,7 +540,7 @@ async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -
         None,
         "Series",
         drilldown_body.clone(),
-        |value| series_contains_tuple(value, &shared_tuple),
+        |value| series_contains_labels(value, &shared_tuple),
     )
     .await?;
     // krabka is fed synchronously above, so a single call suffices; do not poll on
@@ -376,7 +575,7 @@ async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -
         None,
         "Series",
         ranged_body.clone(),
-        |value| series_contains_tuple(value, &shared_tuple),
+        |value| series_contains_labels(value, &shared_tuple),
     )
     .await?;
     let krabka_ranged = connect_json(
@@ -452,7 +651,7 @@ fn series_has_labelsets(value: &Value) -> bool {
 /// connect-go, or the `labels_set` spelling. It returns `None` only when
 /// neither key is present. That state is itself a shape signal, and it differs
 /// from "present but empty".
-fn series_label_sets(value: &Value) -> Option<Vec<Vec<(String, String)>>> {
+fn series_label_sets(value: &Value) -> Option<Vec<Vec<SeriesLabel>>> {
     let sets = value
         .get("labelsSet")
         .or_else(|| value.get("labels_set"))?
@@ -471,7 +670,7 @@ fn series_label_sets(value: &Value) -> Option<Vec<Vec<(String, String)>>> {
                         // value as the empty string so projection still records
                         // the key (an empty-VALUE label is itself a shape signal).
                         let val = pair.get("value").and_then(Value::as_str).unwrap_or("");
-                        Some((name.to_string(), val.to_string()))
+                        Some(SeriesLabel::new(name, val))
                     })
                     .collect::<Vec<_>>()
             })
@@ -485,7 +684,7 @@ fn series_label_sets(value: &Value) -> Option<Vec<Vec<(String, String)>>> {
 /// The test uses this both as a Pyroscope readiness predicate and as the krabka
 /// assertion target. The comparison ignores order within the set, because
 /// [`assert_series_key_order`] checks key order separately.
-fn series_contains_tuple(value: &Value, tuple: &[(String, String)]) -> bool {
+fn series_contains_labels(value: &Value, tuple: &[SeriesLabel]) -> bool {
     let want = tuple.iter().cloned().collect::<BTreeSet<_>>();
     series_label_sets(value).is_some_and(|sets| {
         sets.iter()
@@ -510,7 +709,7 @@ fn series_contains_tuple(value: &Value, tuple: &[(String, String)]) -> bool {
 fn assert_series_drilldown_compatible(
     pyroscope: &Value,
     krabka: &Value,
-    shared_tuple: &[(String, String)],
+    shared_tuple: &[SeriesLabel],
 ) -> TestResult {
     let py_key = series_wire_key(pyroscope);
     let cr_key = series_wire_key(krabka);
@@ -532,13 +731,13 @@ fn assert_series_drilldown_compatible(
         .into());
     }
 
-    if !series_contains_tuple(pyroscope, shared_tuple) {
+    if !series_contains_labels(pyroscope, shared_tuple) {
         return Err(format!(
             "Series(projected): pyroscope missing shared tuple {shared_tuple:?}: {pyroscope}"
         )
         .into());
     }
-    if !series_contains_tuple(krabka, shared_tuple) {
+    if !series_contains_labels(krabka, shared_tuple) {
         return Err(format!(
             "Series(projected): krabka missing shared tuple {shared_tuple:?} (drilldown sees no service → \"No data\"): {krabka}"
         )
@@ -591,13 +790,13 @@ fn assert_series_full_compatible(pyroscope: &Value, krabka: &Value) -> TestResul
         .iter()
         .find(|set| {
             set.iter()
-                .any(|(name, value)| name == "service_name" && value == "api")
+                .any(|label| label.name == "service_name" && label.value == "api")
         })
         .ok_or_else(|| {
             format!("Series(full): krabka missing api series in full label sets: {krabka}")
         })?;
     for required in ["service_name", "__name__", "env", "__profile_type__"] {
-        if !krabka_api.iter().any(|(name, _)| name == required) {
+        if !krabka_api.iter().any(|label| label.name == required) {
             return Err(format!(
                 "Series(full): krabka api label set missing `{required}`: {krabka_api:?}"
             )
@@ -614,13 +813,13 @@ fn assert_series_key_order(
     label: &str,
     pyroscope: &Value,
     krabka: &Value,
-    shared_tuple: &[(String, String)],
+    shared_tuple: &[SeriesLabel],
 ) -> TestResult {
     let want = shared_tuple.iter().cloned().collect::<BTreeSet<_>>();
     let find_keys = |value: &Value| -> Option<Vec<String>> {
         series_label_sets(value)?.into_iter().find_map(|set| {
             (set.iter().cloned().collect::<BTreeSet<_>>() == want)
-                .then(|| set.iter().map(|(name, _)| name.clone()).collect())
+                .then(|| set.iter().map(|label| label.name.clone()).collect())
         })
     };
     let py_order = find_keys(pyroscope);
@@ -692,19 +891,26 @@ fn assert_get_profile_stats_compatible(pyroscope: &Value, krabka: &Value) -> Tes
     // 2. oldest/newest time fields: where present on BOTH sides, the JSON
     // representation (string vs number) must agree. Presence itself is not
     // required to match (proto3 zero-omission is canonical on both backends).
-    for (camel, snake) in [
-        ("oldestProfileTime", "oldest_profile_time"),
-        ("newestProfileTime", "newest_profile_time"),
+    for fields in [
+        StatsTimeFields {
+            camel: "oldestProfileTime",
+            snake: "oldest_profile_time",
+        },
+        StatsTimeFields {
+            camel: "newestProfileTime",
+            snake: "newest_profile_time",
+        },
     ] {
-        let py_repr =
-            stats_field_key(py_obj, camel, snake).and_then(|key| json_number_repr(&py_obj[key]));
-        let cr_repr =
-            stats_field_key(cr_obj, camel, snake).and_then(|key| json_number_repr(&cr_obj[key]));
-        if let (Some(py_repr), Some(cr_repr)) = (py_repr, cr_repr)
+        let py_repr = stats_field_key(py_obj, fields.camel, fields.snake)
+            .and_then(|key| json_number_repr(&py_obj[key]));
+        let cr_repr = stats_field_key(cr_obj, fields.camel, fields.snake)
+            .and_then(|key| json_number_repr(&cr_obj[key]));
+        if let Some(py_repr) = py_repr
+            && let Some(cr_repr) = cr_repr
             && py_repr != cr_repr
         {
             return Err(format!(
-                "GetProfileStats: {camel} JSON representation differs: pyroscope={py_repr:?} krabka={cr_repr:?}\n  pyroscope={pyroscope}\n  krabka={krabka}"
+                "GetProfileStats: {} JSON representation differs: pyroscope={py_repr:?} krabka={cr_repr:?}\n  pyroscope={pyroscope}\n  krabka={krabka}", fields.camel
             )
             .into());
         }
@@ -964,10 +1170,10 @@ async fn start_krabka_pair_with_architecture(
 
 /// Serves a distributor on a loopback port whose WAL is `sink`. It runs until
 /// the returned sender fires or is dropped.
-async fn start_distributor(
-    sink: CapturingSink,
-) -> TestResult<(std::net::SocketAddr, oneshot::Sender<()>)> {
-    let (distributor_shutdown, distributor_rx) = oneshot::channel();
+async fn start_distributor(sink: CapturingSink) -> TestResult<RunningDistributor> {
+    let distributor_channel = oneshot::channel();
+    let distributor_shutdown = distributor_channel.0;
+    let distributor_rx = distributor_channel.1;
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
         overrides: OverridesProvider::new(Limits::default()),
@@ -990,7 +1196,10 @@ async fn start_distributor(
         },
     )
     .await?;
-    Ok((distributor_addr, distributor_shutdown))
+    Ok(RunningDistributor {
+        address: distributor_addr,
+        shutdown: distributor_shutdown,
+    })
 }
 
 /// The hot store a querier reads in front of its cold one.
@@ -1031,9 +1240,13 @@ async fn start_krabka_pair_with_query_options(
     query_mode: QuerierQueryMode,
 ) -> TestResult<KrabkaPair> {
     let cold = sink.cold.clone();
-    let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
+    let distributor = start_distributor(sink).await?;
+    let distributor_addr = distributor.address;
+    let distributor_shutdown = distributor.shutdown;
 
-    let (querier_shutdown, querier_rx) = oneshot::channel();
+    let querier_channel = oneshot::channel();
+    let querier_shutdown = querier_channel.0;
+    let querier_rx = querier_channel.1;
     let querier_state = Arc::new(
         unbounded_querier_state(ProfileTiers { hot: store, cold })
             .with_query_architecture(query_mode.architecture)
@@ -1289,17 +1502,33 @@ async fn assert_profile_types_contain(
                 == Some(PROFILE_TYPE)
             {
                 let field_cases = [
-                    ("name", "goroutines"),
-                    ("sampleType", "goroutine"),
-                    ("sampleUnit", "count"),
-                    ("periodType", "goroutine"),
-                    ("periodUnit", "count"),
+                    ProfileTypeFieldCase {
+                        field: "name",
+                        expected: "goroutines",
+                    },
+                    ProfileTypeFieldCase {
+                        field: "sampleType",
+                        expected: "goroutine",
+                    },
+                    ProfileTypeFieldCase {
+                        field: "sampleUnit",
+                        expected: "count",
+                    },
+                    ProfileTypeFieldCase {
+                        field: "periodType",
+                        expected: "goroutine",
+                    },
+                    ProfileTypeFieldCase {
+                        field: "periodUnit",
+                        expected: "count",
+                    },
                 ];
-                for (field, expected) in field_cases {
+                for case in field_cases {
                     assert_eq!(
-                        profile_type.get(field).and_then(Value::as_str),
-                        Some(expected),
-                        "profile type field `{field}`"
+                        profile_type.get(case.field).and_then(Value::as_str),
+                        Some(case.expected),
+                        "profile type field `{}`",
+                        case.field
                     );
                 }
             }
@@ -2063,7 +2292,7 @@ fn flamebearer_summary(value: &Value) -> String {
         .cloned()
         .unwrap_or_default();
     let mut out = Vec::new();
-    for (level_idx, level) in levels.iter().take(5).enumerate() {
+    for (current_level, level) in levels.iter().take(5).enumerate() {
         let Some(values) = level.as_array() else {
             continue;
         };
@@ -2085,7 +2314,7 @@ fn flamebearer_summary(value: &Value) -> String {
             bars.push(format!("{name}@{x}+{total}/self={self_}"));
             x += total;
         }
-        out.push(format!("L{level_idx}: {}", bars.join(" | ")));
+        out.push(format!("L{current_level}: {}", bars.join(" | ")));
     }
     out.join("\n")
 }
@@ -2208,11 +2437,8 @@ fn canonical_diff(value: &Value) -> TestResult<Value> {
 /// Layout and name-table order are serialization choices. Resolve both side's
 /// delta coordinates to parent rectangles, then preserve every stack's paired
 /// totals/self values and duplicate entries in a sorted semantic record list.
-fn normalized_diff_bars(
-    names: &[&str],
-    levels: &[Vec<i64>],
-) -> TestResult<Vec<(Vec<String>, [i64; 4])>> {
-    let mut parents: Vec<(i64, i64, i64, i64, Vec<String>)> = Vec::new();
+fn normalized_diff_bars(names: &[&str], levels: &[Vec<i64>]) -> TestResult<Vec<NormalizedDiffBar>> {
+    let mut parents: Vec<DiffParent> = Vec::new();
     let mut records = Vec::new();
     for (depth, values) in levels.iter().enumerate() {
         let (bars, remainder) = values.as_chunks::<7>();
@@ -2257,8 +2483,11 @@ fn normalized_diff_bars(
                 }
                 Vec::new()
             } else {
-                let mut candidates = parents.iter().filter(|(l, le, r, re, _)| {
-                    *l <= left && left_end <= *le && *r <= right && right_end <= *re
+                let mut candidates = parents.iter().filter(|parent| {
+                    parent.left_start <= left
+                        && left_end <= parent.left_end
+                        && parent.right_start <= right
+                        && right_end <= parent.right_end
                 });
                 let parent = candidates
                     .next()
@@ -2266,11 +2495,20 @@ fn normalized_diff_bars(
                 if candidates.next().is_some() {
                     return Err("Diff bar has ambiguous containing parents".into());
                 }
-                parent.4.clone()
+                parent.stack.clone()
             };
             path.push((*name).to_string());
-            records.push((path.clone(), [bar[1], bar[2], bar[4], bar[5]]));
-            current.push((left, left_end, right, right_end, path));
+            records.push(NormalizedDiffBar {
+                stack: path.clone(),
+                values: [bar[1], bar[2], bar[4], bar[5]],
+            });
+            current.push(DiffParent {
+                left_start: left,
+                left_end,
+                right_start: right,
+                right_end,
+                stack: path,
+            });
             previous_left_end = left_end;
             previous_right_end = right_end;
         }
@@ -2379,14 +2617,15 @@ fn canonical_json(value: Value) -> Value {
         }
         Value::Array(values) => Value::Array(values.into_iter().map(canonical_json).collect()),
         Value::Object(object) => {
-            let mut entries = object.into_iter().collect::<Vec<_>>();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(key, value)| (key, canonical_json(value)))
-                    .collect(),
-            )
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort();
+            let mut entries = serde_json::Map::new();
+            for key in keys {
+                if let Some(value) = object.get(key) {
+                    entries.insert(key.clone(), canonical_json(value.clone()));
+                }
+            }
+            Value::Object(entries)
         }
         other => other,
     }
@@ -2519,10 +2758,16 @@ fn connect_series_differential_rejects_point_drift() {
     assert!(err.to_string().contains("SelectSeries mismatch"));
 }
 
-fn shared_api_tuple() -> Vec<(String, String)> {
+fn shared_api_tuple() -> Vec<SeriesLabel> {
     vec![
-        ("service_name".to_string(), "api".to_string()),
-        ("__profile_type__".to_string(), PROFILE_TYPE.to_string()),
+        SeriesLabel {
+            name: "service_name".to_string(),
+            value: "api".to_string(),
+        },
+        SeriesLabel {
+            name: "__profile_type__".to_string(),
+            value: PROFILE_TYPE.to_string(),
+        },
     ]
 }
 
@@ -2825,46 +3070,46 @@ async fn every_querier_rpc_accepts_binary_connect() -> TestResult {
         ..Default::default()
     };
     let cases = vec![
-        (
-            "ProfileTypes",
-            prost::Message::encode_to_vec(&pb::querier::v1::ProfileTypesRequest {
+        RpcBinaryRequest {
+            method: "ProfileTypes",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::ProfileTypesRequest {
                 start: 0,
                 end: 100,
             }),
-        ),
-        (
-            "LabelNames",
-            prost::Message::encode_to_vec(&pb::querier::v1::LabelNamesRequest {
+        },
+        RpcBinaryRequest {
+            method: "LabelNames",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::LabelNamesRequest {
                 matchers: vec![SELECTOR.to_string()],
                 start: 0,
                 end: 100,
             }),
-        ),
-        (
-            "LabelValues",
-            prost::Message::encode_to_vec(&pb::querier::v1::LabelValuesRequest {
+        },
+        RpcBinaryRequest {
+            method: "LabelValues",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::LabelValuesRequest {
                 name: "env".to_string(),
                 matchers: vec![SELECTOR.to_string()],
                 start: 0,
                 end: 100,
             }),
-        ),
-        (
-            "Series",
-            prost::Message::encode_to_vec(&pb::querier::v1::SeriesRequest {
+        },
+        RpcBinaryRequest {
+            method: "Series",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::SeriesRequest {
                 matchers: vec![SELECTOR.to_string()],
                 label_names: Vec::new(),
                 start: 0,
                 end: 100,
             }),
-        ),
-        (
-            "SelectMergeStacktraces",
-            prost::Message::encode_to_vec(&stack_query),
-        ),
-        (
-            "SelectMergeSpanProfile",
-            prost::Message::encode_to_vec(&pb::querier::v1::SelectMergeSpanProfileRequest {
+        },
+        RpcBinaryRequest {
+            method: "SelectMergeStacktraces",
+            body: prost::Message::encode_to_vec(&stack_query),
+        },
+        RpcBinaryRequest {
+            method: "SelectMergeSpanProfile",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::SelectMergeSpanProfileRequest {
                 profile_type_id: PROFILE_TYPE.to_string(),
                 label_selector: SELECTOR.to_string(),
                 span_selector: vec!["000000000000002a".to_string()],
@@ -2872,31 +3117,20 @@ async fn every_querier_rpc_accepts_binary_connect() -> TestResult {
                 end: 100,
                 ..Default::default()
             }),
-        ),
-        (
-            "SelectMergeProfile",
-            prost::Message::encode_to_vec(&pb::querier::v1::SelectMergeProfileRequest {
+        },
+        RpcBinaryRequest {
+            method: "SelectMergeProfile",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::SelectMergeProfileRequest {
                 profile_type_id: PROFILE_TYPE.to_string(),
                 label_selector: SELECTOR.to_string(),
                 start: 0,
                 end: 100,
                 ..Default::default()
             }),
-        ),
-        (
-            "SelectSeries",
-            prost::Message::encode_to_vec(&pb::querier::v1::SelectSeriesRequest {
-                profile_type_id: PROFILE_TYPE.to_string(),
-                label_selector: SELECTOR.to_string(),
-                start: 0,
-                end: 100,
-                step: 1.0,
-                ..Default::default()
-            }),
-        ),
-        (
-            "SelectHeatmap",
-            prost::Message::encode_to_vec(&pb::querier::v1::SelectHeatmapRequest {
+        },
+        RpcBinaryRequest {
+            method: "SelectSeries",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::SelectSeriesRequest {
                 profile_type_id: PROFILE_TYPE.to_string(),
                 label_selector: SELECTOR.to_string(),
                 start: 0,
@@ -2904,37 +3138,48 @@ async fn every_querier_rpc_accepts_binary_connect() -> TestResult {
                 step: 1.0,
                 ..Default::default()
             }),
-        ),
-        (
-            "Diff",
-            prost::Message::encode_to_vec(&pb::querier::v1::DiffRequest {
+        },
+        RpcBinaryRequest {
+            method: "SelectHeatmap",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::SelectHeatmapRequest {
+                profile_type_id: PROFILE_TYPE.to_string(),
+                label_selector: SELECTOR.to_string(),
+                start: 0,
+                end: 100,
+                step: 1.0,
+                ..Default::default()
+            }),
+        },
+        RpcBinaryRequest {
+            method: "Diff",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::DiffRequest {
                 left: Some(stack_query.clone()),
                 right: Some(stack_query),
             }),
-        ),
-        (
-            "GetProfileStats",
-            prost::Message::encode_to_vec(&pb::querier::v1::GetProfileStatsRequest {}),
-        ),
-        (
-            "AnalyzeQuery",
-            prost::Message::encode_to_vec(&pb::querier::v1::AnalyzeQueryRequest {
+        },
+        RpcBinaryRequest {
+            method: "GetProfileStats",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::GetProfileStatsRequest {}),
+        },
+        RpcBinaryRequest {
+            method: "AnalyzeQuery",
+            body: prost::Message::encode_to_vec(&pb::querier::v1::AnalyzeQueryRequest {
                 start: 0,
                 end: 100,
                 query: format!("{PROFILE_TYPE}{SELECTOR}"),
             }),
-        ),
+        },
     ];
 
-    for (method, request_body) in cases {
+    for case in cases {
         let response = client
             .post(format!(
-                "http://127.0.0.1:{}/querier.v1.QuerierService/{method}",
-                krabka.querier_port
+                "http://127.0.0.1:{}/querier.v1.QuerierService/{}",
+                krabka.querier_port, case.method
             ))
             .header(reqwest::header::CONTENT_TYPE, "application/proto")
             .header("x-scope-orgid", TENANT)
-            .body(request_body)
+            .body(case.body)
             .send()
             .await?;
         let status = response.status();
@@ -2947,12 +3192,14 @@ async fn every_querier_rpc_accepts_binary_connect() -> TestResult {
         let body = response.bytes().await?;
         assert!(
             status.is_success(),
-            "{method} (application/proto) returned {status}: {}",
+            "{} (application/proto) returned {status}: {}",
+            case.method,
             String::from_utf8_lossy(&body)
         );
         assert!(
             content_type.starts_with("application/proto"),
-            "{method} response must echo application/proto, got `{content_type}`"
+            "{} response must echo application/proto, got `{content_type}`",
+            case.method
         );
     }
 
@@ -3021,11 +3268,11 @@ async fn grafana_renders_krabka_profiles_end_to_end() -> TestResult {
         from_ms,
         to_ms,
     };
-    let (names_a, positive_a) =
-        grafana_profile_evidence_until(&client, &query_a, |names, positive| {
-            positive && names.contains(FUNC_WORK)
-        })
-        .await?;
+    let evidence_a = grafana_profile_evidence_until(&client, &query_a, |evidence| {
+        evidence.has_positive_value && evidence.names.contains(FUNC_WORK)
+    })
+    .await?;
+    let names_a = evidence_a.names;
     for func in [FUNC_WORK, FUNC_HOT] {
         assert!(
             names_a.contains(func),
@@ -3033,7 +3280,7 @@ async fn grafana_renders_krabka_profiles_end_to_end() -> TestResult {
         );
     }
     assert!(
-        positive_a,
+        evidence_a.has_positive_value,
         "Grafana query must return a positive sample value: {names_a:?}"
     );
 
@@ -3047,13 +3294,14 @@ async fn grafana_renders_krabka_profiles_end_to_end() -> TestResult {
         from_ms,
         to_ms,
     };
-    let (names_b, positive_b) = grafana_profile_evidence(&client, &query_b).await?;
+    let evidence_b = grafana_profile_evidence(&client, &query_b).await?;
     assert!(
-        !names_b.contains(FUNC_WORK) && !names_b.contains(FUNC_HOT),
-        "tenant-b leaked tenant-a frames through Grafana: {names_b:?}"
+        !evidence_b.names.contains(FUNC_WORK) && !evidence_b.names.contains(FUNC_HOT),
+        "tenant-b leaked tenant-a frames through Grafana: {:?}",
+        evidence_b.names
     );
     assert!(
-        !positive_b,
+        !evidence_b.has_positive_value,
         "tenant-b saw tenant-a sample values through Grafana"
     );
 
@@ -3171,9 +3419,13 @@ async fn start_krabka_public(
     store: WalTailProfileStore,
 ) -> TestResult<KrabkaPublic> {
     let cold = sink.cold.clone();
-    let (distributor_addr, distributor_shutdown) = start_distributor(sink).await?;
+    let distributor = start_distributor(sink).await?;
+    let distributor_addr = distributor.address;
+    let distributor_shutdown = distributor.shutdown;
 
-    let (querier_shutdown, querier_rx) = oneshot::channel();
+    let querier_channel = oneshot::channel();
+    let querier_shutdown = querier_channel.0;
+    let querier_rx = querier_channel.1;
     let querier_state = Arc::new(unbounded_querier_state(ProfileTiers { hot: store, cold }));
     let querier_addr = query::serve(
         "0.0.0.0:0".parse()?,
@@ -3289,14 +3541,14 @@ struct GrafanaQuery<'a> {
 async fn grafana_profile_evidence(
     client: &reqwest::Client,
     query: &GrafanaQuery<'_>,
-) -> TestResult<(BTreeSet<String>, bool)> {
+) -> TestResult<ProfileEvidence> {
     let mut names = BTreeSet::new();
     let mut positive = false;
 
     if let Ok(value) = ds_query_profile(client, query).await {
-        let (frame_names, frame_positive) = evidence_from_ds_query(&value);
-        names.extend(frame_names);
-        positive = positive || frame_positive;
+        let frame_evidence = evidence_from_ds_query(&value);
+        names.extend(frame_evidence.names);
+        positive = positive || frame_evidence.has_positive_value;
     }
 
     if let Some(value) = proxy_render(client, query).await {
@@ -3304,21 +3556,25 @@ async fn grafana_profile_evidence(
         positive = positive || flame_ticks(&value).is_some_and(|ticks| ticks > 0);
     }
 
-    Ok((names, positive))
+    Ok(ProfileEvidence {
+        names,
+        has_positive_value: positive,
+    })
 }
 
 async fn grafana_profile_evidence_until(
     client: &reqwest::Client,
     query: &GrafanaQuery<'_>,
-    ready: impl Fn(&BTreeSet<String>, bool) -> bool,
-) -> TestResult<(BTreeSet<String>, bool)> {
+    ready: impl Fn(&ProfileEvidence) -> bool,
+) -> TestResult<ProfileEvidence> {
     let mut last = None;
     for _ in 0..120 {
         match grafana_profile_evidence(client, query).await {
-            Ok((names, positive)) if ready(&names, positive) => return Ok((names, positive)),
-            Ok((names, positive)) => {
+            Ok(evidence) if ready(&evidence) => return Ok(evidence),
+            Ok(evidence) => {
                 last = Some(format!(
-                    "evidence not ready: names={names:?} positive={positive}"
+                    "evidence not ready: names={:?} positive={}",
+                    evidence.names, evidence.has_positive_value
                 ));
             }
             Err(err) => last = Some(err.to_string()),
@@ -3365,11 +3621,14 @@ async fn ds_query_profile(client: &reqwest::Client, query: &GrafanaQuery<'_>) ->
 /// cell as a candidate frame name and flags any strictly-positive numeric cell.
 /// The walk is schema-agnostic, so it tolerates Grafana version drift in field
 /// names.
-fn evidence_from_ds_query(value: &Value) -> (BTreeSet<String>, bool) {
+fn evidence_from_ds_query(value: &Value) -> ProfileEvidence {
     let mut names = BTreeSet::new();
     let mut positive = false;
     let Some(results) = value.get("results").and_then(Value::as_object) else {
-        return (names, positive);
+        return ProfileEvidence {
+            names,
+            has_positive_value: positive,
+        };
     };
     for result in results.values() {
         let Some(frames) = result.get("frames").and_then(Value::as_array) else {
@@ -3393,7 +3652,10 @@ fn evidence_from_ds_query(value: &Value) -> (BTreeSet<String>, bool) {
             }
         }
     }
-    (names, positive)
+    ProfileEvidence {
+        names,
+        has_positive_value: positive,
+    }
 }
 
 /// Queries Krabka's legacy flamebearer render through Grafana's data-source
@@ -3629,43 +3891,43 @@ async fn assert_legacy_failure_statuses_match(
     pyroscope_base: &str,
     krabka_base: &str,
 ) -> TestResult {
-    for (name, query, content_type, body) in [
-        (
-            "missing name",
-            "format=groups",
-            "text/plain",
-            &b"main 1\n"[..],
-        ),
-        (
-            "malformed groups",
-            "name=badgroups&format=groups",
-            "text/plain",
-            &b"main nope\n"[..],
-        ),
-        (
-            "malformed pprof",
-            "name=badpprof&format=pprof",
-            "application/octet-stream",
-            &b"not a pprof"[..],
-        ),
-        (
-            "malformed speedscope",
-            "name=badspeedscope&format=speedscope",
-            "application/json",
-            &b"{}"[..],
-        ),
-        (
-            "missing jfr part",
-            "name=badjfr&format=jfr",
-            "multipart/form-data; boundary=empty",
-            &b"--empty--\r\n"[..],
-        ),
+    for case in [
+        LegacyFailureCase {
+            name: "missing name",
+            query: "format=groups",
+            content_type: "text/plain",
+            body: b"main 1\n",
+        },
+        LegacyFailureCase {
+            name: "malformed groups",
+            query: "name=badgroups&format=groups",
+            content_type: "text/plain",
+            body: b"main nope\n",
+        },
+        LegacyFailureCase {
+            name: "malformed pprof",
+            query: "name=badpprof&format=pprof",
+            content_type: "application/octet-stream",
+            body: b"not a pprof",
+        },
+        LegacyFailureCase {
+            name: "malformed speedscope",
+            query: "name=badspeedscope&format=speedscope",
+            content_type: "application/json",
+            body: b"{}",
+        },
+        LegacyFailureCase {
+            name: "missing jfr part",
+            query: "name=badjfr&format=jfr",
+            content_type: "multipart/form-data; boundary=empty",
+            body: b"--empty--\r\n",
+        },
     ] {
         let send = |base: &str, tenant: Option<&str>| {
             let mut request = client
-                .post(format!("{base}/ingest?{query}"))
-                .header(reqwest::header::CONTENT_TYPE, content_type)
-                .body(body.to_vec());
+                .post(format!("{base}/ingest?{}", case.query))
+                .header(reqwest::header::CONTENT_TYPE, case.content_type)
+                .body(case.body.to_vec());
             if let Some(tenant) = tenant {
                 request = request.header("x-scope-orgid", tenant);
             }
@@ -3675,7 +3937,8 @@ async fn assert_legacy_failure_statuses_match(
         let krabka = send(krabka_base, Some(TENANT)).await?;
         if pyroscope.status() != krabka.status() {
             return Err(format!(
-                "legacy {name} status differs: pyroscope={} body={:?}, krabka={} body={:?}",
+                "legacy {} status differs: pyroscope={} body={:?}, krabka={} body={:?}",
+                case.name,
                 pyroscope.status(),
                 pyroscope.text().await.unwrap_or_default(),
                 krabka.status(),
@@ -3980,46 +4243,51 @@ async fn real_pyroscope_otlp_export_matches_krabka() -> TestResult {
     let json = otlp_export_body(now_nanos, OTLP_JSON_SERVICE, true)?;
     let gzip = gzip_bytes(&otlp_export_body(now_nanos, OTLP_GZIP_SERVICE, false)?)?;
     let cases = [
-        (
-            OTLP_PROTOBUF_SERVICE,
-            "application/x-protobuf",
-            None,
-            protobuf,
-        ),
-        (OTLP_JSON_SERVICE, "application/json", None, json),
-        (
-            OTLP_GZIP_SERVICE,
-            "application/protobuf",
-            Some("gzip"),
-            gzip,
-        ),
+        OtlpTransportCase {
+            service: OTLP_PROTOBUF_SERVICE,
+            content_type: "application/x-protobuf",
+            content_encoding: None,
+            body: protobuf,
+        },
+        OtlpTransportCase {
+            service: OTLP_JSON_SERVICE,
+            content_type: "application/json",
+            content_encoding: None,
+            body: json,
+        },
+        OtlpTransportCase {
+            service: OTLP_GZIP_SERVICE,
+            content_type: "application/protobuf",
+            content_encoding: Some("gzip"),
+            body: gzip,
+        },
     ];
-    for (_, content_type, content_encoding, export) in &cases {
+    for case in &cases {
         post_otlp_export(
             &client,
             &pyroscope_base,
             None,
-            export,
-            content_type,
-            *content_encoding,
+            &case.body,
+            case.content_type,
+            case.content_encoding,
         )
         .await?;
         post_otlp_export(
             &client,
             &krabka.distributor_base,
             Some(TENANT),
-            export,
-            content_type,
-            *content_encoding,
+            &case.body,
+            case.content_type,
+            case.content_encoding,
         )
         .await?;
     }
     drain_sink_into_cold_store(&sink)?;
 
-    for (service, _, _, _) in &cases {
+    for case in &cases {
         // Pyroscope names an OTLP series after the profile's own sample type,
         // so this is `cpu:...` where `/ingest` gives `process_cpu`.
-        let query = format!(r#"{OTLP_PROFILE_TYPE}{{service_name="{service}"}}"#);
+        let query = format!(r#"{OTLP_PROFILE_TYPE}{{service_name="{}"}}"#, case.service);
         let pyroscope_render = render_until_non_empty(
             &client,
             &pyroscope_base,
@@ -4040,8 +4308,13 @@ async fn real_pyroscope_otlp_export_matches_krabka() -> TestResult {
         )
         .await?;
         assert_flamebearer_equal(&pyroscope_render, &krabka_render)?;
-        assert_otlp_series_labels_match(&client, &pyroscope_base, &krabka.querier_base, service)
-            .await?;
+        assert_otlp_series_labels_match(
+            &client,
+            &pyroscope_base,
+            &krabka.querier_base,
+            case.service,
+        )
+        .await?;
     }
 
     krabka.shutdown();
@@ -4244,10 +4517,12 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
     // at fixture_timestamp + 1s and retain their original expected values.
     let cpu_right_profile =
         synthetic_cpu_pprof_with_values(i64::try_from(profile_nanos + 2_000_000_000)?, [20, 8])?;
-    for (base, tenant) in [
-        (&pyroscope_base, None),
-        (&krabka.distributor_base, Some(TENANT)),
+    for target in [
+        PushTarget::oracle(&pyroscope_base),
+        PushTarget::krabka(&krabka.distributor_base),
     ] {
+        let base = target.base;
+        let tenant = target.tenant;
         post_otlp_export(
             &client,
             base,
@@ -4354,15 +4629,15 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
 fn populated_diff_expected(reverse: bool) -> Value {
     let bars = if reverse {
         json!([
-            [["total"], [28, 0, 140, 0]],
-            [["total", FUNC_WORK], [28, 8, 140, 40]],
-            [["total", FUNC_WORK, FUNC_HOT], [20, 20, 100, 100]],
+            {"stack": ["total"], "values": [28, 0, 140, 0]},
+            {"stack": ["total", FUNC_WORK], "values": [28, 8, 140, 40]},
+            {"stack": ["total", FUNC_WORK, FUNC_HOT], "values": [20, 20, 100, 100]},
         ])
     } else {
         json!([
-            [["total"], [140, 0, 28, 0]],
-            [["total", FUNC_WORK], [140, 40, 28, 8]],
-            [["total", FUNC_WORK, FUNC_HOT], [100, 100, 20, 20]],
+            {"stack": ["total"], "values": [140, 0, 28, 0]},
+            {"stack": ["total", FUNC_WORK], "values": [140, 40, 28, 8]},
+            {"stack": ["total", FUNC_WORK, FUNC_HOT], "values": [100, 100, 20, 20]},
         ])
     };
     json!({"bars": bars, "total": 168, "maxSelf": 100,
@@ -4375,8 +4650,10 @@ fn populated_diff_expected(reverse: bool) -> Value {
 /// returned sender fires or is dropped.
 async fn start_sharded_frontend(
     store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
-) -> TestResult<(String, oneshot::Sender<()>)> {
-    let (shutdown, shutdown_rx) = oneshot::channel();
+) -> TestResult<RunningFrontend> {
+    let shutdown_channel = oneshot::channel();
+    let shutdown = shutdown_channel.0;
+    let shutdown_rx = shutdown_channel.1;
     let frontend = query::serve(
         "127.0.0.1:0".parse()?,
         Arc::new(QuerierState::new_frontend(
@@ -4391,7 +4668,10 @@ async fn start_sharded_frontend(
         },
     )
     .await?;
-    Ok((format!("http://{frontend}"), shutdown))
+    Ok(RunningFrontend {
+        base_url: format!("http://{frontend}"),
+        shutdown,
+    })
 }
 
 /// The two backends of a populated comparison, and the store and fixture
@@ -4417,7 +4697,9 @@ async fn compare_populated_diffs(
         store,
         fixture_timestamp,
     } = backends;
-    let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
+    let frontend = start_sharded_frontend(store).await?;
+    let frontend_base = frontend.base_url;
+    let shutdown = frontend.shutdown;
     let side = |timestamp| SelectMergeStacktracesRequest {
         profile_type_id: CPU_PROFILE_TYPE.to_string(),
         label_selector: E2E_SELECTOR.to_string(),
@@ -4433,10 +4715,15 @@ async fn compare_populated_diffs(
         } else {
             "unequal CPU"
         };
-        let (left, right) = if reverse {
-            (side(fixture_timestamp + 2_000), side(fixture_timestamp))
+        let left = if reverse {
+            side(fixture_timestamp + 2_000)
         } else {
-            (side(fixture_timestamp), side(fixture_timestamp + 2_000))
+            side(fixture_timestamp)
+        };
+        let right = if reverse {
+            side(fixture_timestamp)
+        } else {
+            side(fixture_timestamp + 2_000)
         };
         let request = DiffRequest {
             left: Some(left),
@@ -4452,14 +4739,29 @@ async fn compare_populated_diffs(
             None,
             "Diff",
             serde_json::to_value(&request)?,
-            |value| canonical_diff(value).is_ok_and(|actual| actual == expected),
+            diff_has_positive_ticks,
         )
         .await?;
-        for (backend, base, tenant) in [
-            ("upstream", oracle_base, None),
-            ("krabka-direct", krabka_base, Some(TENANT)),
-            ("krabka-frontend", frontend_base.as_str(), Some(TENANT)),
+        for endpoint in [
+            BackendEndpointCase {
+                name: "upstream",
+                base: oracle_base,
+                tenant: None,
+            },
+            BackendEndpointCase {
+                name: "krabka-direct",
+                base: krabka_base,
+                tenant: Some(TENANT),
+            },
+            BackendEndpointCase {
+                name: "krabka-frontend",
+                base: frontend_base.as_str(),
+                tenant: Some(TENANT),
+            },
         ] {
+            let backend = endpoint.name;
+            let base = endpoint.base;
+            let tenant = endpoint.tenant;
             for transport in ["json", "protobuf"] {
                 evidence["active_case"] = json!({"method": "Diff", "name": name,
                     "backend": backend, "transport": transport, "request": request});
@@ -4541,76 +4843,94 @@ async fn compare_populated_span_profiles(
     )
     .await?;
 
-    let hot = vec![(vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100)];
-    let work = vec![(vec![FUNC_WORK.to_string()], 40)];
+    let hot = vec![NormalizedStack {
+        frames: vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()],
+        value: 100,
+    }];
+    let work = vec![NormalizedStack {
+        frames: vec![FUNC_WORK.to_string()],
+        value: 40,
+    }];
     let mut both = work.clone();
     both.extend(hot.clone());
     let mut cases = vec![
-        ("hot span", span_request.clone(), hot.clone()),
-        (
-            "other span",
-            SelectMergeSpanProfileRequest {
+        ExpectedRequestCase {
+            name: "hot span",
+            request: span_request.clone(),
+            expected: hot.clone(),
+        },
+        ExpectedRequestCase {
+            name: "other span",
+            request: SelectMergeSpanProfileRequest {
                 span_selector: vec!["000000000000002b".to_string()],
                 ..span_request.clone()
             },
-            work,
-        ),
-        (
-            "both spans",
-            SelectMergeSpanProfileRequest {
+            expected: work,
+        },
+        ExpectedRequestCase {
+            name: "both spans",
+            request: SelectMergeSpanProfileRequest {
                 span_selector: vec![
                     "000000000000002a".to_string(),
                     "000000000000002b".to_string(),
                 ],
                 ..span_request.clone()
             },
-            both,
-        ),
-        (
-            "duplicate span selector",
-            SelectMergeSpanProfileRequest {
+            expected: both,
+        },
+        ExpectedRequestCase {
+            name: "duplicate span selector",
+            request: SelectMergeSpanProfileRequest {
                 span_selector: vec!["000000000000002a".to_string(); 2],
                 ..span_request.clone()
             },
-            hot,
-        ),
-        (
-            "missing span",
-            SelectMergeSpanProfileRequest {
+            expected: hot,
+        },
+        ExpectedRequestCase {
+            name: "missing span",
+            request: SelectMergeSpanProfileRequest {
                 span_selector: vec!["000000000000002c".to_string()],
                 ..span_request.clone()
             },
-            Vec::new(),
-        ),
+            expected: Vec::new(),
+        },
     ];
-    cases.push((
-        "excluded selector",
-        SelectMergeSpanProfileRequest {
+    cases.push(ExpectedRequestCase {
+        name: "excluded selector",
+        request: SelectMergeSpanProfileRequest {
             label_selector: r#"{service_name="missing"}"#.to_string(),
             ..span_request.clone()
         },
-        Vec::new(),
-    ));
-    cases.push((
-        "excluded time",
-        SelectMergeSpanProfileRequest {
+        expected: Vec::new(),
+    });
+    cases.push(ExpectedRequestCase {
+        name: "excluded time",
+        request: SelectMergeSpanProfileRequest {
             start: fixture_timestamp - 3_000,
             end: fixture_timestamp - 2_000,
             ..span_request.clone()
         },
-        Vec::new(),
-    ));
-    cases.push((
-        "excluded profile type",
-        SelectMergeSpanProfileRequest {
+        expected: Vec::new(),
+    });
+    cases.push(ExpectedRequestCase {
+        name: "excluded profile type",
+        request: SelectMergeSpanProfileRequest {
             profile_type_id: WALL_PROFILE_TYPE.to_string(),
             ..span_request
         },
-        Vec::new(),
-    ));
-    for (name, request, mut expected) in cases {
-        expected.sort();
-        for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+        expected: Vec::new(),
+    });
+    for mut case in cases {
+        let name = case.name;
+        case.expected.sort();
+        let request = case.request;
+        let expected = case.expected;
+        for target in [
+            PushTarget::oracle(oracle_base),
+            PushTarget::krabka(krabka_base),
+        ] {
+            let base = target.base;
+            let tenant = target.tenant;
             evidence["active_case"] = json!({"method": "SelectMergeSpanProfile", "name": name,
                 "backend": base, "request": request});
             let json: SelectMergeSpanProfileResponse = serde_json::from_value(
@@ -4625,17 +4945,27 @@ async fn compare_populated_span_profiles(
             )?;
             let binary: SelectMergeSpanProfileResponse =
                 connect_protobuf(client, base, tenant, "SelectMergeSpanProfile", &request).await?;
-            for (transport, response) in [("json", json), ("protobuf", binary)] {
-                let flamegraph = response
+            for transported in [
+                TransportValue {
+                    transport: "json",
+                    value: json,
+                },
+                TransportValue {
+                    transport: "protobuf",
+                    value: binary,
+                },
+            ] {
+                let flamegraph = transported
+                    .value
                     .flamegraph
                     .ok_or("span response missing flamegraph")?;
                 let actual = normalized_flamegraph_stacks(&flamegraph)?;
-                let total: i64 = expected.iter().map(|(_, value)| value).sum();
+                let total: i64 = expected.iter().map(|sample| sample.value).sum();
                 record_profile_rpc_case(
                     evidence,
                     json!({
                         "method": "SelectMergeSpanProfile", "name": name, "backend": base,
-                        "transport": transport, "classification": "matched",
+                        "transport": transported.transport, "classification": "matched",
                         "status": if actual == expected && flamegraph.total == total { "passed" } else { "failed" },
                         "expected_stacks": expected, "actual_stacks": actual,
                         "expected_total": total, "actual_total": flamegraph.total,
@@ -4650,6 +4980,7 @@ async fn compare_populated_span_profiles(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn compare_populated_query_analysis(
     evidence: &mut Value,
     client: &reqwest::Client,
@@ -4661,30 +4992,60 @@ async fn compare_populated_query_analysis(
     use pb::querier::v1::{AnalyzeQueryRequest, AnalyzeQueryResponse};
 
     let mut analysis_failures = Vec::new();
-    for (name, profile_type, selector, expected) in [
-        ("matching", OTLP_PROFILE_TYPE, selector, 1),
-        (
-            "missing selector",
-            OTLP_PROFILE_TYPE,
-            r#"{service_name="missing"}"#,
-            0,
-        ),
-        ("missing profile type", WALL_PROFILE_TYPE, selector, 0),
-        ("selector-only matching", "", selector, 1),
-        (
-            "selector-only missing",
-            "",
-            r#"{service_name="missing"}"#,
-            0,
-        ),
-        ("empty query", "", "", 3),
+    for case in [
+        AnalysisCase {
+            name: "matching",
+            profile_type: OTLP_PROFILE_TYPE,
+            selector,
+            expected: 1,
+        },
+        AnalysisCase {
+            name: "missing selector",
+            profile_type: OTLP_PROFILE_TYPE,
+            selector: r#"{service_name="missing"}"#,
+            expected: 0,
+        },
+        AnalysisCase {
+            name: "missing profile type",
+            profile_type: WALL_PROFILE_TYPE,
+            selector,
+            expected: 0,
+        },
+        AnalysisCase {
+            name: "selector-only matching",
+            profile_type: "",
+            selector,
+            expected: 1,
+        },
+        AnalysisCase {
+            name: "selector-only missing",
+            profile_type: "",
+            selector: r#"{service_name="missing"}"#,
+            expected: 0,
+        },
+        AnalysisCase {
+            name: "empty query",
+            profile_type: "",
+            selector: "",
+            expected: 3,
+        },
     ] {
         let request = AnalyzeQueryRequest {
-            query: format!("{profile_type}{selector}"),
+            query: format!("{}{}", case.profile_type, case.selector),
             start: fixture_timestamp - 1_000,
             end: fixture_timestamp + 1_000,
         };
-        for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+        for backend_target in [
+            QueryBackendTarget {
+                base: oracle_base,
+                tenant: None,
+            },
+            QueryBackendTarget {
+                base: krabka_base,
+                tenant: Some(TENANT),
+            },
+        ] {
+            let QueryBackendTarget { base, tenant } = backend_target;
             evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
                 "request": request, "classification": "matched"});
             let backend = RpcBackend {
@@ -4692,28 +5053,41 @@ async fn compare_populated_query_analysis(
                 base,
                 tenant,
             };
-            for (transport, response) in
-                analyze_query_over_both_transports(backend, &request).await?
-            {
-                if assert_queried_series_count(&response, expected).is_err()
+            for result in analyze_query_over_both_transports(backend, &request).await? {
+                let AnalyzeTransportResponse {
+                    transport,
+                    response,
+                } = result;
+                if assert_queried_series_count(&response, case.expected).is_err()
                     && evidence.get("failure_diagnostics").is_none()
                 {
                     let mut diagnostics = Vec::new();
-                    for (method, body) in [
-                        (
-                            "Series",
-                            json!({"matchers": [selector], "start": request.start, "end": request.end}),
-                        ),
-                        ("Series", json!({"matchers": [selector]})),
-                        ("ProfileTypes", json!({})),
-                        ("GetProfileStats", json!({})),
-                        (
-                            "AnalyzeQuery",
-                            json!({"query": request.query, "start": 0, "end": i64::MAX}),
-                        ),
+                    for case in [
+                        MethodBodyCase {
+                            method: "Series",
+                            body: json!({"matchers": [selector], "start": request.start, "end": request.end}),
+                        },
+                        MethodBodyCase {
+                            method: "Series",
+                            body: json!({"matchers": [selector]}),
+                        },
+                        MethodBodyCase {
+                            method: "ProfileTypes",
+                            body: json!({}),
+                        },
+                        MethodBodyCase {
+                            method: "GetProfileStats",
+                            body: json!({}),
+                        },
+                        MethodBodyCase {
+                            method: "AnalyzeQuery",
+                            body: json!({"query": request.query, "start": 0, "end": i64::MAX}),
+                        },
                     ] {
-                        let result = connect_json(client, base, tenant, method, body.clone()).await;
-                        diagnostics.push(json!({"method": method, "request": body,
+                        let result =
+                            connect_json(client, base, tenant, case.method, case.body.clone())
+                                .await;
+                        diagnostics.push(json!({"method": case.method, "request": case.body,
                             "response": result.as_ref().ok(), "error": result.err().map(|error| error.to_string())}));
                     }
                     evidence["failure_diagnostics"] = json!(diagnostics);
@@ -4722,15 +5096,15 @@ async fn compare_populated_query_analysis(
                     evidence,
                     with_queried_series_outcome(
                         json!({
-                            "method": "AnalyzeQuery", "name": name, "backend": base, "transport": transport,
+                            "method": "AnalyzeQuery", "name": case.name, "backend": base, "transport": transport,
                             "request": request, "classification": "matched",
                         }),
                         &response,
-                        expected,
+                        case.expected,
                     ),
                 )?;
-                if let Err(error) = assert_queried_series_count(&response, expected) {
-                    analysis_failures.push(format!("{error}: backend={base}, transport={transport}, request={request:?}, response={response:?}"));
+                if let Err(error) = assert_queried_series_count(&response, case.expected) {
+                    analysis_failures.push(format!("{}: {error}: backend={base}, transport={transport}, request={request:?}, response={response:?}", case.name));
                 }
             }
         }
@@ -4739,36 +5113,48 @@ async fn compare_populated_query_analysis(
     // The pinned public frontend returns an empty diagnostic whenever either
     // bound is omitted, before parsing the selector or planning storage.
     // pkg/frontend/frontend_analyze_query.go, not the downstream Series method.
-    for (name, query, start, end) in [
-        (
-            "legacy omitted matching",
-            format!("{OTLP_PROFILE_TYPE}{selector}"),
-            0,
-            0,
-        ),
-        (
-            "legacy end omitted empty query",
-            String::new(),
-            fixture_timestamp + 1_000,
-            0,
-        ),
-        (
-            "legacy start omitted missing",
-            format!("{OTLP_PROFILE_TYPE}{{service_name=\"missing\"}}"),
-            0,
-            fixture_timestamp + 1_000,
-        ),
+    for case in [
+        BoundedQueryCase {
+            name: "legacy omitted matching",
+            query: format!("{OTLP_PROFILE_TYPE}{selector}"),
+            start: 0,
+            end: 0,
+        },
+        BoundedQueryCase {
+            name: "legacy end omitted empty query",
+            query: String::new(),
+            start: fixture_timestamp + 1_000,
+            end: 0,
+        },
+        BoundedQueryCase {
+            name: "legacy start omitted missing",
+            query: format!("{OTLP_PROFILE_TYPE}{{service_name=\"missing\"}}"),
+            start: 0,
+            end: fixture_timestamp + 1_000,
+        },
     ] {
-        let request = AnalyzeQueryRequest { query, start, end };
-        for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+        let name = case.name;
+        let request = AnalyzeQueryRequest {
+            query: case.query,
+            start: case.start,
+            end: case.end,
+        };
+        for target in [
+            PushTarget::oracle(oracle_base),
+            PushTarget::krabka(krabka_base),
+        ] {
+            let base = target.base;
+            let tenant = target.tenant;
             let backend = RpcBackend {
                 client,
                 base,
                 tenant,
             };
-            for (transport, response) in
-                analyze_query_over_both_transports(backend, &request).await?
-            {
+            for result in analyze_query_over_both_transports(backend, &request).await? {
+                let AnalyzeTransportResponse {
+                    transport,
+                    response,
+                } = result;
                 let expected = AnalyzeQueryResponse::default();
                 let passed = response == expected;
                 record_profile_rpc_case(
@@ -4794,7 +5180,21 @@ async fn compare_populated_query_analysis(
         start: fixture_timestamp - 3_000,
         end: fixture_timestamp - 2_000,
     };
-    for (base, tenant, expected) in [(oracle_base, None, 1), (krabka_base, Some(TENANT), 1)] {
+    for case in [
+        BackendExpectedCase {
+            base: oracle_base,
+            tenant: None,
+            expected: 1,
+        },
+        BackendExpectedCase {
+            base: krabka_base,
+            tenant: Some(TENANT),
+            expected: 1,
+        },
+    ] {
+        let base = case.base;
+        let tenant = case.tenant;
+        let expected = case.expected;
         evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
             "request": excluded_time, "classification": "matched"});
         let backend = RpcBackend {
@@ -4802,9 +5202,11 @@ async fn compare_populated_query_analysis(
             base,
             tenant,
         };
-        for (transport, response) in
-            analyze_query_over_both_transports(backend, &excluded_time).await?
-        {
+        for result in analyze_query_over_both_transports(backend, &excluded_time).await? {
+            let AnalyzeTransportResponse {
+                transport,
+                response,
+            } = result;
             record_profile_rpc_case(
                 evidence,
                 with_queried_series_outcome(
@@ -4849,8 +5251,14 @@ async fn compare_generated_populated_profiles(
         ..Default::default()
     };
     let expected_cpu_stacks = vec![
-        (vec![FUNC_WORK.to_string()], 40),
-        (vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100),
+        NormalizedStack {
+            frames: vec![FUNC_WORK.to_string()],
+            value: 40,
+        },
+        NormalizedStack {
+            frames: vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()],
+            value: 100,
+        },
     ];
     evidence["active_case"] =
         json!({"method": "SelectMergeStacktraces", "phase": "generated-positive-control"});
@@ -4936,7 +5344,9 @@ async fn run_generated_profile_rejections(
         store,
         fixture_timestamp: time_ms,
     } = backends;
-    let (frontend_base, shutdown) = start_sharded_frontend(store).await?;
+    let frontend = start_sharded_frontend(store).await?;
+    let frontend_base = frontend.base_url;
+    let shutdown = frontend.shutdown;
     let frontend_base = &frontend_base;
     let result = generated_differential::run(
         "pyroscope-rejections",
@@ -4965,11 +5375,14 @@ async fn run_generated_profile_rejections(
             // Establish invalidity with upstream first, then check both
             // Krabka execution paths. Preserve error replies as evidence;
             // successful bodies or paired unrelated errors cannot pass.
-            for (backend, base, tenant) in [
-                ("upstream", oracle_base, None),
-                ("krabka-direct", krabka_base, Some(TENANT)),
-                ("krabka-frontend", frontend_base, Some(TENANT)),
+            for endpoint in [
+                BackendEndpointCase { name: "upstream", base: oracle_base, tenant: None },
+                BackendEndpointCase { name: "krabka-direct", base: krabka_base, tenant: Some(TENANT) },
+                BackendEndpointCase { name: "krabka-frontend", base: frontend_base, tenant: Some(TENANT) },
             ] {
+                let backend = endpoint.name;
+                let base = endpoint.base;
+                let tenant = endpoint.tenant;
                 let mut call = client
                     .post(format!("{base}/querier.v1.QuerierService/SelectMergeSpanProfile"))
                     .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -5022,8 +5435,14 @@ async fn compare_populated_merge_profiles(
         ..Default::default()
     };
     let expected = vec![
-        (vec![FUNC_WORK.to_string()], 40),
-        (vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100),
+        NormalizedStack {
+            frames: vec![FUNC_WORK.to_string()],
+            value: 40,
+        },
+        NormalizedStack {
+            frames: vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()],
+            value: 100,
+        },
     ];
     evidence["active_case"] = json!({"method": "SelectMergeProfile", "name": "fixture readiness"});
     connect_json_until(
@@ -5055,59 +5474,74 @@ async fn compare_populated_merge_profiles(
         })
     };
     let cases = [
-        ("populated CPU", request.clone(), expected.clone()),
-        (
-            "excluded selector",
-            SelectMergeProfileRequest {
+        ExpectedRequestCase {
+            name: "populated CPU",
+            request: request.clone(),
+            expected: expected.clone(),
+        },
+        ExpectedRequestCase {
+            name: "excluded selector",
+            request: SelectMergeProfileRequest {
                 label_selector: r#"{service_name="missing"}"#.to_string(),
                 ..request.clone()
             },
-            Vec::new(),
-        ),
-        (
-            "excluded time",
-            SelectMergeProfileRequest {
+            expected: Vec::new(),
+        },
+        ExpectedRequestCase {
+            name: "excluded time",
+            request: SelectMergeProfileRequest {
                 start: time_ms - 3_000,
                 end: time_ms - 2_000,
                 ..request.clone()
             },
-            Vec::new(),
-        ),
-        (
-            "excluded profile type",
-            SelectMergeProfileRequest {
+            expected: Vec::new(),
+        },
+        ExpectedRequestCase {
+            name: "excluded profile type",
+            request: SelectMergeProfileRequest {
                 profile_type_id: WALL_PROFILE_TYPE.to_string(),
                 ..request.clone()
             },
-            Vec::new(),
-        ),
-        (
-            "root stack prefix",
-            SelectMergeProfileRequest {
+            expected: Vec::new(),
+        },
+        ExpectedRequestCase {
+            name: "root stack prefix",
+            request: SelectMergeProfileRequest {
                 stack_trace_selector: stack_selector(&[FUNC_WORK]),
                 ..request.clone()
             },
             expected,
-        ),
-        (
-            "hot stack prefix",
-            SelectMergeProfileRequest {
+        },
+        ExpectedRequestCase {
+            name: "hot stack prefix",
+            request: SelectMergeProfileRequest {
                 stack_trace_selector: stack_selector(&[FUNC_WORK, FUNC_HOT]),
                 ..request.clone()
             },
-            vec![(vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100)],
-        ),
-        (
-            "missing stack prefix",
-            SelectMergeProfileRequest {
+            expected: vec![NormalizedStack {
+                frames: vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()],
+                value: 100,
+            }],
+        },
+        ExpectedRequestCase {
+            name: "missing stack prefix",
+            request: SelectMergeProfileRequest {
                 stack_trace_selector: stack_selector(&[FUNC_WORK, "missing"]),
                 ..request
             },
-            Vec::new(),
-        ),
+            expected: Vec::new(),
+        },
     ];
-    for (name, request, expected) in cases {
-        for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+    for case in cases {
+        let name = case.name;
+        let request = case.request;
+        let expected = case.expected;
+        for target in [
+            PushTarget::oracle(oracle_base),
+            PushTarget::krabka(krabka_base),
+        ] {
+            let base = target.base;
+            let tenant = target.tenant;
             evidence["active_case"] = json!({"method": "SelectMergeProfile", "name": name,
                 "backend": base, "request": request});
             let json: Profile = serde_json::from_value(
@@ -5122,17 +5556,30 @@ async fn compare_populated_merge_profiles(
             )?;
             let binary: Profile =
                 connect_protobuf(client, base, tenant, "SelectMergeProfile", &request).await?;
-            for (transport, profile) in [("json", json), ("protobuf", binary)] {
-                let normalized = normalized_pprof_stacks(&profile);
-                let expected_total: i64 = expected.iter().map(|(_, value)| value).sum();
-                let actual_total: i64 =
-                    profile.sample.iter().flat_map(|sample| &sample.value).sum();
+            for transported in [
+                TransportValue {
+                    transport: "json",
+                    value: json,
+                },
+                TransportValue {
+                    transport: "protobuf",
+                    value: binary,
+                },
+            ] {
+                let normalized = normalized_pprof_stacks(&transported.value);
+                let expected_total: i64 = expected.iter().map(|sample| sample.value).sum();
+                let actual_total: i64 = transported
+                    .value
+                    .sample
+                    .iter()
+                    .flat_map(|sample| &sample.value)
+                    .sum();
                 let matched = normalized.as_ref().is_ok_and(|stacks| stacks == &expected)
                     && actual_total == expected_total;
                 record_profile_rpc_case(
                     evidence,
                     json!({"method": "SelectMergeProfile", "name": name, "backend": base,
-                        "transport": transport, "request": request, "classification": "matched",
+                        "transport": transported.transport, "request": request, "classification": "matched",
                         "status": if matched { "passed" } else { "failed" },
                         "expected_stacks": expected, "actual_stacks": normalized.as_ref().ok(),
                         "normalization_error": normalized.as_ref().err().map(ToString::to_string),
@@ -5140,7 +5587,7 @@ async fn compare_populated_merge_profiles(
                 )?;
                 if !matched {
                     return Err(format!(
-                        "SelectMergeProfile {name}, {base}, {transport}: expected {expected:?}, total {expected_total}; actual {normalized:?}, total {actual_total}"
+                        "SelectMergeProfile {name}, {base}, {}: expected {expected:?}, total {expected_total}; actual {normalized:?}, total {actual_total}", transported.transport
                     ).into());
                 }
             }
@@ -5152,9 +5599,7 @@ async fn compare_populated_merge_profiles(
 /// Resolve each pprof sample's leaf-first location/function/string references
 /// into a root-first stack and its value. Preserve repeated stacks and check
 /// the single CPU sample type so totals cannot mask wrong symbol associations.
-fn normalized_pprof_stacks(
-    profile: &pb::google::v1::Profile,
-) -> TestResult<Vec<(Vec<String>, i64)>> {
+fn normalized_pprof_stacks(profile: &pb::google::v1::Profile) -> TestResult<Vec<NormalizedStack>> {
     let string = |index: i64| -> TestResult<&str> {
         usize::try_from(index)
             .ok()
@@ -5217,7 +5662,10 @@ fn normalized_pprof_stacks(
                 stack.push(name.to_string());
             }
         }
-        stacks.push((stack, *value));
+        stacks.push(NormalizedStack {
+            frames: stack,
+            value: *value,
+        });
     }
     stacks.sort();
     Ok(stacks)
@@ -5228,9 +5676,14 @@ async fn compare_generated_profile_selector(
     oracle_base: &str,
     krabka_base: &str,
     request: &pb::querier::v1::SelectMergeStacktracesRequest,
-    expected: &[(Vec<String>, i64)],
+    expected: &[NormalizedStack],
 ) -> TestResult<Option<String>> {
-    for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+    for target in [
+        PushTarget::oracle(oracle_base),
+        PushTarget::krabka(krabka_base),
+    ] {
+        let base = target.base;
+        let tenant = target.tenant;
         let json: pb::querier::v1::SelectMergeStacktracesResponse = serde_json::from_value(
             connect_json(
                 client,
@@ -5243,16 +5696,26 @@ async fn compare_generated_profile_selector(
         )?;
         let binary: pb::querier::v1::SelectMergeStacktracesResponse =
             connect_protobuf(client, base, tenant, "SelectMergeStacktraces", request).await?;
-        for (transport, response) in [("json", json), ("protobuf", binary)] {
-            let graph = response
+        for transported in [
+            TransportValue {
+                transport: "json",
+                value: json,
+            },
+            TransportValue {
+                transport: "protobuf",
+                value: binary,
+            },
+        ] {
+            let graph = transported
+                .value
                 .flamegraph
                 .ok_or("generated profile response missing flamegraph")?;
             let actual = normalized_flamegraph_stacks(&graph)?;
-            let expected_total: i64 = expected.iter().map(|(_, value)| value).sum();
+            let expected_total: i64 = expected.iter().map(|sample| sample.value).sum();
             if actual != expected || graph.total != expected_total || graph.max_self != 100 {
                 return Ok(Some(format!(
-                    "selector={} backend={base} transport={transport}: expected stacks={expected:?}, total={expected_total}, maxSelf=100; actual stacks={actual:?}, total={}, maxSelf={}",
-                    request.label_selector, graph.total, graph.max_self
+                    "selector={} backend={base} transport={}: expected stacks={expected:?}, total={expected_total}, maxSelf=100; actual stacks={actual:?}, total={}, maxSelf={}",
+                    transported.transport, request.label_selector, graph.total, graph.max_self
                 )));
             }
         }
@@ -5317,7 +5780,7 @@ struct RpcBackend<'a> {
 async fn analyze_query_over_both_transports(
     backend: RpcBackend<'_>,
     request: &pb::querier::v1::AnalyzeQueryRequest,
-) -> TestResult<[(&'static str, pb::querier::v1::AnalyzeQueryResponse); 2]> {
+) -> TestResult<[AnalyzeTransportResponse; 2]> {
     let RpcBackend {
         client,
         base,
@@ -5335,25 +5798,39 @@ async fn analyze_query_over_both_transports(
     )?;
     let binary: pb::querier::v1::AnalyzeQueryResponse =
         connect_protobuf(client, base, tenant, "AnalyzeQuery", request).await?;
-    Ok([("json", json), ("protobuf", binary)])
+    Ok([
+        AnalyzeTransportResponse {
+            transport: "json",
+            response: json,
+        },
+        AnalyzeTransportResponse {
+            transport: "protobuf",
+            response: binary,
+        },
+    ])
+}
+
+struct AnalyzeTransportResponse {
+    transport: &'static str,
+    response: pb::querier::v1::AnalyzeQueryResponse,
 }
 
 /// Orders exemplars, and each exemplar's labels, canonically, so two backends
 /// that return the same exemplars in different orders compare equal.
 fn sort_exemplars(exemplars: &mut [pb::querier::v1::Exemplar]) {
     for exemplar in exemplars.iter_mut() {
-        exemplar
-            .labels
-            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+        exemplar.labels.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.value.cmp(&right.value))
+        });
     }
-    exemplars.sort_by_key(|e| {
-        (
-            e.timestamp,
-            e.value,
-            e.profile_id.clone(),
-            e.trace_id.clone(),
-            e.span_id.clone(),
-        )
+    exemplars.sort_by_key(|exemplar| ExemplarSortKey {
+        timestamp: exemplar.timestamp,
+        value: exemplar.value,
+        profile_id: exemplar.profile_id.clone(),
+        trace_id: exemplar.trace_id.clone(),
+        span_id: exemplar.span_id.clone(),
     });
 }
 
@@ -5395,8 +5872,14 @@ async fn connect_protobuf<Req: prost::Message, Resp: prost::Message + Default>(
 /// and their values. Only sibling layout and name-table order are irrelevant.
 fn normalized_flamegraph_stacks(
     graph: &pb::querier::v1::FlameGraph,
-) -> TestResult<Vec<(Vec<String>, i64)>> {
-    let mut parents: Vec<(i64, i64, Vec<String>)> = Vec::new();
+) -> TestResult<Vec<NormalizedStack>> {
+    struct FlamegraphParent {
+        left: i64,
+        right: i64,
+        path: Vec<String>,
+    }
+
+    let mut parents: Vec<FlamegraphParent> = Vec::new();
     let mut stacks = Vec::new();
     for (depth, level) in graph.levels.iter().enumerate() {
         let (bars, remainder) = level.values.as_chunks::<4>();
@@ -5417,18 +5900,25 @@ fn normalized_flamegraph_stacks(
             } else {
                 parents
                     .iter()
-                    .find(|(left, right, _)| *left <= x && end <= *right)
+                    .find(|parent| parent.left <= x && end <= parent.right)
                     .ok_or("flamegraph bar has no parent")?
-                    .2
+                    .path
                     .clone()
             };
             if depth != 0 {
                 path.push(name.clone());
             }
             if bar[2] != 0 {
-                stacks.push((path.clone(), bar[2]));
+                stacks.push(NormalizedStack {
+                    frames: path.clone(),
+                    value: bar[2],
+                });
             }
-            current.push((x, end, path));
+            current.push(FlamegraphParent {
+                left: x,
+                right: end,
+                path,
+            });
             x = end;
         }
         parents = current;
@@ -5545,8 +6035,14 @@ fn profile_semantic_comparators_reject_index_timestamp_and_count_drift() -> Test
     assert2::assert!(
         normalized_flamegraph_stacks(&graph)?
             == vec![
-                (vec!["work".to_string()], 40),
-                (vec!["work".to_string(), "hot".to_string()], 100),
+                NormalizedStack {
+                    frames: vec!["work".to_string()],
+                    value: 40,
+                },
+                NormalizedStack {
+                    frames: vec!["work".to_string(), "hot".to_string()],
+                    value: 100,
+                },
             ]
     );
     let mut duplicate = graph.clone();
@@ -5571,8 +6067,14 @@ fn pprof_stack_comparator_rejects_value_and_symbol_association_drift() -> TestRe
     flate2::read::GzDecoder::new(compressed.as_slice()).read_to_end(&mut bytes)?;
     let profile = pb::google::v1::Profile::decode(bytes.as_slice())?;
     let expected = vec![
-        (vec![FUNC_WORK.to_string()], 40),
-        (vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100),
+        NormalizedStack {
+            frames: vec![FUNC_WORK.to_string()],
+            value: 40,
+        },
+        NormalizedStack {
+            frames: vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()],
+            value: 100,
+        },
     ];
     assert2::assert!(normalized_pprof_stacks(&profile)? == expected);
     let mut swapped_values = profile.clone();
@@ -5779,8 +6281,9 @@ async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
     )
     .await?;
     let time = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? - 60_000;
-    let (profile_id, identity) =
-        profile_v2_fixtures(&client, &oracle_base, &candidate, &sink, time).await?;
+    let fixtures = profile_v2_fixtures(&client, &oracle_base, &candidate, &sink, time).await?;
+    let profile_id = fixtures.profile_id;
+    let identity = fixtures.identity;
 
     let selector = r#"{service_name="v2-matrix"}"#;
     let base = json!({"profileTypeID": OTLP_PROFILE_TYPE, "labelSelector": selector, "start": time-1000, "end": time+1000});
@@ -5798,7 +6301,12 @@ async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
     let fixture_hash = hex::encode(Sha256::digest(synthetic_cpu_pprof(time * 1_000_000)?));
     let mut evidence = json!({"fixture":{"cpu_pprof_sha256":fixture_hash,"primary_stacks":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]],"secondary_stacks":[[[FUNC_WORK],15],[[FUNC_WORK,FUNC_HOT],35]],"primary_total":140,"secondary_total":50},"suite":"pyroscope-v2-fields", "upstream_revision":"7aeaa0ff91e83538b3ff0d09bfefb168bddc022d", "storage":"v2", "upstream":{"image_tag":std::env::var("KRABKA_PYROSCOPE_IMAGE_TAG").ok(),"image_id":std::env::var("KRABKA_PYROSCOPE_IMAGE_ID").ok()}, "settings":{"oracle":{"query-frontend.async-queries-enabled":true},"candidate":{"query_architecture":"v2","async_queries_enabled":true}}, "identity_witness":{"requested":"03030303-0303-0303-0303-030303030303","upstream_assigned":profile_id,"candidate_stored":profile_id,"oracle_response":identity}, "planned":cases.len()+4, "status":"running", "cases":[]});
     let mut failures = Vec::new();
-    for (method, name, request) in cases {
+    for case in cases {
+        let ProfileV2RequestCase {
+            method,
+            name,
+            request,
+        } = case;
         let oracle =
             profile_v2_response(&client, &oracle_base, None, method, request.clone()).await;
         let candidate = profile_v2_response(
@@ -5809,13 +6317,22 @@ async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
             request.clone(),
         )
         .await;
-        let (independent_expected, independent) =
-            profile_v2_independent_witness(method, &name, time, &oracle, &candidate);
-        let matched = independent
-            && match (&oracle, &candidate) {
-                (Ok(a), Ok(b)) => a == b,
-                _ => false,
-            };
+        let witness = profile_v2_independent_witness(method, &name, time, &oracle, &candidate);
+        let independent_expected = witness.expected;
+        let independent = witness.matches;
+        let matched = if independent {
+            if let Ok(oracle_value) = &oracle {
+                if let Ok(candidate_value) = &candidate {
+                    oracle_value == candidate_value
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         evidence["cases"].as_array_mut().ok_or("evidence cases missing")?.push(json!({"id":format!("{method}/{name}"),"request":request,"independent_expected":independent_expected,"status":if matched {"passed"} else {"failed"},"classification":if matched && oracle.as_ref().is_ok_and(|v| v.get("error_code").is_some()) {"paired-expected-error"} else if matched {"matched"} else {"mismatch"},"oracle":oracle.as_ref().ok(),"candidate":candidate.as_ref().ok(),"oracle_error":oracle.as_ref().err().map(ToString::to_string),"candidate_error":candidate.as_ref().err().map(ToString::to_string)}));
         if !matched {
             failures.push(format!(
@@ -5846,21 +6363,29 @@ async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
             }
             "PROFILE_FORMAT_DOT" => profile_fixture_dot_expected(),
             "PROFILE_FORMAT_PPROF" => {
-                json!({"pprof":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]]})
+                json!({"pprof":[
+                    {"frames":[FUNC_WORK],"value":40},
+                    {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+                ]})
             }
             _ => {
-                json!({"stacks":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]],"total":140,"max_self":100})
+                json!({"stacks":[
+                    {"frames":[FUNC_WORK],"value":40},
+                    {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+                ],"total":140,"max_self":100})
             }
         };
         let independent = json!({"submission_status":"ASYNC_QUERY_STATUS_IN_PROGRESS","completion_status":"ASYNC_QUERY_STATUS_SUCCESS","result":result});
-        let matched = match (&expected, &actual) {
-            (Ok((expected, _)), Ok((actual, _))) => {
-                *expected == independent && *actual == independent
+        let matched = if let Ok(expected_value) = &expected {
+            if let Ok(actual_value) = &actual {
+                expected_value.result == independent && actual_value.result == independent
+            } else {
+                false
             }
-
-            _ => false,
+        } else {
+            false
         };
-        evidence["cases"].as_array_mut().ok_or("evidence cases missing")?.push(json!({"id":format!("SelectMergeStacktraces/async {format}"),"request":request,"independent_expected":independent,"status":if matched {"passed"} else {"failed"},"classification":if matched {"matched"} else {"mismatch"},"oracle":expected.as_ref().ok().map(|(value,_)|value),"candidate":actual.as_ref().ok().map(|(value,_)|value),"exchanges":{"oracle":expected.as_ref().ok().map(|(_,value)|value),"candidate":actual.as_ref().ok().map(|(_,value)|value)},"oracle_error":expected.as_ref().err().map(ToString::to_string),"candidate_error":actual.as_ref().err().map(ToString::to_string)}));
+        evidence["cases"].as_array_mut().ok_or("evidence cases missing")?.push(json!({"id":format!("SelectMergeStacktraces/async {format}"),"request":request,"independent_expected":independent,"status":if matched {"passed"} else {"failed"},"classification":if matched {"matched"} else {"mismatch"},"oracle":expected.as_ref().ok().map(|value|&value.result),"candidate":actual.as_ref().ok().map(|value|&value.result),"exchanges":{"oracle":expected.as_ref().ok().map(|value|&value.exchange),"candidate":actual.as_ref().ok().map(|value|&value.exchange)},"oracle_error":expected.as_ref().err().map(ToString::to_string),"candidate_error":actual.as_ref().err().map(ToString::to_string)}));
         if !matched {
             failures.push(format!(
                 "async {format}: expected={expected:?} actual={actual:?}"
@@ -5888,13 +6413,18 @@ async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
     }
 }
 
+struct ProfileV2IndependentWitness {
+    expected: Value,
+    matches: bool,
+}
+
 fn profile_v2_independent_witness(
     method: &str,
     name: &str,
     time: i64,
     oracle: &TestResult<Value>,
     candidate: &TestResult<Value>,
-) -> (Value, bool) {
+) -> ProfileV2IndependentWitness {
     let mut independent_expected = Value::Null;
     let independent = if method == "SelectMergeStacktraces"
         && oracle.as_ref().is_ok_and(|v| v.get("stacks").is_some())
@@ -5909,9 +6439,12 @@ fn profile_v2_independent_witness(
             | "end excludes profile"
             | "missing profile type" => json!([]),
             "hot prefix" | "hot trace" | "hot modern span" => {
-                json!([[[FUNC_WORK, FUNC_HOT], 100]])
+                json!([{"frames":[FUNC_WORK,FUNC_HOT],"value":100}])
             }
-            _ => json!([[[FUNC_WORK], 40], [[FUNC_WORK, FUNC_HOT], 100]]),
+            _ => json!([
+                {"frames":[FUNC_WORK],"value":40},
+                {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+            ]),
         };
         independent_expected = json!({"stacks":expected});
         oracle.as_ref().is_ok_and(|v| v["stacks"] == expected)
@@ -5929,7 +6462,10 @@ fn profile_v2_independent_witness(
         oracle.as_ref().is_ok_and(|value| *value == expected)
             && candidate.as_ref().is_ok_and(|value| *value == expected)
     } else if method == "SelectMergeStacktraces" && name == "PROFILE_FORMAT_PPROF" {
-        let expected = json!({"pprof":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]]});
+        let expected = json!({"pprof":[
+            {"frames":[FUNC_WORK],"value":40},
+            {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+        ]});
         independent_expected = expected.clone();
         oracle.as_ref().is_ok_and(|value| *value == expected)
             && candidate.as_ref().is_ok_and(|value| *value == expected)
@@ -5940,11 +6476,17 @@ fn profile_v2_independent_witness(
         let stacks = if empty {
             json!([])
         } else if leaf {
-            json!([[[FUNC_HOT], 100], [[FUNC_WORK], 40]])
+            json!([
+                {"frames":[FUNC_HOT],"value":100},
+                {"frames":[FUNC_WORK],"value":40}
+            ])
         } else if trace {
-            json!([[[FUNC_WORK, FUNC_HOT], 100]])
+            json!([{"frames":[FUNC_WORK,FUNC_HOT],"value":100}])
         } else {
-            json!([[[FUNC_WORK], 40], [[FUNC_WORK, FUNC_HOT], 100]])
+            json!([
+                {"frames":[FUNC_WORK],"value":40},
+                {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+            ])
         };
         let locations = if empty {
             json!([])
@@ -6038,7 +6580,10 @@ fn profile_v2_independent_witness(
     } else {
         true
     };
-    (independent_expected, independent)
+    ProfileV2IndependentWitness {
+        expected: independent_expected,
+        matches: independent,
+    }
 }
 
 // DOT describes function self percentages and rounds edge widths upward.
@@ -6049,24 +6594,28 @@ fn profile_fixture_dot_expected() -> Value {
     json!({"nodes":[hot,work],"edges":[{"caller":work,"callee":hot,"weight":72}]})
 }
 
+#[allow(clippy::too_many_lines)]
 async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> TestResult {
     use prost::Message;
-    for (architecture, options, artifact) in [
-        (
-            query::PyroscopeQueryArchitecture::V1,
-            vec!["-architecture.storage=v1", "-write-path=ingester"],
-            "pyroscope-v1-aggregation.json",
-        ),
-        (
-            query::PyroscopeQueryArchitecture::V2,
-            vec![
+    for config in [
+        ArchitectureConfig {
+            architecture: query::PyroscopeQueryArchitecture::V1,
+            options: vec!["-architecture.storage=v1", "-write-path=ingester"],
+            artifact: "pyroscope-v1-aggregation.json",
+        },
+        ArchitectureConfig {
+            architecture: query::PyroscopeQueryArchitecture::V2,
+            options: vec![
                 "-architecture.storage=v2",
                 "-write-path=segment-writer",
                 "-query-frontend.async-queries-enabled=false",
             ],
-            "pyroscope-v2-async-disabled.json",
-        ),
+            artifact: "pyroscope-v2-async-disabled.json",
+        },
     ] {
+        let architecture = config.architecture;
+        let options = config.options;
+        let artifact = config.artifact;
         let oracle = start_pyroscope_with_options(&options).await?;
         let oracle_base = mapped_base_url(&oracle, PYROSCOPE_HTTP_PORT).await?;
         wait_for_http_ok(client, &oracle_base, &["/ready"]).await?;
@@ -6082,20 +6631,29 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
             },
         )
         .await?;
-        for (service, values) in [
-            ("architecture-primary", [100, 40]),
-            ("architecture-secondary", [35, 15]),
+        for fixture in [
+            ServiceValuesCase {
+                service: "architecture-primary",
+                values: [100, 40],
+            },
+            ServiceValuesCase {
+                service: "architecture-secondary",
+                values: [35, 15],
+            },
         ] {
             let mut export = pb::otlp_profiles::ExportProfilesServiceRequest::decode(
-                otlp_export_body(u64::try_from(time)? * 1_000_000, service, false)?.as_slice(),
+                otlp_export_body(u64::try_from(time)? * 1_000_000, fixture.service, false)?
+                    .as_slice(),
             )?;
             let samples = &mut export.resource_profiles[0].scope_profiles[0].profiles[0].samples;
-            samples[0].values = vec![values[0]];
-            samples[1].values = vec![values[1]];
-            for (base, tenant) in [
-                (&oracle_base, None),
-                (&candidate.distributor_base, Some(TENANT)),
+            samples[0].values = vec![fixture.values[0]];
+            samples[1].values = vec![fixture.values[1]];
+            for target in [
+                PushTarget::oracle(&oracle_base),
+                PushTarget::krabka(&candidate.distributor_base),
             ] {
+                let base = target.base;
+                let tenant = target.tenant;
                 post_otlp_export(
                     client,
                     base,
@@ -6120,46 +6678,44 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
         .await?;
         let mut report = json!({"suite":artifact.trim_end_matches(".json"),"upstream_revision":"7aeaa0ff91e83538b3ff0d09bfefb168bddc022d","upstream":{"image_tag":std::env::var("KRABKA_PYROSCOPE_IMAGE_TAG").ok(),"image_id":std::env::var("KRABKA_PYROSCOPE_IMAGE_ID").ok()},"settings":{"query_architecture":if architecture==query::PyroscopeQueryArchitecture::V1 {"v1"} else {"v2"},"oracle_async_enabled":false,"candidate_async_enabled":false,"oracle_query_analysis_series_enabled":false,"candidate_query_analysis_series_enabled":false},"fixture":{"primary_total":140,"secondary_total":50},"planned":2,"status":"running","cases":[]});
         let mut failures = Vec::new();
-        for (name, field, value, expected) in
-            if architecture == query::PyroscopeQueryArchitecture::V1 {
-                [
-                    (
-                        "SUM",
-                        "aggregation",
-                        "TIME_SERIES_AGGREGATION_TYPE_SUM",
-                        190.0,
-                    ),
-                    (
-                        "AVERAGE",
-                        "aggregation",
-                        "TIME_SERIES_AGGREGATION_TYPE_AVERAGE",
-                        95.0,
-                    ),
-                ]
-            } else {
-                [
-                    (
-                        "FORCE falls through",
-                        "async",
-                        "ASYNC_QUERY_TYPE_FORCE",
-                        190.0,
-                    ),
-                    (
-                        "DISABLED falls through",
-                        "async",
-                        "ASYNC_QUERY_TYPE_DISABLED",
-                        190.0,
-                    ),
-                ]
-            }
-        {
+        for case in if architecture == query::PyroscopeQueryArchitecture::V1 {
+            [
+                ArchitectureControlCase {
+                    name: "SUM",
+                    field: "aggregation",
+                    value: "TIME_SERIES_AGGREGATION_TYPE_SUM",
+                    expected: 190.0,
+                },
+                ArchitectureControlCase {
+                    name: "AVERAGE",
+                    field: "aggregation",
+                    value: "TIME_SERIES_AGGREGATION_TYPE_AVERAGE",
+                    expected: 95.0,
+                },
+            ]
+        } else {
+            [
+                ArchitectureControlCase {
+                    name: "FORCE falls through",
+                    field: "async",
+                    value: "ASYNC_QUERY_TYPE_FORCE",
+                    expected: 190.0,
+                },
+                ArchitectureControlCase {
+                    name: "DISABLED falls through",
+                    field: "async",
+                    value: "ASYNC_QUERY_TYPE_DISABLED",
+                    expected: 190.0,
+                },
+            ]
+        } {
             let mut request = base.clone();
-            let method = if field == "aggregation" {
+            let method = if case.field == "aggregation" {
                 request["step"] = json!(1.0);
-                request[field] = json!(value);
+                request[case.field] = json!(case.value);
                 "SelectSeries"
             } else {
-                request[field] = json!({"type":value});
+                request[case.field] = json!({"type":case.value});
                 "SelectMergeStacktraces"
             };
             let oracle =
@@ -6174,28 +6730,43 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
             .await;
             let witness = |response: &Value| {
                 if method == "SelectSeries" {
-                    response["series"][0]["points"][0]["value"].as_f64() == Some(expected)
+                    response["series"][0]["points"][0]["value"].as_f64() == Some(case.expected)
                 } else {
                     response["total"].as_i64() == Some(190) && response.get("async").is_none()
                 }
             };
-            let matched =
-                matches!((&oracle,&candidate),(Ok(a),Ok(b)) if a==b&&witness(a)&&witness(b));
-            report["cases"].as_array_mut().ok_or("cases missing")?.push(json!({"id":format!("{method}/{name}"),"request":request,"independent_expected":if method=="SelectSeries" {json!({"point_values":[expected]})} else {json!({"total":190,"async":null})},"classification":if matched {"matched"} else {"mismatch"},"status":if matched {"passed"} else {"failed"},"oracle":oracle.as_ref().ok(),"candidate":candidate.as_ref().ok(),"oracle_error":oracle.as_ref().err().map(ToString::to_string),"candidate_error":candidate.as_ref().err().map(ToString::to_string)}));
+            let matched = if let Ok(oracle_value) = &oracle {
+                if let Ok(candidate_value) = &candidate {
+                    oracle_value == candidate_value
+                        && witness(oracle_value)
+                        && witness(candidate_value)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            report["cases"].as_array_mut().ok_or("cases missing")?.push(json!({"id":format!("{method}/{}",case.name),"request":request,"independent_expected":if method=="SelectSeries" {json!({"point_values":[case.expected]})} else {json!({"total":190,"async":null})},"classification":if matched {"matched"} else {"mismatch"},"status":if matched {"passed"} else {"failed"},"oracle":oracle.as_ref().ok(),"candidate":candidate.as_ref().ok(),"oracle_error":oracle.as_ref().err().map(ToString::to_string),"candidate_error":candidate.as_ref().err().map(ToString::to_string)}));
             if !matched {
-                failures.push(format!("{artifact}/{name}: {oracle:?} vs {candidate:?}"));
+                failures.push(format!(
+                    "{artifact}/{}: {oracle:?} vs {candidate:?}",
+                    case.name
+                ));
             }
         }
         if architecture == query::PyroscopeQueryArchitecture::V1 {
             report["planned"] = json!(4);
-            for (name, query) in [
-                (
-                    "analysis disabled matching",
-                    format!("{OTLP_PROFILE_TYPE}{{service_name=~\"architecture-.*\"}}"),
-                ),
-                ("analysis disabled malformed", "invalid ignored {".into()),
+            for query_case in [
+                NamedQueryCase {
+                    name: "analysis disabled matching",
+                    query: format!("{OTLP_PROFILE_TYPE}{{service_name=~\"architecture-.*\"}}"),
+                },
+                NamedQueryCase {
+                    name: "analysis disabled malformed",
+                    query: "invalid ignored {".into(),
+                },
             ] {
-                let request = json!({"query":query,"start":time-1000,"end":time+1000});
+                let request = json!({"query":query_case.query,"start":time-1000,"end":time+1000});
                 let oracle =
                     connect_json(client, &oracle_base, None, "AnalyzeQuery", request.clone()).await;
                 let actual = connect_json(
@@ -6219,9 +6790,12 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
                 let matched =
                     oracle.as_ref().is_ok_and(witness) && actual.as_ref().is_ok_and(witness);
                 let normalized = json!({"total_queried_series":0,"component_types":["Short term storage","Long term storage"]});
-                report["cases"].as_array_mut().ok_or("cases missing")?.push(json!({"id":format!("AnalyzeQuery/{name}"),"request":request,"independent_expected":normalized,"comparison_fields":["query_impact.total_queried_series","query_scopes.component_type"],"classification":if matched {"matched"} else {"mismatch"},"status":if matched {"passed"} else {"failed"},"oracle":if oracle.as_ref().is_ok_and(witness) {Some(&normalized)} else {None},"candidate":if actual.as_ref().is_ok_and(witness) {Some(&normalized)} else {None},"exchanges":{"oracle":oracle.as_ref().ok(),"candidate":actual.as_ref().ok()},"oracle_error":oracle.as_ref().err().map(ToString::to_string),"candidate_error":actual.as_ref().err().map(ToString::to_string)}));
+                report["cases"].as_array_mut().ok_or("cases missing")?.push(json!({"id":format!("AnalyzeQuery/{}",query_case.name),"request":request,"independent_expected":normalized,"comparison_fields":["query_impact.total_queried_series","query_scopes.component_type"],"classification":if matched {"matched"} else {"mismatch"},"status":if matched {"passed"} else {"failed"},"oracle":if oracle.as_ref().is_ok_and(witness) {Some(&normalized)} else {None},"candidate":if actual.as_ref().is_ok_and(witness) {Some(&normalized)} else {None},"exchanges":{"oracle":oracle.as_ref().ok(),"candidate":actual.as_ref().ok()},"oracle_error":oracle.as_ref().err().map(ToString::to_string),"candidate_error":actual.as_ref().err().map(ToString::to_string)}));
                 if !matched {
-                    failures.push(format!("{artifact}/{name}: {oracle:?} vs {actual:?}"));
+                    failures.push(format!(
+                        "{artifact}/{}: {oracle:?} vs {actual:?}",
+                        query_case.name
+                    ));
                 }
             }
         }
@@ -6244,13 +6818,18 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
     Ok(())
 }
 
+struct ProfileV2Fixtures {
+    profile_id: String,
+    identity: Value,
+}
+
 async fn profile_v2_fixtures(
     client: &reqwest::Client,
     oracle_base: &str,
     candidate: &KrabkaPair,
     sink: &CapturingSink,
     time: i64,
-) -> TestResult<(String, Value)> {
+) -> TestResult<ProfileV2Fixtures> {
     use pb::otlp_profiles::{ExportProfilesServiceRequest, Link};
     use prost::Message;
     let mut export = ExportProfilesServiceRequest::decode(
@@ -6291,10 +6870,12 @@ async fn profile_v2_fixtures(
     );
     second_export.resource_profiles[0].scope_profiles[0].profiles[0].samples[0].values = vec![35];
     second_export.resource_profiles[0].scope_profiles[0].profiles[0].samples[1].values = vec![15];
-    for (base, tenant) in [
-        (oracle_base, None),
-        (&candidate.distributor_base, Some(TENANT)),
+    for target in [
+        PushTarget::oracle(oracle_base),
+        PushTarget::krabka(&candidate.distributor_base),
     ] {
+        let base = target.base;
+        let tenant = target.tenant;
         post_otlp_export(
             client,
             base,
@@ -6340,7 +6921,33 @@ async fn profile_v2_fixtures(
     )
     .await?;
     drain_sink_into_cold_store(sink)?;
-    Ok((profile_id, identity))
+    Ok(ProfileV2Fixtures {
+        profile_id,
+        identity,
+    })
+}
+
+struct ProfileV2RequestCase {
+    method: &'static str,
+    name: String,
+    request: Value,
+}
+
+struct ProfileV2FieldsCase {
+    name: &'static str,
+    fields: Value,
+}
+
+fn profile_v2_fields_case(name: &'static str, fields: Value) -> ProfileV2FieldsCase {
+    ProfileV2FieldsCase { name, fields }
+}
+
+fn profile_v2_case(method: &'static str, name: String, request: Value) -> ProfileV2RequestCase {
+    ProfileV2RequestCase {
+        method,
+        name,
+        request,
+    }
 }
 
 fn profile_v2_request_cases(
@@ -6348,53 +6955,55 @@ fn profile_v2_request_cases(
     time: i64,
     profile_id: &str,
     selector: &str,
-) -> TestResult<Vec<(&'static str, String, Value)>> {
-    let mut cases: Vec<(&str, String, Value)> = Vec::new();
-    for (name, fields) in [
-        ("default", json!({})),
-        (
+) -> TestResult<Vec<ProfileV2RequestCase>> {
+    let mut cases: Vec<ProfileV2RequestCase> = Vec::new();
+    for case in [
+        profile_v2_fields_case("default", json!({})),
+        profile_v2_fields_case(
             "root prefix",
             json!({"stackTraceSelector":{"callSite":[{"name":FUNC_WORK}]}}),
         ),
-        (
+        profile_v2_fields_case(
             "hot prefix",
             json!({"stackTraceSelector":{"callSite":[{"name":FUNC_WORK},{"name":FUNC_HOT}]}}),
         ),
-        (
+        profile_v2_fields_case(
             "leaf is not root",
             json!({"stackTraceSelector":{"callSite":[{"name":FUNC_HOT}]}}),
         ),
-        (
+        profile_v2_fields_case(
             "reordered prefix",
             json!({"stackTraceSelector":{"callSite":[{"name":FUNC_HOT},{"name":FUNC_WORK}]}}),
         ),
-        ("profile ID", json!({"profileIdSelector":[profile_id]})),
-        (
+        profile_v2_fields_case("profile ID", json!({"profileIdSelector":[profile_id]})),
+        profile_v2_fields_case(
             "missing profile ID",
             json!({"profileIdSelector":["04040404-0404-0404-0404-040404040404"]}),
         ),
-        (
+        profile_v2_fields_case(
             "hot trace",
             json!({"traceIdSelector":["01010101010101010101010101010101"]}),
         ),
-        (
+        profile_v2_fields_case(
             "both traces",
             json!({"traceIdSelector":["01010101010101010101010101010101","02020202020202020202020202020202"]}),
         ),
-        (
+        profile_v2_fields_case(
             "hot modern span",
             json!({"spanSelector":["000000000000002a"]}),
         ),
-        (
+        profile_v2_fields_case(
             "missing modern span",
             json!({"spanSelector":["000000000000002c"]}),
         ),
-        ("bounded nodes", json!({"maxNodes":2})),
-        (
+        profile_v2_fields_case("bounded nodes", json!({"maxNodes":2})),
+        profile_v2_fields_case(
             "explicit disabled async",
             json!({"async":{"type":"ASYNC_QUERY_TYPE_DISABLED","requestId":"ignored"}}),
         ),
     ] {
+        let name = case.name;
+        let fields = case.fields;
         let mut request = base.clone();
         request
             .as_object_mut()
@@ -6404,7 +7013,11 @@ fn profile_v2_request_cases(
             request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
             request["labelSelector"] = json!(E2E_SELECTOR);
         }
-        cases.push(("SelectMergeStacktraces", name.into(), request));
+        cases.push(profile_v2_case(
+            "SelectMergeStacktraces",
+            name.into(),
+            request,
+        ));
     }
     for format in [
         "PROFILE_FORMAT_UNSPECIFIED",
@@ -6415,144 +7028,156 @@ fn profile_v2_request_cases(
     ] {
         let mut request = base.clone();
         request["format"] = json!(format);
-        cases.push(("SelectMergeStacktraces", format.into(), request));
+        cases.push(profile_v2_case(
+            "SelectMergeStacktraces",
+            format.into(),
+            request,
+        ));
     }
-    for (name, fields) in [
-        ("start boundary inclusive", json!({"start":time})),
-        ("end boundary inclusive", json!({"end":time})),
-        ("start excludes profile", json!({"start":time+1})),
-        ("end excludes profile", json!({"end":time-1})),
-        (
+    for case in [
+        profile_v2_fields_case("start boundary inclusive", json!({"start":time})),
+        profile_v2_fields_case("end boundary inclusive", json!({"end":time})),
+        profile_v2_fields_case("start excludes profile", json!({"start":time+1})),
+        profile_v2_fields_case("end excludes profile", json!({"end":time-1})),
+        profile_v2_fields_case(
             "missing profile type",
             json!({"profileTypeID":"absent:cpu:nanoseconds:cpu:nanoseconds"}),
         ),
-        (
+        profile_v2_fields_case(
             "incompatible trace and span",
             json!({"traceIdSelector":["01010101010101010101010101010101"],"spanSelector":["000000000000002a"]}),
         ),
     ] {
+        let name = case.name;
+        let fields = case.fields;
         let mut request = base.clone();
         request
             .as_object_mut()
             .ok_or("request missing")?
             .extend(fields.as_object().ok_or("fields missing")?.clone());
-        cases.push(("SelectMergeStacktraces", name.into(), request));
+        cases.push(profile_v2_case(
+            "SelectMergeStacktraces",
+            name.into(),
+            request,
+        ));
     }
     append_profile_v2_timeseries_cases(&mut cases, base, time)?;
     append_profile_v2_merge_profile_cases(&mut cases, base, profile_id, selector)?;
-    for (method, name, request) in [
-        (
+    for case in [
+        profile_v2_case(
             "ProfileTypes",
-            "populated",
+            "populated".into(),
             json!({"start":time-1000,"end":time+1000}),
         ),
-        ("ProfileTypes", "unbounded", json!({})),
-        (
+        profile_v2_case("ProfileTypes", "unbounded".into(), json!({})),
+        profile_v2_case(
             "ProfileTypes",
-            "empty",
+            "empty".into(),
             json!({"start":time+3000,"end":time+4000}),
         ),
-        (
+        profile_v2_case(
             "LabelValues",
-            "filtered",
+            "filtered".into(),
             json!({"name":"service_name","matchers":[selector],"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_case(
             "LabelValues",
-            "absent label",
+            "absent label".into(),
             json!({"name":"absent","matchers":[selector],"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_case(
             "LabelValues",
-            "empty",
+            "empty".into(),
             json!({"name":"service_name","matchers":["{service_name=\"missing\"}"],"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_case(
             "LabelNames",
-            "filtered",
+            "filtered".into(),
             json!({"matchers":[selector],"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_case(
             "LabelNames",
-            "empty",
+            "empty".into(),
             json!({"matchers":["{service_name=\"missing\"}"],"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_case(
             "Series",
-            "projected",
+            "projected".into(),
             json!({"matchers":[selector],"labelNames":["service_name","__profile_type__"],"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_case(
             "Series",
-            "full",
+            "full".into(),
             json!({"matchers":[E2E_SELECTOR],"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_case(
             "Series",
-            "empty",
+            "empty".into(),
             json!({"matchers":["{service_name=\"missing\"}"],"start":time-1000,"end":time+1000}),
         ),
-        ("GetProfileStats", "populated", json!({})),
+        profile_v2_case("GetProfileStats", "populated".into(), json!({})),
     ] {
-        cases.push((method, name.into(), request));
+        cases.push(case);
     }
     append_profile_v2_span_diff_analysis_cases(&mut cases, base, time, profile_id, selector)?;
     let mut bounded_profile = base.clone();
     bounded_profile["profileTypeID"] = json!(CPU_PROFILE_TYPE);
     bounded_profile["labelSelector"] = json!(E2E_SELECTOR);
     bounded_profile["maxNodes"] = json!(1);
-    cases.push((
+    cases.push(profile_v2_case(
         "SelectMergeProfile",
         "bounded nodes".into(),
         bounded_profile,
     ));
-    cases.push((
+    cases.push(profile_v2_case(
         "SelectMergeStacktraces",
         "invalid async request ID".into(),
         json!({"async":{"type":"ASYNC_QUERY_TYPE_FORCE","requestId":"missing-query"}}),
     ));
-    cases.push(("SelectMergeStacktraces", "unknown async request ID".into(), json!({"async":{"type":"ASYNC_QUERY_TYPE_FORCE","requestId":"04040404-0404-4404-8404-040404040404"}})));
+    cases.push(profile_v2_case("SelectMergeStacktraces", "unknown async request ID".into(), json!({"async":{"type":"ASYNC_QUERY_TYPE_FORCE","requestId":"04040404-0404-4404-8404-040404040404"}})));
     Ok(cases)
 }
 
 fn append_profile_v2_merge_profile_cases(
-    cases: &mut Vec<(&'static str, String, Value)>,
+    cases: &mut Vec<ProfileV2RequestCase>,
     base: &Value,
     profile_id: &str,
     selector: &str,
 ) -> TestResult {
-    for (name, fields) in [
-        ("default", json!({})),
-        ("profile UUID", json!({"profileIdSelector":[profile_id]})),
-        (
+    for case in [
+        profile_v2_fields_case("default", json!({})),
+        profile_v2_fields_case("profile UUID", json!({"profileIdSelector":[profile_id]})),
+        profile_v2_fields_case(
             "absent UUID",
             json!({"profileIdSelector":["04040404-0404-0404-0404-040404040404"]}),
         ),
-        (
+        profile_v2_fields_case(
             "GoPGO leaf",
             json!({"stackTraceSelector":{"goPgo":{"keepLocations":1}}}),
         ),
-        (
+        profile_v2_fields_case(
             "GoPGO aggregate",
             json!({"stackTraceSelector":{"goPgo":{"keepLocations":1,"aggregateCallees":true}}}),
         ),
-        (
+        profile_v2_fields_case(
             "GoPGO aggregate with caller",
             json!({"stackTraceSelector":{"goPgo":{"keepLocations":2,"aggregateCallees":true}}}),
         ),
-        (
+        profile_v2_fields_case(
             "GoPGO default",
             json!({"stackTraceSelector":{"callSite":[{"name":"does-not-exist"}],"goPgo":{"keepLocations":0}}}),
         ),
-        (
+        profile_v2_fields_case(
             "trace selector",
             json!({"traceIdSelector":["01010101010101010101010101010101"]}),
         ),
-        (
+        profile_v2_fields_case(
             "empty",
             json!({"labelSelector":"{service_name=\"missing\"}"}),
         ),
     ] {
+        let name = case.name;
+        let fields = case.fields;
         let mut request = base.clone();
         request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
         request["labelSelector"] = json!(E2E_SELECTOR);
@@ -6564,44 +7189,46 @@ fn append_profile_v2_merge_profile_cases(
             request["profileTypeID"] = json!(OTLP_PROFILE_TYPE);
             request["labelSelector"] = json!(selector);
         }
-        cases.push(("SelectMergeProfile", name.into(), request));
+        cases.push(profile_v2_case("SelectMergeProfile", name.into(), request));
     }
     Ok(())
 }
 
 fn append_profile_v2_timeseries_cases(
-    cases: &mut Vec<(&'static str, String, Value)>,
+    cases: &mut Vec<ProfileV2RequestCase>,
     base: &Value,
     time: i64,
 ) -> TestResult {
-    for (name, fields) in [
-        (
+    for case in [
+        profile_v2_fields_case(
             "SUM",
             json!({"aggregation":"TIME_SERIES_AGGREGATION_TYPE_SUM"}),
         ),
-        (
+        profile_v2_fields_case(
             "AVERAGE",
             json!({"aggregation":"TIME_SERIES_AGGREGATION_TYPE_AVERAGE"}),
         ),
-        ("grouping", json!({"groupBy":["service_name"]})),
-        (
+        profile_v2_fields_case("grouping", json!({"groupBy":["service_name"]})),
+        profile_v2_fields_case(
             "individual exemplars",
             json!({"exemplarType":"EXEMPLAR_TYPE_INDIVIDUAL"}),
         ),
-        (
+        profile_v2_fields_case(
             "span exemplars",
             json!({"exemplarType":"EXEMPLAR_TYPE_SPAN"}),
         ),
-        (
+        profile_v2_fields_case(
             "stack filter",
             json!({"stackTraceSelector":{"callSite":[{"name":FUNC_WORK},{"name":FUNC_HOT}]}}),
         ),
-        ("limit", json!({"limit":1})),
-        (
+        profile_v2_fields_case("limit", json!({"limit":1})),
+        profile_v2_fields_case(
             "empty span exemplars",
             json!({"labelSelector":"{service_name=\"missing\"}","exemplarType":"EXEMPLAR_TYPE_SPAN"}),
         ),
     ] {
+        let name = case.name;
+        let fields = case.fields;
         let mut request = base.clone();
         request["step"] = json!(1.0);
         request
@@ -6618,15 +7245,23 @@ fn append_profile_v2_timeseries_cases(
             request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
             request["labelSelector"] = json!(E2E_SELECTOR);
         }
-        cases.push(("SelectSeries", name.into(), request));
+        cases.push(profile_v2_case("SelectSeries", name.into(), request));
     }
-    for (name, step) in [
-        ("half second resolution", 0.5),
-        ("two second resolution", 2.0),
+    for case in [
+        NamedScalarCase {
+            name: "half second resolution",
+            value: 0.5,
+        },
+        NamedScalarCase {
+            name: "two second resolution",
+            value: 2.0,
+        },
     ] {
+        let name = case.name;
+        let step = case.value;
         let mut request = base.clone();
         request["step"] = json!(step);
-        cases.push(("SelectSeries", name.into(), request));
+        cases.push(profile_v2_case("SelectSeries", name.into(), request));
     }
     for query_type in [
         "HEATMAP_QUERY_TYPE_UNSPECIFIED",
@@ -6649,14 +7284,25 @@ fn append_profile_v2_timeseries_cases(
                 request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
                 request["labelSelector"] = json!(E2E_SELECTOR);
             }
-            cases.push((
+            cases.push(profile_v2_case(
                 "SelectHeatmap",
                 format!("{query_type}/{exemplar_type}"),
                 request,
             ));
         }
     }
-    for (name, limit) in [("two groups", 2), ("top group limit", 1)] {
+    for case in [
+        NamedScalarCase {
+            name: "two groups",
+            value: 2,
+        },
+        NamedScalarCase {
+            name: "top group limit",
+            value: 1,
+        },
+    ] {
+        let name = case.name;
+        let limit = case.value;
         let mut request = base.clone();
         request["labelSelector"] = json!("{service_name=~\"v2-matrix.*\"}");
         request["queryType"] = json!("HEATMAP_QUERY_TYPE_INDIVIDUAL");
@@ -6664,50 +7310,71 @@ fn append_profile_v2_timeseries_cases(
         request["groupBy"] = json!(["service_name"]);
         request["step"] = json!(1.0);
         request["limit"] = json!(limit);
-        cases.push(("SelectHeatmap", name.into(), request));
+        cases.push(profile_v2_case("SelectHeatmap", name.into(), request));
     }
-    for (name, start, end) in [
-        ("initial lookback", time + 123, time + 1500),
-        ("exact end", time - 123, time),
-        ("empty", time + 3000, time + 4000),
+    for case in [
+        NamedTimeRangeCase {
+            name: "initial lookback",
+            start: time + 123,
+            end: time + 1500,
+        },
+        NamedTimeRangeCase {
+            name: "exact end",
+            start: time - 123,
+            end: time,
+        },
+        NamedTimeRangeCase {
+            name: "empty",
+            start: time + 3000,
+            end: time + 4000,
+        },
     ] {
+        let name = case.name;
+        let start = case.start;
+        let end = case.end;
         let mut request = base.clone();
         request["start"] = json!(start);
         request["end"] = json!(end);
         request["step"] = json!(1.0);
         request["queryType"] = json!("HEATMAP_QUERY_TYPE_SPAN");
-        cases.push(("SelectHeatmap", name.into(), request));
+        cases.push(profile_v2_case("SelectHeatmap", name.into(), request));
     }
     Ok(())
 }
 
 fn append_profile_v2_span_diff_analysis_cases(
-    cases: &mut Vec<(&'static str, String, Value)>,
+    cases: &mut Vec<ProfileV2RequestCase>,
     base: &Value,
     time: i64,
     profile_id: &str,
     selector: &str,
 ) -> TestResult {
-    for (name, fields) in [
-        (
+    for case in [
+        profile_v2_fields_case(
             "hot deprecated span",
             json!({"spanSelector":["000000000000002a"]}),
         ),
-        (
+        profile_v2_fields_case(
             "missing deprecated span",
             json!({"spanSelector":["000000000000002c"]}),
         ),
-        (
+        profile_v2_fields_case(
             "bounded deprecated span",
             json!({"spanSelector":["000000000000002a"],"maxNodes":1}),
         ),
     ] {
+        let name = case.name;
+        let fields = case.fields;
         let mut request = base.clone();
         request
             .as_object_mut()
             .ok_or("request missing")?
             .extend(fields.as_object().ok_or("fields missing")?.clone());
-        cases.push(("SelectMergeSpanProfile", name.into(), request));
+        cases.push(profile_v2_case(
+            "SelectMergeSpanProfile",
+            name.into(),
+            request,
+        ));
     }
     for format in [
         "PROFILE_FORMAT_UNSPECIFIED",
@@ -6719,7 +7386,11 @@ fn append_profile_v2_span_diff_analysis_cases(
         let mut request = base.clone();
         request["spanSelector"] = json!(["000000000000002a"]);
         request["format"] = json!(format);
-        cases.push(("SelectMergeSpanProfile", format.into(), request));
+        cases.push(profile_v2_case(
+            "SelectMergeSpanProfile",
+            format.into(),
+            request,
+        ));
     }
     for name in [
         "empty left",
@@ -6771,24 +7442,32 @@ fn append_profile_v2_span_diff_analysis_cases(
             }
             _ => unreachable!(),
         }
-        cases.push(("Diff", name.into(), json!({"left":left,"right":right})));
+        cases.push(profile_v2_case(
+            "Diff",
+            name.into(),
+            json!({"left":left,"right":right}),
+        ));
     }
-    for (name, request) in [
-        (
+    for case in [
+        profile_v2_fields_case(
             "matching query",
             json!({"query":format!("{OTLP_PROFILE_TYPE}{selector}"),"start":time-1000,"end":time+1000}),
         ),
-        (
+        profile_v2_fields_case(
             "excluded time",
             json!({"query":format!("{OTLP_PROFILE_TYPE}{selector}"),"start":time+3000,"end":time+4000}),
         ),
-        (
+        profile_v2_fields_case(
             "malformed ignored query",
             json!({"query":"invalid","start":10,"end":0}),
         ),
-        ("omitted fields", json!({})),
+        profile_v2_fields_case("omitted fields", json!({})),
     ] {
-        cases.push(("AnalyzeQuery", name.into(), request));
+        cases.push(profile_v2_case(
+            "AnalyzeQuery",
+            case.name.into(),
+            case.fields,
+        ));
     }
     Ok(())
 }
@@ -6876,7 +7555,7 @@ fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value>
             let mut response: pb::querier::v1::SeriesResponse = serde_json::from_value(response)?;
             for set in &mut response.labels_set {
                 set.labels
-                    .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+                    .sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.value.cmp(&b.value)));
             }
             response
                 .labels_set
@@ -6921,7 +7600,7 @@ fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value>
             for series in &mut response.series {
                 series
                     .labels
-                    .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+                    .sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.value.cmp(&b.value)));
                 for point in &mut series.points {
                     sort_exemplars(&mut point.exemplars);
                 }
@@ -6937,7 +7616,7 @@ fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value>
             for series in &mut response.series {
                 series
                     .labels
-                    .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+                    .sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.value.cmp(&b.value)));
                 for slot in &mut series.slots {
                     sort_exemplars(&mut slot.exemplars);
                 }
@@ -6969,11 +7648,11 @@ fn normalized_dot_graph(dot: &str) -> TestResult<Value> {
             let address = u64::from_str_radix(&capture[2], 16)?;
             nodes.insert(capture[1].to_string(),json!({"function":&capture[3],"file":&capture[4],"line":capture[5].parse::<i64>()?,"address":address,"self_percent":percent}));
         } else if let Some(capture) = edge.captures(line) {
-            edges.push((
-                capture[1].to_string(),
-                capture[2].to_string(),
-                capture[3].parse::<i64>()?,
-            ));
+            edges.push(DotEdge {
+                caller: capture[1].to_string(),
+                callee: capture[2].to_string(),
+                weight: capture[3].parse::<i64>()?,
+            });
         }
     }
     if nodes.is_empty() {
@@ -6981,19 +7660,34 @@ fn normalized_dot_graph(dot: &str) -> TestResult<Value> {
     }
     let mut functions = nodes.values().cloned().collect::<Vec<_>>();
     functions.sort_by_key(ToString::to_string);
-    let mut calls=edges.into_iter().map(|(caller,callee,weight)|Ok(json!({"caller":nodes.get(&caller).ok_or("DOT caller missing")?,"callee":nodes.get(&callee).ok_or("DOT callee missing")?,"weight":weight}))).collect::<TestResult<Vec<_>>>()?;
+    let mut calls = edges
+        .into_iter()
+        .map(|edge| {
+            Ok(json!({
+                "caller": nodes.get(&edge.caller).ok_or("DOT caller missing")?,
+                "callee": nodes.get(&edge.callee).ok_or("DOT callee missing")?,
+                "weight": edge.weight,
+            }))
+        })
+        .collect::<TestResult<Vec<_>>>()?;
     calls.sort_by_key(ToString::to_string);
     Ok(json!({"nodes":functions,"edges":calls}))
 }
 
 /// Server-generated IDs remain exact in the exchange witness. Equality compares
 /// the lifecycle after checking each poll refers to its own submitted query.
+#[derive(Debug)]
+struct ProfileAsyncLifecycle {
+    result: Value,
+    exchange: Value,
+}
+
 async fn profile_async_lifecycle(
     client: &reqwest::Client,
     base: &str,
     tenant: Option<&str>,
     request: Value,
-) -> TestResult<(Value, Value)> {
+) -> TestResult<ProfileAsyncLifecycle> {
     let submitted = connect_json(
         client,
         base,
@@ -7025,10 +7719,10 @@ async fn profile_async_lifecycle(
     )
     .await?;
     let result = profile_async_completion_value(&completed, id)?;
-    Ok((
-        json!({"submission_status":"ASYNC_QUERY_STATUS_IN_PROGRESS","completion_status":"ASYNC_QUERY_STATUS_SUCCESS","result":result}),
-        json!({"submission":{"request":request,"response":submitted},"poll":{"request":poll_request,"response":completed}}),
-    ))
+    Ok(ProfileAsyncLifecycle {
+        result: json!({"submission_status":"ASYNC_QUERY_STATUS_IN_PROGRESS","completion_status":"ASYNC_QUERY_STATUS_SUCCESS","result":result}),
+        exchange: json!({"submission":{"request":request,"response":submitted},"poll":{"request":poll_request,"response":completed}}),
+    })
 }
 
 fn profile_async_completion_value(completed: &Value, submitted_id: &str) -> TestResult<Value> {
@@ -7052,36 +7746,54 @@ async fn async_lifecycle_compares_recorded_success_and_rejects_result_drift() ->
     use std::sync::atomic::{AtomicUsize, Ordering};
     let id = "12345678-1234-1234-1234-123456789abc";
     let completed = json!({"async":{"requestId":id,"status":"ASYNC_QUERY_STATUS_SUCCESS"},"flamegraph":{"names":["total",FUNC_WORK,FUNC_HOT],"levels":[{"values":["0","140","0","0"]},{"values":["0","140","40","1"]},{"values":["40","100","100","2"]}],"total":"140","maxSelf":"100"}});
-    let expected =
-        json!({"stacks":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]],"total":140,"max_self":100});
+    let expected = json!({
+        "stacks": [
+            {"frames": [FUNC_WORK], "value": 40},
+            {"frames": [FUNC_WORK, FUNC_HOT], "value": 100}
+        ],
+        "total": 140,
+        "max_self": 100
+    });
     let calls = Arc::new(AtomicUsize::new(0));
     let observed_calls = Arc::clone(&calls);
     let captured = completed.clone();
-    let router = axum::Router::new().route("/querier.v1.QuerierService/SelectMergeStacktraces", axum::routing::post(move |axum::Json(request):axum::Json<Value>| {
-        let calls = Arc::clone(&observed_calls);
-        let captured = captured.clone();
-        async move {
-            match calls.fetch_add(1,Ordering::SeqCst) {
-                0 => (StatusCode::OK,axum::Json(json!({"async":{"requestId":id,"status":"ASYNC_QUERY_STATUS_IN_PROGRESS"}}))),
-                1 => {
-                    assert2::assert!(request["async"]["requestId"]==id);
-                    (StatusCode::OK,axum::Json(captured))
-                },
-                _ => (StatusCode::INTERNAL_SERVER_ERROR,axum::Json(json!({"code":"internal","message":"a later poll failed"}))),
+    let router = axum::Router::new().route(
+        "/querier.v1.QuerierService/SelectMergeStacktraces",
+        axum::routing::post(move |axum::Json(request): axum::Json<Value>| {
+            let calls = Arc::clone(&observed_calls);
+            let captured = captured.clone();
+            async move {
+                match calls.fetch_add(1, Ordering::SeqCst) {
+                    0 => json_http_response(
+                        StatusCode::OK,
+                        json!({"async":{"requestId":id,"status":"ASYNC_QUERY_STATUS_IN_PROGRESS"}}),
+                    ),
+                    1 => {
+                        assert2::assert!(request["async"]["requestId"] == id);
+                        json_http_response(StatusCode::OK, captured)
+                    }
+                    _ => json_http_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        json!({"code":"internal","message":"a later poll failed"}),
+                    ),
+                }
             }
-        }
-    }));
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let base = format!("http://{}", listener.local_addr()?);
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_channel = oneshot::channel();
     let server = tokio::spawn(async move {
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
-                let _ = shutdown_rx.await;
+                let _ = shutdown_channel.1.await;
             })
             .await
     });
-    let (actual, exchange) = profile_async_lifecycle(
+    let ProfileAsyncLifecycle {
+        result: actual,
+        exchange,
+    } = profile_async_lifecycle(
         &reqwest::Client::new(),
         &base,
         None,
@@ -7117,7 +7829,7 @@ async fn async_lifecycle_compares_recorded_success_and_rejects_result_drift() ->
     changed["flamegraph"]["total"] = json!("139");
     changed["flamegraph"]["maxSelf"] = json!("99");
     assert2::assert!(profile_async_completion_value(&changed, id)? != expected);
-    let _ = shutdown_tx.send(());
+    let _ = shutdown_channel.0.send(());
     server.await??;
     Ok(())
 }

@@ -7,9 +7,10 @@ use super::{HashMap, Limits, OverridesError, RuntimeFile, TenantId, Time, TimeEx
 /// Each logs service builds exactly one provider and shares it with the
 /// distributor and the querier, so both gates answer a tenant with the same
 /// numbers.
-#[derive(Clone, Debug)]
+#[derive(bon::Builder, Clone, Debug)]
 pub struct OverridesProvider {
     defaults: Limits,
+    #[builder(default)]
     per_tenant: HashMap<String, Limits>,
 }
 
@@ -17,10 +18,7 @@ impl OverridesProvider {
     /// A provider with no per-tenant entry: every tenant gets `defaults`.
     #[must_use]
     pub fn new(defaults: Limits) -> Self {
-        Self {
-            defaults,
-            per_tenant: HashMap::new(),
-        }
+        Self::builder().defaults(defaults).build()
     }
 
     /// Parses a runtime overrides file over `Limits::default()`.
@@ -49,11 +47,10 @@ impl OverridesProvider {
         let runtime: RuntimeFile =
             serde_yaml::from_str(yaml).map_err(|error| OverridesError::Yaml(error.to_string()))?;
         let defaults = merge_limits(base, &runtime.defaults);
-        let per_tenant = runtime
-            .overrides
-            .into_iter()
-            .map(|(tenant, partial)| (tenant, merge_limits(&defaults, &partial)))
-            .collect();
+        let mut per_tenant = HashMap::with_capacity(runtime.overrides.len());
+        for entry in runtime.overrides {
+            per_tenant.insert(entry.0, merge_limits(&defaults, &entry.1));
+        }
         Ok(Self {
             defaults,
             per_tenant,

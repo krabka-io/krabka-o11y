@@ -3,6 +3,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use super::{AuthFailureReason, AuthMethod, ClientIdentity, PeerAddr};
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CredentialParseFailure {
+    pub(super) method: Option<AuthMethod>,
+    pub(super) reason: AuthFailureReason,
+}
+
 /// The credential a request presented, before any principal is looked up.
 pub enum PresentedCredential<'a> {
     /// The token from `Authorization: Bearer <token>`.
@@ -23,47 +29,49 @@ impl<'a> PresentedCredential<'a> {
     pub fn from_request(
         headers: &'a HeaderMap,
         peer: Option<&'a PeerAddr>,
-    ) -> Result<Self, (Option<AuthMethod>, AuthFailureReason)> {
+    ) -> Result<Self, CredentialParseFailure> {
         let mut values = headers.get_all(header::AUTHORIZATION).into_iter();
         let Some(value) = values.next() else {
             return peer
                 .and_then(|peer| peer.client_identity.as_deref())
                 .map(Self::ClientCertificate)
-                .ok_or((None, AuthFailureReason::MissingCredential));
+                .ok_or(CredentialParseFailure {
+                    method: None,
+                    reason: AuthFailureReason::MissingCredential,
+                });
         };
         if values.next().is_some() {
-            return Err((None, AuthFailureReason::MalformedCredential));
+            return Err(CredentialParseFailure {
+                method: None,
+                reason: AuthFailureReason::MalformedCredential,
+            });
         }
         let value = value.as_bytes();
-        let (scheme, credential) = match value.iter().position(|byte| *byte == b' ') {
-            Some(space) => {
-                let (scheme, rest) = value.split_at(space);
-                (scheme, rest.trim_ascii_start())
-            }
-            None => (value, &[][..]),
-        };
+        let space = value.iter().position(|byte| *byte == b' ');
+        let scheme = space.map_or(value, |space| &value[..space]);
+        let credential = space.map_or(&[][..], |space| value[space..].trim_ascii_start());
         if scheme.eq_ignore_ascii_case(b"bearer") {
             return if credential.is_empty() {
-                Err((
-                    Some(AuthMethod::Bearer),
-                    AuthFailureReason::MalformedCredential,
-                ))
+                Err(CredentialParseFailure {
+                    method: Some(AuthMethod::Bearer),
+                    reason: AuthFailureReason::MalformedCredential,
+                })
             } else {
                 Ok(Self::Bearer(credential))
             };
         }
         if scheme.eq_ignore_ascii_case(b"basic") {
-            let malformed = (
-                Some(AuthMethod::Basic),
-                AuthFailureReason::MalformedCredential,
-            );
+            let malformed = CredentialParseFailure {
+                method: Some(AuthMethod::Basic),
+                reason: AuthFailureReason::MalformedCredential,
+            };
             let decoded = STANDARD.decode(credential).map_err(|_| malformed)?;
             let colon = decoded
                 .iter()
                 .position(|byte| *byte == b':')
                 .ok_or(malformed)?;
-            let (username, token) = decoded.split_at(colon);
-            let token = &token[1..];
+            let username = &decoded[..colon];
+            let token = &decoded[colon + 1..];
             let username = std::str::from_utf8(username).map_err(|_| malformed)?;
             if token.is_empty() {
                 return Err(malformed);
@@ -73,7 +81,10 @@ impl<'a> PresentedCredential<'a> {
                 token: token.to_vec(),
             });
         }
-        Err((None, AuthFailureReason::UnsupportedScheme))
+        Err(CredentialParseFailure {
+            method: None,
+            reason: AuthFailureReason::UnsupportedScheme,
+        })
     }
 
     /// The kind of credential.

@@ -1,5 +1,13 @@
 use super::*;
 
+struct CounterHistogramSample {
+    timestamp_ms: i64,
+    count: f64,
+    sum: f64,
+    first_bucket: f64,
+    second_bucket: f64,
+}
+
 #[tokio::test]
 pub(crate) async fn histogram_range_planner_path_matches_interpreter() {
     use crate::{DurationExprContext, parse_promql_with_duration_context};
@@ -22,20 +30,58 @@ pub(crate) async fn histogram_range_planner_path_matches_interpreter() {
     // exercise the shared counter-reset + extrapolation rules. Timestamps are
     // 1m apart so the window `(eval-10m, eval]` captures the full series.
     let mut store = InMemoryMetricStore::new();
-    let series = labels(&[("__name__", "h"), ("job", "api")]);
-    for (ts, count, sum, b0, b1) in [
-        (60_000_i64, 4.0, 6.0, 1.0, 3.0),
-        (120_000, 6.0, 10.0, 2.0, 4.0),
-        (180_000, 9.0, 15.0, 3.0, 6.0),
+    let series = labels(&[
+        crate::test_support::TestLabelPair::new("__name__", "h"),
+        crate::test_support::TestLabelPair::new("job", "api"),
+    ]);
+    for sample in [
+        CounterHistogramSample {
+            timestamp_ms: 60_000,
+            count: 4.0,
+            sum: 6.0,
+            first_bucket: 1.0,
+            second_bucket: 3.0,
+        },
+        CounterHistogramSample {
+            timestamp_ms: 120_000,
+            count: 6.0,
+            sum: 10.0,
+            first_bucket: 2.0,
+            second_bucket: 4.0,
+        },
+        CounterHistogramSample {
+            timestamp_ms: 180_000,
+            count: 9.0,
+            sum: 15.0,
+            first_bucket: 3.0,
+            second_bucket: 6.0,
+        },
         // COUNTER RESET: every component decreases below the prior sample.
-        (240_000, 2.0, 3.0, 1.0, 1.0),
-        (300_000, 5.0, 8.0, 2.0, 3.0),
+        CounterHistogramSample {
+            timestamp_ms: 240_000,
+            count: 2.0,
+            sum: 3.0,
+            first_bucket: 1.0,
+            second_bucket: 1.0,
+        },
+        CounterHistogramSample {
+            timestamp_ms: 300_000,
+            count: 5.0,
+            sum: 8.0,
+            first_bucket: 2.0,
+            second_bucket: 3.0,
+        },
     ] {
         store.push_histogram(
             "t",
             series.clone(),
-            ts,
-            counter_histogram(count, sum, b0, b1),
+            sample.timestamp_ms,
+            counter_histogram(
+                sample.count,
+                sample.sum,
+                sample.first_bucket,
+                sample.second_bucket,
+            ),
         );
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
@@ -77,15 +123,7 @@ pub(crate) async fn histogram_range_planner_path_matches_interpreter() {
     ];
 
     for query in queries {
-        let ((via_operators, operator_annotations), (via_interpreter, interpreter_annotations)) =
-            annotated_planned_and_interpreted(&engine, query, time_ms).await;
-
-        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
-
-        let via_interpreter = normalize(via_interpreter);
-        let via_operators = normalize(via_operators);
-        assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
-        assert2::assert!(operator_annotations == interpreter_annotations);
+        assert_annotated_call_planner_matches_interpreter(&engine, query, time_ms).await;
     }
 
     // Pin the absolute rules the parity above relies on (not just

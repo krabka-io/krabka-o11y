@@ -3,6 +3,37 @@ use super::{
     VectorScalarExpressionParser, parse_scalar_sample, scalar_literal_len,
 };
 
+struct ParsedResultDestination {
+    result: ScalarVectorExpressionResult,
+    destination_label: String,
+}
+
+struct OperatorCase<Operator> {
+    text: &'static str,
+    operator: Operator,
+}
+
+#[derive(Clone, Copy)]
+enum ScalarExpressionOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+}
+
+impl ScalarExpressionOperator {
+    fn apply(self, left: ScalarSample, right: ScalarSample) -> Option<ScalarSample> {
+        match self {
+            Self::Add => left.add(right),
+            Self::Subtract => left.subtract(right),
+            Self::Multiply => left.multiply(right),
+            Self::Divide => left.divide(right),
+            Self::Modulo => left.modulo(right),
+        }
+    }
+}
+
 impl<'a> VectorScalarExpressionParser<'a> {
     pub(crate) fn new(input: &'a str) -> Self {
         Self {
@@ -86,11 +117,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
     }
 
     pub(crate) fn parse_label_replace_result(&mut self) -> Option<ScalarVectorExpressionResult> {
-        self.consume_keyword("label_replace");
-        self.consume('(').then_some(())?;
-        let result = self.parse_result()?;
-        self.consume(',').then_some(())?;
-        let destination_label = self.parse_string_literal()?;
+        let parsed = self.parse_result_and_destination_label("label_replace")?;
         self.consume(',').then_some(())?;
         let replacement = self.parse_string_literal()?;
         self.consume(',').then_some(())?;
@@ -99,7 +126,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         let pattern = self.parse_string_literal()?;
         self.consume(')').then_some(())?;
 
-        let ScalarVectorExpressionResult::Vector { sample, mut metric } = result else {
+        let ScalarVectorExpressionResult::Vector { sample, mut metric } = parsed.result else {
             return None;
         };
         let regex = Regex::new(&pattern).ok()?;
@@ -107,18 +134,14 @@ impl<'a> VectorScalarExpressionParser<'a> {
         if let Some(captures) = regex.captures(source_value) {
             let mut destination_value = String::new();
             captures.expand(&replacement, &mut destination_value);
-            metric.insert(destination_label, destination_value);
+            metric.insert(parsed.destination_label, destination_value);
         }
 
         Some(ScalarVectorExpressionResult::Vector { sample, metric })
     }
 
     pub(crate) fn parse_label_join_result(&mut self) -> Option<ScalarVectorExpressionResult> {
-        self.consume_keyword("label_join");
-        self.consume('(').then_some(())?;
-        let result = self.parse_result()?;
-        self.consume(',').then_some(())?;
-        let destination_label = self.parse_string_literal()?;
+        let parsed = self.parse_result_and_destination_label("label_join")?;
         self.consume(',').then_some(())?;
         let separator = self.parse_string_literal()?;
         self.consume(',').then_some(())?;
@@ -128,7 +151,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
         self.consume(')').then_some(())?;
 
-        let ScalarVectorExpressionResult::Vector { sample, mut metric } = result else {
+        let ScalarVectorExpressionResult::Vector { sample, mut metric } = parsed.result else {
             return None;
         };
         let joined = source_labels
@@ -136,81 +159,70 @@ impl<'a> VectorScalarExpressionParser<'a> {
             .map(|label| metric.get(label).map_or("", String::as_str))
             .collect::<Vec<_>>()
             .join(&separator);
-        metric.insert(destination_label, joined);
+        metric.insert(parsed.destination_label, joined);
 
         Some(ScalarVectorExpressionResult::Vector { sample, metric })
     }
 
+    fn parse_result_and_destination_label(
+        &mut self,
+        function_name: &str,
+    ) -> Option<ParsedResultDestination> {
+        self.consume_keyword(function_name);
+        self.consume('(').then_some(())?;
+        let result = self.parse_result()?;
+        self.consume(',').then_some(())?;
+        let destination_label = self.parse_string_literal()?;
+        Some(ParsedResultDestination {
+            result,
+            destination_label,
+        })
+    }
+
     pub(crate) fn parse_expression(&mut self) -> Option<ScalarSample> {
-        let mut sample = self.parse_product()?;
-        loop {
-            if self.consume('+') {
-                let left_vector_terms = self.vector_terms;
-                let has_matching_modifier = self.consume_vector_matching_modifier()?;
-                let right_vector_terms = self.vector_terms;
-                let right = self.parse_product()?;
-                self.validate_vector_matching_modifier(
-                    has_matching_modifier,
-                    left_vector_terms,
-                    right_vector_terms,
-                )?;
-                sample = sample.add(right)?;
-            } else if self.consume('-') {
-                let left_vector_terms = self.vector_terms;
-                let has_matching_modifier = self.consume_vector_matching_modifier()?;
-                let right_vector_terms = self.vector_terms;
-                let right = self.parse_product()?;
-                self.validate_vector_matching_modifier(
-                    has_matching_modifier,
-                    left_vector_terms,
-                    right_vector_terms,
-                )?;
-                sample = sample.subtract(right)?;
-            } else {
-                return Some(sample);
-            }
-        }
+        self.parse_binary_chain(
+            Self::parse_product,
+            &[
+                ('+', ScalarExpressionOperator::Add),
+                ('-', ScalarExpressionOperator::Subtract),
+            ],
+        )
     }
 
     pub(crate) fn parse_product(&mut self) -> Option<ScalarSample> {
-        let mut sample = self.parse_power()?;
+        self.parse_binary_chain(
+            Self::parse_power,
+            &[
+                ('*', ScalarExpressionOperator::Multiply),
+                ('/', ScalarExpressionOperator::Divide),
+                ('%', ScalarExpressionOperator::Modulo),
+            ],
+        )
+    }
+
+    fn parse_binary_chain(
+        &mut self,
+        parse_right: fn(&mut Self) -> Option<ScalarSample>,
+        operators: &[(char, ScalarExpressionOperator)],
+    ) -> Option<ScalarSample> {
+        let mut sample = parse_right(self)?;
         loop {
-            if self.consume('*') {
-                let left_vector_terms = self.vector_terms;
-                let has_matching_modifier = self.consume_vector_matching_modifier()?;
-                let right_vector_terms = self.vector_terms;
-                let right = self.parse_power()?;
-                self.validate_vector_matching_modifier(
-                    has_matching_modifier,
-                    left_vector_terms,
-                    right_vector_terms,
-                )?;
-                sample = sample.multiply(right)?;
-            } else if self.consume('/') {
-                let left_vector_terms = self.vector_terms;
-                let has_matching_modifier = self.consume_vector_matching_modifier()?;
-                let right_vector_terms = self.vector_terms;
-                let right = self.parse_power()?;
-                self.validate_vector_matching_modifier(
-                    has_matching_modifier,
-                    left_vector_terms,
-                    right_vector_terms,
-                )?;
-                sample = sample.divide(right)?;
-            } else if self.consume('%') {
-                let left_vector_terms = self.vector_terms;
-                let has_matching_modifier = self.consume_vector_matching_modifier()?;
-                let right_vector_terms = self.vector_terms;
-                let right = self.parse_power()?;
-                self.validate_vector_matching_modifier(
-                    has_matching_modifier,
-                    left_vector_terms,
-                    right_vector_terms,
-                )?;
-                sample = sample.modulo(right)?;
-            } else {
+            let Some(operator) = operators
+                .iter()
+                .find_map(|(symbol, operator)| self.consume(*symbol).then_some(*operator))
+            else {
                 return Some(sample);
-            }
+            };
+            let left_vector_terms = self.vector_terms;
+            let has_matching_modifier = self.consume_vector_matching_modifier()?;
+            let right_vector_terms = self.vector_terms;
+            let right = parse_right(self)?;
+            self.validate_vector_matching_modifier(
+                has_matching_modifier,
+                left_vector_terms,
+                right_vector_terms,
+            )?;
+            sample = operator.apply(sample, right)?;
         }
     }
 
@@ -243,31 +255,59 @@ impl<'a> VectorScalarExpressionParser<'a> {
     }
 
     pub(crate) fn parse_comparison_operator(&mut self) -> Option<ScalarComparisonOp> {
-        for (operator, op) in [
-            (">=", ScalarComparisonOp::GreaterOrEqual),
-            ("<=", ScalarComparisonOp::LessOrEqual),
-            ("==", ScalarComparisonOp::Equal),
-            ("!=", ScalarComparisonOp::NotEqual),
-            (">", ScalarComparisonOp::Greater),
-            ("<", ScalarComparisonOp::Less),
-        ] {
-            if self.input[self.position..].starts_with(operator) {
-                self.position += operator.len();
-                return Some(op);
-            }
-        }
-        None
+        self.parse_operator([
+            OperatorCase {
+                text: ">=",
+                operator: ScalarComparisonOp::GreaterOrEqual,
+            },
+            OperatorCase {
+                text: "<=",
+                operator: ScalarComparisonOp::LessOrEqual,
+            },
+            OperatorCase {
+                text: "==",
+                operator: ScalarComparisonOp::Equal,
+            },
+            OperatorCase {
+                text: "!=",
+                operator: ScalarComparisonOp::NotEqual,
+            },
+            OperatorCase {
+                text: ">",
+                operator: ScalarComparisonOp::Greater,
+            },
+            OperatorCase {
+                text: "<",
+                operator: ScalarComparisonOp::Less,
+            },
+        ])
     }
 
     pub(crate) fn parse_set_operator(&mut self) -> Option<ScalarSetOp> {
-        for (operator, op) in [
-            ("unless", ScalarSetOp::Unless),
-            ("and", ScalarSetOp::And),
-            ("or", ScalarSetOp::Or),
-        ] {
-            if self.input[self.position..].starts_with(operator) {
-                self.position += operator.len();
-                return Some(op);
+        self.parse_operator([
+            OperatorCase {
+                text: "unless",
+                operator: ScalarSetOp::Unless,
+            },
+            OperatorCase {
+                text: "and",
+                operator: ScalarSetOp::And,
+            },
+            OperatorCase {
+                text: "or",
+                operator: ScalarSetOp::Or,
+            },
+        ])
+    }
+
+    fn parse_operator<Operator>(
+        &mut self,
+        cases: impl IntoIterator<Item = OperatorCase<Operator>>,
+    ) -> Option<Operator> {
+        for case in cases {
+            if self.input[self.position..].starts_with(case.text) {
+                self.position += case.text.len();
+                return Some(case.operator);
             }
         }
         None

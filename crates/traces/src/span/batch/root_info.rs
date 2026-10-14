@@ -7,7 +7,15 @@ use super::{Span, Time, TimeExt, service_name};
 /// or otherwise filtered subset yields trace-level values that reflect only the
 /// subset, not the trace. Callers that materialize rows from a clipped window
 /// must use [`span_batch_for_window`] and pass the full trace's spans here.
-pub(crate) fn root_info(spans: &[Span]) -> (String, String, i64, Time) {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RootInfo {
+    pub(crate) service_name: String,
+    pub(crate) span_name: String,
+    pub(crate) start_ns: i64,
+    pub(crate) duration: Time,
+}
+
+pub(crate) fn root_info(spans: &[Span]) -> RootInfo {
     let root = spans
         .iter()
         .find(|span| span.is_root())
@@ -15,17 +23,15 @@ pub(crate) fn root_info(spans: &[Span]) -> (String, String, i64, Time) {
     let service = root
         .and_then(|span| service_name(&span.resource_attrs))
         .unwrap_or_default();
-    let name = root.map(|span| span.name.clone()).unwrap_or_default();
-    let start = spans.iter().map(|span| span.start_ns).min().unwrap_or(0);
-    let end = spans
-        .iter()
-        .map(|span| span.start_ns.saturating_add(span.duration_ns))
-        .max()
-        .unwrap_or(start);
-    (
-        service,
-        name,
-        start,
-        Time::from_nanos(end.saturating_sub(start)),
-    )
+    let name = root.map_or_else(Default::default, |span| span.name.clone());
+    let bounds = crate::trace_time_bounds(spans.iter().map(|span| crate::SpanTiming {
+        start_ns: span.start_ns,
+        duration_ns: span.duration_ns,
+    }));
+    RootInfo {
+        service_name: service,
+        span_name: name,
+        start_ns: bounds.start_ns,
+        duration: Time::from_nanos(bounds.end_ns.saturating_sub(bounds.start_ns)),
+    }
 }

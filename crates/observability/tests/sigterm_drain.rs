@@ -98,9 +98,12 @@ fn run_compactor_child(root: std::path::PathBuf) {
     let store = Arc::new(LocalFileSystem::new_with_prefix(&store_root).expect("object store"));
 
     runtime.block_on(async move {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .expect("bind the compactor listener");
+        let listener = tokio::net::TcpListener::bind(std::net::SocketAddr::new(
+            "127.0.0.1".parse().unwrap(),
+            0,
+        ))
+        .await
+        .expect("bind the compactor listener");
         let config = ServiceConfig {
             target: Role::BlockBuilder,
             listen_addr: "127.0.0.1:0".parse().expect("listen address"),
@@ -119,7 +122,10 @@ fn run_compactor_child(root: std::path::PathBuf) {
                 batches: VecDeque::from([vec![kafka_wal_record(
                     &WalLogRecord {
                         tenant: "tenant-a".to_string(),
-                        labels: labels([("app", "api"), ("env", "prod")]),
+                        labels: labels([
+                            krabka_blockstore::LabelPair::new("app", "api"),
+                            krabka_blockstore::LabelPair::new("env", "prod"),
+                        ]),
                         timestamp_ns: 10,
                         line: "api ok".to_string(),
                         structured_metadata: BTreeMap::new(),

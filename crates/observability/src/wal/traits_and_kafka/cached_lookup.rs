@@ -1,10 +1,22 @@
 use super::{Arc, BrokerAccessPolicy, Instant, TimeExt};
 
 /// One broker answer, when it arrived, and the last refresh that failed.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CachedSnapshot<T> {
+    pub(crate) value: Arc<T>,
+    pub(crate) fetched_at: Instant,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct CachedFailure {
+    pub(crate) failed_at: Instant,
+    pub(crate) reason: String,
+}
+
 #[derive(Debug)]
 pub(crate) struct CachedLookup<T> {
-    pub(crate) snapshot: Option<(Arc<T>, Instant)>,
-    pub(crate) last_failure: Option<(Instant, String)>,
+    pub(crate) snapshot: Option<CachedSnapshot<T>>,
+    pub(crate) last_failure: Option<CachedFailure>,
 }
 
 /// What a caller does with a [`CachedLookup`] at one instant.
@@ -41,15 +53,15 @@ impl<T> CachedLookup<T> {
         policy: &BrokerAccessPolicy,
     ) -> CachedLookupDecision<T> {
         let ttl = policy.ttl.to_std();
-        if let Some((value, fetched_at)) = &self.snapshot
-            && now.saturating_duration_since(*fetched_at) < ttl
+        if let Some(snapshot) = &self.snapshot
+            && now.saturating_duration_since(snapshot.fetched_at) < ttl
         {
-            return CachedLookupDecision::Serve(Arc::clone(value));
+            return CachedLookupDecision::Serve(Arc::clone(&snapshot.value));
         }
         match &self.last_failure {
-            Some((failed_at, reason)) if now.saturating_duration_since(*failed_at) < ttl => {
+            Some(failure) if now.saturating_duration_since(failure.failed_at) < ttl => {
                 self.within_staleness(now, policy).map_or_else(
-                    || CachedLookupDecision::Unavailable(reason.clone()),
+                    || CachedLookupDecision::Unavailable(failure.reason.clone()),
                     CachedLookupDecision::Serve,
                 )
             }
@@ -65,16 +77,19 @@ impl<T> CachedLookup<T> {
     ) -> Option<Arc<T>> {
         self.snapshot
             .as_ref()
-            .filter(|(_, fetched_at)| {
-                now.saturating_duration_since(*fetched_at) <= policy.max_staleness.to_std()
+            .filter(|snapshot| {
+                now.saturating_duration_since(snapshot.fetched_at) <= policy.max_staleness.to_std()
             })
-            .map(|(value, _)| Arc::clone(value))
+            .map(|snapshot| Arc::clone(&snapshot.value))
     }
 
     /// Stores a broker answer and forgets the last failure.
     pub(crate) fn store(&mut self, value: T, now: Instant) -> Arc<T> {
         let value = Arc::new(value);
-        self.snapshot = Some((Arc::clone(&value), now));
+        self.snapshot = Some(CachedSnapshot {
+            value: Arc::clone(&value),
+            fetched_at: now,
+        });
         self.last_failure = None;
         value
     }
@@ -88,7 +103,10 @@ impl<T> CachedLookup<T> {
         policy: &BrokerAccessPolicy,
     ) -> Result<Arc<T>, String> {
         let served = self.within_staleness(now, policy);
-        self.last_failure = Some((now, reason.clone()));
+        self.last_failure = Some(CachedFailure {
+            failed_at: now,
+            reason: reason.clone(),
+        });
         served.ok_or(reason)
     }
 }

@@ -31,7 +31,9 @@ pub(crate) fn every_promql_scalar_operator_parses_to_its_own_variant() {
         parse("%"),
         parse("^"),
     ];
-    for (index, left) in variants.iter().enumerate() {
+    for entry in variants.iter().enumerate() {
+        let index = entry.0;
+        let left = entry.1;
         for right in &variants[index + 1..] {
             check!(left != right, "two operators share a variant: {left:?}");
         }

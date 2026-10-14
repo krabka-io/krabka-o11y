@@ -36,42 +36,45 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
                 &left,
                 op,
             );
-        (kept, range_pairs(&output))
+        super::super::series_samples::BinaryOperationResult {
+            kept,
+            samples: range_pairs(&output),
+        }
     };
 
     // 10-2, 20-5, 20-5 -- not 2-10, which is what a swap would give.
     check!(
         apply(MetricScalarArithmeticOp::Subtract)
-            == (
-                true,
-                vec![
-                    (1, "8".to_string()),
-                    (4, "15".to_string()),
-                    (5, "15".to_string()),
-                ]
-            )
+            == super::super::series_samples::BinaryOperationResult {
+                kept: true,
+                samples: vec![
+                    formatted_sample(1, "8"),
+                    formatted_sample(4, "15"),
+                    formatted_sample(5, "15")
+                ],
+            }
     );
     check!(
         apply(MetricScalarArithmeticOp::Divide)
-            == (
-                true,
-                vec![
-                    (1, "5".to_string()),
-                    (4, "4".to_string()),
-                    (5, "4".to_string()),
-                ]
-            )
+            == super::super::series_samples::BinaryOperationResult {
+                kept: true,
+                samples: vec![
+                    formatted_sample(1, "5"),
+                    formatted_sample(4, "4"),
+                    formatted_sample(5, "4")
+                ],
+            }
     );
     check!(
         apply(MetricScalarArithmeticOp::Multiply)
-            == (
-                true,
-                vec![
-                    (1, "20".to_string()),
-                    (4, "100".to_string()),
-                    (5, "100".to_string()),
-                ]
-            )
+            == super::super::series_samples::BinaryOperationResult {
+                kept: true,
+                samples: vec![
+                    formatted_sample(1, "20"),
+                    formatted_sample(4, "100"),
+                    formatted_sample(5, "100")
+                ],
+            }
     );
 
     // A division with no answer drops its sample rather than emitting one.

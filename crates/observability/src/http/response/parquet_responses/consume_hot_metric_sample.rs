@@ -1,14 +1,17 @@
-use super::{BTreeMap, Labels, Value, loki_metric_sample_timestamp_key};
+use super::{BTreeMap, HotSampleKey, Labels, Value, loki_metric_sample_timestamp_key};
 
 pub(crate) fn consume_hot_metric_sample(
-    hot_counts: &mut BTreeMap<(Labels, String), u64>,
+    hot_counts: &mut BTreeMap<HotSampleKey, u64>,
     labels: &Labels,
     sample: &Value,
 ) -> bool {
     let Some(timestamp_key) = loki_metric_sample_timestamp_key(sample) else {
         return false;
     };
-    let key = (labels.clone(), timestamp_key);
+    let key = HotSampleKey {
+        labels: labels.clone(),
+        timestamp_key,
+    };
     let Some(count) = hot_counts.get_mut(&key) else {
         return false;
     };

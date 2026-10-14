@@ -31,9 +31,13 @@ pub(crate) fn native_histograms_equal(left: &NativeHistogram, right: &NativeHist
 
 /// `floatBucketsMatch`: bucket counts compared bitwise, as every count is.
 fn bucket_counts_match(left: &[f64], right: &[f64]) -> bool {
-    left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .all(|(left, right)| left.to_bits() == right.to_bits())
+    if left.len() != right.len() {
+        return false;
+    }
+    for index in 0..left.len() {
+        if left[index].to_bits() != right[index].to_bits() {
+            return false;
+        }
+    }
+    true
 }

@@ -21,13 +21,28 @@ mod tests {
 
     use super::{AttrValue, attr_value_json, json};
 
+    struct NonFiniteCase {
+        number: f64,
+        text: &'static str,
+    }
+
     #[test]
     fn nonfinite_scalar_and_array_values_keep_protojson_tokens() {
-        for (number, text) in [
-            (f64::NAN, "NaN"),
-            (f64::INFINITY, "Infinity"),
-            (f64::NEG_INFINITY, "-Infinity"),
+        for case in [
+            NonFiniteCase {
+                number: f64::NAN,
+                text: "NaN",
+            },
+            NonFiniteCase {
+                number: f64::INFINITY,
+                text: "Infinity",
+            },
+            NonFiniteCase {
+                number: f64::NEG_INFINITY,
+                text: "-Infinity",
+            },
         ] {
+            let NonFiniteCase { number, text } = case;
             assert!(attr_value_json(&AttrValue::Float(number)) == json!({"doubleValue":text}));
             assert!(
                 attr_value_json(&AttrValue::Array(vec![AttrValue::Float(number)]))

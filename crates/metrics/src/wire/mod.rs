@@ -17,18 +17,18 @@ pub use clocks::{
     NtpReading, PtpReading, TimexReading, UnixNanos, decode_clock_readings,
 };
 pub use decoded::{
-    DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries, WireError, WireFormat,
-    negotiate, snappy_block_decode,
+    DecodedExemplar, DecodedHistogramSample, DecodedMetadata, DecodedSample, DecodedSeries,
+    WireError, WireFormat, negotiate, snappy_block_decode,
 };
 pub(crate) use histogram::validate_spans_and_counts;
 pub use histogram::{v1_histogram_to_native, v2_histogram_to_native};
 pub use remote_read::{
-    DEFAULT_MAX_READ_DECOMPRESSED, RemoteReadError, decode_read_request,
-    encode_chunked_read_frames, encode_read_response, matchers_to_selectors,
-    negotiate_read_response_type, series_to_timeseries,
+    DEFAULT_MAX_READ_DECOMPRESSED, RemoteReadError, RemoteReadSample, RemoteReadSelectors,
+    RemoteReadSeries, decode_read_request, encode_chunked_read_frames, encode_read_response,
+    matchers_to_selectors, negotiate_read_response_type, series_to_timeseries,
 };
 pub use v1::decode_v1;
-pub use v2::{WrittenCounts, decode_v2};
+pub use v2::{DecodedV2Write, WrittenCounts, decode_v2};
 
 /// prost-generated message types from the vendored protos.
 pub mod pb {

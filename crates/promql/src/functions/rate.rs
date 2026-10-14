@@ -31,10 +31,13 @@
 //! it aggregates. A value that a UDF computes stays a non-null float and
 //! propagates, even when that value is NaN.
 
+#[cfg(test)]
 use std::sync::Arc;
 
+#[cfg(test)]
+use arrow::array::ArrayRef;
 use arrow::{
-    array::{Array, ArrayRef, Float64Builder, Int64Array},
+    array::{Array, Int64Array},
     datatypes::DataType,
 };
 use datafusion::{
@@ -73,7 +76,7 @@ mod tests {
         for window in windows {
             let len = u32::try_from(window.len()).unwrap();
             values.extend_from_slice(window);
-            ranges.push((offset, len));
+            ranges.push(crate::RangeWindow::new(offset, len));
             offset += len;
         }
         let values = Arc::new(PrimitiveArray::<T>::from_iter_values(values)) as ArrayRef;
@@ -97,24 +100,10 @@ mod tests {
         rows: usize,
     ) -> ScalarFunctionArgs {
         let return_field = Arc::new(Field::new("out", DataType::Float64, true));
-        let arg_fields = vec![
-            Arc::new(Field::new(
-                "eval_timestamp",
-                eval_col.data_type().clone(),
-                false,
-            )),
-            Arc::new(Field::new(
-                "timestamp_range",
-                ts_dict.data_type().clone(),
-                false,
-            )),
-            Arc::new(Field::new(
-                "value_range",
-                val_dict.data_type().clone(),
-                false,
-            )),
-            Arc::new(Field::new("range_ms", DataType::Int64, false)),
-        ];
+        let mut arg_fields = crate::functions::udf_test_support::range_argument_fields(
+            &eval_col, &ts_dict, &val_dict,
+        );
+        arg_fields.push(Arc::new(Field::new("range_ms", DataType::Int64, false)));
         ScalarFunctionArgs {
             args: vec![
                 ColumnarValue::Array(eval_col),
@@ -184,6 +173,11 @@ mod tests {
 
     #[test]
     fn rate_udf_rejects_each_row_count_mismatch_independently() {
+        struct RejectionCase {
+            message: &'static str,
+            args: ScalarFunctionArgs,
+        }
+
         let udf = RateUdf::new(RateFamily::Rate);
         let OneRowRateInputs {
             eval,
@@ -192,39 +186,39 @@ mod tests {
         } = OneRowRateInputs::default();
         let range_ms = ColumnarValue::Scalar(ScalarValue::Int64(Some(60_000)));
 
-        for (_case, args) in [
-            (
-                "timestamp_range has extra rows",
-                invoke_args(
+        for case in [
+            RejectionCase {
+                message: "timestamp_range has extra rows",
+                args: invoke_args(
                     Arc::clone(&eval),
                     timestamp_range(&[&[0, 60_000], &[0, 60_000]]),
                     Arc::clone(&values),
                     range_ms.clone(),
                     1,
                 ),
-            ),
-            (
-                "value_range has extra rows",
-                invoke_args(
+            },
+            RejectionCase {
+                message: "value_range has extra rows",
+                args: invoke_args(
                     Arc::clone(&eval),
                     Arc::clone(&timestamps),
                     value_range(&[&[1.0, 2.0], &[1.0, 2.0]]),
                     range_ms.clone(),
                     1,
                 ),
-            ),
-            (
-                "eval_timestamp has extra rows",
-                invoke_args(
+            },
+            RejectionCase {
+                message: "eval_timestamp has extra rows",
+                args: invoke_args(
                     Arc::new(Int64Array::from(vec![60_000_i64, 120_000])),
                     timestamps,
                     values,
                     range_ms,
                     1,
                 ),
-            ),
+            },
         ] {
-            assert2::assert!(udf.invoke_with_args(args).is_err());
+            assert2::assert!(udf.invoke_with_args(case.args).is_err(), "{}", case.message);
         }
     }
 
@@ -304,8 +298,21 @@ mod tests {
             300_000,
         );
         assert2::assert!(out.len() == 2);
-        for (step, want) in [(0_usize, 4.0 / 300.0), (1, 5.0 / 300.0)] {
-            assert2::assert!(approx_eq(out[step], want));
+        struct ExpectedStep {
+            step: usize,
+            value: f64,
+        }
+        for case in [
+            ExpectedStep {
+                step: 0,
+                value: 4.0 / 300.0,
+            },
+            ExpectedStep {
+                step: 1,
+                value: 5.0 / 300.0,
+            },
+        ] {
+            assert2::assert!(approx_eq(out[case.step], case.value));
         }
     }
 
@@ -341,10 +348,12 @@ mod tests {
         assert2::assert!(approx_eq(out[0], -2.0));
     }
 
-    /// `prom_irate` reproduces 2/30 from the last two samples (engine number).
-    #[test]
-    fn irate_udf_uses_last_two_samples() {
-        let udf = RateUdf::new(RateFamily::Irate);
+    #[yare::parameterized(
+        irate_uses_last_two_samples = { RateFamily::Irate, 2.0 / 30.0 },
+        idelta_uses_last_two_samples = { RateFamily::Idelta, 2.0 },
+    )]
+    fn instant_rate_family_uses_last_two_samples(family: RateFamily, expected: f64) {
+        let udf = RateUdf::new(family);
         let out = run_udf(
             &udf,
             &[WindowStep {
@@ -354,23 +363,7 @@ mod tests {
             }],
             120_000,
         );
-        assert2::assert!(approx_eq(out[0], 2.0 / 30.0));
-    }
-
-    /// `prom_idelta` reproduces 2.0 from the last two samples (engine number).
-    #[test]
-    fn idelta_udf_uses_last_two_samples() {
-        let udf = RateUdf::new(RateFamily::Idelta);
-        let out = run_udf(
-            &udf,
-            &[WindowStep {
-                eval_ts_ms: 90_000,
-                timestamps: &[0, 60_000, 90_000],
-                sample_values: &[0.0, 1.0, 3.0],
-            }],
-            120_000,
-        );
-        assert2::assert!(approx_eq(out[0], 2.0));
+        assert2::assert!(approx_eq(out[0], expected));
     }
 
     /// A window with fewer than two samples renders as NULL, not a NaN sentinel.
@@ -442,12 +435,14 @@ mod tests {
         use datafusion::datasource::MemTable;
 
         // One eval step: t=300s, window holds 0..240s stepping by 1.0.
-        let (value_ra, ts_ra) = RangeArray::from_paired_ranges(
+        let paired = RangeArray::from_paired_ranges(
             Float64Array::from(vec![0.0, 1.0, 2.0, 3.0, 4.0]),
             Int64Array::from(vec![0_i64, 60_000, 120_000, 180_000, 240_000]),
-            [(0_u32, 5_u32)],
+            [crate::RangeWindow::new(0, 5)],
         )
         .unwrap();
+        let value_ra = paired.values;
+        let ts_ra = paired.timestamps;
         let ts_dict: ArrayRef = Arc::new(ts_ra.into_dict_array().unwrap());
         let val_dict: ArrayRef = Arc::new(value_ra.into_dict_array().unwrap());
         let eval_col: ArrayRef = Arc::new(Int64Array::from(vec![300_000_i64]));
@@ -504,4 +499,7 @@ pub use rate_udf::rate_udf;
 pub use register_rate_udfs::register_rate_udfs;
 use scalar_i64::scalar_i64;
 
-use super::udf_args::WindowColumns;
+use super::{
+    impl_window_udf_identity,
+    udf_args::{WindowColumns, append_window_values},
+};

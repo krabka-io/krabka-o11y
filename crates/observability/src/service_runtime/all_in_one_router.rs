@@ -1,6 +1,6 @@
 use super::{
-    ALL_OPS, Arc, CancellationToken, DistributorState, JoinHandle, ObjectStore, Router,
-    ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceMetrics,
+    ALL_OPS, Arc, CancellationToken, DistributorState, ObjectStore, Router, ServiceConfig,
+    ServiceConfigError, ServiceDependencies, ServiceMetrics, ServiceRouter,
     compactor_delete_requests_for_config, delete_request_routes, distributor_push_routes,
     ingest_limiter_refresh_task, querier_routes_with_shutdown, query_authorizer_for_role,
     with_role_ops_routes,
@@ -30,7 +30,7 @@ pub(crate) async fn all_in_one_router(
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     distributor_state: DistributorState,
-) -> Result<(Router, Vec<(&'static str, JoinHandle<()>)>), ServiceConfigError> {
+) -> Result<ServiceRouter, ServiceConfigError> {
     // The querier resolves tenants through the very provider the distributor
     // holds, so the two gates cannot answer one tenant with two limit sets.
     let overrides = Arc::clone(&distributor_state.overrides);
@@ -47,7 +47,7 @@ pub(crate) async fn all_in_one_router(
         query_authorizer_for_role(config, &dependencies, &token, &querier_readiness);
     let query_authorizer = Arc::clone(&role_authorizer.authorizer);
     let limiter_task = ingest_limiter_refresh_task(&distributor_state.ingest_limiter, &token);
-    let (querier_routes, mut background_tasks) = querier_routes_with_shutdown(
+    let querier = querier_routes_with_shutdown(
         config,
         ServiceDependencies {
             query_authorizer: Some(role_authorizer.authorizer),
@@ -65,11 +65,15 @@ pub(crate) async fn all_in_one_router(
         overrides,
     )
     .await?;
+    let mut background_tasks = querier.background_tasks;
     background_tasks.extend(role_authorizer.task);
     background_tasks.push(limiter_task);
     let router = with_role_ops_routes(Router::new(), ALL_OPS, readiness)
         .merge(distributor_push_routes(distributor_state))
-        .merge(querier_routes)
+        .merge(querier.router)
         .merge(delete_request_routes(delete_requests, query_authorizer));
-    Ok((router, background_tasks))
+    Ok(ServiceRouter {
+        router,
+        background_tasks,
+    })
 }

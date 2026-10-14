@@ -2,6 +2,11 @@ use krabka_observability::persisted_format::{PERSISTED_FORMAT_HEADER, PERSISTED_
 
 use super::{Bytes, ProducerHeader, ProducerRecord, WAL_TOPIC};
 
+pub(crate) struct TraceHeader {
+    pub(crate) key: String,
+    pub(crate) value: String,
+}
+
 /// Builds the WAL producer record for a serialized entry.
 ///
 /// Separated from the send so the record's shape can be checked without a
@@ -10,7 +15,7 @@ use super::{Bytes, ProducerHeader, ProducerRecord, WAL_TOPIC};
 pub(crate) fn wal_producer_record(
     key: Bytes,
     value: Vec<u8>,
-    trace_headers: Vec<(String, String)>,
+    trace_headers: Vec<TraceHeader>,
 ) -> ProducerRecord {
     ProducerRecord {
         topic: WAL_TOPIC.to_string(),
@@ -23,14 +28,10 @@ pub(crate) fn wal_producer_record(
             key: PERSISTED_FORMAT_HEADER.to_string(),
             value: Some(Bytes::from_static(PERSISTED_FORMAT_VERSION)),
         })
-        .chain(
-            trace_headers
-                .into_iter()
-                .map(|(key, value)| ProducerHeader {
-                    key,
-                    value: Some(Bytes::from(value.into_bytes())),
-                }),
-        )
+        .chain(trace_headers.into_iter().map(|header| ProducerHeader {
+            key: header.key,
+            value: Some(Bytes::from(header.value.into_bytes())),
+        }))
         .collect(),
         ..Default::default()
     }

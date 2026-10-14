@@ -36,6 +36,17 @@ pub(crate) struct BucketExemplars<'a, B, X> {
     pub(crate) exemplar: X,
 }
 
+#[derive(Clone, Copy)]
+struct SpanColumns<'a> {
+    span_ids: &'a arrow::array::UInt64Array,
+    trace_ids: &'a BinaryArray,
+}
+
+struct SpanTraceId {
+    span_id: String,
+    trace_id: String,
+}
+
 /// Reads the exemplars of `scan` and groups them by the bucket that
 /// `bucket` assigns to their timestamp, dropping those it assigns none.
 pub(crate) async fn bucket_exemplars<E, B, X>(
@@ -62,10 +73,15 @@ where
             fingerprint = COL_FINGERPRINT,
         ),
         ExemplarSource::SpansBySampleValue | ExemplarSource::SpansByTotal => {
-            let (aggregate, total) = if matches!(source, ExemplarSource::SpansBySampleValue) {
-                ("SUM", PCOL_VALUE)
+            let aggregate = if matches!(source, ExemplarSource::SpansBySampleValue) {
+                "SUM"
             } else {
-                ("MAX", PCOL_TOTAL_VALUE)
+                "MAX"
+            };
+            let total = if matches!(source, ExemplarSource::SpansBySampleValue) {
+                PCOL_VALUE
+            } else {
+                PCOL_TOTAL_VALUE
             };
             format!(
                 "SELECT {timestamp}, {fingerprint}, {span}, {trace}, {aggregate}({total}) AS total \
@@ -86,26 +102,31 @@ where
         let timestamps = batch.column(0).as_primitive::<Int64Type>();
         let spans = match source {
             ExemplarSource::Profiles => None,
-            ExemplarSource::SpansBySampleValue | ExemplarSource::SpansByTotal => Some((
-                batch.column(2).as_primitive::<UInt64Type>(),
-                batch.column(3).as_binary::<i32>() as &BinaryArray,
-            )),
+            ExemplarSource::SpansBySampleValue | ExemplarSource::SpansByTotal => {
+                Some(SpanColumns {
+                    span_ids: batch.column(2).as_primitive::<UInt64Type>(),
+                    trace_ids: batch.column(3).as_binary::<i32>() as &BinaryArray,
+                })
+            }
         };
         let totals = batch
             .column(if spans.is_some() { 4 } else { 1 })
             .as_primitive::<Int64Type>();
         for row in 0..batch.num_rows() {
-            let (span_id, trace_id) = match spans {
-                None => (String::new(), String::new()),
-                Some((span_ids, _)) if span_ids.is_null(row) => continue,
-                Some((span_ids, trace_ids)) => (
-                    span_id_hex_from_u64(span_ids.value(row)),
-                    if trace_ids.is_null(row) {
+            let ids = match spans {
+                None => SpanTraceId {
+                    span_id: String::new(),
+                    trace_id: String::new(),
+                },
+                Some(columns) if columns.span_ids.is_null(row) => continue,
+                Some(columns) => SpanTraceId {
+                    span_id: span_id_hex_from_u64(columns.span_ids.value(row)),
+                    trace_id: if columns.trace_ids.is_null(row) {
                         String::new()
                     } else {
-                        hex::encode(trace_ids.value(row))
+                        hex::encode(columns.trace_ids.value(row))
                     },
-                ),
+                },
             };
             let timestamp = timestamps.value(row);
             let Some(slot) = bucket(timestamp) else {
@@ -114,8 +135,8 @@ where
             out.entry(slot).or_default().push(exemplar(ExemplarRow {
                 timestamp,
                 value: totals.value(row),
-                span_id,
-                trace_id,
+                span_id: ids.span_id,
+                trace_id: ids.trace_id,
             }));
         }
     }

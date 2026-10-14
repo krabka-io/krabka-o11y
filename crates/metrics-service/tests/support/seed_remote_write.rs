@@ -12,17 +12,17 @@ pub fn remote_write_body() -> Vec<u8> {
             .map(|point| pb::v1::TimeSeries {
                 labels: remote_write_labels(
                     point.metric,
-                    point
-                        .labels
-                        .iter()
-                        .map(|&(name, value)| FixtureLabel { name, value }),
+                    point.labels.iter().map(|label| FixtureLabel {
+                        name: label.name,
+                        value: label.value,
+                    }),
                 ),
                 samples: point
                     .samples
                     .iter()
-                    .map(|(timestamp, value)| pb::v1::Sample {
-                        value: *value,
-                        timestamp: *timestamp,
+                    .map(|sample| pb::v1::Sample {
+                        value: sample.value,
+                        timestamp: sample.timestamp_ms,
                     })
                     .collect(),
                 ..Default::default()

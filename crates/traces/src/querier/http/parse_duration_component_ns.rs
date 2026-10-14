@@ -1,5 +1,7 @@
 pub(crate) fn parse_duration_component_ns(number: &str, multiplier: u128) -> Result<u128, String> {
-    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+    let separator = number.find('.');
+    let whole = separator.map_or(number, |index| &number[..index]);
+    let fraction = separator.map_or("", |index| &number[index + 1..]);
     if whole.is_empty() && fraction.is_empty() {
         return Err(format!("invalid number {number:?}"));
     }
@@ -21,13 +23,13 @@ pub(crate) fn parse_duration_component_ns(number: &str, multiplier: u128) -> Res
         return Ok(whole_ns);
     }
 
-    let fraction = fraction
+    let fraction_value = fraction
         .parse::<u128>()
         .map_err(|_| format!("invalid number {number:?}"))?;
-    let scale = (0..number.rsplit_once('.').map_or(0, |(_, frac)| frac.len()))
+    let scale = (0..fraction.len())
         .try_fold(1_u128, |acc, _| acc.checked_mul(10))
         .ok_or_else(|| "duration out of range".to_string())?;
-    let fraction_ns = fraction
+    let fraction_ns = fraction_value
         .checked_mul(multiplier)
         .ok_or_else(|| "duration out of range".to_string())?
         / scale;

@@ -1,8 +1,24 @@
 use krabka_logql::{LogqlExpr, parse_logql_expr};
 
+pub(crate) struct SplitLeadingVectorMatchingModifier<'a> {
+    pub(crate) text: String,
+    pub(crate) remainder: &'a str,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct SplitLeadingVectorGroupModifier<'a> {
+    pub(crate) text: Option<String>,
+    pub(crate) remainder: &'a str,
+}
+
+pub(crate) struct SplitLeadingVectorBinaryModifiers<'a> {
+    pub(crate) modifiers: Option<FormattedVectorBinaryModifiers>,
+    pub(crate) remainder: &'a str,
+}
+
 use crate::{
     Bytes, ComparisonResult, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
-    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_form_component,
+    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_query_pair,
     format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
     format_metric_and_vector_operands, format_metric_label_replace_query, format_metric_query,
     format_metric_scalar_arithmetic_expression, format_metric_scalar_arithmetic_operator,
@@ -17,6 +33,15 @@ use crate::{
     split_query_param_pairs, split_top_level_arithmetic_query, split_top_level_comparison_query,
     split_top_level_set_query,
 };
+
+pub(crate) fn validate_metric_binary_query_operands(
+    split: crate::http::params_format::metric_formatting::TopLevelQuerySplit<'_>,
+) -> Option<()> {
+    let right_text = split_leading_vector_binary_modifiers(split.right).remainder;
+    parse_metric_query(split.left.trim()).ok()?;
+    parse_metric_query(right_text.trim()).ok()?;
+    Some(())
+}
 
 mod execute_format_query;
 mod form_body_query;

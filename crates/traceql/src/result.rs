@@ -1,6 +1,31 @@
 //! Tempo-shaped `TraceQL` result model.
 
+use std::collections::BTreeSet;
+
 use krabka_units::{ByteSize, Time};
+
+/// Accumulates catalog keys by `TraceQL` tag scope while a store scans spans.
+#[derive(Debug, Default)]
+pub struct TagNameSets {
+    pub resource: BTreeSet<String>,
+    pub span: BTreeSet<String>,
+    pub event: BTreeSet<String>,
+    pub link: BTreeSet<String>,
+    pub instrumentation: BTreeSet<String>,
+}
+
+impl TagNameSets {
+    pub fn add_instrumentation(&mut self, name: &str, version: &str) {
+        if !name.is_empty() {
+            self.instrumentation
+                .insert("instrumentation:name".to_string());
+        }
+        if !version.is_empty() {
+            self.instrumentation
+                .insert("instrumentation:version".to_string());
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -27,14 +52,14 @@ mod tests {
             instrumentation_version: String::new(),
             resource_attributes: Vec::new(),
             attributes: vec![
-                ("http.status_code".into(), AttrValue::Int(200)),
-                ("ok".into(), AttrValue::Bool(true)),
+                Attribute::new("http.status_code", AttrValue::Int(200)),
+                Attribute::new("ok", AttrValue::Bool(true)),
             ],
             events: Vec::new(),
             links: Vec::new(),
         };
-        assert!(s.attributes[0].1 == AttrValue::Int(200));
-        assert!(s.attributes[1].1 == AttrValue::Bool(true));
+        assert!(s.attributes[0].value == AttrValue::Int(200));
+        assert!(s.attributes[1].value == AttrValue::Bool(true));
     }
 
     #[test]
@@ -73,10 +98,12 @@ mod tests {
 mod attr_value;
 mod event_ref;
 mod link_ref;
+mod metric_label;
 mod scoped_tag;
 mod search_response;
 mod span_ref;
 mod span_set;
+mod tag_name_groups;
 mod tag_scope;
 mod trace_metric_exemplar;
 mod trace_metric_series;
@@ -85,16 +112,19 @@ mod trace_result;
 mod trace_spans;
 mod typed_value;
 
-pub use attr_value::AttrValue;
+pub(crate) use attr_value::normalized_attr_value;
+pub use attr_value::{AttrValue, Attribute};
 pub use event_ref::EventRef;
 pub use link_ref::LinkRef;
+pub use metric_label::MetricLabel;
 pub use scoped_tag::ScopedTag;
 pub use search_response::SearchResponse;
 pub use span_ref::SpanRef;
 pub use span_set::SpanSet;
-pub use tag_scope::TagScope;
+pub use tag_name_groups::TagNameGroups;
+pub use tag_scope::{ParsedTagScope, TagScope, TagScopePrefix};
 pub use trace_metric_exemplar::TraceMetricExemplar;
-pub use trace_metric_series::TraceMetricSeries;
+pub use trace_metric_series::{MetricPoint, TraceMetricSeries};
 pub use trace_metrics_response::TraceMetricsResponse;
 pub use trace_result::TraceResult;
 pub use trace_spans::TraceSpans;

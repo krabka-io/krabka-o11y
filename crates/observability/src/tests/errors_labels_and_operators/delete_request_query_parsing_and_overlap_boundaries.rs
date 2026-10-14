@@ -1,5 +1,15 @@
 use super::*;
 
+struct DeleteOverlapCase {
+    filter: ListDeleteRequestsParams,
+    overlaps: bool,
+}
+
+struct RangeOverlapCase {
+    right: TimeRange,
+    overlaps: bool,
+}
+
 #[test]
 pub(crate) fn delete_request_query_parsing_and_overlap_boundaries() {
     let params = parse_create_delete_request_params(Some(
@@ -50,29 +60,44 @@ pub(crate) fn delete_request_query_parsing_and_overlap_boundaries() {
         status: "received".to_string(),
         created_at: 1,
     };
-    for (filter, want) in [
-        (list, true),
-        (
-            ListDeleteRequestsParams {
+    for case in [
+        DeleteOverlapCase {
+            filter: list,
+            overlaps: true,
+        },
+        DeleteOverlapCase {
+            filter: ListDeleteRequestsParams {
                 start_time: Some(20),
                 end_time: Some(30),
             },
-            true,
-        ),
-        (
-            ListDeleteRequestsParams {
+            overlaps: true,
+        },
+        DeleteOverlapCase {
+            filter: ListDeleteRequestsParams {
                 start_time: Some(21),
                 end_time: Some(30),
             },
-            false,
-        ),
+            overlaps: false,
+        },
     ] {
-        assert_eq!(delete_request_overlaps_filter(&request, &filter), want);
+        assert_eq!(
+            delete_request_overlaps_filter(&request, &case.filter),
+            case.overlaps
+        );
     }
-    for (right, want) in [
-        (TimeRange::new(20, 30).unwrap(), true),
-        (TimeRange::new(21, 30).unwrap(), false),
+    for case in [
+        RangeOverlapCase {
+            right: TimeRange::new(20, 30).unwrap(),
+            overlaps: true,
+        },
+        RangeOverlapCase {
+            right: TimeRange::new(21, 30).unwrap(),
+            overlaps: false,
+        },
     ] {
-        assert_eq!(ranges_overlap(TimeRange::new(10, 20).unwrap(), right), want);
+        assert_eq!(
+            ranges_overlap(TimeRange::new(10, 20).unwrap(), case.right),
+            case.overlaps
+        );
     }
 }

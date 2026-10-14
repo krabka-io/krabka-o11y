@@ -1,10 +1,5 @@
-use super::{Labels, quote_logql_string};
+use super::Labels;
 
 pub(crate) fn loki_stale_sample_label_set(labels: &Labels) -> String {
-    let values = labels
-        .iter()
-        .map(|(name, value)| format!("{name}={}", quote_logql_string(value)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{{{values}}}")
+    crate::distributor::format_loki_label_set(labels, ", ")
 }

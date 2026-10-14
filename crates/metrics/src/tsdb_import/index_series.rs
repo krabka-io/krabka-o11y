@@ -1,4 +1,4 @@
-use super::{ChunkMeta, MetricString};
+use super::{ChunkMeta, MetricLabelPair, MetricString};
 
 /// One series entry of a TSDB index.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7,6 +7,6 @@ pub struct IndexSeries {
     /// and tombstones name a series by it.
     pub reference: u64,
     /// The label pairs, sorted by name.
-    pub labels: Vec<(String, MetricString)>,
+    pub labels: Vec<MetricLabelPair<MetricString>>,
     pub chunks: Vec<ChunkMeta>,
 }

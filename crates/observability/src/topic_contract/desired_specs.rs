@@ -5,6 +5,11 @@ use krabka_units::convert::TimeExt as _;
 
 use super::{CLEANUP_POLICY, COMPACT, RETENTION_MS, TopicContract, TopicKind, TopicSettings};
 
+struct TopicConfig {
+    partitions: i32,
+    configs: BTreeMap<String, String>,
+}
+
 /// Turns the contract and the deployment settings into `CreateTopics` specs.
 ///
 /// A WAL topic gets the WAL partition count and an explicit `retention.ms`. A
@@ -21,24 +26,32 @@ pub fn desired_specs(topics: &[TopicContract], settings: &TopicSettings) -> Vec<
     topics
         .iter()
         .map(|topic| {
-            let (partitions, configs) = match topic.kind {
-                TopicKind::Wal => (
-                    settings.wal_partitions,
-                    BTreeMap::from([(
+            let config = match topic.kind {
+                TopicKind::Wal => {
+                    let mut configs = BTreeMap::new();
+                    configs.insert(
                         RETENTION_MS.to_string(),
                         settings.wal_retention.millis_i64().to_string(),
-                    )]),
-                ),
-                TopicKind::CompactedState => (
-                    settings.state_partitions,
-                    BTreeMap::from([(CLEANUP_POLICY.to_string(), COMPACT.to_string())]),
-                ),
+                    );
+                    TopicConfig {
+                        partitions: settings.wal_partitions.get(),
+                        configs,
+                    }
+                }
+                TopicKind::CompactedState => {
+                    let mut configs = BTreeMap::new();
+                    configs.insert(CLEANUP_POLICY.to_string(), COMPACT.to_string());
+                    TopicConfig {
+                        partitions: settings.state_partitions.get(),
+                        configs,
+                    }
+                }
             };
             CreateTopicSpec {
                 name: topic.name.to_string(),
-                partitions: partitions.get(),
+                partitions: config.partitions,
                 replicas: settings.replication_factor,
-                configs,
+                configs: config.configs,
                 ..Default::default()
             }
         })

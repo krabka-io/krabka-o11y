@@ -1,6 +1,6 @@
 use super::{
     DetectedFieldsParams, HttpQueryError, LOKI_DEFAULT_QUERY_RANGE, TimeExt, current_unix_time_ns,
-    decode_form_component, parse_loki_duration_query_param, parse_loki_timestamp_query_param,
+    decode_query_pair, parse_loki_duration_query_param, parse_loki_timestamp_query_param,
     parse_usize_query_param, set_first_query_param, split_query_param_pairs, start_or_since,
 };
 
@@ -31,34 +31,34 @@ pub(crate) fn parse_detected_fields_params(
             "line_limit",
         ],
     ) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_form_component(key)?;
-        let value = decode_form_component(value)?;
+        let pair = decode_query_pair(pair)?;
 
-        match key.as_str() {
-            "query" => set_first_query_param(&mut query, || Ok(value))?,
+        match pair.key.as_str() {
+            "query" => set_first_query_param(&mut query, || Ok(pair.value))?,
             "start" => set_first_query_param(&mut start, || {
-                parse_loki_timestamp_query_param("start", &value)
+                parse_loki_timestamp_query_param("start", &pair.value)
             })?,
             "end" => {
                 set_first_query_param(&mut end, || {
-                    parse_loki_timestamp_query_param("end", &value)
+                    parse_loki_timestamp_query_param("end", &pair.value)
                 })?;
             }
             "since" => set_first_query_param(&mut since, || {
-                parse_loki_duration_query_param("since", &value)
+                parse_loki_duration_query_param("since", &pair.value)
             })?,
             "step" => set_first_query_param(&mut step, || {
-                parse_loki_duration_query_param("step", &value)
+                parse_loki_duration_query_param("step", &pair.value)
             })?,
             "limit" => {
-                set_first_query_param(&mut limit, || parse_usize_query_param("limit", &value))?;
+                set_first_query_param(&mut limit, || {
+                    parse_usize_query_param("limit", &pair.value)
+                })?;
             }
             "field_limit" => set_first_query_param(&mut limit, || {
-                parse_usize_query_param("field_limit", &value)
+                parse_usize_query_param("field_limit", &pair.value)
             })?,
             "line_limit" => set_first_query_param(&mut line_limit, || {
-                parse_usize_query_param("line_limit", &value)
+                parse_usize_query_param("line_limit", &pair.value)
             })?,
             _ => {}
         }

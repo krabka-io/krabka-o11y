@@ -57,6 +57,23 @@ pub(crate) fn decimal_scaled_numerator(decimal: f64) -> Option<i128> {
     i128::from_f64(scaled)
 }
 
+macro_rules! impl_rational_float_conversion {
+    ($rational:ty) => {
+        impl $rational {
+            pub(crate) fn to_f64(self) -> Option<f64> {
+                $crate::rational_to_f64(self.numerator, self.denominator)
+            }
+
+            pub(crate) fn from_f64(value: f64) -> Option<Self> {
+                Some(Self::new(
+                    $crate::decimal_scaled_numerator(value)?,
+                    $crate::METRIC_DECIMAL_SCALE,
+                ))
+            }
+        }
+    };
+}
+
 /// Implements `divide`, `modulo` and `power` for a rational type with
 /// `numerator` and `denominator` fields, a normalising `new`, and `to_f64` and
 /// `from_f64`.
@@ -97,3 +114,4 @@ macro_rules! impl_rational_division_ops {
 }
 
 pub(crate) use impl_rational_division_ops;
+pub(crate) use impl_rational_float_conversion;

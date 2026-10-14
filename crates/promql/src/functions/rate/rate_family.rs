@@ -1,4 +1,5 @@
 use super::{InstantKind, RangeKind, RateWindow, extrapolated_rate, instant_delta};
+use crate::planner::rate_range::RateUdfKind;
 
 /// Which rate-family function a [`RateUdf`] evaluates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -17,13 +18,7 @@ pub(crate) enum RateFamily {
 
 impl RateFamily {
     pub(crate) fn udf_name(self) -> &'static str {
-        match self {
-            Self::Rate => "prom_rate",
-            Self::Increase => "prom_increase",
-            Self::Delta => "prom_delta",
-            Self::Irate => "prom_irate",
-            Self::Idelta => "prom_idelta",
-        }
+        RateUdfKind::from(self).udf_name()
     }
 
     /// Evaluates one window and returns `None` where Prometheus has no value.
@@ -37,6 +32,18 @@ impl RateFamily {
             Self::Delta => extrapolated_rate(window, RangeKind::Delta),
             Self::Irate => instant_delta(window.timestamps, window.values, InstantKind::Irate),
             Self::Idelta => instant_delta(window.timestamps, window.values, InstantKind::Idelta),
+        }
+    }
+}
+
+impl From<RateFamily> for RateUdfKind {
+    fn from(family: RateFamily) -> Self {
+        match family {
+            RateFamily::Rate => Self::Rate,
+            RateFamily::Increase => Self::Increase,
+            RateFamily::Delta => Self::Delta,
+            RateFamily::Irate => Self::Irate,
+            RateFamily::Idelta => Self::Idelta,
         }
     }
 }

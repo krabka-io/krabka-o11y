@@ -1,6 +1,6 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, pb, select_heatmap_inner, timed_query,
+    Arc, ConnectError, ConnectQueryRequest, ConnectRequest, ConnectResponse, Extension, HeaderMap,
+    Principal, ProfileStore, QuerierState, pb, select_heatmap_inner, timed_query,
 };
 
 pub(crate) async fn select_heatmap_handler<S>(
@@ -16,7 +16,7 @@ where
     timed_query(
         &metrics,
         "select_heatmap",
-        select_heatmap_inner(state, principal, headers, req),
+        select_heatmap_inner(ConnectQueryRequest::new(state, principal, headers, req)),
     )
     .await
 }

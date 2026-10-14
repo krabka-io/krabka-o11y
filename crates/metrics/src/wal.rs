@@ -5,7 +5,7 @@ use krabka_units::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    MetricLabels as Labels, MetricString, NativeHistogram,
+    MetricLabelPair, MetricLabels as Labels, NativeHistogram,
     wire::{DecodedClockReading, UnixNanos},
 };
 
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn records_round_trip() {
         let trace_exemplar = || WalExemplar {
-            labels: vec![("trace_id".into(), "abc".into())],
+            labels: vec![MetricLabelPair::new("trace_id", "abc".into())],
             value: 0.9,
             timestamp_ms: 200,
         };
@@ -96,8 +96,8 @@ mod tests {
             WalRecord {
                 tenant: "t1".into(),
                 labels: vec![
-                    ("__name__".into(), "up".into()),
-                    ("job".into(), "api".into()),
+                    MetricLabelPair::new("__name__", "up".into()),
+                    MetricLabelPair::new("job", "api".into()),
                 ],
                 payload: SamplePayload::Float {
                     timestamp_ms: 100,
@@ -108,7 +108,7 @@ mod tests {
             },
             WalRecord {
                 tenant: "t1".into(),
-                labels: vec![("__name__".into(), "latency".into())],
+                labels: vec![MetricLabelPair::new("__name__", "latency".into())],
                 payload: SamplePayload::Hist {
                     timestamp_ms: 200,
                     hist: hist(),
@@ -117,7 +117,7 @@ mod tests {
             },
             WalRecord {
                 tenant: "t1".into(),
-                labels: vec![("__name__".into(), "requests_total".into())],
+                labels: vec![MetricLabelPair::new("__name__", "requests_total".into())],
                 payload: SamplePayload::Exemplars,
                 exemplars: vec![trace_exemplar()],
             },
@@ -135,7 +135,10 @@ mod tests {
     fn fingerprint_is_order_independent() {
         let a = WalRecord {
             tenant: "t".into(),
-            labels: vec![("a".into(), "1".into()), ("b".into(), "2".into())],
+            labels: vec![
+                MetricLabelPair::new("a", "1".into()),
+                MetricLabelPair::new("b", "2".into()),
+            ],
             payload: SamplePayload::Float {
                 timestamp_ms: 0,
                 value: 0.0,
@@ -144,7 +147,10 @@ mod tests {
             exemplars: Vec::new(),
         };
         let mut b = a.clone();
-        b.labels = vec![("b".into(), "2".into()), ("a".into(), "1".into())];
+        b.labels = vec![
+            MetricLabelPair::new("b", "2".into()),
+            MetricLabelPair::new("a", "1".into()),
+        ];
 
         assert!(a.series_fingerprint() == b.series_fingerprint());
     }
@@ -154,9 +160,15 @@ mod tests {
         // This independent old envelope verifies the UTF-8 WAL contract, rather
         // than comparing the new encoder only with its own decoder.
         #[derive(serde::Serialize)]
+        struct Utf8Label {
+            name: String,
+            value: String,
+        }
+
+        #[derive(serde::Serialize)]
         struct Utf8Record {
             tenant: String,
-            labels: Vec<(String, String)>,
+            labels: Vec<Utf8Label>,
             payload: SamplePayload,
             exemplars: Vec<WalExemplar>,
         }
@@ -168,8 +180,14 @@ mod tests {
         let legacy = Utf8Record {
             tenant: "tenant".to_owned(),
             labels: vec![
-                ("__name__".to_owned(), "recorded".to_owned()),
-                ("raw".to_owned(), "é".to_owned()),
+                Utf8Label {
+                    name: "__name__".to_owned(),
+                    value: "recorded".to_owned(),
+                },
+                Utf8Label {
+                    name: "raw".to_owned(),
+                    value: "é".to_owned(),
+                },
             ],
             payload: payload.clone(),
             exemplars: Vec::new(),
@@ -182,14 +200,19 @@ mod tests {
             labels: legacy
                 .labels
                 .iter()
-                .map(|(name, value)| (name.clone(), value.clone().into()))
+                .map(|label| MetricLabelPair::new(label.name.clone(), label.value.clone().into()))
                 .collect(),
             payload,
             exemplars: Vec::new(),
         };
         assert2::assert!(expected.encode().unwrap() == legacy_bytes);
         assert2::assert!(WalRecord::decode(&legacy_bytes).unwrap() == expected);
-        let native = krabka_blockstore::Labels::from_pairs(legacy.labels);
+        let native = krabka_blockstore::Labels::from_pairs(
+            legacy
+                .labels
+                .into_iter()
+                .map(|label| krabka_blockstore::LabelPair::new(label.name, label.value)),
+        );
         assert2::assert!(native.fingerprint() == expected.series_fingerprint());
         let mut fingerprints = std::collections::BTreeSet::new();
         for bytes in [
@@ -199,9 +222,9 @@ mod tests {
             b"__krabka_bytes_ff".to_vec(),
         ] {
             let mut record = expected.clone();
-            record.labels[1].1 = bytes.clone().into();
+            record.labels[1].value = bytes.clone().into();
             let decoded = WalRecord::decode(&record.encode().unwrap()).unwrap();
-            assert2::assert!(decoded.labels[1].1.as_bytes() == bytes);
+            assert2::assert!(decoded.labels[1].value.as_bytes() == bytes);
             assert2::assert!(fingerprints.insert(decoded.series_fingerprint()));
         }
     }

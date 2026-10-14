@@ -10,7 +10,7 @@ use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{float_sample_schema, native_histogram_schema};
 
 use self::{
-    scan::{FLOAT_TABLE, HISTOGRAM_TABLE, merge_scan_table},
+    scan::{FLOAT_TABLE, HISTOGRAM_TABLE, ScanTableInput, merge_scan_table},
     stats::{merge_named_stats, min_present_time},
 };
 use crate::{
@@ -18,7 +18,16 @@ use crate::{
     MetricStore, PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, ScanResult,
     TsdbBlock, TsdbHeadStats, TsdbStats,
     series_stats::{SeriesRef, label_name_cardinality, label_value_cardinality},
+    store::sort_tsdb_blocks,
 };
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct MetadataRecordKey {
+    metric_family_name: String,
+    metric_type: String,
+    help: String,
+    unit: String,
+}
 
 mod instant_scan;
 mod scan;
@@ -72,8 +81,14 @@ where
             FLOAT_TABLE,
             float_sample_schema(),
             [
-                (cold.ctx.clone(), cold.float_table.clone()),
-                (hot.ctx.clone(), hot.float_table.clone()),
+                ScanTableInput {
+                    context: cold.ctx.clone(),
+                    table: cold.float_table.clone(),
+                },
+                ScanTableInput {
+                    context: hot.ctx.clone(),
+                    table: hot.float_table.clone(),
+                },
             ],
         )
         .await?;
@@ -82,8 +97,14 @@ where
             HISTOGRAM_TABLE,
             native_histogram_schema(),
             [
-                (cold.ctx, cold.histogram_table),
-                (hot.ctx, hot.histogram_table),
+                ScanTableInput {
+                    context: cold.ctx,
+                    table: cold.histogram_table,
+                },
+                ScanTableInput {
+                    context: hot.ctx,
+                    table: hot.histogram_table,
+                },
             ],
         )
         .await?;
@@ -233,7 +254,12 @@ where
             .await?;
         let mut exemplars = cold.exemplars;
         exemplars.extend(hot.exemplars);
-        exemplars.sort_by_key(|row| (row.series_labels.fingerprint(), row.ts_ms));
+        exemplars.sort_by(|left, right| {
+            left.series_labels
+                .fingerprint()
+                .cmp(&right.series_labels.fingerprint())
+                .then(left.ts_ms.cmp(&right.ts_ms))
+        });
         let mut warnings = cold.warnings;
         warnings.extend(hot.warnings);
         Ok(ExemplarScan {
@@ -251,15 +277,15 @@ where
         let hot = self.hot.metadata(tenant, metric).await?;
         let mut warnings = cold.warnings;
         warnings.extend(hot.warnings);
-        let mut by_key = BTreeMap::<(String, String, String, String), MetadataRecord>::new();
+        let mut by_key = BTreeMap::<MetadataRecordKey, MetadataRecord>::new();
         for record in cold.metadata.into_iter().chain(hot.metadata) {
             by_key.insert(
-                (
-                    record.metric_family_name.clone(),
-                    record.metric_type.clone(),
-                    record.help.clone(),
-                    record.unit.clone(),
-                ),
+                MetadataRecordKey {
+                    metric_family_name: record.metric_family_name.clone(),
+                    metric_type: record.metric_type.clone(),
+                    help: record.help.clone(),
+                    unit: record.unit.clone(),
+                },
                 record,
             );
         }
@@ -336,12 +362,7 @@ where
     async fn tsdb_blocks(&self, tenant: &str) -> Result<Vec<TsdbBlock>, PromqlError> {
         let mut blocks = self.cold.tsdb_blocks(tenant).await?;
         blocks.extend(self.hot.tsdb_blocks(tenant).await?);
-        blocks.sort_by(|left, right| {
-            left.min_time
-                .cmp(&right.min_time)
-                .then_with(|| left.max_time.cmp(&right.max_time))
-                .then_with(|| left.id.cmp(&right.id))
-        });
+        sort_tsdb_blocks(&mut blocks);
         Ok(blocks)
     }
 }

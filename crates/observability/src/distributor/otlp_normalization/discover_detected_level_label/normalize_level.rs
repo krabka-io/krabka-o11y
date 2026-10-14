@@ -1,18 +1,44 @@
 pub(super) fn normalize_level(value: &str) -> &str {
-    for (canonical, aliases) in [
-        ("trace", &["trace", "trc"][..]),
-        ("debug", &["debug", "dbg"][..]),
-        ("info", &["info", "inf", "information"][..]),
-        ("warn", &["warn", "wrn", "warning"][..]),
-        ("error", &["error", "err"][..]),
-        ("critical", &["critical"][..]),
-        ("fatal", &["fatal"][..]),
+    struct LevelAliases {
+        canonical: &'static str,
+        aliases: &'static [&'static str],
+    }
+    for level in [
+        LevelAliases {
+            canonical: "trace",
+            aliases: &["trace", "trc"],
+        },
+        LevelAliases {
+            canonical: "debug",
+            aliases: &["debug", "dbg"],
+        },
+        LevelAliases {
+            canonical: "info",
+            aliases: &["info", "inf", "information"],
+        },
+        LevelAliases {
+            canonical: "warn",
+            aliases: &["warn", "wrn", "warning"],
+        },
+        LevelAliases {
+            canonical: "error",
+            aliases: &["error", "err"],
+        },
+        LevelAliases {
+            canonical: "critical",
+            aliases: &["critical"],
+        },
+        LevelAliases {
+            canonical: "fatal",
+            aliases: &["fatal"],
+        },
     ] {
-        if aliases
+        if level
+            .aliases
             .iter()
             .any(|alias| value.eq_ignore_ascii_case(alias))
         {
-            return canonical;
+            return level.canonical;
         }
     }
     value

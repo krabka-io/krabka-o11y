@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use krabka_blockstore::Labels;
+use krabka_blockstore::{LabelPair, Labels};
 use krabka_units::prelude::*;
 use prost::Message;
 
@@ -17,7 +17,9 @@ mod tests {
     use prost::Message;
 
     use super::*;
-    use crate::wire::test_support::{check_up_sample_with_trace_exemplar, snappy, up_v1_series};
+    use crate::wire::test_support::{
+        assert_duplicate_job_label, check_up_sample_with_trace_exemplar, snappy, up_v1_series,
+    };
 
     #[test]
     fn decodes_v1_samples_and_exemplars() {
@@ -66,41 +68,34 @@ mod tests {
         let decoded = decode_v1(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
         assert!(decoded[0].histograms.len() == 1);
-        check!(decoded[0].histograms[0].0 == 10);
-        check!(decoded[0].histograms[0].1.positive_counts == vec![1.0, 3.0]);
+        check!(decoded[0].histograms[0].timestamp_ms == 10);
+        check!(decoded[0].histograms[0].histogram.positive_counts == vec![1.0, 3.0]);
     }
 
     #[test]
     fn decode_v1_rejects_duplicate_label_names() {
+        let mut series = up_v1_series(pb::v1::Sample {
+            value: 1.0,
+            timestamp: 1000,
+        });
+        series.labels.extend([
+            pb::v1::Label {
+                name: "job".into(),
+                value: "api".into(),
+            },
+            pb::v1::Label {
+                name: "job".into(),
+                value: "worker".into(),
+            },
+        ]);
         let req = pb::v1::WriteRequest {
-            timeseries: vec![pb::v1::TimeSeries {
-                labels: vec![
-                    pb::v1::Label {
-                        name: "__name__".into(),
-                        value: "up".into(),
-                    },
-                    pb::v1::Label {
-                        name: "job".into(),
-                        value: "api".into(),
-                    },
-                    pb::v1::Label {
-                        name: "job".into(),
-                        value: "worker".into(),
-                    },
-                ],
-                samples: vec![pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 1000,
-                }],
-                ..Default::default()
-            }],
+            timeseries: vec![series],
             ..Default::default()
         };
 
         let err = decode_v1(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap_err();
 
-        assert!(matches!(err, WireError::Invalid(_)));
-        assert!(format!("{err}").contains("duplicate label `job`"));
+        assert_duplicate_job_label(&err);
     }
 }
 

@@ -4,11 +4,11 @@ use super::{
 };
 
 pub(crate) fn span_from_proto(span: api_v2::Span) -> Result<JaegerSpan, WireError> {
-    let (trace_id_high, trace_id_low) = trace_id_parts(&span.trace_id)?;
+    let trace_id = trace_id_parts(&span.trace_id)?;
     let span_id = span_id_part(&span.span_id)?;
     Ok(JaegerSpan {
-        trace_id_low,
-        trace_id_high,
+        trace_id_low: trace_id.low,
+        trace_id_high: trace_id.high,
         span_id,
         parent_span_id: 0,
         operation_name: span.operation_name,

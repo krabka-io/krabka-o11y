@@ -104,9 +104,16 @@ async fn build_blocks_under(directory: &Path, traces: u32) {
                 })
             })
             .collect::<Vec<_>>();
-        build_blocks(&writer, &mut index, "tenant", 0, &records, (offset, offset))
-            .await
-            .expect("the block is written");
+        build_blocks(
+            &writer,
+            &mut index,
+            "tenant",
+            0,
+            &records,
+            krabka_blockstore::OffsetRange::new(offset, offset),
+        )
+        .await
+        .expect("the block is written");
     }
 }
 
@@ -233,6 +240,7 @@ fn worker_growth_kib(directory: &Path, arm: &str) -> u64 {
 /// the read the compactor used to do, over the same blocks in the same
 /// process -- and its cost is expected to track the rows.
 #[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::items_after_statements)]
 async fn compacting_twice_as_many_rows_does_not_cost_twice_the_memory() {
     if status_kib("VmHWM").is_none() {
         // No /proc to read RSS out of. Nothing to measure rather than
@@ -245,25 +253,29 @@ async fn compacting_twice_as_many_rows_does_not_cost_twice_the_memory() {
     build_blocks_under(small.path(), 5_000).await;
     build_blocks_under(large.path(), 10_000).await;
 
-    let buffered = (
-        worker_growth_kib(small.path(), "buffer"),
-        worker_growth_kib(large.path(), "buffer"),
-    );
-    let streamed = (
-        worker_growth_kib(small.path(), "stream"),
-        worker_growth_kib(large.path(), "stream"),
-    );
+    struct GrowthComparison {
+        small: u64,
+        large: u64,
+    }
+    let buffered = GrowthComparison {
+        small: worker_growth_kib(small.path(), "buffer"),
+        large: worker_growth_kib(large.path(), "buffer"),
+    };
+    let streamed = GrowthComparison {
+        small: worker_growth_kib(small.path(), "stream"),
+        large: worker_growth_kib(large.path(), "stream"),
+    };
 
     // The fixed part of a child's growth -- the Parquet reader, the decoder's
     // own buffers, the code paged in on the way -- is the same in both arms
     // and at both sizes, so what the two sizes say about scaling is in the
     // difference between them rather than in the ratio of the totals.
-    let buffered_marginal = buffered.1.saturating_sub(buffered.0);
-    let streamed_marginal = streamed.1.saturating_sub(streamed.0);
+    let buffered_marginal = buffered.large.saturating_sub(buffered.small);
+    let streamed_marginal = streamed.large.saturating_sub(streamed.small);
     let report = format!(
         "read whole: {} KiB then {} KiB (marginal {buffered_marginal} KiB); \
          streamed: {} KiB then {} KiB (marginal {streamed_marginal} KiB)",
-        buffered.0, buffered.1, streamed.0, streamed.1
+        buffered.small, buffered.large, streamed.small, streamed.large
     );
     println!("{report}");
 

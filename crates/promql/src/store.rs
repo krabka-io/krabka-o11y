@@ -1,8 +1,31 @@
 //! Metric data access abstraction.
 
+use std::collections::BTreeSet;
+
 use datafusion::prelude::SessionContext;
 
 use crate::{PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher};
+
+pub(crate) fn distinct_label_names(series: impl IntoIterator<Item = Labels>) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for labels in series {
+        names.extend(labels.iter().map(|pair| pair.name.clone()));
+    }
+    names.into_iter().collect()
+}
+
+pub(crate) fn distinct_label_values(
+    series: impl IntoIterator<Item = Labels>,
+    name: &str,
+) -> Vec<krabka_metrics::MetricString> {
+    let mut values = BTreeSet::new();
+    for labels in series {
+        if let Some(value) = labels.get_value(name) {
+            values.insert(value.clone());
+        }
+    }
+    values.into_iter().collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -15,6 +38,14 @@ mod tests {
     use datafusion::prelude::SessionContext;
 
     use super::*;
+
+    #[derive(bon::Builder)]
+    struct ErrorPropagationCase {
+        cold_failure: Option<&'static str>,
+        hot_failure: Option<&'static str>,
+        expected_calls: Vec<&'static str>,
+        expected_error: &'static str,
+    }
 
     #[derive(Default)]
     struct Empty {
@@ -69,7 +100,10 @@ mod tests {
 
     #[tokio::test]
     async fn canonical_shared_map_keeps_default_last_and_merged_first_owners() {
-        let first = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "api")]));
+        let first = Arc::new(Labels::from_pairs([
+            krabka_metrics::MetricLabelPair::new("__name__", "up"),
+            krabka_metrics::MetricLabelPair::new("job", "api"),
+        ]));
         let last = Arc::new(first.as_ref().clone());
         let mut raw = first.as_ref().clone();
         raw.insert("job", vec![0xff]);
@@ -112,27 +146,37 @@ mod tests {
         assert!(Arc::ptr_eq(&map[&first.fingerprint()], &first));
         let shared = merged.series_shared("t", &[], 0, 1).await.unwrap();
         assert!(shared.len() == map.len());
-        for (actual, expected) in shared.iter().zip(map.values()) {
-            assert!(Arc::ptr_eq(actual, expected));
+        let expected_values = map.values().collect::<Vec<_>>();
+        for index in 0..shared.len() {
+            assert!(Arc::ptr_eq(&shared[index], expected_values[index]));
         }
     }
 
     #[tokio::test]
     async fn canonical_shared_map_preserves_cold_then_hot_errors() {
-        for (cold_failure, hot_failure, expected_calls, expected_error) in [
-            (Some("cold"), Some("hot"), vec!["cold"], "cold"),
-            (None, Some("hot"), vec!["cold", "hot"], "hot"),
+        for case in [
+            ErrorPropagationCase::builder()
+                .cold_failure("cold")
+                .hot_failure("hot")
+                .expected_calls(vec!["cold"])
+                .expected_error("cold")
+                .build(),
+            ErrorPropagationCase::builder()
+                .hot_failure("hot")
+                .expected_calls(vec!["cold", "hot"])
+                .expected_error("hot")
+                .build(),
         ] {
             let calls = Arc::new(Mutex::new(Vec::new()));
             let store = crate::MergedMetricStore::new(
                 Empty {
-                    failure: cold_failure,
+                    failure: case.cold_failure,
                     name: "cold",
                     calls: Arc::clone(&calls),
                     ..Empty::default()
                 },
                 Empty {
-                    failure: hot_failure,
+                    failure: case.hot_failure,
                     name: "hot",
                     calls: Arc::clone(&calls),
                     ..Empty::default()
@@ -142,15 +186,28 @@ mod tests {
                 .series_shared_by_fingerprint("t", &[], 0, 1)
                 .await
                 .unwrap_err();
-            assert!(matches!(error, PromqlError::Store(message) if message == expected_error));
-            assert!(*calls.lock().unwrap() == expected_calls);
+            assert!(matches!(error, PromqlError::Store(message) if message == case.expected_error));
+            assert!(*calls.lock().unwrap() == case.expected_calls);
         }
     }
 
     #[tokio::test]
     async fn latest_scan_keeps_sample_limit_before_label_errors() {
         let store = Empty {
-            samples: Some(vec![(7, 0, 1.0, None), (7, 1, 2.0, None)]),
+            samples: Some(vec![
+                krabka_metrics::FloatSampleRow {
+                    fingerprint: 7,
+                    timestamp_ms: 0,
+                    value: 1.0,
+                    start_timestamp_ms: None,
+                },
+                krabka_metrics::FloatSampleRow {
+                    fingerprint: 7,
+                    timestamp_ms: 1,
+                    value: 2.0,
+                    start_timestamp_ms: None,
+                },
+            ]),
             failure: Some("labels"),
             ..Empty::default()
         };
@@ -160,7 +217,22 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            scan.samples == vec![(7, 0, 1.0, None), (7, 1, 2.0, None)] && scan.labels.is_empty()
+            scan.samples
+                == vec![
+                    krabka_metrics::FloatSampleRow {
+                        fingerprint: 7,
+                        timestamp_ms: 0,
+                        value: 1.0,
+                        start_timestamp_ms: None,
+                    },
+                    krabka_metrics::FloatSampleRow {
+                        fingerprint: 7,
+                        timestamp_ms: 1,
+                        value: 2.0,
+                        start_timestamp_ms: None,
+                    },
+                ]
+                && scan.labels.is_empty()
         );
         assert!(store.calls.lock().unwrap().is_empty());
         assert!(
@@ -204,5 +276,6 @@ pub use metric_store::MetricStore;
 pub use named_tsdb_stat::NamedTsdbStat;
 pub use scan_result::ScanResult;
 pub use tsdb_block::TsdbBlock;
+pub(crate) use tsdb_block::sort_tsdb_blocks;
 pub use tsdb_head_stats::TsdbHeadStats;
 pub use tsdb_stats::TsdbStats;

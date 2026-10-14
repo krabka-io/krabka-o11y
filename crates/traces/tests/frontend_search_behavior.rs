@@ -93,6 +93,16 @@ fn build_router(querier_urls: &str, cfg: FrontendConfig, catalog: TraceIndexCata
     authenticated(router_with_backend(qf, RoleReadiness::new()))
 }
 
+fn trace_index_catalog(
+    entries: impl IntoIterator<Item = TenantBlockCatalogEntry>,
+) -> TraceIndexCatalog {
+    let mut blocks_by_tenant = BTreeMap::new();
+    for TenantBlockCatalogEntry { tenant, blocks } in entries {
+        blocks_by_tenant.insert(tenant, blocks);
+    }
+    TraceIndexCatalog::new(blocks_by_tenant)
+}
+
 /// Strip the scheme from a comma-separated querier URL list into bare host:port,
 /// exactly as the binary's `parse_querier_addrs` does.
 fn parse_addrs(value: &str) -> Vec<String> {
@@ -125,7 +135,10 @@ fn single_block_catalog() -> TraceIndexCatalog {
             compressed: ByteSize::from_bytes(100),
         }],
     };
-    TraceIndexCatalog::new(BTreeMap::from([("tenant-a".to_string(), vec![block])]))
+    trace_index_catalog([TenantBlockCatalogEntry {
+        tenant: "tenant-a".to_string(),
+        blocks: vec![block],
+    }])
 }
 
 /// Config that always probes the live tier, through `hot_frontier_ns = 0`, and
@@ -173,7 +186,51 @@ async fn spawn(app: Router) -> String {
     format!("http://{addr}")
 }
 
-async fn get_text(app: Router, uri: &str) -> (StatusCode, String) {
+struct HttpTextResult {
+    status: StatusCode,
+    body: String,
+}
+
+struct TenantBlockCatalogEntry {
+    tenant: String,
+    blocks: Vec<BlockMetaInfo>,
+}
+
+struct ConcurrentResponseStatuses {
+    first: StatusCode,
+    second: StatusCode,
+}
+
+struct StubTraceSummary {
+    span_id: &'static str,
+    inspected_traces: u64,
+}
+
+struct TraceRow {
+    prefix: &'static str,
+    start: &'static str,
+}
+
+struct MetricShardPayload {
+    samples: Value,
+    exemplar: Value,
+}
+
+struct TagShardSummary {
+    tag: &'static str,
+    inspected_bytes: u64,
+}
+
+impl axum::response::IntoResponse for HttpTextResult {
+    fn into_response(self) -> axum::response::Response {
+        axum::response::Response::builder()
+            .status(self.status)
+            .body(axum::body::Body::from(self.body))
+            .unwrap()
+    }
+}
+
+async fn get_text(app: Router, uri: &str) -> HttpTextResult {
     let response = app
         .oneshot(
             axum::http::Request::builder()
@@ -185,7 +242,10 @@ async fn get_text(app: Router, uri: &str) -> (StatusCode, String) {
         .unwrap();
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
-    (status, String::from_utf8(body.to_vec()).unwrap())
+    HttpTextResult {
+        status,
+        body: String::from_utf8(body.to_vec()).unwrap(),
+    }
 }
 
 // --- by-id: tenant + window reach the querier ------------------------------
@@ -468,7 +528,10 @@ async fn forwards_backend_row_group_job_to_querier() {
             },
         ],
     };
-    let catalog = TraceIndexCatalog::new(BTreeMap::from([("tenant-a".to_string(), vec![block])]));
+    let catalog = trace_index_catalog([TenantBlockCatalogEntry {
+        tenant: "tenant-a".to_string(),
+        blocks: vec![block],
+    }]);
     let router = build_router(&upstream, cfg, catalog);
 
     let json = successful_json_as_tenant_a(
@@ -495,10 +558,10 @@ async fn uses_tenant_specific_backend_row_group_jobs() {
         target_per_job: ByteSize::from_bytes(100),
         ..FrontendConfig::default()
     };
-    let catalog = TraceIndexCatalog::new(BTreeMap::from([
-        (
-            "tenant-a".to_string(),
-            vec![BlockMetaInfo {
+    let catalog = trace_index_catalog([
+        TenantBlockCatalogEntry {
+            tenant: "tenant-a".to_string(),
+            blocks: vec![BlockMetaInfo {
                 block_id: "blocks/tenant-a.parquet".to_string(),
                 start_ns: 0,
                 end_ns: 10_000_000_000,
@@ -508,10 +571,10 @@ async fn uses_tenant_specific_backend_row_group_jobs() {
                     compressed: ByteSize::from_bytes(100),
                 }],
             }],
-        ),
-        (
-            "tenant-b".to_string(),
-            vec![BlockMetaInfo {
+        },
+        TenantBlockCatalogEntry {
+            tenant: "tenant-b".to_string(),
+            blocks: vec![BlockMetaInfo {
                 block_id: "blocks/tenant-b.parquet".to_string(),
                 start_ns: 0,
                 end_ns: 10_000_000_000,
@@ -521,8 +584,8 @@ async fn uses_tenant_specific_backend_row_group_jobs() {
                     compressed: ByteSize::from_bytes(100),
                 }],
             }],
-        ),
-    ]));
+        },
+    ]);
     let router = build_router(&upstream, cfg, catalog);
 
     let response = router
@@ -737,7 +800,7 @@ async fn search_requires_valid_start_and_end() {
         .with_state(());
     let upstream = spawn(app).await;
 
-    let (status, body) = get_text(
+    let HttpTextResult { status, body } = get_text(
         build_router(&upstream, FrontendConfig::default(), single_block_catalog()),
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D",
     )
@@ -745,7 +808,7 @@ async fn search_requires_valid_start_and_end() {
     assert2::assert!(status == StatusCode::BAD_REQUEST);
     assert2::assert!(body == "missing query parameter start");
 
-    let (status, body) = get_text(
+    let HttpTextResult { status, body } = get_text(
         build_router(&upstream, FrontendConfig::default(), single_block_catalog()),
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=0",
     )
@@ -753,7 +816,7 @@ async fn search_requires_valid_start_and_end() {
     assert2::assert!(status == StatusCode::BAD_REQUEST);
     assert2::assert!(body == "missing query parameter end");
 
-    let (status, body) = get_text(
+    let HttpTextResult { status, body } = get_text(
         build_router(&upstream, FrontendConfig::default(), single_block_catalog()),
         "/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=bogus&end=1",
     )
@@ -807,23 +870,32 @@ async fn drains_concurrent_search_requests() {
             .status()
     });
 
-    let (first, second) = timeout(Duration::from_secs(2), async {
-        (first.await.unwrap(), second.await.unwrap())
+    let statuses = timeout(Duration::from_secs(2), async {
+        ConcurrentResponseStatuses {
+            first: first.await.unwrap(),
+            second: second.await.unwrap(),
+        }
     })
     .await
     .expect("concurrent frontend requests should drain");
 
-    assert2::assert!(first == StatusCode::OK);
-    assert2::assert!(second == StatusCode::OK);
+    assert2::assert!(statuses.first == StatusCode::OK);
+    assert2::assert!(statuses.second == StatusCode::OK);
 }
 
 // --- stub querier responses -------------------------------------------------
 
 async fn sharded_search_response(State(()): State<()>, uri: Uri) -> axum::Json<Value> {
-    let (span_id, inspected_traces) = if is_backend_shard(uri.query().unwrap_or_default()) {
-        ("1111111111111111", 5)
+    let summary = if is_backend_shard(uri.query().unwrap_or_default()) {
+        StubTraceSummary {
+            span_id: "1111111111111111",
+            inspected_traces: 5,
+        }
     } else {
-        ("2222222222222222", 7)
+        StubTraceSummary {
+            span_id: "2222222222222222",
+            inspected_traces: 7,
+        }
     };
     axum::Json(json!({
         "traces": [{
@@ -833,11 +905,11 @@ async fn sharded_search_response(State(()): State<()>, uri: Uri) -> axum::Json<V
             "startTimeUnixNano": "1000000000",
             "durationMs": 2,
             "spanSets": [{
-                "spans": [span(span_id)],
+                "spans": [span(summary.span_id)],
                 "matched": 1
             }]
         }],
-        "metrics": { "totalBlocks": 1, "inspectedTraces": inspected_traces, "inspectedBytes": 0 }
+        "metrics": { "totalBlocks": 1, "inspectedTraces": summary.inspected_traces, "inspectedBytes": 0 }
     }))
 }
 
@@ -887,12 +959,38 @@ async fn overlapping_search_response() -> axum::Json<Value> {
 
 async fn many_trace_search_response(State(()): State<()>, uri: Uri) -> axum::Json<Value> {
     let traces: Vec<Value> = if is_backend_shard(uri.query().unwrap_or_default()) {
-        [("aa", "100"), ("bb", "300"), ("cc", "500")]
+        [
+            TraceRow {
+                prefix: "aa",
+                start: "100",
+            },
+            TraceRow {
+                prefix: "bb",
+                start: "300",
+            },
+            TraceRow {
+                prefix: "cc",
+                start: "500",
+            },
+        ]
     } else {
-        [("dd", "200"), ("ee", "400"), ("ff", "600")]
+        [
+            TraceRow {
+                prefix: "dd",
+                start: "200",
+            },
+            TraceRow {
+                prefix: "ee",
+                start: "400",
+            },
+            TraceRow {
+                prefix: "ff",
+                start: "600",
+            },
+        ]
     }
     .into_iter()
-    .map(|(prefix, start)| {
+    .map(|TraceRow { prefix, start }| {
         json!({
             "traceID": prefix.repeat(16),
             "rootServiceName": "svc",
@@ -985,37 +1083,37 @@ async fn query_echo_search_response(State(()): State<()>, uri: Uri) -> axum::Jso
 }
 
 async fn sharded_metrics_response(State(()): State<()>, uri: Uri) -> axum::Json<Value> {
-    let (samples, exemplar) = if is_backend_shard(uri.query().unwrap_or_default()) {
-        (
-            json!([
+    let payload = if is_backend_shard(uri.query().unwrap_or_default()) {
+        MetricShardPayload {
+            samples: json!([
                 {"timestampMs": "1000000000", "value": 1.0},
                 {"timestampMs": "1999999999", "value": 2.0}
             ]),
-            json!({
+            exemplar: json!({
                 "labels": [{"key": "trace_id", "value": {"stringValue": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}],
                 "timestampMs": "1000000000",
                 "value": 1.0
             }),
-        )
+        }
     } else {
-        (
-            json!([
+        MetricShardPayload {
+            samples: json!([
                 {"timestampMs": "2000000000", "value": 3.0},
                 {"timestampMs": "3000000000", "value": 4.0}
             ]),
-            json!({
+            exemplar: json!({
                 "labels": [{"key": "trace_id", "value": {"stringValue": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
                 "timestampMs": "2000000000",
                 "value": 3.0
             }),
-        )
+        }
     };
     axum::Json(json!({
         "series": [{
             "labels": [{"key": "svc", "value": {"stringValue": "api"}}],
             "promLabels": "{svc=\"api\"}",
-            "samples": samples,
-            "exemplars": [exemplar],
+            "samples": payload.samples,
+            "exemplars": [payload.exemplar],
         }]
     }))
 }
@@ -1053,17 +1151,23 @@ async fn record_instant_metrics(State(seen): State<SeenQueries>, uri: Uri) -> ax
 }
 
 async fn sharded_tags_response(State(()): State<()>, uri: Uri) -> axum::Json<Value> {
-    let (tag, inspected_bytes) = if is_backend_shard(uri.query().unwrap_or_default()) {
-        ("backend.tag", 10)
+    let summary = if is_backend_shard(uri.query().unwrap_or_default()) {
+        TagShardSummary {
+            tag: "backend.tag",
+            inspected_bytes: 10,
+        }
     } else {
-        ("live.tag", 20)
+        TagShardSummary {
+            tag: "live.tag",
+            inspected_bytes: 20,
+        }
     };
     axum::Json(json!({
         "scopes": [{
             "name": "span",
-            "tags": [tag]
+            "tags": [summary.tag]
         }],
-        "metrics": { "totalBlocks": 1, "inspectedTraces": 0, "inspectedBytes": inspected_bytes }
+        "metrics": { "totalBlocks": 1, "inspectedTraces": 0, "inspectedBytes": summary.inspected_bytes }
     }))
 }
 
@@ -1110,11 +1214,11 @@ async fn concurrent_tag_values_response(
 
 // --- error propagation: an upstream querier error must not be swallowed -------
 
-async fn reject_search() -> (StatusCode, String) {
-    (
-        StatusCode::BAD_REQUEST,
-        "parse error: unexpected token".to_string(),
-    )
+async fn reject_search() -> HttpTextResult {
+    HttpTextResult {
+        status: StatusCode::BAD_REQUEST,
+        body: "parse error: unexpected token".to_string(),
+    }
 }
 
 /// A search shard that fails, for example on an invalid `TraceQL` query, must

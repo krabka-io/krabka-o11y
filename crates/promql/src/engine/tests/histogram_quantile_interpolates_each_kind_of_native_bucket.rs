@@ -1,5 +1,10 @@
 use super::*;
 
+struct QuantileExpectation {
+    quantile: f64,
+    value: f64,
+}
+
 /// `histogram_quantile` interpolates inside the bucket the rank lands in, and
 /// which way depends on where that bucket sits. One spanning zero interpolates
 /// linearly; one entirely positive interpolates geometrically; one entirely
@@ -19,20 +24,35 @@ pub(crate) async fn histogram_quantile_interpolates_each_kind_of_native_bucket()
     // multiplying by it.
     let engine = signed_bucket_histogram_engine(0.0);
 
-    for (quantile, want) in [
+    for case in [
         // Lands in -2..-1: geometric on magnitudes, negated.
-        (0.1, -1.909_683_207_820_833),
+        QuantileExpectation {
+            quantile: 0.1,
+            value: -1.909_683_207_820_833,
+        },
         // Lands inside the zero bucket, not on an edge -- at the edge the
         // interpolation returns the upper bound whatever the lower one is.
-        (0.35, -0.400_000_000_000_000_36),
+        QuantileExpectation {
+            quantile: 0.35,
+            value: -0.400_000_000_000_000_36,
+        },
         // At the median the walk turns around and comes down from the top
         // bucket instead, which lands it on the lower bound of `1..2`.
-        (0.5, 1.0),
+        QuantileExpectation {
+            quantile: 0.5,
+            value: 1.0,
+        },
         // Lands in 1..2 and then in 2..4: geometric.
-        (0.75, 1.681_792_830_507_429),
-        (0.9, 2.639_015_821_545_789_3),
+        QuantileExpectation {
+            quantile: 0.75,
+            value: 1.681_792_830_507_429,
+        },
+        QuantileExpectation {
+            quantile: 0.9,
+            value: 2.639_015_821_545_789_3,
+        },
     ] {
-        let query = format!("histogram_quantile({quantile}, h)");
-        assert_lone_value(&engine, &query, want).await;
+        let query = format!("histogram_quantile({}, h)", case.quantile);
+        assert_lone_value(&engine, &query, case.value).await;
     }
 }
