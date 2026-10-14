@@ -14,8 +14,6 @@ dependencies = [
 [[package]]
 name = "addr2line"
 version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e567177890eb1617b1f774005b66b26b2377afd138a2ca37aae7d8f0c81429d4"
 dependencies = [
  "cpp_demangle",
  "fallible-iterator",
@@ -5421,8 +5419,6 @@ dependencies = [
 [[package]]
 name = "lzzzz"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb42ba2edf1f0491b2e2c85fd49cf2a7adad3cab92ea0e29bff82d6fdafcefda"
 dependencies = [
  "cc",
 ]
@@ -5566,8 +5562,6 @@ dependencies = [
 [[package]]
 name = "mio"
 version = "1.0.3+wasix.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6382283eb5bc017eab57d653e4872eb35e3c1c730085a14fbed0bce51b9b9e5"
 dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
@@ -6201,8 +6195,6 @@ dependencies = [
 [[package]]
 name = "parking_lot_core"
 version = "0.9.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",

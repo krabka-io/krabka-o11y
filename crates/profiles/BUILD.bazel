@@ -11,6 +11,15 @@ exports_files([
 
 crate_library(
     name = "profiles",
+    # Unit tests include shared assertion and compaction fixtures from sibling
+    # crates, so make those sources available in the library test sandbox.
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    ) + [
+        "//crates/blockstore:tests/support/compaction_levels.rs",
+        "//crates/metrics:tests/support/shared_registry_assertion.rs",
+    ],
     # `build.rs` reaches the shared `protoc` lookup with `#[path]`.
     build_script_compile_data = ["//tools/build_support:protoc_path.rs"],
     # `build.rs` generates prost types from these.
