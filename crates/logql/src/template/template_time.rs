@@ -26,6 +26,18 @@ pub(crate) struct TemplateTimeReflectionFields {
     pub location: Option<usize>,
 }
 
+#[cfg(test)]
+pub(crate) struct ParsedTemplateTimeFields {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+    pub nanosecond: u32,
+    pub offset: i32,
+}
+
 #[derive(Clone, Debug)]
 enum Location {
     Utc,
@@ -255,6 +267,20 @@ impl TemplateTime {
             wall: u64::from(self.nanos),
             ext: self.seconds.wrapping_add(62_135_596_800),
             location,
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn parsed_fields(&self) -> ParsedTemplateTimeFields {
+        let parts = self.parts();
+        ParsedTemplateTimeFields {
+            year: i32::try_from(parts.year).expect("parsed test year fits i32"),
+            month: parts.month,
+            day: parts.day,
+            hour: parts.hour,
+            minute: parts.minute,
+            second: parts.second,
+            nanosecond: self.nanos,
+            offset: self.zone().offset,
         }
     }
     fn parts(&self) -> calendar::Parts {
