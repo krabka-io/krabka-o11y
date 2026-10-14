@@ -262,7 +262,8 @@ use parse_logfmt_fields::parse_logfmt_fields;
 use parse_pattern_parts::parse_pattern_parts;
 use parse_selected_logfmt_fields::parse_selected_logfmt_fields;
 pub use parser_stage::ParserStage;
-use pattern_parser::PatternCapture;
+#[cfg(test)]
+pub(crate) use pattern_parser::PatternCapture;
 pub use pattern_parser::PatternParser;
 use pattern_part::PatternPart;
 pub use pipeline_evaluation::PipelineEvaluation;
