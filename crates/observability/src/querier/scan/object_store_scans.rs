@@ -1,7 +1,7 @@
 pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest};
 use crate::{
     Arc, LabelIndex, MetricQuery, NonZeroUsize, ObjectPath, ObjectStore, QueryError, QueryHotTail,
-    StreamPlan, TimeRange, Value,
+    StreamPlan, Value,
 };
 
 mod cold_block_scan;

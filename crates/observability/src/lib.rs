@@ -84,7 +84,6 @@ use datafusion::{
         record_batch::RecordBatch,
     },
     error::DataFusionError,
-    prelude::SessionContext,
 };
 use flate2::read::{DeflateDecoder, GzDecoder};
 pub use ids::{Offset, PartitionIndex};
@@ -366,9 +365,9 @@ pub(crate) use self::{
                 DecodedQueryPair, LOKI_DEFAULT_QUERY_RANGE, LOKI_DEFAULT_TAIL_LIMIT,
                 LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS, LOKI_MAX_TAIL_DELAY,
                 LOKI_METADATA_DEFAULT_INDEX_RANGE, LokiDirection, QueryKind, authorized_tenant,
-                authorized_tenants, current_unix_time_ns, decode_form_component, decode_query_pair,
-                loki_direction, optional_start_end_range, parse_decimal_seconds_timestamp,
-                parse_usize_query_param, start_or_since, time_range,
+                authorized_tenants, current_unix_time_ns, decode_query_pair, loki_direction,
+                optional_start_end_range, parse_decimal_seconds_timestamp, parse_usize_query_param,
+                start_or_since, time_range,
             },
         },
         params_format::{
@@ -398,7 +397,6 @@ pub(crate) use self::{
                 execute_format_query, form_body_query, format_metric_vector_arithmetic_expression,
                 format_metric_vector_binary_expression, parse_posted_series_params,
                 post_query_params, post_query_params_body_first,
-                split_leading_vector_binary_modifiers,
             },
             stream_formatting::{
                 format_stream_query, parse_formatted_vector_function,
@@ -457,7 +455,7 @@ pub(crate) use self::{
         },
         analytics::{
             detected_fields::{
-                AnalyticsQuery, PlannedRead, RangeEnd, VolumeRangeLimit, collect_detected_fields,
+                AnalyticsQuery, RangeEnd, VolumeRangeLimit, collect_detected_fields,
                 execute_index_volume_query, plan_analytics_query, reads_planned_row,
                 sample_time_bucket,
             },
