@@ -347,13 +347,14 @@ async fn an_applied_repair_deletes_only_the_tenants_orphans_and_is_idempotent() 
         let deleted: BTreeSet<_> = orphans.iter().map(|action| action.path.clone()).collect();
         let options = options("t", signal, true);
 
-        let first = repair(&store, &options).await.report;
+        let first = repair(&store, &options).await;
+        let first_report = first.report;
+        let log = first.entries;
         let run = repair(&store, &options).await;
         let second = run.report;
-        let log = run.entries;
 
         check!(
-            first == report(true, signal, orphans.len(), orphans.clone()),
+            first_report == report(true, signal, orphans.len(), orphans.clone()),
             "{signal}"
         );
         check!(second == report(true, signal, 0, Vec::new()), "{signal}");

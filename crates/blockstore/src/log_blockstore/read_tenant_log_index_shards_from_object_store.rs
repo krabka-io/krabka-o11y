@@ -48,13 +48,13 @@ pub async fn read_tenant_log_index_shards_from_object_store(
                 Err(error) => return Err(error),
             };
 
-        for series_tenant in indexes.labels.series.keys() {
-            let series = &indexes.labels.series[series_tenant];
-            for fingerprint in series.keys() {
-                merged_labels.insert_series(series_tenant.clone(), series[fingerprint].clone());
+        let LogIndexes { labels, blocks } = indexes;
+        for (series_tenant, series) in labels.series {
+            for labels in series.into_values() {
+                merged_labels.insert_series(series_tenant.clone(), labels);
             }
         }
-        for block in indexes.blocks.blocks {
+        for block in blocks.blocks {
             merged_blocks.entry(block.key.object_key()).or_insert(block);
         }
     }

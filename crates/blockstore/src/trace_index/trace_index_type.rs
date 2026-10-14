@@ -188,12 +188,12 @@ impl TraceIndex {
         });
 
         replacement.tag_names.extend(carried_tag_names);
-        for tag in carried_tag_values.keys() {
+        for (tag, values) in carried_tag_values {
             replacement
                 .tag_values
-                .entry(tag.clone())
+                .entry(tag)
                 .or_default()
-                .extend(carried_tag_values[tag].iter().cloned());
+                .extend(values);
         }
         tenant_index.blocks.push(replacement);
         level

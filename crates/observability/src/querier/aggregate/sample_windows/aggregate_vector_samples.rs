@@ -49,12 +49,13 @@ pub(crate) fn aggregate_vector_samples(
             vector_group_labels(&sample_set.0, vector_aggregation.grouping.as_ref());
         for sample in sample_set.1 {
             let time = sample.0;
+            let mut value = sample.1;
             states
                 .entry(grouped_labels.clone())
                 .or_default()
                 .entry(time)
                 .or_default()
-                .record(range_sample_value(&sample.1, query));
+                .record(range_sample_value(&mut value, query));
         }
     }
 

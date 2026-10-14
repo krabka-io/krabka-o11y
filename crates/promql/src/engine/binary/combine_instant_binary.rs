@@ -71,7 +71,7 @@ pub(crate) fn combine_instant_binary(
                 let samples = vector
                     .into_iter()
                     .filter_map(|sample| {
-                        op.apply_vector_scalar(sample, left, modifier, ScalarSide::Right)
+                        op.apply_vector_scalar(sample, left, modifier, ScalarSide::Left)
                     })
                     .collect();
                 Ok(QueryResult::InstantVector(samples))
@@ -82,7 +82,7 @@ pub(crate) fn combine_instant_binary(
                 let samples = vector
                     .into_iter()
                     .filter_map(|sample| {
-                        op.apply_vector_scalar(sample, scalar, modifier, ScalarSide::Left)
+                        op.apply_vector_scalar(sample, scalar, modifier, ScalarSide::Right)
                     })
                     .collect();
                 Ok(QueryResult::InstantVector(samples))

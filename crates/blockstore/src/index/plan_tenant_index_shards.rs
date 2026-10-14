@@ -43,13 +43,14 @@ pub(crate) fn plan_tenant_index_shards(
         }
     }
 
-    let mut planned = Vec::with_capacity(shards.len());
-    for slot in shards.keys() {
-        let range = shard_range(*slot, width);
-        planned.push(PlannedIndexShard {
-            range: IndexShardRange::new(range.start, range.end),
-            ordinals: shards[slot].clone(),
-        });
-    }
-    planned
+    shards
+        .into_iter()
+        .map(|(slot, ordinals)| {
+            let range = shard_range(slot, width);
+            PlannedIndexShard {
+                range: IndexShardRange::new(range.start, range.end),
+                ordinals,
+            }
+        })
+        .collect()
 }

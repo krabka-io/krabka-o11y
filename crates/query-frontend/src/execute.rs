@@ -150,12 +150,8 @@ impl<C> QueryFrontend<C> {
         .try_collect::<Vec<_>>()
         .await?;
         let mut missing = Vec::new();
-        let mut planned = planned.into_iter();
-        for index in 0..cached.len() {
-            let query = planned
-                .next()
-                .expect("planned query count matches cache keys");
-            if cached[index].is_none() {
+        for (index, (cached, query)) in cached.iter().zip(planned).enumerate() {
+            if cached.is_none() {
                 missing.push(Indexed {
                     index,
                     value: query,
@@ -163,9 +159,7 @@ impl<C> QueryFrontend<C> {
             }
         }
         let mut results = Vec::new();
-        let mut cached = cached.into_iter();
-        for index in 0..cached.len() {
-            let result = cached.next().expect("cached result count remains stable");
+        for (index, result) in cached.into_iter().enumerate() {
             if let Some(value) = result {
                 results.push(Indexed { index, value });
             }

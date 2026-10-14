@@ -91,23 +91,22 @@ impl MetricSampleState {
         self.stdvar().sqrt()
     }
 
-    pub(crate) fn quantile(&self, quantile: Quantile) -> MetricValue {
+    pub(crate) fn quantile(&mut self, quantile: Quantile) -> MetricValue {
         if self.values.is_empty() {
             return MetricValue::zero();
         }
-        let mut values = self.values.clone();
-        values.sort_by(|left, right| left.cmp_value(*right));
-        if values.len() == 1 {
-            return values[0];
+        self.values.sort_by(|left, right| left.cmp_value(*right));
+        if self.values.len() == 1 {
+            return self.values[0];
         }
 
         let scaled_rank =
-            u128::from(quantile.numerator.0) * u128::try_from(values.len() - 1).unwrap();
+            u128::from(quantile.numerator.0) * u128::try_from(self.values.len() - 1).unwrap();
         let denominator = u128::from(quantile.denominator.0);
         let lower_index = usize::try_from(scaled_rank / denominator).unwrap();
         let rank_remainder = scaled_rank % denominator;
         if rank_remainder == 0 {
-            return values[lower_index];
+            return self.values[lower_index];
         }
 
         let upper_index = lower_index + 1;
@@ -115,9 +114,9 @@ impl MetricSampleState {
             i128::try_from(rank_remainder).expect("quantile rank remainder fits in i128"),
             denominator,
         );
-        values[lower_index].add(
-            values[upper_index]
-                .saturating_sub(values[lower_index])
+        self.values[lower_index].add(
+            self.values[upper_index]
+                .saturating_sub(self.values[lower_index])
                 .multiply(fraction),
         )
     }

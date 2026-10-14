@@ -15,7 +15,8 @@ pub(crate) fn count_values_vector_samples(
         let grouped_labels = vector_group_labels(&sample_set.0, grouping);
         for sample in sample_set.1 {
             let time = sample.0;
-            let value = range_sample_value(&sample.1, query);
+            let mut sample_value = sample.1;
+            let value = range_sample_value(&mut sample_value, query);
             let mut output_labels = grouped_labels.clone();
             output_labels.insert(value_label.to_string(), format_metric_value(value));
             *counted

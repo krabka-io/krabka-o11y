@@ -343,7 +343,8 @@ impl BlockList {
             let ordinal_list = &selected[fingerprint];
             let mut local_ordinals = Vec::with_capacity(ordinal_list.len());
             for ordinal in ordinal_list {
-                if let Some(mapped) = local.iter().find(|entry| entry.original == *ordinal) {
+                if let Ok(index) = local.binary_search_by_key(ordinal, |entry| entry.original) {
+                    let mapped = &local[index];
                     local_ordinals.push(mapped.local);
                 }
             }

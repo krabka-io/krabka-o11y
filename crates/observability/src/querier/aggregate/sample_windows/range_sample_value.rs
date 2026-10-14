@@ -1,6 +1,9 @@
 use super::{MetricQuery, MetricSampleState, MetricValue, RangeAggregation, rate_metric_value};
 
-pub(crate) fn range_sample_value(value: &MetricSampleState, query: &MetricQuery) -> MetricValue {
+pub(crate) fn range_sample_value(
+    value: &mut MetricSampleState,
+    query: &MetricQuery,
+) -> MetricValue {
     match query.aggregation {
         RangeAggregation::CountOverTime
         | RangeAggregation::BytesOverTime

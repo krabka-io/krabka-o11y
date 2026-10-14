@@ -1519,7 +1519,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ name = \"ancestor1\" } >> { .kind = \"descendant\" }",
@@ -1543,7 +1543,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ name = \"ancestor2\" } > { .kind = \"descendant\" }",
@@ -1567,7 +1567,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ name = \"ancestor2\" } >> { .kind = \"descendant\" }",
@@ -1592,7 +1592,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ name = \"ancestor1\" } !>> { .kind = \"descendant\" }",
@@ -1617,7 +1617,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ name = \"ancestor1\" } &>> { .kind = \"descendant\" }",
@@ -1642,7 +1642,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ name = \"descendant2a\" } ~ { .kind = \"descendant\" }",
@@ -1665,7 +1665,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ resource.service.name = \"forest\" && .kind = \"missing\" }",
@@ -4385,7 +4385,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-metric-avg-duration",
@@ -4413,7 +4413,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-metric-min-duration",
@@ -4441,7 +4441,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-metric-max-duration",
@@ -4469,7 +4469,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-metric-sum-duration",
@@ -4497,7 +4497,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-metric-quantile-duration",
@@ -4525,7 +4525,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-metric-histogram-duration",
@@ -4553,7 +4553,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4610,7 +4610,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4659,7 +4659,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4716,7 +4716,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4765,7 +4765,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4814,7 +4814,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4863,7 +4863,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4920,7 +4920,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -4969,7 +4969,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5018,7 +5018,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5067,7 +5067,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5122,7 +5122,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5179,7 +5179,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5230,7 +5230,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5289,7 +5289,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5338,7 +5338,7 @@
       "report": "logql-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5393,7 +5393,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5416,7 +5416,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5439,7 +5439,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5462,7 +5462,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5485,7 +5485,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5508,7 +5508,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5531,7 +5531,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5554,7 +5554,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5577,7 +5577,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5600,7 +5600,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5623,7 +5623,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5646,7 +5646,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5669,7 +5669,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5692,7 +5692,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5715,7 +5715,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5738,7 +5738,7 @@
       "report": "logql-rejections-generated-differential.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/metrics-service/tests/support/generated_differential.rs",
@@ -5761,7 +5761,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "query": "{ .foo = .bar }",
@@ -5784,7 +5784,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/root prefix",
@@ -5866,7 +5866,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot prefix",
@@ -5933,7 +5933,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/leaf is not root",
@@ -5973,7 +5973,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/reordered prefix",
@@ -6016,7 +6016,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot trace",
@@ -6076,7 +6076,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/both traces",
@@ -6155,7 +6155,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot modern span",
@@ -6215,7 +6215,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/missing modern span",
@@ -6251,7 +6251,7 @@
       "report": "pyroscope-v1-aggregation.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectSeries/SUM",
@@ -6291,7 +6291,7 @@
       "report": "pyroscope-v1-aggregation.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectSeries/AVERAGE",
@@ -6331,7 +6331,7 @@
       "report": "pyroscope-v2-async-disabled.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/FORCE falls through",
@@ -6377,7 +6377,7 @@
       "report": "pyroscope-v2-async-disabled.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectMergeStacktraces/DISABLED falls through",
@@ -6423,7 +6423,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectSeries/grouping",
@@ -6468,7 +6468,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectSeries/limit",
@@ -6513,7 +6513,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectHeatmap/two groups",
@@ -6559,7 +6559,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectHeatmap/top group limit",
@@ -6605,7 +6605,7 @@
       "report": "tempo-typed-group-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-group-heterogeneous-scalars",
@@ -6654,7 +6654,7 @@
       "report": "tempo-typed-group-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-group-heterogeneous-and-missing",
@@ -6703,7 +6703,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-multiply-duration",
@@ -6736,7 +6736,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-divide-duration",
@@ -6768,7 +6768,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-add-duration",
@@ -6801,7 +6801,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-negate-duration",
@@ -6833,7 +6833,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "4908e0ea8ffb2d081848df7b378f372957ed6c9ae0f512d670767032a0939f6e"
+        "sha256": "638d4ef020272ef162d32cd543e4fd512809d63fb058167c46e9f1586a1531e2"
       },
       "identity": {
         "id": "SelectSeries/empty span exemplars",
@@ -6879,7 +6879,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-event-arithmetic-types",
@@ -6921,7 +6921,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-event-field-comparison",
@@ -6967,7 +6967,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-instrumentation-event-composition",
@@ -7011,7 +7011,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-instrumentation-intrinsic",
@@ -7057,7 +7057,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-event-time-intrinsic",
@@ -7103,7 +7103,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-link-arithmetic",
@@ -7145,7 +7145,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-id-intrinsic-composition",
@@ -7189,7 +7189,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-trace-child-intrinsic",
@@ -7231,7 +7231,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-trace-root-intrinsic",
@@ -7273,7 +7273,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-integer-power-outside-range",
@@ -7317,7 +7317,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-array-scalar-ordering",
@@ -7361,7 +7361,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-supported-scalar-array-ordering",
@@ -7403,7 +7403,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-aggregate-arithmetic",
@@ -7427,7 +7427,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-aggregate-average",
@@ -7451,7 +7451,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-boolean-group-filter",
@@ -7475,7 +7475,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-boolean-group-coalesce",
@@ -7499,7 +7499,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-array-group-attributes",
@@ -7523,7 +7523,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-bare-name-label",
@@ -7551,7 +7551,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-scoped-name-label",
@@ -7579,7 +7579,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-output-array-metric-label",
@@ -7615,11 +7615,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7652,11 +7652,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7689,11 +7689,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7726,11 +7726,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7763,11 +7763,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7800,11 +7800,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7837,11 +7837,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7874,11 +7874,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7911,11 +7911,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7948,11 +7948,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -7985,11 +7985,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8022,11 +8022,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8059,11 +8059,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8096,11 +8096,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8133,11 +8133,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8170,11 +8170,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8207,11 +8207,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8244,11 +8244,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8281,11 +8281,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8318,11 +8318,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8355,11 +8355,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8392,11 +8392,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8429,11 +8429,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8466,11 +8466,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8503,11 +8503,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8540,11 +8540,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8577,11 +8577,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8614,11 +8614,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8651,11 +8651,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8688,11 +8688,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8725,11 +8725,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8762,11 +8762,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8799,11 +8799,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8836,11 +8836,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8873,11 +8873,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8910,11 +8910,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8947,11 +8947,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -8984,11 +8984,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9021,11 +9021,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9058,11 +9058,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9095,11 +9095,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9132,11 +9132,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9169,11 +9169,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9206,11 +9206,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9243,11 +9243,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9280,11 +9280,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9317,11 +9317,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9354,11 +9354,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9391,11 +9391,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9428,11 +9428,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9465,11 +9465,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9502,11 +9502,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9539,11 +9539,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9576,11 +9576,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9613,11 +9613,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9650,11 +9650,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9687,11 +9687,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9724,11 +9724,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9761,11 +9761,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9798,11 +9798,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9835,11 +9835,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9872,11 +9872,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9909,11 +9909,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9946,11 +9946,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -9983,11 +9983,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10020,11 +10020,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10057,11 +10057,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10094,11 +10094,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10131,11 +10131,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10168,11 +10168,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10205,11 +10205,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10242,11 +10242,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10279,11 +10279,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10316,11 +10316,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10353,11 +10353,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10390,11 +10390,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10427,11 +10427,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10464,11 +10464,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10501,11 +10501,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10538,11 +10538,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10575,11 +10575,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10612,11 +10612,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10649,11 +10649,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10686,11 +10686,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10723,11 +10723,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10760,11 +10760,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10797,11 +10797,11 @@
       "report": "loki-supported-template-functions.json",
       "source": {
         "path": "crates/observability/tests/loki_differential.rs",
-        "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f",
+        "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843",
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "959fa3196f375217c74ddc0eb3c5970264bdc545a9a27229e7e13dd69aaa10ed"
+            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
           }
         ]
       },
@@ -10834,7 +10834,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-ordered-ranks",
@@ -10867,7 +10867,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-chained-filters",
@@ -10900,7 +10900,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-scalar-before-metrics",
@@ -10933,7 +10933,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-scalar-before-metrics-negative",
@@ -10966,7 +10966,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-group-filter-before-metrics",
@@ -10999,7 +10999,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-group-filter-before-metrics-negative",
@@ -11032,7 +11032,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-typed-unknown-hints",
@@ -11065,7 +11065,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-typed-float-hint",
@@ -11098,7 +11098,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-scalar-rank-filter-composition",
@@ -11131,7 +11131,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-aggregate-result-arithmetic-rejected",
@@ -11180,7 +11180,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-aggregate-result-comparison-rejected",
@@ -11229,7 +11229,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-dynamic-hint-rejected",
@@ -11278,7 +11278,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-fractional-span-sampling",
@@ -11324,7 +11324,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-fractional-trace-sampling",
@@ -11370,15 +11370,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11416,15 +11416,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11462,15 +11462,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11508,15 +11508,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11554,15 +11554,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11600,15 +11600,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11646,15 +11646,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11692,15 +11692,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11744,15 +11744,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11790,15 +11790,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11842,15 +11842,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11888,15 +11888,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11934,15 +11934,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -11980,15 +11980,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12026,15 +12026,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12086,15 +12086,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12146,15 +12146,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12198,15 +12198,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12250,15 +12250,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12296,15 +12296,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12342,15 +12342,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12397,15 +12397,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12457,15 +12457,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12517,15 +12517,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12577,15 +12577,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12629,15 +12629,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12675,15 +12675,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12735,15 +12735,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12781,15 +12781,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12833,15 +12833,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12879,15 +12879,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12931,15 +12931,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -12977,15 +12977,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -13037,15 +13037,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -13083,15 +13083,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -13135,15 +13135,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -13181,7 +13181,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "7754b336de05d47380b3258015492d7eb8bafc62d60ae181bccb1a4ebbb828df"
+        "sha256": "d39254db1db1dcb7c134ec16745adc847252c9b09a85a6e11ada3a354247848d"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-fractional-span-average",
@@ -13229,15 +13229,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -13281,15 +13281,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -13327,15 +13327,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },
@@ -13379,15 +13379,15 @@
       "report": "loki-experimental-query-conformance.json",
       "source": {
         "path": "crates/observability/tests/support/experimental_queries.rs",
-        "sha256": "4f5fdd5e7a8f90f908b52ec83c7a5c4c449f5d56bf9fa516b5668326b6c25e07",
+        "sha256": "b7cd46b05d530e4dd3d5bf4177b927195999a766554580ad7ba282d945645319",
         "supporting_sources": [
           {
             "path": "crates/observability/tests/support/loki_experimental_queries.rs",
-            "sha256": "6dfc7d25c8ecef32fd83d260d31a18f671511fd0e832ad82c649aa4e64912b1c"
+            "sha256": "da573c4e3ab24421bf5612250c84f13052e6f0c7b4f7094ec150d3a96e4af7c7"
           },
           {
             "path": "crates/observability/tests/loki_differential.rs",
-            "sha256": "718b7cba0ce39a5ceb044d2368479a41d7fedb8b418532e68e2b72f032a3665f"
+            "sha256": "dc2455a4a61428a3f3f1ffad71f5c1958a70d00ec283d4d10a3b8ea8c0579843"
           }
         ]
       },

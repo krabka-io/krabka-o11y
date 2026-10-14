@@ -284,10 +284,13 @@ fn logs_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
         {
             // Match every JSON object the snapshot reader can select. Invalid
             // generation names make the tenant unknown when the reader fails.
-            let range = time_range(time.strip_prefix("time=")?)?;
+            // Keep syntactically valid but reversed ranges classified: the
+            // audit must report their unreadable manifest instead of treating
+            // the object as unknown.
+            let range = offset_range(time.strip_prefix("time=")?)?;
             ObjectRole::LogShardManifest {
-                start_ns: range.start_ns,
-                end_ns: range.end_ns,
+                start_ns: range.min,
+                end_ns: range.max,
             }
         }
         ["index", "logs", "shards", time] => {

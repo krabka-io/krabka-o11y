@@ -33,21 +33,18 @@ pub(crate) fn format_metric_samples(
     }
 
     samples
-        .keys()
-        .map(|labels| {
-            let values = &samples[labels];
-            super::FormattedMetricSeriesEntry {
-                labels: labels.clone(),
-                values: values
-                    .keys()
-                    .map(|time| {
-                        [
-                            time.to_string(),
-                            format_metric_value(range_sample_value(&values[time], query)),
-                        ]
-                    })
-                    .collect(),
-            }
+        .into_iter()
+        .map(|(labels, values)| super::FormattedMetricSeriesEntry {
+            labels,
+            values: values
+                .into_iter()
+                .map(|(time, mut value)| {
+                    [
+                        time.to_string(),
+                        format_metric_value(range_sample_value(&mut value, query)),
+                    ]
+                })
+                .collect(),
         })
         .collect()
 }

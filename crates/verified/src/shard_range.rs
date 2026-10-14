@@ -2,7 +2,8 @@
 use creusot_std::prelude::*;
 
 /// Inclusive timestamp bounds for one grid shard.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(std::clone::Clone, Copy, Debug, std::cmp::PartialEq, Eq)]
+#[cfg_attr(creusot, derive(DeepModel))]
 pub struct ShardTimeRange {
     pub start: i64,
     pub end: i64,

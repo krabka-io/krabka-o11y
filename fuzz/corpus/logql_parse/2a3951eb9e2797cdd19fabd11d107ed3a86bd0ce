@@ -1,0 +1,1 @@
+count_over_time({app="api"}[25ns]) + count_over_time({app="api"}[20ns] offset 10ns)

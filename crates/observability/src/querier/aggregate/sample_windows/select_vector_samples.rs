@@ -23,7 +23,7 @@ pub(crate) fn select_vector_samples(
         let grouped_labels = vector_group_labels(&labels, grouping);
         for value_entry in values {
             let time = value_entry.0;
-            let value = value_entry.1;
+            let mut value = value_entry.1;
             groups
                 .entry(grouped_labels.clone())
                 .or_default()
@@ -31,7 +31,7 @@ pub(crate) fn select_vector_samples(
                 .or_default()
                 .push(VectorSampleCandidate {
                     labels: labels.clone(),
-                    value: range_sample_value(&value, query),
+                    value: range_sample_value(&mut value, query),
                 });
         }
     }

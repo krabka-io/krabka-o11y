@@ -2,7 +2,8 @@
 use creusot_std::prelude::*;
 
 /// Half-open slice bounds for blocks that may overlap a query time range.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(std::clone::Clone, Copy, Debug, std::cmp::PartialEq, Eq)]
+#[cfg_attr(creusot, derive(DeepModel))]
 pub struct OverlapWindow {
     pub start: usize,
     pub end: usize,

@@ -57,10 +57,10 @@ pub(crate) fn scalar_expression_value(expr: &ScalarExpr, row: &CompareRow) -> Re
 }
 
 fn scalar_arithmetic(lhs: Value, op: ArithmeticOp, rhs: Value) -> Result<Value> {
-    if let (RuntimeValuePair {
+    if let RuntimeValuePair {
         lhs: Value::Int(lhs),
         rhs: Value::Int(rhs),
-    }) = (RuntimeValuePair {
+    } = (RuntimeValuePair {
         lhs: &lhs,
         rhs: &rhs,
     }) {
