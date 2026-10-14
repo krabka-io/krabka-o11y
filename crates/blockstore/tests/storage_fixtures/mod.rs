@@ -4,6 +4,9 @@
 //! injects one fault. The keys follow the grammar of the service that owns
 //! the signal, so the audit classifies them as it would in production.
 
+// Each test binary uses only a subset of these shared fixture helpers.
+#![allow(dead_code)]
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
