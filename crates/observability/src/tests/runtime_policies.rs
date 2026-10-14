@@ -6,10 +6,9 @@ use super::prelude::{
     DeferredWalConsumerConnect, InMemoryWalSink, IngestLimitError, LabelIndex, LogIngestLimiter,
     LogQueryAuthorizer, Principal, QuerierState, QueryAuthorizationError, ServiceConfig,
     ServiceDependencies, ServiceMetrics, SharedCompactionFrontier, StreamScanOptions, TenantId,
-    WalDependenciesRequest, WalLogRecord, admin_connection_options, async_trait,
-    build_service_dependencies, check, days, hours, mebibytes, millis, minutes,
-    next_compactor_object_store_backoff, secs, validate_compactor_policy,
-    validate_distributor_policy, with_querier_dependencies,
+    WalLogRecord, admin_connection_options, async_trait, build_service_dependencies, check, days,
+    hours, mebibytes, millis, minutes, next_compactor_object_store_backoff, secs,
+    validate_compactor_policy, validate_distributor_policy, with_querier_dependencies,
 };
 
 mod compactor_policy_rejects_zero_and_invalid_bounds;

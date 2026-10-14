@@ -43,7 +43,7 @@ async fn a_task_that_returns_early_resolves_as_an_unexpected_exit() {
 /// Reporting them would turn every clean stop into a spurious failure.
 #[tokio::test]
 async fn exits_after_cancellation_are_not_reported() {
-    let (token, mut tasks) = supervised_wal_consumer();
+    let (token, tasks) = supervised_wal_consumer();
     token.cancel();
 
     let reported = tokio::time::timeout(

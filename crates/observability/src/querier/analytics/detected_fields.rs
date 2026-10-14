@@ -46,6 +46,8 @@ pub(crate) use detect_json_fields::detect_json_fields;
 pub(crate) use detect_logfmt_fields::detect_logfmt_fields;
 pub(crate) use detect_structured_metadata_fields::detect_structured_metadata_fields;
 pub(crate) use detected_bytes_unit::detected_bytes_unit;
+#[cfg(test)]
+pub(crate) use detected_duration_unit::DetectedDurationUnit;
 pub(crate) use detected_duration_unit::detected_duration_unit;
 pub(crate) use detected_json_value_string::detected_json_value_string;
 pub(crate) use execute_index_volume_query::execute_index_volume_query;
@@ -57,6 +59,8 @@ pub(crate) use is_prometheus_duration_literal::is_prometheus_duration_literal;
 pub(crate) use limit_volume_series::limit_volume_series;
 pub(crate) use loki_volume_matrix_response::loki_volume_matrix_response;
 pub(crate) use loki_volume_vector_response::loki_volume_vector_response;
+#[cfg(test)]
+pub(crate) use parse_logfmt_pairs::ParsedLogfmtPair;
 pub(crate) use parse_logfmt_pairs::parse_logfmt_pairs;
 pub(crate) use plan_analytics_query::{
     AnalyticsQuery, PlannedAnalyticsQuery, VolumeRangeLimit, plan_analytics_query,
