@@ -397,10 +397,7 @@ async fn tenant_log_index_shard_round_trips_only_matching_time_and_series() {
     let store = fixture.store.clone();
     let prefix = fixture.prefix.clone();
     let mut labels_index = LabelIndex::default();
-    let ApiWorkerAdminBlocks {
-        blocks: mut blocks,
-        admin,
-    } = api_worker_admin_blocks(&mut labels_index);
+    let ApiWorkerAdminBlocks { mut blocks, admin } = api_worker_admin_blocks(&mut labels_index);
     let other_tenant_api = series(
         &mut labels_index,
         TestSeries {
