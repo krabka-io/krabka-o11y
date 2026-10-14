@@ -24,6 +24,8 @@ pub(crate) async fn push_logs(
     .await
 }
 
+// Keep the normalizer and response callbacks injectable for focused handler tests.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn push_logs_with_normalizer<E>(
     state: DistributorState,
     security: RequestSecurity,

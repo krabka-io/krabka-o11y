@@ -1,6 +1,5 @@
 use super::{
-    ClientResourcePolicy, ClientSecurity, DeferredWalConsumerConnect, ServiceConfig,
-    ServiceDependencies, ServiceRuntimeError, WalDependenciesRequest,
+    DeferredWalConsumerConnect, ServiceDependencies, ServiceRuntimeError, WalDependenciesRequest,
     deferred_query_authorizer_connect,
 };
 

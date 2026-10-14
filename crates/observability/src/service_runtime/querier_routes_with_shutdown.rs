@@ -2,11 +2,11 @@ use krabka_blockstore::ObjectStoreAccess;
 
 use super::{
     Arc, BackgroundTask, BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore,
-    OverridesProvider, Router, ServiceConfig, ServiceConfigError, ServiceDependencies,
-    ServiceMetrics, ServiceRouter, SharedLogDeleteRequests, SharedLokiRules,
-    build_configured_object_store, build_configured_querier_state,
-    build_querier_state_with_overrides, load_querier_shared_compaction_frontier, loki_query_routes,
-    querier_object_store_prefix, spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
+    OverridesProvider, ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceMetrics,
+    ServiceRouter, SharedLogDeleteRequests, SharedLokiRules, build_configured_object_store,
+    build_configured_querier_state, build_querier_state_with_overrides,
+    load_querier_shared_compaction_frontier, loki_query_routes, querier_object_store_prefix,
+    spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
     spawn_wal_hot_tail_connect_and_poll,
 };
 use crate::{

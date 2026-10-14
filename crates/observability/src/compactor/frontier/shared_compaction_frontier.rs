@@ -7,7 +7,7 @@ pub(crate) struct SharedFrontierSnapshot {
 }
 
 #[derive(Clone, Debug)]
-struct SharedFrontierState {
+pub(crate) struct SharedFrontierState {
     version: u64,
     frontier: CompactionFrontier,
 }

@@ -478,10 +478,10 @@ pub(crate) fn merge_frontend_results(
 
 fn merge_one_result(target: &mut Value, mut source: Value) {
     let source_results = source["data"]["result"].as_array_mut().map(std::mem::take);
-    if let Some(source_results) = source_results {
-        if let Some(target_results) = target["data"]["result"].as_array_mut() {
-            target_results.extend(source_results);
-        }
+    if let Some(source_results) = source_results
+        && let Some(target_results) = target["data"]["result"].as_array_mut()
+    {
+        target_results.extend(source_results);
     }
     if let Some(source_stats) = source.pointer("/data/stats") {
         merge_loki_query_stats(&mut target["data"]["stats"], source_stats);
@@ -555,10 +555,8 @@ fn compare_entry_timestamps(left: &Value, right: &Value) -> std::cmp::Ordering {
     let right_integer = right
         .and_then(Value::as_str)
         .and_then(|value| value.parse::<i64>().ok());
-    if let Some(left) = left_integer {
-        if let Some(right) = right_integer {
-            return left.cmp(&right);
-        }
+    if let (Some(left), Some(right)) = (left_integer, right_integer) {
+        return left.cmp(&right);
     }
     left.and_then(Value::as_f64)
         .partial_cmp(&right.and_then(Value::as_f64))
@@ -634,7 +632,7 @@ pub(crate) fn apply_global_stream_limit(
     };
     // Stream and entry positions make the order unique, so a strict cutoff
     // keeps exactly `limit` entries without building a membership set.
-    let cutoff = entries.select_nth_unstable_by(limit, compare).1.clone();
+    let cutoff = *entries.select_nth_unstable_by(limit, compare).1;
     drop(entries);
     for stream_row in streams.iter_mut().enumerate() {
         let stream_index = stream_row.0;

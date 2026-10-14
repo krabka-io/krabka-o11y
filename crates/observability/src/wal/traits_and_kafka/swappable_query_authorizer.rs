@@ -19,7 +19,7 @@ pub(crate) struct SwappableQueryAuthorizerParts {
 
 impl SwappableQueryAuthorizer {
     /// Creates a new swappable authorizer that starts unavailable.
-    pub(crate) fn new() -> SwappableQueryAuthorizerParts {
+    pub(crate) fn unavailable() -> SwappableQueryAuthorizerParts {
         let inner: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>> = Arc::new(
             tokio::sync::RwLock::new(Arc::new(UnavailableQueryAuthorizer)),
         );

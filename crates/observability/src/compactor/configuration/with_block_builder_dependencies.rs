@@ -1,6 +1,6 @@
 use super::{
-    ClientResourcePolicy, ClientSecurity, KafkaLogWalConsumer, ServiceConfig, ServiceDependencies,
-    ServiceRuntimeError, WalDependenciesRequest, deferred_query_authorizer_connect,
+    KafkaLogWalConsumer, ServiceDependencies, ServiceRuntimeError, WalDependenciesRequest,
+    deferred_query_authorizer_connect,
 };
 
 /// Adds the WAL consumer the block builder reads its records from, and the

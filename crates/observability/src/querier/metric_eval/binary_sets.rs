@@ -28,9 +28,7 @@ fn apply_scalar_to_series(
         return !values.is_empty();
     }
 
-    series
-        .get_mut("value")
-        .is_some_and(|sample| apply_sample(sample))
+    series.get_mut("value").is_some_and(&mut apply_sample)
 }
 
 fn scalar_operands_for_sample(

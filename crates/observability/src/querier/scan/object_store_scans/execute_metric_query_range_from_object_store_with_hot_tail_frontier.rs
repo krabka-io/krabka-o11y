@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 
 use super::{
     ColdBlockScan, LabelIndex, MetricEvaluationRange, MetricQuery, MetricRangeScanRequest,
-    QueryError, QueryHotTail, StreamPlan, TimeRange, Value,
+    QueryError, QueryHotTail, StreamPlan, Value,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
 };
 use crate::WalLogRecord;

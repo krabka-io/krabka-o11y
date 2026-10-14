@@ -1,6 +1,6 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, LabelValuesRequest, Path, QuerierState, RawQuery,
-    RequestSecurity, Response, State, execute_label_values_response, parse_posted_series_params,
+    Bytes, HeaderMap, IntoResponse, Path, QuerierState, RawQuery, RequestSecurity, Response, State,
+    execute_label_values_response, parse_posted_series_params,
 };
 
 pub(crate) async fn label_values_post(

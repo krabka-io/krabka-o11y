@@ -12,15 +12,11 @@ pub(crate) fn add_loki_query_stats_for_metric_plan(
     let chunks = u64::try_from(plan.blocks.len()).unwrap_or(u64::MAX);
     let samples = count_loki_metric_result_scan_lines(&value, query);
     let mut stats = loki_query_stats();
-    let store_lines;
-    let ingester_lines;
-    if chunks == 0 {
-        store_lines = 0;
-        ingester_lines = samples;
+    let (store_lines, ingester_lines) = if chunks == 0 {
+        (0, samples)
     } else {
-        store_lines = samples;
-        ingester_lines = 0;
-    }
+        (samples, 0)
+    };
     populate_loki_query_scan_stats(&mut stats, bytes, store_lines, ingester_lines, chunks);
     value["data"]["stats"] = stats;
     value

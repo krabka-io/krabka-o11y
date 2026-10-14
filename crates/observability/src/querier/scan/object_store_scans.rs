@@ -1,9 +1,7 @@
-pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest, PreparedMetricRangeScan};
+pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest};
 use crate::{
-    Arc, BTreeMap, HotTailMetricSamples, LabelIndex, MetricQuery, NonZeroUsize, ObjectPath,
-    ObjectStore, QueryError, QueryHotTail, StreamPlan, TimeRange, Value,
-    collect_object_store_metric_log_batches, loki_matrix_response_with_warnings,
-    merge_metric_samples, metric_samples_from_batches,
+    Arc, LabelIndex, MetricQuery, NonZeroUsize, ObjectPath, ObjectStore, QueryError, QueryHotTail,
+    StreamPlan, TimeRange, Value,
 };
 
 mod cold_block_scan;

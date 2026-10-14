@@ -1,8 +1,8 @@
 use krabka_client_admin::{AdminClient, ConfigResource, DescribeConfigsOptions};
 
 use super::{
-    TopicContract, TopicContractError, TopicDrift, TopicExpectation, TopicReport, TopicSettings,
-    desired_specs, inspect_topics,
+    TopicContract, TopicContractError, TopicExpectation, TopicReport, TopicSettings, desired_specs,
+    inspect_topics,
 };
 
 /// Describes the topics and compares them against the whole contract,

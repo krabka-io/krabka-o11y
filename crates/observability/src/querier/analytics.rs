@@ -10,6 +10,8 @@ use crate::{
     TenantErrorSurface, TenantId, TimeRange, active_log_delete_filters, authorized_tenant,
 };
 
+// These request fields are kept explicit to mirror the analytics endpoint inputs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn authorize_and_plan_analytics_query(
     state: &QuerierState,
     security: &RequestSecurity,
@@ -52,6 +54,8 @@ impl PlannedAnalyticsRead {
     }
 }
 
+// These request fields are kept explicit to mirror the analytics endpoint inputs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn authorize_and_prepare_analytics_read(
     state: &QuerierState,
     security: &RequestSecurity,

@@ -6,7 +6,7 @@ use crate::{
     OtlpKeyValue, OtlpLogRecord, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord,
     TenantId, Time, Value, WalLogRecord, current_unix_time_ns, encode_lower_hex,
     metadata_value_to_string, otlp_value_to_json, proto_any_value, proto_value_to_string,
-    quote_logql_string, validate_loki_label_limits, validate_loki_line_size,
+    validate_loki_label_limits, validate_loki_line_size,
 };
 
 mod discover_detected_level_label;

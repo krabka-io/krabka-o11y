@@ -33,7 +33,7 @@ pub(crate) fn query_authorizer_for_role(
             task: None,
         };
     };
-    let parts = SwappableQueryAuthorizer::new();
+    let parts = SwappableQueryAuthorizer::unavailable();
     let swappable = parts.authorizer;
     let slot = parts.slot;
     let task = spawn_query_authorizer_connect(

@@ -8,15 +8,7 @@ pub(crate) fn add_loki_query_stats_for_stream_plan(mut value: Value, plan: &Stre
     let chunks = u64::try_from(plan.blocks.len()).unwrap_or(u64::MAX);
     let lines = count_loki_stream_result_lines(&value);
     let mut stats = loki_query_stats();
-    let store_lines;
-    let ingester_lines;
-    if chunks == 0 {
-        store_lines = 0;
-        ingester_lines = lines;
-    } else {
-        store_lines = lines;
-        ingester_lines = 0;
-    }
+    let (store_lines, ingester_lines) = if chunks == 0 { (0, lines) } else { (lines, 0) };
     populate_loki_query_scan_stats(&mut stats, bytes, store_lines, ingester_lines, chunks);
     value["data"]["stats"] = stats;
     value

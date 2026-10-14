@@ -92,8 +92,7 @@ fn label_bytes(labels: &Value) -> Vec<u8> {
         // serde_json can use insertion order when preserve_order is enabled.
         let mut names = labels.keys().collect::<Vec<_>>();
         names.sort_unstable();
-        for index in 0..names.len() {
-            let name = names[index];
+        for (index, name) in names.iter().enumerate() {
             let value = &labels[name];
             if index != 0 {
                 bytes.push(0xff);

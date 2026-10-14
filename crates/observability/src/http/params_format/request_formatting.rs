@@ -18,10 +18,9 @@ pub(crate) struct SplitLeadingVectorBinaryModifiers<'a> {
 
 use crate::{
     Bytes, ComparisonResult, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
-    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_form_component,
-    decode_query_pair, format_label_replace_metric_scalar_expression,
-    format_label_replace_metric_vector_expression, format_metric_and_vector_operands,
-    format_metric_label_replace_query, format_metric_query,
+    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_query_pair,
+    format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
+    format_metric_and_vector_operands, format_metric_label_replace_query, format_metric_query,
     format_metric_scalar_arithmetic_expression, format_metric_scalar_arithmetic_operator,
     format_metric_scalar_comparison_expression, format_metric_scalar_comparison_operator,
     format_metric_vector_comparison_expression, format_metric_vector_set_expression,

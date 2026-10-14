@@ -18,6 +18,6 @@ mod vector_aggregation_state;
 pub(crate) use append_matching_log_row::append_matching_log_row;
 pub(crate) use eval_times::{checked_eval_times, eval_times};
 pub(crate) use format_metric_value::format_metric_value;
-pub(crate) use metric_sample_state::{MetricSampleState, TimestampedMetricValue};
+pub(crate) use metric_sample_state::MetricSampleState;
 pub(crate) use rate_metric_value::rate_metric_value;
 pub(crate) use vector_aggregation_state::VectorAggregationState;

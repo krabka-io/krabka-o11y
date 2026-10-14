@@ -22,10 +22,11 @@ pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
             true
         }
         ComparisonResult::Filter => {
-            if matches && let Some(left) = operands.left.get(1) {
-                if let Some(output) = output_values.get_mut(1) {
-                    *output = left.clone();
-                }
+            if matches
+                && let Some(left) = operands.left.get(1)
+                && let Some(output) = output_values.get_mut(1)
+            {
+                *output = left.clone();
             }
             matches
         }

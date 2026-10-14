@@ -7,5 +7,5 @@ pub(crate) fn loki_json_push_stream_parse_error(body: &[u8], value: &Value) -> S
     let context = loki_decode_error_context(&body, value_start.saturating_add(4));
     let bigger_context = loki_decode_error_context(&body, value_start.saturating_sub(12));
 
-    loki_json_push_unclosed_object_error(&context, &bigger_context)
+    loki_json_push_unclosed_object_error(context, bigger_context)
 }

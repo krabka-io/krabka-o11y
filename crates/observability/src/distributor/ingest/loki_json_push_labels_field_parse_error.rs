@@ -5,5 +5,5 @@ pub(crate) fn loki_json_push_labels_field_parse_error(body: &[u8]) -> String {
     let context = loki_decode_error_context(&body, body.len().saturating_sub(12));
     let bigger_context = loki_decode_error_context(&body, body.len().saturating_sub(52));
 
-    loki_json_push_unclosed_object_error(&context, &bigger_context)
+    loki_json_push_unclosed_object_error(context, bigger_context)
 }

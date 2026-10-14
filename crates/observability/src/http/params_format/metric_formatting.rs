@@ -7,8 +7,7 @@ use crate::{
     format_vector_comparison_text, format_vector_function_text, format_vector_grouping,
     format_vector_label_replace_function, parse_logql_string_argument,
     parse_metric_label_replace_query, parse_metric_query, parse_metric_scalar_arithmetic_query,
-    parse_metric_scalar_comparison_query, parse_scalar_sample,
-    split_leading_vector_binary_modifiers, split_logql_function_arguments,
+    parse_metric_scalar_comparison_query, parse_scalar_sample, split_logql_function_arguments,
 };
 
 mod format_label_replace_metric_scalar_expression;

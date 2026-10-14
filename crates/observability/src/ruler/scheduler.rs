@@ -195,10 +195,10 @@ async fn evaluate_recording_rule(
             .and_then(serde_yaml::Value::as_mapping)
         {
             for entry in configured {
-                if let Some(name) = entry.0.as_str() {
-                    if let Some(value) = entry.1.as_str() {
-                        labels.insert(name.to_string(), value.to_string());
-                    }
+                if let Some(name) = entry.0.as_str()
+                    && let Some(value) = entry.1.as_str()
+                {
+                    labels.insert(name.to_string(), value.to_string());
                 }
             }
         }

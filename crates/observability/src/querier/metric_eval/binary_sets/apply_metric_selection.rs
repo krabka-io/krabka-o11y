@@ -38,8 +38,7 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, order: Sam
     }
 
     let mut ranked = std::collections::HashMap::<String, Vec<RankedSample>>::new();
-    for series_index in 0..series.len() {
-        let item = &series[series_index];
+    for (series_index, item) in series.iter().enumerate() {
         for sample in item
             .get("values")
             .and_then(Value::as_array)
@@ -75,8 +74,7 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, order: Sam
                 }),
         );
     }
-    for series_index in 0..series.len() {
-        let item = &mut series[series_index];
+    for (series_index, item) in series.iter_mut().enumerate() {
         if let Some(samples) = item.get_mut("values").and_then(Value::as_array_mut) {
             samples.retain(|sample| {
                 sample

@@ -40,7 +40,7 @@ impl UnauthenticatedRoutes {
     pub fn contains(&self, method: &Method, path: &str) -> bool {
         self.0
             .iter()
-            .any(|route| &route.method == method && route.path == path)
+            .any(|route| route.method == *method && route.path == path)
     }
 }
 

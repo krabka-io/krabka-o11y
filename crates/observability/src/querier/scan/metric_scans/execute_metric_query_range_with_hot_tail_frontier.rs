@@ -1,6 +1,6 @@
 use super::{
     CompactionFrontier, FsPath, LabelIndex, MetricEvaluationRange, MetricQuery,
-    MetricRangeScanRequest, QueryError, QueryHotTail, StreamPlan, TimeRange, Value, WalLogRecord,
+    MetricRangeScanRequest, QueryError, QueryHotTail, StreamPlan, Value, WalLogRecord,
     execute_metric_query_range_with_hot_tail_frontier_and_deletes,
 };
 

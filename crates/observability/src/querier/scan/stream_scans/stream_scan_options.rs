@@ -224,8 +224,7 @@ impl StreamScanOptions {
         let by_stream = streams.values().collect::<Vec<_>>();
         let mut selected = vec![0; by_stream.len()];
         let mut heads = BinaryHeap::with_capacity(by_stream.len());
-        for stream_index in 0..by_stream.len() {
-            let entries = by_stream[stream_index];
+        for (stream_index, entries) in by_stream.iter().enumerate() {
             if entries.is_empty() {
                 continue;
             }

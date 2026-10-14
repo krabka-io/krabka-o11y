@@ -1,7 +1,7 @@
 use super::{
     HttpQueryError, OPERATION_RULE_NAMESPACE_DELETE, Path, QuerierState, RESOURCE_RULE_NAMESPACE,
-    RESOURCE_TENANT, RequestSecurity, Response, RulerTenant, State, StatusCode, json,
-    json_response, resource, text_response,
+    RESOURCE_TENANT, RequestSecurity, Response, RulerTenant, State, StatusCode, resource,
+    text_response,
 };
 
 /// `DELETE /loki/api/v1/rules/{namespace}`: delete every rule group in a
