@@ -31,6 +31,7 @@ crate_library(
         "tests/support/experimental_queries.rs",
         "tests/support/pipeline_bundle_metrics.rs",
         "tests/support/recorded_security_events.rs",
+        "tests/support/recorded_security_events_impl.rs",
         "tests/support/recording_trace_subscriber.rs",
         "tests/support/server_security_pki.rs",
         "tests/support/token_sha256.rs",
