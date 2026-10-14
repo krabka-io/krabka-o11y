@@ -81,6 +81,7 @@ crate_tests(
             "src/bin/krabka-profiles/wal_topic.rs",
         ],
         "block_builder_object_store_retry": [
+            "//crates/blockstore:tests/support/failure_budget.rs",
             "//crates/blockstore:tests/support/hooked_store.rs",
             "//crates/integration:tests/support/test_broker.rs",
             "src/bin/krabka-profiles/wal_topic.rs",

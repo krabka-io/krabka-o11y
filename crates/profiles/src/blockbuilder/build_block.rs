@@ -87,9 +87,7 @@ async fn write_block(
         let stack_ids = intern_record(&mut symdb, rec)?;
         let fp = rec.series_fingerprint();
         let total_value = rec.samples.iter().map(|sample| sample.value).sum();
-        for ordinal in 0..rec.samples.len() {
-            let sample = &rec.samples[ordinal];
-            let stack_id = stack_ids[ordinal];
+        for (ordinal, (sample, stack_id)) in rec.samples.iter().zip(&stack_ids).enumerate() {
             let timestamp_ms = profile_timestamp_ms(sample.timestamp_ns);
             min_ts = min_ts.min(timestamp_ms);
             max_ts = max_ts.max(timestamp_ms);
@@ -98,7 +96,7 @@ async fn write_block(
                 fields: krabka_blockstore::ProfileSampleFields {
                     series_fingerprint: fp,
                     profile_type: rec.profile_type.clone(),
-                    stacktrace_id: u64::from(stack_id),
+                    stacktrace_id: u64::from(*stack_id),
                     value: sample.value,
                     stacktrace_partition: STACKTRACE_PARTITION,
                     total_value,

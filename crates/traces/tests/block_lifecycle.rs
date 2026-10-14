@@ -1025,8 +1025,8 @@ async fn check_lifecycle_queries(
             });
             check!(response.series == expected, "scan job {key}");
             for series in &response.series {
-                for index in 0..sharded.len() {
-                    sharded[index] += series.points[index].value;
+                for (index, total) in sharded.iter_mut().enumerate() {
+                    *total += series.points[index].value;
                 }
             }
         }

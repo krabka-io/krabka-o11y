@@ -5801,53 +5801,53 @@
         },
         "independent_expected": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work"
               ],
-              40
-            ],
-            [
-              [
+              "value": 40
+            },
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "oracle": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work"
               ],
-              40
-            ],
-            [
-              [
+              "value": 40
+            },
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "candidate": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work"
               ],
-              40
-            ],
-            [
-              [
+              "value": 40
+            },
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         }
       },
@@ -5886,35 +5886,35 @@
         },
         "independent_expected": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "oracle": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "candidate": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         }
       },
@@ -6029,35 +6029,35 @@
         },
         "independent_expected": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "oracle": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "candidate": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         }
       },
@@ -6090,53 +6090,53 @@
         },
         "independent_expected": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work"
               ],
-              40
-            ],
-            [
-              [
+              "value": 40
+            },
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "oracle": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work"
               ],
-              40
-            ],
-            [
-              [
+              "value": 40
+            },
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "candidate": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work"
               ],
-              40
-            ],
-            [
-              [
+              "value": 40
+            },
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         }
       },
@@ -6168,35 +6168,35 @@
         },
         "independent_expected": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "oracle": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         },
         "candidate": {
           "stacks": [
-            [
-              [
+            {
+              "frames": [
                 "main.work",
                 "main.hotloop"
               ],
-              100
-            ]
+              "value": 100
+            }
           ]
         }
       },

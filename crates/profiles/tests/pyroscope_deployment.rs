@@ -472,8 +472,8 @@ fn collapsed(profile: &proto::Profile) -> BTreeMap<Vec<String>, Vec<i64>> {
             .entry(stack)
             .or_insert_with(|| vec![0; sample.value.len()]);
         assert!(row.len() == sample.value.len());
-        for value_index in 0..row.len() {
-            row[value_index] += sample.value[value_index];
+        for (value_index, total) in row.iter_mut().enumerate() {
+            *total += sample.value[value_index];
         }
     }
     rows
