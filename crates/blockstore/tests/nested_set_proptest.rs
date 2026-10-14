@@ -49,16 +49,15 @@ proptest! {
     fn nested_set_intervals_are_valid(spans in arb_forest()) {
         let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         let mut by_id: HashMap<[u8; 8], usize> = HashMap::new();
-        for i in 0..spans.len() {
-            by_id.insert(spans[i].span_id, i);
+        for (i, span) in spans.iter().enumerate() {
+            by_id.insert(span.span_id, i);
         }
 
         for n in &ns {
             prop_assert!(n.nested_set_left < n.nested_set_right);
         }
 
-        for i in 0..spans.len() {
-            let span = &spans[i];
+        for (i, span) in spans.iter().enumerate() {
             if let Some(parent) = span.parent_span_id.and_then(|p| by_id.get(&p).copied()) {
                 if parent == i {
                     // Self-parented span is treated as a root: -1 sentinel.
