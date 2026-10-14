@@ -5,12 +5,14 @@ package(default_visibility = ["//visibility:public"])
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 # `tests/support/lifecycle_store.rs` opens the store a signal's lifecycle suite
 # runs against, and `tests/support/hooked_store.rs` is the in-memory store the
-# traces and profiles suites inject faults through. `tests/support/flaky_put_store.rs`
-# wraps it in a store whose first puts fail, for the block writer's and the
-# metrics compactor's unit tests. The signal crates reach them with `#[path]`,
+# traces and profiles suites inject faults through. `flaky_put_store.rs` wraps
+# it in a store whose first puts fail, for the block writer's and the metrics
+# compactor's unit tests. `failure_budget.rs` contains the atomic counter shared
+# counter shared with that wrapper. The signal crates reach them with `#[path]`,
 # so they have to be nameable from there.
 exports_files([
     "Cargo.toml",
+    "tests/support/failure_budget.rs",
     "tests/support/flaky_put_store.rs",
     "tests/support/hooked_store.rs",
     "tests/support/lifecycle_store.rs",
@@ -24,6 +26,7 @@ crate_library(
         ["src/**/*.rs"],
         exclude = ["src/bin/**"],
     ) + [
+        "tests/support/failure_budget.rs",
         "tests/support/flaky_put_store.rs",
         "tests/support/hooked_store.rs",
     ],
