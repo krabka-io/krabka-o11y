@@ -1,6 +1,6 @@
 //! A populated in-memory span store, for `TraceQL` filtering.
 
-use krabka_traceql::{Attribute, AttrValue, InMemorySpanStore, InputSpan};
+use krabka_traceql::{AttrValue, Attribute, InMemorySpanStore, InputSpan};
 use krabka_units::{Time, convert::TimeExt as _};
 
 use crate::{Seeded, index::TENANT};
