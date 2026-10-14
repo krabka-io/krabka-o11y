@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::FloatSample;
+
+#[cfg(feature = "experimental-functions")]
 pub(crate) fn double_exponential_smoothing(
     samples: &[FloatSample],
     smoothing_factor: f64,

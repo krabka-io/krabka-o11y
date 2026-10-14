@@ -33,6 +33,8 @@ crate_library(
         "//crates/blockstore:tests/support/failure_budget.rs",
         "//crates/blockstore:tests/support/flaky_put_store.rs",
         "//crates/blockstore:tests/support/hooked_store.rs",
+        # Included by the metrics unit tests from metrics.rs.
+        "tests/support/shared_registry_assertion.rs",
     ],
     # `build.rs` reaches the shared `protoc` lookup with `#[path]`.
     build_script_compile_data = ["//tools/build_support:protoc_path.rs"],
