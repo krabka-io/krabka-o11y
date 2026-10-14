@@ -370,7 +370,7 @@ impl ProfileStore for InMemoryProfileStore {
             // list yields an empty vec, which surfaces as a spurious `[{}]`
             // entry — mirror the cold-path fix in `krabka_blockstore`'s index.
             let mut projected: Vec<_> = if label_names.is_empty() {
-                row.labels.iter().cloned().collect()
+                row.labels.to_vec()
             } else {
                 label_names
                     .iter()
