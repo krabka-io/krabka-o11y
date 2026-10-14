@@ -1,10 +1,12 @@
 //! Recursive-descent `TraceQL` parser.
 
+#[cfg(test)]
+use crate::ast::QueryHintValue;
 use crate::{
     ast::{
         Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, NumericFilter,
-        Pipeline, Query, QueryHintValue, QueryHints, ScalarExpr, Scope, SpansetExpr, StructuralOp,
-        Value, WithBinding,
+        Pipeline, Query, QueryHints, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
+        WithBinding,
     },
     error::{Result, TraceqlError},
     lexer::{Token, lex},

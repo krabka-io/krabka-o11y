@@ -1,5 +1,5 @@
 use super::{
-    COL_SPAN_ID, COL_TRACE_ID, FieldExpr, Result, SpansetExpr, TraceqlError,
+    COL_SPAN_ID, COL_TRACE_ID, Result, SpansetExpr, TraceqlError,
     register_nested_selector_tables::NestedSelectorTable, selector, structural_base_op,
     structural_is_negated, structural_is_union, structural_predicate_sql,
 };

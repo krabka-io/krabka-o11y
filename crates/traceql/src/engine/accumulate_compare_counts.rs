@@ -1,8 +1,10 @@
+#[cfg(test)]
+use super::CompareGroup;
 use super::{
     BTreeMap, COL_SPAN_ID, COL_TRACE_ID, CompareAttributeKey, CompareCountKey, CompareCounts,
-    CompareGroup, CompareRegexCache, CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange,
-    RecordBatch, Result, SpanIdentity, TraceqlError, UnixNano, collect_selection_regexes,
-    compare_group_for_row, compare_row, fixed_8, fixed_16, span_start_column,
+    CompareRegexCache, CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange, RecordBatch,
+    Result, SpanIdentity, TraceqlError, UnixNano, collect_selection_regexes, compare_group_for_row,
+    compare_row, fixed_8, fixed_16, span_start_column,
 };
 
 /// Scans the batches and accumulates per-bucket span counts.

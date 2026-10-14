@@ -1,4 +1,4 @@
-use super::{Pipeline, RankFilter, UngroupedRankParts, rank_pipeline};
+use super::{Pipeline, RankFilter, UngroupedRankParts};
 
 pub(crate) fn ungrouped_rank_pipeline_parts(
     pipeline: &[Pipeline],

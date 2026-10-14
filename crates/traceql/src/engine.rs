@@ -6286,7 +6286,7 @@ mod usize_from_integer_f64;
 mod validate_compare_field_expr;
 mod validate_compare_selection;
 
-use accumulate_compare_counts::{CompareAccumulation, accumulate_compare_counts};
+use accumulate_compare_counts::accumulate_compare_counts;
 use apply_metric_filter::apply_metric_filter;
 use apply_rank::apply_rank;
 use assemble_compare_response::assemble_compare_response;

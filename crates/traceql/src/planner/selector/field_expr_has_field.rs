@@ -6,7 +6,7 @@ pub(super) fn field_expr_has_field(fe: &FieldExpr, predicate: &impl Fn(&Field) -
             let mut fields = Vec::new();
             lhs.collect_fields(&mut fields);
             rhs.collect_fields(&mut fields);
-            fields.into_iter().any(|field| predicate(&field))
+            fields.into_iter().any(predicate)
         }
         FieldExpr::FieldComparison { lhs, rhs, .. } => predicate(lhs) || predicate(rhs),
         FieldExpr::Comparison { lhs, .. } | FieldExpr::Field(lhs) => predicate(lhs),

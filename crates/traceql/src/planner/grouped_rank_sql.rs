@@ -1,6 +1,5 @@
 use super::{
-    ComparisonOp, Field, GroupJoinSql, RankDirection, RankLimit, Result, aggregate_filter_sql,
-    group_join_sql,
+    Field, GroupJoinSql, RankDirection, RankLimit, Result, aggregate_filter_sql, group_join_sql,
 };
 
 pub(crate) fn grouped_rank_sql(

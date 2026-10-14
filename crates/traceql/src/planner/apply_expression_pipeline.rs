@@ -271,27 +271,27 @@ fn regroup(sets: Vec<Spanset>, rows: &[CompareRow], exprs: &[&ScalarExpr]) -> Re
 }
 
 fn group_attribute_value(expr: &ScalarExpr, value: &Value) -> AttrValue {
-    if let ScalarExpr::Field(field) = expr {
-        if let Value::Int(value) = value {
-            match field.scope {
-                crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Kind) => {
-                    return AttrValue::Str(
-                        crate::engine::kind_enum_name(
-                            i32::try_from(*value).expect("intrinsic enum is an i32"),
-                        )
-                        .into(),
-                    );
-                }
-                crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Status) => {
-                    return AttrValue::Str(
-                        crate::engine::status_enum_name(
-                            i32::try_from(*value).expect("intrinsic enum is an i32"),
-                        )
-                        .into(),
-                    );
-                }
-                _ => {}
+    if let ScalarExpr::Field(field) = expr
+        && let Value::Int(value) = value
+    {
+        match field.scope {
+            crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Kind) => {
+                return AttrValue::Str(
+                    crate::engine::kind_enum_name(
+                        i32::try_from(*value).expect("intrinsic enum is an i32"),
+                    )
+                    .into(),
+                );
             }
+            crate::ast::Scope::Intrinsic(crate::ast::Intrinsic::Status) => {
+                return AttrValue::Str(
+                    crate::engine::status_enum_name(
+                        i32::try_from(*value).expect("intrinsic enum is an i32"),
+                    )
+                    .into(),
+                );
+            }
+            _ => {}
         }
     }
     attribute_value(value)

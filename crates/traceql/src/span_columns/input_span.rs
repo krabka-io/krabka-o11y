@@ -1,5 +1,7 @@
 use super::{EventRef, LinkRef, Time};
-use crate::result::{AttrValue, Attribute};
+#[cfg(test)]
+use crate::result::AttrValue;
+use crate::result::Attribute;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputSpan {

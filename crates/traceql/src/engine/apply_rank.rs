@@ -23,8 +23,7 @@ pub(crate) fn apply_rank(
     // Tempo ranks independently at every timestamp, retaining the union of
     // winning series. Exemplars belong to that series, not to its rank points.
     let mut timestamps = BTreeMap::<i64, Vec<RankedValue>>::new();
-    for series_index in 0..series.len() {
-        let series_item = &series[series_index];
+    for (series_index, series_item) in series.iter().enumerate() {
         for point in &series_item.points {
             if !point.value.is_nan() {
                 timestamps
@@ -65,8 +64,8 @@ pub(crate) fn apply_rank(
                 }),
         );
     }
-    for series_index in 0..series.len() {
-        series[series_index].points.retain(|point| {
+    for (series_index, series_item) in series.iter_mut().enumerate() {
+        series_item.points.retain(|point| {
             admitted.contains(&RankedPointIdentity {
                 series_index,
                 timestamp: point.timestamp,

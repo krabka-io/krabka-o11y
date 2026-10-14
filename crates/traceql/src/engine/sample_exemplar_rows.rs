@@ -47,8 +47,7 @@ fn sample_rows(
     if limit == 0 {
         return Ok(HashSet::new());
     }
-    for batch_index in 0..batches.len() {
-        let batch = &batches[batch_index];
+    for (batch_index, batch) in batches.iter().enumerate() {
         for row in 0..batch.num_rows() {
             let timestamp = UnixNano(i64_value(batch, COL_START, row)?);
             if timestamp < start || timestamp > end {

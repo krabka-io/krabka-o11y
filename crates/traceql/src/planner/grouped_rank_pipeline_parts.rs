@@ -1,4 +1,4 @@
-use super::{Aggregate, Field, Pipeline, RankFilter, rank_pipeline};
+use super::{Aggregate, Field, Pipeline, RankFilter};
 
 pub(crate) struct GroupedRankPipelineParts<'a> {
     pub(crate) aggregate: &'a Aggregate,

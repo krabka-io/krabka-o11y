@@ -29,8 +29,7 @@ pub(crate) fn assemble_metrics_response(
         metric_policy.max_exemplars_per_series,
     )?;
     let mut buckets: BTreeMap<MetricLabels, Vec<MetricBucket>> = BTreeMap::new();
-    for batch_index in 0..batches.len() {
-        let batch = &batches[batch_index];
+    for (batch_index, batch) in batches.iter().enumerate() {
         let starts = span_start_column(batch)?;
         for row in 0..batch.num_rows() {
             let ts = UnixNano(starts.value(row));

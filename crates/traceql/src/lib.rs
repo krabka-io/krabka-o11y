@@ -23,10 +23,10 @@ mod span_matching;
 mod store;
 pub mod testkit;
 
-pub fn string_array_from_arrow<'a>(
-    array: &'a dyn arrow::array::Array,
+pub fn string_array_from_arrow(
+    array: &dyn arrow::array::Array,
     error: impl FnOnce() -> TraceqlError,
-) -> Result<&'a arrow::array::StringArray, TraceqlError> {
+) -> Result<&arrow::array::StringArray, TraceqlError> {
     array
         .as_any()
         .downcast_ref::<arrow::array::StringArray>()

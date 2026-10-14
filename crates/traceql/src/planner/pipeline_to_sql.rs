@@ -1,7 +1,6 @@
 use super::{
     Aggregate, Pipeline, Result, aggregate_filter_query_any_sql, aggregate_filter_sql_query,
     grouped_pipeline_sql, is_inert_pipeline_stage, is_search_preserving_pipeline_stage,
-    numeric_aggregate,
 };
 
 pub(crate) fn pipeline_to_sql(spanset_sql: &str, pipeline: &[Pipeline]) -> Result<String> {
