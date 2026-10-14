@@ -76,14 +76,16 @@ pub const CASES: &[TemplateFunctionCase] = &[
         rejected: false,
     },
     TemplateFunctionCase {
-        name: "match_rune_error", expression: "match \"�\" \"\\xff\"",
+        name: "match_rune_error",
+        expression: "match \"�\" \"\\xff\"",
         expected: "true",
         rejected: false,
     },
     TemplateFunctionCase {
         name: "title",
         expression: "title \"hELLO_world-go it’s a TEST ßeta ﬄower\"",
-        expected: "HELLO_world-Go It’s A TEST Sseta Fflower", rejected: false,
+        expected: "HELLO_world-Go It’s A TEST Sseta Fflower",
+        rejected: false,
     },
     TemplateFunctionCase {
         name: "title_double_mid",
@@ -92,16 +94,23 @@ pub const CASES: &[TemplateFunctionCase] = &[
         rejected: false,
     },
     TemplateFunctionCase {
-        name: "upper", expression: "toUpper \"straße\"",
+        name: "upper",
+        expression: "toUpper \"straße\"",
         expected: "STRAßE",
         rejected: false,
     },
     TemplateFunctionCase {
-        name: "lower", expression: "toLower \"İ\"",
+        name: "lower",
+        expression: "toLower \"İ\"",
         expected: "i",
         rejected: false,
     },
-    TemplateFunctionCase { name: "graph", expression: "graphLink \"rate(a{job=\\\"x\\\"}[5m])\"", expected: "/graph?g0.expr=rate%28a%7Bjob%3D%22x%22%7D%5B5m%5D%29&g0.tab=0", rejected: false },
+    TemplateFunctionCase {
+        name: "graph",
+        expression: "graphLink \"rate(a{job=\\\"x\\\"}[5m])\"",
+        expected: "/graph?g0.expr=rate%28a%7Bjob%3D%22x%22%7D%5B5m%5D%29&g0.tab=0",
+        rejected: false,
+    },
     TemplateFunctionCase {
         name: "table",
         expression: "tableLink \"x+y\"",
@@ -110,8 +119,10 @@ pub const CASES: &[TemplateFunctionCase] = &[
     },
     TemplateFunctionCase {
         name: "sort",
-        expression: "range sortByLabel \"job\" (query \"metric\"),
-    }}{{label \"job\" .}}={{value .}};{{end", expected: "a=2;b=7;b=9;", rejected: false },
+        expression: "range sortByLabel \"job\" (query \"metric\")}}{{label \"job\" .}}={{value .}};{{end",
+        expected: "a=2;b=7;b=9;",
+        rejected: false,
+    },
     TemplateFunctionCase {
         name: "strip_port",
         expression: "stripPort \"[2001:db8::1]:9090\"",
@@ -204,7 +215,8 @@ pub const CASES: &[TemplateFunctionCase] = &[
     },
     TemplateFunctionCase {
         name: "to_time_method",
-        expression: "(toTime 1709211845.123).Year", expected: "2024",
+        expression: "(toTime 1709211845.123).Year",
+        expected: "2024",
         rejected: false,
     },
     TemplateFunctionCase {
@@ -256,7 +268,8 @@ pub const CASES: &[TemplateFunctionCase] = &[
         rejected: true,
     },
     TemplateFunctionCase {
-        name: "query_error", expression: "query \"bad\"",
+        name: "query_error",
+        expression: "query \"bad\"",
         expected: "",
         rejected: true,
     },
@@ -310,14 +323,20 @@ pub const CASES: &[TemplateFunctionCase] = &[
     },
     TemplateFunctionCase {
         name: "sort_alias",
-        expression: "$q := query \"metric\",
-    }}{{$alias := $q}}{{$sorted := sortByLabel \"job\" $q}}{{label \"job\" (first $alias)", expected: "a", rejected: false },
+        expression: "$q := query \"metric\"}}{{$alias := $q}}{{$sorted := sortByLabel \"job\" $q}}{{label \"job\" (first $alias)",
+        expected: "a",
+        rejected: false,
+    },
     TemplateFunctionCase {
         name: "sort_slice_alias",
-        expression: "$q := query \"metric\",
-    }}{{$part := slice $q 0 2}}{{$sorted := sortByLabel \"job\" $part}}{{label \"job\" (first $q)", expected: "a", rejected: false },
+        expression: "$q := query \"metric\"}}{{$part := slice $q 0 2}}{{$sorted := sortByLabel \"job\" $part}}{{label \"job\" (first $q)",
+        expected: "a",
+        rejected: false,
+    },
     TemplateFunctionCase {
         name: "sort_during_range",
-        expression: "$q := query \"metric\",
-    }}{{range $i,$s := $q}}{{label \"job\" $s}}{{if eq $i 0}}{{$sorted := sortByLabel \"job\" $q}}{{end}}{{end", expected: "bbb", rejected: false },
+        expression: "$q := query \"metric\"}}{{range $i,$s := $q}}{{label \"job\" $s}}{{if eq $i 0}}{{$sorted := sortByLabel \"job\" $q}}{{end}}{{end",
+        expected: "bbb",
+        rejected: false,
+    },
 ];

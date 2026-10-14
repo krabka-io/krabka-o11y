@@ -76,10 +76,10 @@ fn metric_value(value: f64) -> Value {
 fn metrics_json(series: &[TraceMetricSeries]) -> Value {
     json!(series.iter().map(|series| {
         let mut result = json!({
-            "labels": series.labels,
+            "labels": series.labels.iter().map(|label| json!([label.key, label.value])).collect::<Vec<_>>(),
             "points": series.points.iter().map(|point| json!([point.timestamp, metric_value(point.value)])).collect::<Vec<_>>(),
             "exemplars": series.exemplars.iter().map(|exemplar| {
-                let mut value = json!({"labels": exemplar.labels, "value": metric_value(exemplar.value), "timestamp_ns": exemplar.timestamp_ns});
+                let mut value = json!({"labels": exemplar.labels.iter().map(|label| json!([label.key, label.value])).collect::<Vec<_>>(), "value": metric_value(exemplar.value), "timestamp_ns": exemplar.timestamp_ns});
                 if !exemplar.label_types.is_empty() { value["label_types"] = json!(exemplar.label_types); }
                 value
             }).collect::<Vec<_>>(),

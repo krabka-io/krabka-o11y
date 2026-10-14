@@ -70,8 +70,8 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
         .with_hot_tail_shared_frontier(SharedOnly(tail.clone()), frontier.clone());
     let range = TimeRange::new(80, 120).unwrap();
     let snapshot = hot_tail_snapshot(&state, range);
-    let captured = &snapshot.records;
-    let captured_frontier = &snapshot.frontier;
+    let captured = snapshot.records;
+    let captured_frontier = snapshot.frontier;
     let expected_records = ledger[..6].to_vec();
     assert!(
         captured.iter().map(Arc::as_ref).collect::<Vec<_>>()

@@ -4114,7 +4114,8 @@ fn prometheus_template_function_profile_matches_pinned_expander() {
         TemplateData::String("https://prom.example/x%20y?arg=a%2Bb".into()),
     )]);
     for case in prometheus_template_functions::CASES {
-        let format = LineFormat::new_prometheus(format!("{{{{ {} }}}}", case.expression)).unwrap();
+        let format = LineFormat::new_prometheus(format!("{{{{ {} }}}}", case.expression))
+            .unwrap_or_else(|error| panic!("{} ({}): {error}", case.name, case.expression));
         let query = match case.name {
             "first_empty" => TemplateData::QueryResult(Vec::new().into()),
             "query_error" => TemplateData::QueryError("backend unavailable".into()),

@@ -15,6 +15,7 @@ crate_library(
     ) + [
         "//crates/observability:tests/support/pipeline_bundle_metrics.rs",
         "//crates/observability:tests/support/recording_trace_subscriber.rs",
+        "//crates/blockstore:tests/support/compaction_levels.rs",
     ],
     # `build.rs` generates prost types from these.
     build_script_data = glob(["proto/**"]),
@@ -76,6 +77,11 @@ crate_tests(
     # tests also use.
     extra_srcs = {
         "block_lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
+        "frontend_http_backend": ["//crates/integration:tests/support/test_broker.rs"],
+        "frontend_membership_fanout": ["//crates/integration:tests/support/test_broker.rs"],
+        "frontend_server": ["//crates/integration:tests/support/test_broker.rs"],
+        "frontend_trace_by_id_assembly": ["//crates/integration:tests/support/test_broker.rs"],
+        "querier_readiness": ["//crates/integration:tests/support/test_broker.rs"],
         "blockbuilder": ["//crates/blockstore:tests/support/hooked_store.rs"],
         "grafana_e2e": [
             "src/wire/jaeger/thrift_fixture.rs",

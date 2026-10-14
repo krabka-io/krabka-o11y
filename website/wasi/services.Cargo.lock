@@ -14,6 +14,8 @@ dependencies = [
 [[package]]
 name = "addr2line"
 version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e567177890eb1617b1f774005b66b26b2377afd138a2ca37aae7d8f0c81429d4"
 dependencies = [
  "cpp_demangle",
  "fallible-iterator",
@@ -3870,6 +3872,7 @@ dependencies = [
  "arrow",
  "assert2",
  "async-trait",
+ "bon",
  "bytes",
  "clap",
  "datafusion",
@@ -4256,6 +4259,7 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "tracing",
+ "yare",
 ]
 
 [[package]]
@@ -4292,6 +4296,7 @@ dependencies = [
  "assert2",
  "async-trait",
  "axum",
+ "bon",
  "bytes",
  "clap",
  "crc32c",
@@ -4340,6 +4345,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wincode",
+ "yare",
 ]
 
 [[package]]
@@ -4430,10 +4436,13 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.23.1",
+ "bon",
  "bytes",
  "clap",
  "datafusion",
+ "derive_more",
  "flate2",
+ "futures",
  "futures-util",
  "krabka-audit",
  "krabka-blockstore",
@@ -4449,6 +4458,7 @@ dependencies = [
  "krabka-security",
  "krabka-telemetry",
  "krabka-units",
+ "maplit",
  "mutants",
  "num-traits",
  "object_store",
@@ -4488,6 +4498,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "x509-parser",
+ "yare",
 ]
 
 [[package]]
@@ -4518,6 +4529,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "wincode",
+ "yare",
 ]
 
 [[package]]
@@ -4553,6 +4565,7 @@ dependencies = [
  "krabka-telemetry",
  "krabka-throttle",
  "krabka-units",
+ "maplit",
  "multer",
  "num-traits",
  "object 0.40.0",
@@ -4588,6 +4601,7 @@ dependencies = [
  "url",
  "uuid",
  "wincode",
+ "yare",
 ]
 
 [[package]]
@@ -4600,6 +4614,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.23.1",
+ "bon",
  "crc32c",
  "datafusion",
  "datatest-stable",
@@ -4632,6 +4647,7 @@ dependencies = [
  "tracing",
  "url",
  "xxhash-rust",
+ "yare",
 ]
 
 [[package]]
@@ -4929,6 +4945,7 @@ dependencies = [
  "arrow",
  "assert2",
  "async-trait",
+ "bon",
  "datafusion",
  "datatest-stable",
  "derive_more",
@@ -4943,6 +4960,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "yare",
 ]
 
 [[package]]
@@ -4955,6 +4973,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.23.1",
+ "bon",
  "bytes",
  "clap",
  "dashmap",
@@ -5013,6 +5032,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wincode",
+ "yare",
 ]
 
 [[package]]
@@ -5401,6 +5421,8 @@ dependencies = [
 [[package]]
 name = "lzzzz"
 version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb42ba2edf1f0491b2e2c85fd49cf2a7adad3cab92ea0e29bff82d6fdafcefda"
 dependencies = [
  "cc",
 ]
@@ -5544,6 +5566,8 @@ dependencies = [
 [[package]]
 name = "mio"
 version = "1.0.3+wasix.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6382283eb5bc017eab57d653e4872eb35e3c1c730085a14fbed0bce51b9b9e5"
 dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
@@ -6177,6 +6201,8 @@ dependencies = [
 [[package]]
 name = "parking_lot_core"
 version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
@@ -9733,6 +9759,26 @@ name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
+name = "yare"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd38b61ea41431e67d75175dedcf452d555e99a08a5d0cf9ea6fdd35ef615c7c"
+dependencies = [
+ "yare-macro",
+]
+
+[[package]]
+name = "yare-macro"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac8d4626f0bd81499df0d68262eb1b819b0025edc6832ade7fbf10597b008efe"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "yasna"

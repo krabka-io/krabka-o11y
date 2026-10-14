@@ -376,7 +376,7 @@ mod tests {
             .diff(
                 DiffQuery::new(
                     ProfileSelection::new("tenant-a", PT, "{}"),
-                    MillisRange::new(0, 30_000),
+                    MillisRange::new(0, 1),
                 ),
                 DiffQuery::new(
                     ProfileSelection::new("tenant-a", PT, "{}"),

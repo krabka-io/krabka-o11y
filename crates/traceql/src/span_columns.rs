@@ -23,7 +23,7 @@ mod tests {
     }
 
     fn sid(n: u8) -> [u8; 8] {
-        [n, 0, 0, 0, 0, 0, 0, 0]
+        [n; 8]
     }
 
     fn span(id: u8, parent: Option<u8>) -> InputSpan {

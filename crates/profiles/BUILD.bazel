@@ -71,7 +71,10 @@ crate_tests(
             "//crates/blockstore:tests/support/hooked_store.rs",
             "src/bin/krabka-profiles/wal_topic.rs",
         ],
-        "ingest_query_proptest": ["//crates/logql:tests/support/seed_splice.rs"],
+        "ingest_query_proptest": [
+            "//crates/logql:tests/support/seed_splice.rs",
+            "//crates/logql:tests/support/unicode_noise.rs",
+        ],
         "ingest_roundtrip": [
             "src/bin/krabka-profiles/render_roundtrip.rs",
             "src/bin/krabka-profiles/synthetic_cpu_profile.rs",
