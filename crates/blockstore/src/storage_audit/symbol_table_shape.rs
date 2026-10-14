@@ -1,3 +1,5 @@
+#![allow(dead_code)] // These fields mirror the wire format consumed by serde.
+
 /// The shape of a profiles `.symdb` symbol table, as `krabka-pprof` persists
 /// it in `SymbolDb`.
 ///

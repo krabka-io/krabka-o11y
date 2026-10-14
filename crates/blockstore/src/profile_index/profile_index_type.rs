@@ -202,7 +202,7 @@ impl ProfileIndex {
                             )
                             .is_empty()
                     })
-                    .map(|profile_type| profile_type.clone())
+                    .cloned()
                     .collect()
             })
             .unwrap_or_default()
@@ -248,7 +248,7 @@ impl ProfileIndex {
                     .profile_types
                     .keys()
                     .filter(|profile_type| !extras.profile_types[*profile_type].is_disjoint(fps))
-                    .map(|profile_type| profile_type.clone())
+                    .cloned()
                     .collect()
             })
             .unwrap_or_default()

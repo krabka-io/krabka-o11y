@@ -40,7 +40,7 @@ pub(crate) fn parse_index_shard_location(
     let span = parts.next();
     let kind = parts.next();
     let extra = parts.next();
-    if !matches!(span, Some(_)) || kind != Some("shard.kbi") || extra.is_some() {
+    if span.is_none() || kind != Some("shard.kbi") || extra.is_some() {
         return Some(ParsedIndexShardLocation {
             tenant,
             object: IndexShardObject::Foreign,

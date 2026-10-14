@@ -40,7 +40,7 @@ struct CopyManifestCounts {
     already_present: usize,
 }
 
-struct LoadedDeploymentCut {
+pub(super) struct LoadedDeploymentCut {
     cut: DeploymentCut,
     digest: String,
 }

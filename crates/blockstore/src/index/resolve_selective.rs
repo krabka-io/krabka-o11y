@@ -18,8 +18,7 @@ impl TenantIndex {
         matchers: &[LabelMatcher],
     ) -> Option<BTreeSet<SeriesFingerprint>> {
         let mut seed = None;
-        for position in 0..matchers.len() {
-            let matcher = &matchers[position];
+        for (position, matcher) in matchers.iter().enumerate() {
             if matcher.op != MatchOp::Eq
                 || matcher.value.is_empty()
                 || matcher.name == QUERY_SHARD_LABEL
@@ -58,8 +57,7 @@ impl TenantIndex {
         }
 
         let mut candidates = seed_posting.cloned().unwrap_or_default();
-        for position in 0..matchers.len() {
-            let matcher = &matchers[position];
+        for (position, matcher) in matchers.iter().enumerate() {
             if position != seed_position {
                 self.retain_matching(&mut candidates, matcher)?;
             }
@@ -75,8 +73,7 @@ impl TenantIndex {
         seed_position: usize,
     ) -> Option<BTreeSet<SeriesFingerprint>> {
         let mut regex_position = None;
-        for position in 0..matchers.len() {
-            let matcher = &matchers[position];
+        for (position, matcher) in matchers.iter().enumerate() {
             if matcher.name != QUERY_SHARD_LABEL
                 && matches!(matcher.op, MatchOp::Re | MatchOp::Nre)
                 && self
@@ -97,8 +94,7 @@ impl TenantIndex {
         let matcher = &matchers[regex_position];
         // A tenant-wide exact posting cannot remove any regex matches.
         let mut candidates = self.resolve_regex(matcher).ok()?;
-        for position in 0..matchers.len() {
-            let matcher = &matchers[position];
+        for (position, matcher) in matchers.iter().enumerate() {
             if position != seed_position && position != regex_position {
                 self.retain_matching(&mut candidates, matcher)?;
             }

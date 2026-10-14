@@ -1776,7 +1776,7 @@ use block_entry::BlockEntry;
 use block_list::BlockList;
 use block_list_repr::BlockListRepr;
 pub(crate) use byte_reader::{
-    ByteReader, DecodedShardHeader, ShardBlockBounds, decode_shard_header, read_shard_block_prefix,
+    ByteReader, ShardBlockBounds, decode_shard_header, read_shard_block_prefix,
 };
 pub(crate) use decode_index_shard::{decode_index_shard, dictionary_entry};
 pub use default_index_shard_width::DEFAULT_INDEX_SHARD_WIDTH;

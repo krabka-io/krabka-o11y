@@ -29,7 +29,7 @@ use datafusion::{
     physical_plan::ExecutionPlan,
     prelude::{Expr, ParquetReadOptions, SessionConfig, SessionContext, col, lit},
 };
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, stream};
 use krabka_units::prelude::{ByteSize, ByteSizeExt};
 use object_store::ObjectStore;
 use tracing::instrument;

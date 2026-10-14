@@ -1051,7 +1051,9 @@ mod validate_batch_schemas;
 use abort_on_part_failure_store::AbortOnPartFailureStore;
 pub use block_row_group_rows::BLOCK_ROW_GROUP_ROWS;
 pub use block_stream_writer::BlockStreamWriter;
-use block_summary::{BlockSummary, BlockSummaryResult};
+use block_summary::BlockSummary;
+#[cfg(test)]
+use block_summary::BlockSummaryResult;
 pub use block_writer::BlockWriter;
 pub use block_writer_properties::block_writer_properties;
 pub use block_zstd_level::BLOCK_ZSTD_LEVEL;

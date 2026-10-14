@@ -3,6 +3,7 @@ use serde::Deserialize;
 use super::{BlockLevel, Labels, MetricsBlockKind, SerdeCompat, WincodeDeserialize};
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // Fields validate the serialized manifest shape on decode.
 struct MetricsManifestShape {
     tenant: String,
     kind: MetricsBlockKind,
@@ -19,6 +20,7 @@ struct MetricsManifestShape {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // The series payload is checked as part of the manifest shape.
 struct MetricsManifestSeries {
     fingerprint: u64,
     labels: Labels,

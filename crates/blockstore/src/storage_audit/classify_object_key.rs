@@ -321,10 +321,10 @@ fn offset_range(raw: &str) -> Option<crate::OffsetRange> {
         .map(|entry| entry.0)
         .filter(|at| *at > 0)
     {
-        if let Ok(first) = raw[..at].parse() {
-            if let Ok(last) = raw[at + 1..].parse() {
-                return Some(crate::OffsetRange::new(first, last));
-            }
+        if let Ok(first) = raw[..at].parse()
+            && let Ok(last) = raw[at + 1..].parse()
+        {
+            return Some(crate::OffsetRange::new(first, last));
         }
     }
     None

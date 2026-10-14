@@ -56,11 +56,11 @@ pub async fn check_log_frontier(
         let Some(block) = listed.object.block() else {
             continue;
         };
-        if let Some(partition) = block.partition {
-            if let Some(offsets) = block.offsets {
-                let entry = last_offsets.entry(partition).or_insert(offsets.max);
-                *entry = (*entry).max(offsets.max);
-            }
+        if let Some(partition) = block.partition
+            && let Some(offsets) = block.offsets
+        {
+            let entry = last_offsets.entry(partition).or_insert(offsets.max);
+            *entry = (*entry).max(offsets.max);
         }
         if let Some(time_range) = block.time_range {
             let end_ns = time_range.end_ns;

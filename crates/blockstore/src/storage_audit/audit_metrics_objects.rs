@@ -2,7 +2,6 @@ use super::{
     Arc, DEFAULT_BLOCK_READ_MAX, LiveBlockSet, MetricsIndexManifest, ObjectRole, ObjectStore,
     StorageAuditError, StorageAuditOptions, StorageFinding, StorageFindingKind, StorageInventory,
     StorageSignal, compare_with_live::append_unindexed_blocks, read_capped_object,
-    unindexed_block_finding,
 };
 
 /// Reads every metrics `.index` manifest and checks the metrics blocks
