@@ -4629,15 +4629,15 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
 fn populated_diff_expected(reverse: bool) -> Value {
     let bars = if reverse {
         json!([
-            [["total"], [28, 0, 140, 0]],
-            [["total", FUNC_WORK], [28, 8, 140, 40]],
-            [["total", FUNC_WORK, FUNC_HOT], [20, 20, 100, 100]],
+            {"stack": ["total"], "values": [28, 0, 140, 0]},
+            {"stack": ["total", FUNC_WORK], "values": [28, 8, 140, 40]},
+            {"stack": ["total", FUNC_WORK, FUNC_HOT], "values": [20, 20, 100, 100]},
         ])
     } else {
         json!([
-            [["total"], [140, 0, 28, 0]],
-            [["total", FUNC_WORK], [140, 40, 28, 8]],
-            [["total", FUNC_WORK, FUNC_HOT], [100, 100, 20, 20]],
+            {"stack": ["total"], "values": [140, 0, 28, 0]},
+            {"stack": ["total", FUNC_WORK], "values": [140, 40, 28, 8]},
+            {"stack": ["total", FUNC_WORK, FUNC_HOT], "values": [100, 100, 20, 20]},
         ])
     };
     json!({"bars": bars, "total": 168, "maxSelf": 100,

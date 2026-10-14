@@ -204,7 +204,7 @@ fn trace_rows(trace_id: [u8; 16], spans: usize, start_nano: i64) -> Vec<SpanRow>
             instrumentation_version: None,
             attrs: vec![SpanAttr::string(
                 "service.name",
-                format!("svc-{}", index % 32),
+                format!("svc-{}", entry.0 % 32),
             )],
             events: vec![],
             links: vec![],

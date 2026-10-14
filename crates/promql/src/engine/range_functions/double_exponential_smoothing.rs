@@ -15,8 +15,7 @@ pub(crate) fn double_exponential_smoothing(
     let mut smoothed = samples[0].value;
     let mut trend = samples[1].value - samples[0].value;
 
-    for index in 1..samples.len() {
-        let sample = &samples[index];
+    for (index, sample) in samples.iter().enumerate().skip(1) {
         if index != 1 {
             trend =
                 trend_factor.mul_add(smoothed - previous_smoothed, (1.0 - trend_factor) * trend);
