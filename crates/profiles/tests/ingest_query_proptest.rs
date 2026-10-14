@@ -17,6 +17,8 @@
 
 #[path = "../../logql/tests/support/seed_splice.rs"]
 mod seed_splice;
+#[path = "../../logql/tests/support/unicode_noise.rs"]
+mod unicode_noise;
 
 use std::fmt::Write as _;
 
@@ -78,27 +80,13 @@ const TOKENS: &[&str] = &[
     "v",
 ];
 
-fn arbitrary_text() -> impl Strategy<Value = String> {
-    prop::collection::vec(
-        prop_oneof![
-            2 => any::<char>(),
-            3 => prop::char::range('\u{0}', '\u{7f}'),
-            1 => Just('%'),
-            1 => Just('é'),
-            1 => Just('\u{1f600}'),
-        ],
-        0..48,
-    )
-    .prop_map(String::from_iter)
-}
-
 fn token_salad() -> impl Strategy<Value = String> {
     prop::collection::vec(prop::sample::select(TOKENS), 1..16).prop_map(|parts| parts.concat())
 }
 
 fn arbitrary_query() -> impl Strategy<Value = String> {
     prop_oneof![
-        2 => arbitrary_text(),
+        2 => unicode_noise::arbitrary_text(),
         3 => token_salad(),
         3 => seed_splice::mutated_seed(SEED_QUERIES),
     ]

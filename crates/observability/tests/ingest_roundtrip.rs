@@ -263,9 +263,9 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
 /// call. Only a scrape after real work separates them, so this reads the
 /// encoded text rather than the handles.
 async fn check_compactor_instruments_moved(metrics: &ServiceMetrics, wal_topic: &str) {
-    let mut buffer = String::new();
-    let registry = metrics.registry.lock().await;
-    prometheus_client::encoding::text::encode(&mut buffer, &registry).expect("encode the registry");
+    let buffer = krabka_observability::service_metrics::encode_registry(&metrics.registry)
+        .await
+        .expect("encode the registry");
 
     for needle in [
         // Two WAL records were produced above, and the compactor read both.

@@ -28,6 +28,13 @@ struct PlannedLoneVectorArg<'call> {
     samples: Vec<InstantSample>,
 }
 
+fn single_argument(call: &Call) -> Option<&Expr> {
+    match call.args.args.as_slice() {
+        [arg] => Some(arg),
+        _ => None,
+    }
+}
+
 impl<S: MetricStore> PromqlEngine<S> {
     /// Plans the float utility functions onto the operator path.
     ///
@@ -177,7 +184,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let [arg] = call.args.args.as_slice() else {
+        let Some(arg) = single_argument(call) else {
             return Ok(None);
         };
         let Some(samples) = self
@@ -316,7 +323,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let [arg] = call.args.args.as_slice() else {
+        let Some(arg) = single_argument(call) else {
             return Ok(None);
         };
         let QueryResult::Scalar { value, .. } = self.plan_and_resolve(tenant, arg, time_ms).await?

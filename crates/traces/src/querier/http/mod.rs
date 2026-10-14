@@ -4104,9 +4104,7 @@ mod instrumentation_groups;
 mod instrumentation_key;
 mod instrumentation_scope_json;
 mod instrumentation_tags;
-mod intrinsic_tags;
 mod is_match_all_query;
-mod key_is_safe_attribute;
 mod limit_error_response;
 mod link_tags;
 mod links_json;
@@ -4206,6 +4204,8 @@ pub(crate) fn tag_filter<'a>(
         },
     }
 }
+mod accepts_media_type;
+pub(super) use accepts_media_type::accepts_media_type;
 mod timed_tag_values;
 mod trace_by_id;
 mod trace_by_id_inner;
@@ -4259,10 +4259,8 @@ use instrumentation_groups::{InstrumentationGroup, InstrumentationGroups};
 use instrumentation_key::InstrumentationKey;
 use instrumentation_scope_json::instrumentation_scope_json;
 use instrumentation_tags::INSTRUMENTATION_TAGS;
-use intrinsic_tags::INTRINSIC_TAGS;
 use is_match_all_query::is_match_all_query;
-use key_is_safe_attribute::key_is_safe_attribute;
-use krabka_traceql::typed_value_parts;
+use krabka_traceql::{key_is_safe_attribute, typed_value_parts};
 use limit_error_response::limit_error_response;
 use link_tags::LINK_TAGS;
 use links_json::links_json;
@@ -4299,7 +4297,7 @@ pub(crate) use query_param::query_param;
 use query_range::query_range;
 use query_range_inner::query_range_inner;
 pub(crate) use request_tenant::request_tenant;
-use required_seconds_param::required_seconds_param;
+pub(crate) use required_seconds_param::required_seconds_param;
 use required_time_range::required_time_range;
 use resource_attrs::ResourceAttrs;
 use resource_span_group::ResourceSpanGroup;
@@ -4359,7 +4357,7 @@ use typed_traceql_value::typed_traceql_value;
 pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;
 
-use super::tag_scope_from_name;
+use super::{INTRINSIC_TAGS, tag_scope_from_name};
 
 mod tempo_metric_bounds;
 use tempo_metric_bounds::tempo_metric_bounds;

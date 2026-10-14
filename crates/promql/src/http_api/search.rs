@@ -68,14 +68,20 @@ struct SearchResult {
     score: f64,
 }
 
-pub(super) async fn search_metric_names<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
-    RawQuery(query): RawQuery,
-) -> Response {
-    let request = search_request(caller, query.as_deref(), SearchKind::MetricNames);
-    search(state, request).await
+macro_rules! search_get_handler {
+    ($name:ident, $kind:ident) => {
+        pub(super) async fn $name<S: MetricStore>(
+            State(state): State<Arc<PrometheusApiState<S>>>,
+            caller: RequestCaller,
+            RawQuery(query): RawQuery,
+        ) -> Response {
+            let request = search_request(caller, query.as_deref(), SearchKind::$kind);
+            search(state, request).await
+        }
+    };
 }
+
+search_get_handler!(search_metric_names, MetricNames);
 
 macro_rules! search_post_handler {
     ($name:ident, $kind:ident) => {
@@ -93,25 +99,11 @@ macro_rules! search_post_handler {
 
 search_post_handler!(search_metric_names_post, MetricNames);
 
-pub(super) async fn search_label_names<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
-    RawQuery(query): RawQuery,
-) -> Response {
-    let request = search_request(caller, query.as_deref(), SearchKind::LabelNames);
-    search(state, request).await
-}
+search_get_handler!(search_label_names, LabelNames);
 
 search_post_handler!(search_label_names_post, LabelNames);
 
-pub(super) async fn search_label_values<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    caller: RequestCaller,
-    RawQuery(query): RawQuery,
-) -> Response {
-    let request = search_request(caller, query.as_deref(), SearchKind::LabelValues);
-    search(state, request).await
-}
+search_get_handler!(search_label_values, LabelValues);
 
 search_post_handler!(search_label_values_post, LabelValues);
 

@@ -678,18 +678,25 @@ mod tests {
         );
     }
 
+    async fn expect_two_spans_rejected(limits: crate::limits::Limits, error_message: Option<&str>) {
+        let ResponseWithSink { response, sink } = post_two_spans_with_limits(limits).await;
+        assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
+        if let Some(error_message) = error_message {
+            check_error_body_mentions(response, error_message).await;
+        }
+        assert2::assert!(sink.count() == 0);
+    }
+
     #[tokio::test]
     async fn over_span_limit_is_400() {
-        let limits = crate::limits::Limits {
-            max_spans_per_request: 1,
-            ..crate::limits::Limits::default()
-        };
-        let ResponseWithSink {
-            response: resp,
-            sink,
-        } = post_two_spans_with_limits(limits).await;
-        assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        assert2::assert!(sink.count() == 0);
+        expect_two_spans_rejected(
+            crate::limits::Limits {
+                max_spans_per_request: 1,
+                ..crate::limits::Limits::default()
+            },
+            None,
+        )
+        .await;
     }
 
     /// A request of exactly the cap is appended. The cap and its refusal differ
@@ -712,19 +719,14 @@ mod tests {
 
     #[tokio::test]
     async fn shared_trace_span_limit_is_enforced_before_append() {
-        let limits = crate::limits::Limits {
-            max_spans_per_trace: 1,
-            ..crate::limits::Limits::default()
-        };
-
-        let ResponseWithSink {
-            response: resp,
-            sink,
-        } = post_two_spans_with_limits(limits).await;
-
-        assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        check_error_body_mentions(resp, "max spans per trace").await;
-        check!(sink.count() == 0);
+        expect_two_spans_rejected(
+            crate::limits::Limits {
+                max_spans_per_trace: 1,
+                ..crate::limits::Limits::default()
+            },
+            Some("max spans per trace"),
+        )
+        .await;
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 //! Helpers the wire decoder tests share.
 
-use assert2::check;
+use assert2::{assert, check};
 
 use super::{DecodedSample, DecodedSeries, pb};
 
@@ -39,6 +39,11 @@ pub fn check_up_sample_with_trace_exemplar(decoded: &[DecodedSeries]) {
     check!(decoded[0].labels.get("__name__") == Some("up"));
     check!(decoded[0].samples == vec![DecodedSample::new(1000, 1.0)]);
     check!(decoded[0].exemplars[0].labels.get("trace_id") == Some("abc"));
+}
+
+pub fn assert_duplicate_job_label(error: super::WireError) {
+    assert!(matches!(error, super::WireError::Invalid(_)));
+    assert!(format!("{error}").contains("duplicate label `job`"));
 }
 
 // A raw snappy block whose varint preamble declares `declared_len` bytes of

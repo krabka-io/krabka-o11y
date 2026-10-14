@@ -316,7 +316,6 @@ mod echo;
 mod endpoint_variant;
 mod exemplar_limit;
 mod frontend_request;
-mod key_is_safe_attribute;
 mod metrics_query;
 mod ndjson_search_stream;
 mod overrides;
@@ -348,7 +347,7 @@ use endpoint_variant::{
 };
 use exemplar_limit::exemplar_limit;
 use frontend_request::FrontendRequest;
-use key_is_safe_attribute::key_is_safe_attribute;
+use krabka_traceql::key_is_safe_attribute;
 use metrics_query::metrics_query;
 use ndjson_search_stream::ndjson_search_stream;
 use overrides::overrides;

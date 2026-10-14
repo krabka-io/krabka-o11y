@@ -37,12 +37,7 @@ impl MetricValue {
     }
 
     pub(crate) fn subtract(self, other: Self) -> Self {
-        Self::new(
-            self.numerator * i128::try_from(other.denominator).expect("denominator fits in i128")
-                - other.numerator
-                    * i128::try_from(self.denominator).expect("denominator fits in i128"),
-            self.denominator * other.denominator,
-        )
+        self.difference(other)
     }
 
     pub(crate) fn multiply(self, other: Self) -> Self {
@@ -56,14 +51,17 @@ impl MetricValue {
         if self.cmp_value(other) == Ordering::Less {
             Self::zero()
         } else {
-            Self::new(
-                self.numerator
-                    * i128::try_from(other.denominator).expect("denominator fits in i128")
-                    - other.numerator
-                        * i128::try_from(self.denominator).expect("denominator fits in i128"),
-                self.denominator * other.denominator,
-            )
+            self.difference(other)
         }
+    }
+
+    fn difference(self, other: Self) -> Self {
+        Self::new(
+            self.numerator * i128::try_from(other.denominator).expect("denominator fits in i128")
+                - other.numerator
+                    * i128::try_from(self.denominator).expect("denominator fits in i128"),
+            self.denominator * other.denominator,
+        )
     }
 
     pub(crate) fn divide_by(self, divisor: u64) -> Self {

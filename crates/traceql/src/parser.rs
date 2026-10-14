@@ -28,6 +28,94 @@ struct ArithmeticOperands {
     rhs: Value,
 }
 
+#[derive(Clone, Copy)]
+enum ValueArithmetic {
+    Add,
+    Subtract,
+    Multiply,
+}
+
+impl ValueArithmetic {
+    fn apply(self, lhs: f64, rhs: f64) -> f64 {
+        match self {
+            Self::Add => lhs + rhs,
+            Self::Subtract => lhs - rhs,
+            Self::Multiply => lhs * rhs,
+        }
+    }
+
+    fn checked_int(self, lhs: i64, rhs: i64) -> Option<i64> {
+        match self {
+            Self::Add => lhs.checked_add(rhs),
+            Self::Subtract => lhs.checked_sub(rhs),
+            Self::Multiply => lhs.checked_mul(rhs),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Add => "addition",
+            Self::Subtract => "subtraction",
+            Self::Multiply => "multiplication",
+        }
+    }
+
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Multiply => "*",
+        }
+    }
+}
+
+fn apply_value_arithmetic(lhs: Value, rhs: Value, operation: ValueArithmetic) -> Result<Value> {
+    match (ArithmeticOperands { lhs, rhs }) {
+        ArithmeticOperands {
+            lhs: Value::Int(lhs),
+            rhs: Value::Int(rhs),
+        } => operation
+            .checked_int(lhs, rhs)
+            .map(Value::Int)
+            .ok_or_else(|| {
+                TraceqlError::Parse(format!("integer {} out of range", operation.name()))
+            }),
+        ArithmeticOperands {
+            lhs: Value::Float(lhs),
+            rhs: Value::Float(rhs),
+        } => Ok(Value::Float(operation.apply(lhs, rhs))),
+        ArithmeticOperands {
+            lhs: Value::Int(lhs),
+            rhs: Value::Float(rhs),
+        } => Ok(Value::Float(operation.apply(i64_to_f64(lhs)?, rhs))),
+        ArithmeticOperands {
+            lhs: Value::Float(lhs),
+            rhs: Value::Int(rhs),
+        } => Ok(Value::Float(operation.apply(lhs, i64_to_f64(rhs)?))),
+        ArithmeticOperands {
+            lhs: Value::Duration(lhs),
+            rhs: Value::Duration(rhs),
+        } if !matches!(operation, ValueArithmetic::Multiply) => operation
+            .checked_int(lhs, rhs)
+            .map(Value::Duration)
+            .ok_or_else(|| {
+                TraceqlError::Parse(format!("duration {} out of range", operation.name()))
+            }),
+        ArithmeticOperands {
+            lhs: Value::Duration(lhs),
+            rhs: Value::Int(rhs),
+        }
+        | ArithmeticOperands {
+            lhs: Value::Int(rhs),
+            rhs: Value::Duration(lhs),
+        } if matches!(operation, ValueArithmetic::Multiply) => operation
+            .checked_int(lhs, rhs)
+            .map(Value::Duration)
+            .ok_or_else(|| TraceqlError::Parse("duration multiplication out of range".into())),
+        ArithmeticOperands { lhs, rhs } => arithmetic_type_error(operation.symbol(), &lhs, &rhs),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};

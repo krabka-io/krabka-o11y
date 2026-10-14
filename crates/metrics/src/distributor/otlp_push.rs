@@ -2,18 +2,13 @@ use prost::Message as _;
 
 use super::*;
 
-pub(crate) async fn otlp_push(
-    State(state): State<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    body: BodyBytes,
+super::ingest_push_handler!(otlp_push, otlp_push_inner, respond_otlp_push);
+
+fn respond_otlp_push(
+    state: &DistributorState,
+    ingest: &IngestRequestStart,
+    result: Result<OtlpPushOutcome, PushError>,
 ) -> Response {
-    let ingest = IngestRequestStart::begin(&headers, &principal, &body);
-    // ONE ingest span per OTLP HTTP push request; series recorded post-decode.
-    let result =
-        async { otlp_push_inner(&state, ingest.authorized_tenant()?, &headers, &body).await }
-            .instrument(ingest.span())
-            .await;
     if let Some(metrics) = &state.metrics {
         metrics.record_ingest(IngestRequest {
             outcome: RequestOutcome::from_result(&result),

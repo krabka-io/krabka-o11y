@@ -37,19 +37,5 @@ pub(crate) fn loki_streams_parquet_response(value: &Value) -> Result<Response, H
     }
 
     let columns = loki_parquet_columns(timestamps, &label_sets)?;
-    let line_array = StringArray::from(lines);
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("timestamp", columns.timestamp_data_type, false),
-        Field::new("labels", columns.labels_array.data_type().clone(), false),
-        Field::new("line", DataType::Utf8, false),
-    ]));
-    let batch = RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(columns.timestamp_array) as ArrayRef,
-            Arc::new(columns.labels_array) as ArrayRef,
-            Arc::new(line_array) as ArrayRef,
-        ],
-    )?;
-    loki_parquet_batch_response(&batch)
+    loki_parquet_value_response(columns, "line", Arc::new(StringArray::from(lines)))
 }

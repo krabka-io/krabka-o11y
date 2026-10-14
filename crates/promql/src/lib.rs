@@ -30,6 +30,13 @@ mod store;
 mod test_support;
 mod wal_record;
 
+pub(crate) fn yaml_optional_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_string)
+}
+
 pub use block_store::MetricBlockStore;
 pub use conformance::{
     AnnotationExpect, ExpectLine, LoadSeries, SampleSpec, Statement, TestFile, parse_test_file,

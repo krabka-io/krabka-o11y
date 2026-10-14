@@ -77,13 +77,7 @@ async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() 
 
 #[tokio::test]
 async fn compactor_delete_endpoint_rejects_invalid_requests() {
-    let config = ServiceConfig {
-        index_prefix: Some("observability/logs".to_string()),
-        ..minimal_service_config(Role::BlockBuilder)
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let app = support::blockbuilder_service_router().await;
 
     let missing_tenant_response = app
         .clone()

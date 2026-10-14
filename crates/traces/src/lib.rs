@@ -55,6 +55,7 @@ pub(crate) fn trace_time_bounds(spans: impl IntoIterator<Item = SpanTiming>) -> 
     }
 }
 
+mod align_record_batch;
 pub mod all_in_one;
 pub mod blockbuilder;
 pub mod compactor;
@@ -62,6 +63,7 @@ pub mod distributor;
 pub mod error;
 mod float_json;
 pub mod frontend;
+mod group_rows_by_trace_id;
 pub mod ids;
 pub mod limits;
 pub mod livestore;

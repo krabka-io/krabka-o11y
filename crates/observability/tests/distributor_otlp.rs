@@ -11,6 +11,15 @@ use krabka_observability::{
     InMemoryWalSink, WalLogRecord, distributor_router, otlp_grpc_logs_service,
     otlp_grpc_logs_service_with_limiter,
 };
+
+async fn assert_duplicate_otlp_attributes_rejected(
+    response: axum::response::Response,
+    sink: &InMemoryWalSink,
+) {
+    assert!(response.status() == StatusCode::BAD_REQUEST);
+    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
+    assert!(sink.records().is_empty());
+}
 use opentelemetry_proto::tonic::{
     collector::logs::v1::logs_service_server::LogsService, common::v1::any_value,
     logs::v1::LogRecord, resource::v1::Resource,
@@ -42,6 +51,13 @@ fn checkout_record(metadata: LogLabels) -> WalLogRecord {
     }
 }
 
+fn set_proto_log_attributes(
+    log: &mut LogRecord,
+    attributes: Vec<opentelemetry_proto::tonic::common::v1::KeyValue>,
+) {
+    log.attributes = attributes;
+}
+
 async fn post_checkout_export_with_attributes(
     app: &axum::Router,
     resource_attributes: &Value,
@@ -54,6 +70,28 @@ async fn post_checkout_export_with_attributes(
         &checkout_json_export_with_attributes(resource_attributes, scope_attributes, log_records),
     )
     .await
+}
+
+struct CheckoutExportResult {
+    sink: InMemoryWalSink,
+    response: axum::response::Response,
+}
+
+async fn export_checkout(
+    resource_attributes: &Value,
+    scope_attributes: &Value,
+    log_record: &Value,
+) -> CheckoutExportResult {
+    let sink = InMemoryWalSink::default();
+    let app = distributor_router(sink.clone());
+    let response = post_checkout_export_with_attributes(
+        &app,
+        resource_attributes,
+        scope_attributes,
+        log_record,
+    )
+    .await;
+    CheckoutExportResult { sink, response }
 }
 
 fn checkout_proto_log_metadata() -> LogLabels {
@@ -159,11 +197,7 @@ async fn post_protobuf(
 
 #[tokio::test]
 async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = post_checkout_export_with_attributes(
-        &app,
+    let CheckoutExportResult { sink, response } = export_checkout(
         &json!([
             {"key": "service.name", "value": {"stringValue": "checkout"}},
             {"key": "deployment.environment", "value": {"stringValue": "prod"}}
@@ -253,11 +287,7 @@ async fn otlp_logs_endpoint_returns_server_error_when_wal_append_fails() {
 
 #[tokio::test]
 async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metadata() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink.clone());
-
-    let response = post_checkout_export_with_attributes(
-        &app,
+    let CheckoutExportResult { sink, response } = export_checkout(
         &json!([
             {"key": "service.name", "value": {"stringValue": "checkout"}},
             {"key": "cloud/region", "value": {"stringValue": "us-west"}}
@@ -331,9 +361,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_resource_attributes_wit
     )
     .await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
-    assert!(sink.records().is_empty());
+    assert_duplicate_otlp_attributes_rejected(response, &sink).await;
 }
 
 #[tokio::test]
@@ -357,9 +385,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_log_attributes_without_
     )
     .await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
-    assert!(sink.records().is_empty());
+    assert_duplicate_otlp_attributes_rejected(response, &sink).await;
 }
 
 #[tokio::test]
@@ -484,7 +510,10 @@ async fn otlp_logs_endpoint_accepts_protobuf_payloads() {
 #[tokio::test]
 async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata() {
     let record = posted_proto_log_record(|log| {
-        log.attributes = vec![proto_key_value("status", any_value::Value::IntValue(500))];
+        set_proto_log_attributes(
+            log,
+            vec![proto_key_value("status", any_value::Value::IntValue(500))],
+        );
         log.trace_id = vec![
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
             0x0f, 0x10,
@@ -510,10 +539,13 @@ async fn otlp_logs_endpoint_maps_proto_severity_fields_to_structured_metadata() 
     let record = posted_proto_log_record(|log| {
         log.severity_number = 17;
         log.severity_text = "ERROR".to_string();
-        log.attributes = vec![proto_key_value(
-            "trace_id",
-            any_value::Value::StringValue("abc".into()),
-        )];
+        set_proto_log_attributes(
+            log,
+            vec![proto_key_value(
+                "trace_id",
+                any_value::Value::StringValue("abc".into()),
+            )],
+        );
     })
     .await;
     assert!(
@@ -551,9 +583,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_protobuf_attributes_wit
 
     let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
-    assert!(sink.records().is_empty());
+    assert_duplicate_otlp_attributes_rejected(response, &sink).await;
 }
 
 #[tokio::test]

@@ -372,6 +372,23 @@ fn trace_ids(batch: &RecordBatch) -> Vec<Vec<u8>> {
     (0..ids.len()).map(|row| ids.value(row).to_vec()).collect()
 }
 
+struct CompactionStore {
+    store: Arc<dyn ObjectStore>,
+    writer: BlockWriter,
+    index: TraceIndex,
+}
+
+fn compaction_store() -> CompactionStore {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let index = TraceIndex::new();
+    CompactionStore {
+        store,
+        writer,
+        index,
+    }
+}
+
 /// Promoted attribute columns are an operator-configurable ingest feature, and
 /// a block written with them has a schema strictly wider than the base one.
 /// Compaction used to rebuild the base schema at this point, so the first
@@ -379,14 +396,12 @@ fn trace_ids(batch: &RecordBatch) -> Vec<Vec<u8>> {
 /// -- and with it the late-span merge -- without any signal.
 #[tokio::test]
 async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
+    let mut compaction = compaction_store();
     let promoted = [PromotedSpanAttr::string("http.method")];
 
     let first = build_blocks_with_promoted_attrs(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
         &[get_request_record()],
@@ -396,8 +411,8 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
     .await
     .unwrap();
     let late = build_blocks_with_promoted_attrs(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
         &[post_child_record()],
@@ -407,10 +422,17 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
     .await
     .unwrap();
 
-    let compacted = compact_pair(store.clone(), &writer, &mut index, &first[0], &late[0]).await;
+    let compacted = compact_pair(
+        compaction.store.clone(),
+        &compaction.writer,
+        &mut compaction.index,
+        &first[0],
+        &late[0],
+    )
+    .await;
     let meta = compacted.metadata;
 
-    assert_get_then_post_methods(store, &meta.object_key).await;
+    assert_get_then_post_methods(compaction.store, &meta.object_key).await;
 }
 
 /// An operator can add `--promote-span-attr` between two flushes, and the
@@ -421,13 +443,11 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
 /// carry it.
 #[tokio::test]
 async fn compacting_inputs_written_under_different_promotion_flags_fills_the_column() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
+    let mut compaction = compaction_store();
 
     let before = build_blocks(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
         &[get_request_record()],
@@ -436,8 +456,8 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
     .await
     .unwrap();
     let after = build_blocks_with_promoted_attrs(
-        &writer,
-        &mut index,
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         7,
         &[post_child_record()],
@@ -449,9 +469,9 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
 
     let keys = planned_job_keys("tenant-a", &[&before[0], &after[0]]);
     let meta = compact_block_keys(
-        store.clone(),
-        &writer,
-        &mut index,
+        compaction.store.clone(),
+        &compaction.writer,
+        &mut compaction.index,
         "tenant-a",
         &keys.inputs,
         &keys.output,
@@ -459,7 +479,7 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
     .await
     .expect("mixed inputs compact");
 
-    assert_get_then_post_methods(store, &meta.object_key).await;
+    assert_get_then_post_methods(compaction.store, &meta.object_key).await;
 }
 
 /// The span block declares `[trace_id, start_unix_nano]` as its sort key, and

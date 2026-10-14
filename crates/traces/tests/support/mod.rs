@@ -2,9 +2,14 @@
 
 #![allow(dead_code)]
 
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
+use krabka_broker::BrokerHandle;
 use krabka_client_core::Client;
+use krabka_traces::frontend::job::{BlockMetaInfo, RowGroupInfo};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 use tempfile::TempDir;
+
+#[path = "../../../integration/tests/support/test_broker.rs"]
+mod shared_broker;
 
 pub struct InProcess {
     pub broker: BrokerHandle,
@@ -14,21 +19,37 @@ pub struct InProcess {
 }
 
 pub async fn start() -> InProcess {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let started = shared_broker::start_broker().await;
     let client = Client::builder()
-        .bootstrap(&bootstrap)
+        .bootstrap(&started.bootstrap)
         .client_id("krabka-traces-test")
         .build()
         .await
         .expect("client build");
     InProcess {
-        broker,
+        broker: started.broker,
         client,
-        bootstrap,
-        _tempdir: tempdir,
+        bootstrap: started.bootstrap,
+        _tempdir: started.tempdir,
     }
+}
+
+pub fn block_info(id: &str, start_ns: i64, end_ns: i64) -> BlockMetaInfo {
+    BlockMetaInfo {
+        block_id: id.to_string(),
+        start_ns,
+        end_ns,
+        size: ByteSize::from_bytes(100),
+        row_groups: vec![RowGroupInfo {
+            index: 0,
+            compressed: ByteSize::from_bytes(100),
+        }],
+    }
+}
+
+pub async fn spawn_axum(app: axum::Router) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
 }

@@ -43,9 +43,10 @@ annotations:
 "#,
     )
     .unwrap();
-    let wal = RecordingSink::default();
-    let alerts = RecordingAlertmanagerSink::default();
-    let states = RecordingRulerStateSink::default();
+    let sinks = super::RecordingRulerSinks::default();
+    let wal = sinks.wal;
+    let alerts = sinks.alertmanager;
+    let states = sinks.ruler_state;
     let mut state = super::super::RulerAlertState::default();
     let pending = super::super::alerting::evaluate_alerting_rule_with_state_and_sink(
         &engine,

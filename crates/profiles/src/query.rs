@@ -48,6 +48,47 @@ use crate::{
     wire::pb,
 };
 
+pub(super) struct ConnectQueryRequest<S: ProfileStore, R> {
+    pub state: Extension<Arc<QuerierState<S>>>,
+    pub principal: Extension<Principal>,
+    pub headers: HeaderMap,
+    pub request: ConnectRequest<R>,
+}
+
+impl<S: ProfileStore, R> ConnectQueryRequest<S, R> {
+    pub fn new(
+        state: Extension<Arc<QuerierState<S>>>,
+        principal: Extension<Principal>,
+        headers: HeaderMap,
+        request: ConnectRequest<R>,
+    ) -> Self {
+        Self {
+            state,
+            principal,
+            headers,
+            request,
+        }
+    }
+
+    pub fn authorized_tenant(&self) -> Result<TenantId, ConnectError> {
+        authorized_connect_tenant(
+            &self.headers,
+            &self.principal.0,
+            &self.state.0.tenant_policy,
+        )
+    }
+}
+
+async fn bind_profile_listener(
+    addr: SocketAddr,
+    security: &ServerSecurity,
+) -> std::io::Result<(ServerListener, SocketAddr)> {
+    let listener = ServerListener::bind(tokio::net::TcpListener::bind(addr).await?, security)
+        .map_err(std::io::Error::other)?;
+    let bound = listener.local_addr();
+    Ok((listener, bound))
+}
+
 fn authorized_connect_tenant(
     headers: &HeaderMap,
     principal: &Principal,
@@ -4041,7 +4082,7 @@ use tenant_services::{
     set_settings_handler, should_initiate_upload_handler, upload_adhoc_handler,
     upload_debuginfo_handler, upload_finished_handler, upsert_recording_rule_handler,
 };
-use timed_query::timed_query;
+use timed_query::{timed_connect_query, timed_query};
 use timed_query_response::timed_query_response;
 use types_label_pairs::types_label_pairs;
 use unix_now_ms::unix_now_ms;

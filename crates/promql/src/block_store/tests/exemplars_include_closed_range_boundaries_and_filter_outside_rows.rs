@@ -19,10 +19,7 @@ struct ExpectedExemplar {
 
 #[tokio::test]
 pub(crate) async fn exemplars_include_closed_range_boundaries_and_filter_outside_rows() {
-    let series_labels = labels(&[
-        crate::test_support::TestLabelPair::new("__name__", "http_requests_total"),
-        crate::test_support::TestLabelPair::new("job", "api"),
-    ]);
+    let series_labels = crate::test_support::labels::http_requests_total_api_labels();
     let fp = series_labels.fingerprint();
     let fixtures = [
         ExemplarFixture::builder()
@@ -72,7 +69,7 @@ pub(crate) async fn exemplars_include_closed_range_boundaries_and_filter_outside
         schema: exemplar_schema(),
         batch,
         last_offset: 3,
-        series_labels: series_labels.clone(),
+        series_labels: series_labels.to_storage_labels().unwrap(),
     })
     .await;
     let exemplars = api_exemplars(&store).await;

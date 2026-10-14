@@ -21,10 +21,11 @@ where
     let mut summary = WalHeadConsumerLoopSummary::default();
     loop {
         let result = poll_ruler_state_consumer_once(consumer, state, state_topic, timeout).await?;
-        summary.polls += 1;
-        summary.polled_records += result.polled_records;
-        summary.replayed_records += result.replayed_records;
-        summary.committed_offsets.extend(result.committed_offsets);
+        summary.record_poll(
+            result.polled_records,
+            result.replayed_records,
+            result.committed_offsets,
+        );
 
         if should_stop(&summary) {
             break;

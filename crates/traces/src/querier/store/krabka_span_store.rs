@@ -459,6 +459,15 @@ impl TagCatalog for KrabkaSpanStore {
 }
 
 impl KrabkaSpanStore {
+    async fn cold_key_batches(&self, keys: &[String]) -> Result<Vec<RecordBatch>, TraceqlError> {
+        let registered = self
+            .blocks
+            .scan_block_keys(keys, span_block_schema())
+            .await
+            .map_err(|err| block_err(&err))?;
+        collect_table(&registered.context, &registered.table).await
+    }
+
     pub(crate) async fn cold_attribute_tag_names(
         &self,
         tenant: &str,
@@ -467,12 +476,7 @@ impl KrabkaSpanStore {
     ) -> Result<ColdAttributeTagNames, TraceqlError> {
         let trace_index = self.trace_index.load();
         let keys = trace_index.candidate_blocks(tenant, start_ns, end_ns);
-        let registered = self
-            .blocks
-            .scan_block_keys(&keys, span_block_schema())
-            .await
-            .map_err(|err| block_err(&err))?;
-        let batches = collect_table(&registered.context, &registered.table).await?;
+        let batches = self.cold_key_batches(&keys).await?;
         let mut names = ColdAttributeTagNames::default();
         for batch in &batches {
             collect_attribute_tag_names(batch, &mut names)?;
@@ -494,12 +498,7 @@ impl KrabkaSpanStore {
             range.start_ns,
             range.end_ns,
         );
-        let registered = self
-            .blocks
-            .scan_block_keys(&keys, span_block_schema())
-            .await
-            .map_err(|err| block_err(&err))?;
-        let batches = collect_table(&registered.context, &registered.table).await?;
+        let batches = self.cold_key_batches(&keys).await?;
         let mut values = BTreeSet::new();
         for batch in &batches {
             collect_attribute_tag_values(batch, requested, &mut values)?;

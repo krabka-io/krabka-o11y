@@ -3,19 +3,22 @@ use krabka_observability::service_metrics::RequestOutcome;
 use super::{
     ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery, FrontendRangeRequest, HeaderMap,
     IntoResponse, MetricStore, PerStepSampleStats, Principal, PrometheusApiState,
-    QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid, TimeExt,
-    authorized_query_tenant, check_range_resolution, collect_query_sample_stats, duration_param,
-    enforce_query_range_limit, evaluated_query_response, execute_range_query_frontend,
-    has_erasure_requests, timestamp_ms, validate_timestamp_range,
+    QueryDispatchRequest, QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid,
+    TimeExt, authorized_query_tenant, check_range_resolution, collect_query_sample_stats,
+    duration_param, enforce_query_range_limit, evaluated_query_response,
+    execute_range_query_frontend, has_erasure_requests, timestamp_ms, validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
-    state: &Arc<PrometheusApiState<S>>,
-    headers: &HeaderMap,
-    principal: &Principal,
-    params: RangeQueryParams,
-    timing: QueryRequestTiming,
+    request: QueryDispatchRequest<'_, S, RangeQueryParams>,
 ) -> Response {
+    let QueryDispatchRequest {
+        state,
+        headers,
+        principal,
+        params,
+        timing,
+    } = request;
     let preparation_started = std::time::Instant::now();
     let tenant = match authorized_query_tenant(headers, principal) {
         Ok(tenant) => tenant,
@@ -118,13 +121,12 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
             evaluation: std::time::Duration::ZERO,
         }
     };
-    let evaluation = eval_started.elapsed();
-    state.record_eval(
+    super::finish_query_evaluation(
+        state,
         "range",
-        RequestOutcome::from_result(&evaluated.outcome),
-        evaluation.as_time(),
-    );
-    evaluated.evaluation = evaluation;
-
-    evaluated_query_response(evaluated, params.limit, timing)
+        evaluated,
+        eval_started,
+        params.limit,
+        timing,
+    )
 }

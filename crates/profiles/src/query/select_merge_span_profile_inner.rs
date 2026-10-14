@@ -1,19 +1,17 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, connect_error, parse_span_selectors, pb,
+    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileStore, QuerierState, connect_error,
+    parse_span_selectors, pb,
 };
 
 pub(crate) async fn select_merge_span_profile_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::SelectMergeSpanProfileRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::SelectMergeSpanProfileRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SelectMergeSpanProfileResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
-    let req = req.0;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
+    let req = request.request.0;
     let span_ids = parse_span_selectors(&req.span_selector).map_err(connect_error)?;
     let max_nodes = req.max_nodes.map_or(0, |count| {
         if count > 0 {

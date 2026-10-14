@@ -6,9 +6,6 @@ pub(crate) fn insert_i32_value(
     values: &mut BTreeSet<super::TypedValue>,
     column: &str,
 ) -> Result<(), TraceqlError> {
-    values.insert(super::TypedValue::new(
-        "int",
-        int32_value(batch, column, row)?.to_string(),
-    ));
+    super::insert_typed_value(values, "int", int32_value(batch, column, row)?.to_string());
     Ok(())
 }

@@ -25,9 +25,13 @@ struct ApiSeriesPlan {
 
 impl ApiSeriesPlan {
     fn new(query: &str) -> Self {
-        let mut label_index = LabelIndex::default();
         let mut labels = Labels::default();
         labels.insert("app".to_string(), "api".to_string());
+        Self::with_labels(query, labels)
+    }
+
+    fn with_labels(query: &str, labels: Labels) -> Self {
+        let mut label_index = LabelIndex::default();
         let api = label_index.insert_series("tenant", labels);
         let plan = StreamPlan {
             tenant: "tenant".to_string(),

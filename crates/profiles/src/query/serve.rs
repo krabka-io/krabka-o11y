@@ -1,6 +1,6 @@
 use super::{
-    Arc, Future, ProfileStore, QuerierState, ServerListener, ServerSecurity, SocketAddr,
-    TcpListener, router, serve_router,
+    Arc, Future, ProfileStore, QuerierState, ServerSecurity, SocketAddr, bind_profile_listener,
+    router, serve_router,
 };
 
 /// Serves the querier on `addr` until `shutdown` completes, and returns the bound address.
@@ -21,9 +21,7 @@ pub async fn serve<S>(
 where
     S: ProfileStore + 'static,
 {
-    let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
-        .map_err(std::io::Error::other)?;
-    let bound = listener.local_addr();
+    let (listener, bound) = bind_profile_listener(addr, security).await?;
     let shutting_down = Arc::clone(&state);
     let server = serve_router(listener, router(Arc::clone(&state)), security)
         .with_graceful_shutdown(async move {

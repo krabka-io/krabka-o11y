@@ -37,6 +37,24 @@ mod span_intrinsic_fields;
 mod string_matches;
 mod typed_value_parts;
 
+fn matches_ordering(ordering: Option<std::cmp::Ordering>, op: MatchCmp) -> bool {
+    match op {
+        MatchCmp::Eq => ordering == Some(std::cmp::Ordering::Equal),
+        MatchCmp::Neq => ordering != Some(std::cmp::Ordering::Equal),
+        MatchCmp::Lt => ordering == Some(std::cmp::Ordering::Less),
+        MatchCmp::Lte => matches!(
+            ordering,
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        ),
+        MatchCmp::Gt => ordering == Some(std::cmp::Ordering::Greater),
+        MatchCmp::Gte => matches!(
+            ordering,
+            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+        ),
+        MatchCmp::Re | MatchCmp::Nre => false,
+    }
+}
+
 pub use attr_matches::attr_matches;
 pub use attr_values_match::attr_values_match;
 pub use bool_matches::bool_matches;

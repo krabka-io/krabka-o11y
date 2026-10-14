@@ -153,12 +153,7 @@ impl OverridesProvider {
         expected: &str,
     ) -> Result<String, OverrideMutationError> {
         let limits = parse_api_limits(&raw)?;
-        let _file_lock = self.lock_api_file()?;
-        let mut api = self
-            .api
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)?;
+        let (_file_lock, mut api) = self.lock_and_reload_api()?;
         let current = api.get(tenant).map_or(0, |entry| entry.version);
         if expected.parse::<u64>().ok() != Some(current) {
             return Err(OverrideMutationError::VersionMismatch);
@@ -189,12 +184,7 @@ impl OverridesProvider {
         tenant: &str,
         patch: Value,
     ) -> Result<ApiOverrideSnapshot, OverrideMutationError> {
-        let _file_lock = self.lock_api_file()?;
-        let mut api = self
-            .api
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)?;
+        let (_file_lock, mut api) = self.lock_and_reload_api()?;
         let previous = api.clone();
         let mut raw = api
             .get(tenant)
@@ -227,12 +217,7 @@ impl OverridesProvider {
     /// # Errors
     /// Returns [`OverrideMutationError`] when the override is absent or stale.
     pub fn api_delete(&self, tenant: &str, expected: &str) -> Result<(), OverrideMutationError> {
-        let _file_lock = self.lock_api_file()?;
-        let mut api = self
-            .api
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)?;
+        let (_file_lock, mut api) = self.lock_and_reload_api()?;
         let entry = api.get(tenant).ok_or(OverrideMutationError::NotFound)?;
         if expected.parse::<u64>().ok() != Some(entry.version) {
             return Err(OverrideMutationError::VersionMismatch);
@@ -247,12 +232,25 @@ impl OverridesProvider {
     }
 
     fn refresh_api(&self) -> Result<(), OverrideMutationError> {
-        let _file_lock = self.lock_api_file()?;
+        self.lock_and_reload_api().map(|_| ())
+    }
+
+    fn lock_and_reload_api(
+        &self,
+    ) -> Result<
+        (
+            Option<std::fs::File>,
+            std::sync::RwLockWriteGuard<'_, HashMap<String, VersionedOverride>>,
+        ),
+        OverrideMutationError,
+    > {
+        let file_lock = self.lock_api_file()?;
         let mut api = self
             .api
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.reload_locked(&mut api)
+        self.reload_locked(&mut api)?;
+        Ok((file_lock, api))
     }
 
     fn lock_api_file(&self) -> Result<Option<std::fs::File>, OverrideMutationError> {

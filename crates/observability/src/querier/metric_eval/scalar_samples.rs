@@ -48,9 +48,14 @@ pub(crate) fn validate_approximate_topk(
     state: &QuerierState,
     kind: QueryKind,
 ) -> Result<(), HttpQueryError> {
-    if !state
-        .limits
-        .shard_aggregations
+    validate_approximate_topk_enabled(&state.limits.shard_aggregations, kind)
+}
+
+pub(crate) fn validate_approximate_topk_enabled(
+    enabled_aggregations: &[String],
+    kind: QueryKind,
+) -> Result<(), HttpQueryError> {
+    if !enabled_aggregations
         .iter()
         .any(|name| name == "approx_topk")
     {

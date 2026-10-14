@@ -60,6 +60,29 @@ where
     }
 }
 
+async fn execute_label_values_response(
+    state: &QuerierState,
+    security: &RequestSecurity,
+    headers: &HeaderMap,
+    label_name: &str,
+    series_params: &SeriesParams,
+) -> Response {
+    match execute_label_values_query(
+        state,
+        LabelValuesRequest {
+            security,
+            headers,
+            label_name,
+            series_params,
+        },
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    }
+}
+
 pub(crate) use api_prom_label_names::api_prom_label_names;
 pub(crate) use api_prom_label_names_post::api_prom_label_names_post;
 pub(crate) use api_prom_label_values::api_prom_label_values;

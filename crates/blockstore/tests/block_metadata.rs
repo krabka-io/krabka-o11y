@@ -21,6 +21,44 @@ fn block(
     }
 }
 
+fn block_between(
+    key: &str,
+    min_ts: i64,
+    max_ts: i64,
+    row_count: usize,
+    fingerprints: &[u64],
+    level: u32,
+) -> BlockMeta {
+    block(
+        key,
+        BlockTimeBounds { min_ts, max_ts },
+        row_count,
+        fingerprints,
+        level,
+    )
+}
+
+fn empty_block() -> BlockMeta {
+    block(
+        "empty",
+        BlockTimeBounds {
+            min_ts: 20,
+            max_ts: 30,
+        },
+        0,
+        &[],
+        1,
+    )
+}
+
+fn expected_blocks_with_early(early: BlockMeta) -> Vec<BlockMeta> {
+    vec![
+        block_between("late", -30, -20, 11, &[2, 9], 4),
+        early,
+        empty_block(),
+    ]
+}
+
 #[test]
 fn block_metadata_preserves_full_records_through_restatement_and_retirement() {
     let mut index = Index::new();
@@ -45,16 +83,7 @@ fn block_metadata_preserves_full_records_through_restatement_and_retirement() {
             &[7],
             0,
         ),
-        block(
-            "empty",
-            BlockTimeBounds {
-                min_ts: 20,
-                max_ts: 30,
-            },
-            0,
-            &[],
-            1,
-        ),
+        empty_block(),
         BlockMeta {
             tenant: "other".into(),
             ..block(
@@ -82,16 +111,7 @@ fn block_metadata_preserves_full_records_through_restatement_and_retirement() {
             &[7],
             0,
         ),
-        block(
-            "empty",
-            BlockTimeBounds {
-                min_ts: 20,
-                max_ts: 30,
-            },
-            0,
-            &[],
-            1,
-        ),
+        empty_block(),
         block(
             "late",
             BlockTimeBounds {
@@ -107,50 +127,10 @@ fn block_metadata_preserves_full_records_through_restatement_and_retirement() {
     let snapshot = index.clone();
 
     // An unchanged fingerprint set updates the same block and its time order.
-    index.add_block(&block(
-        "late",
-        BlockTimeBounds {
-            min_ts: -30,
-            max_ts: -20,
-        },
-        11,
-        &[9, 2],
-        4,
-    ));
+    index.add_block(&block_between("late", -30, -20, 11, &[9, 2], 4));
     assert!(
         index.all_blocks("t")
-            == vec![
-                block(
-                    "late",
-                    BlockTimeBounds {
-                        min_ts: -30,
-                        max_ts: -20
-                    },
-                    11,
-                    &[2, 9],
-                    4
-                ),
-                block(
-                    "early",
-                    BlockTimeBounds {
-                        min_ts: -10,
-                        max_ts: 0
-                    },
-                    2,
-                    &[7],
-                    0
-                ),
-                block(
-                    "empty",
-                    BlockTimeBounds {
-                        min_ts: 20,
-                        max_ts: 30
-                    },
-                    0,
-                    &[],
-                    1
-                ),
-            ]
+            == expected_blocks_with_early(block_between("early", -10, 0, 2, &[7], 0))
     );
 
     // A changed set retires the prior block record and its postings.
@@ -166,38 +146,7 @@ fn block_metadata_preserves_full_records_through_restatement_and_retirement() {
     ));
     assert!(
         index.all_blocks("t")
-            == vec![
-                block(
-                    "late",
-                    BlockTimeBounds {
-                        min_ts: -30,
-                        max_ts: -20
-                    },
-                    11,
-                    &[2, 9],
-                    4
-                ),
-                block(
-                    "early",
-                    BlockTimeBounds {
-                        min_ts: 10,
-                        max_ts: 15
-                    },
-                    6,
-                    &[2, 11],
-                    5
-                ),
-                block(
-                    "empty",
-                    BlockTimeBounds {
-                        min_ts: 20,
-                        max_ts: 30
-                    },
-                    0,
-                    &[],
-                    1
-                ),
-            ]
+            == expected_blocks_with_early(block_between("early", 10, 15, 6, &[2, 11], 5))
     );
     assert!(
         index
@@ -218,16 +167,7 @@ fn block_metadata_preserves_full_records_through_restatement_and_retirement() {
                     &[2, 11],
                     5
                 ),
-                block(
-                    "empty",
-                    BlockTimeBounds {
-                        min_ts: 20,
-                        max_ts: 30
-                    },
-                    0,
-                    &[],
-                    1
-                ),
+                empty_block(),
             ]
     );
 

@@ -12,15 +12,19 @@ rules:
     );
 
     let engine = up_api_engine(&[120_000]);
-    let (wal_sink, alert_sink, state_sink, mut alert_state) = recording_sinks_and_alert_state();
+    let fixture = recording_sinks_and_alert_state();
+    let sinks = fixture.sinks;
+    let mut alert_state = fixture.alert_state;
 
     let evaluation = super::super::evaluate_and_persist_ruler_rule_set(
-        &engine,
-        super::super::RulerSinks::new(&wal_sink, &alert_sink, &state_sink),
-        &mut alert_state,
-        &tenant_id("tenant-a"),
-        &rules,
-        120_000,
+        super::super::RulerRuleSetEvaluationRequest::new(
+            &engine,
+            super::super::RulerSinks::new(&sinks.wal, &sinks.alertmanager, &sinks.ruler_state),
+            &mut alert_state,
+            &tenant_id("tenant-a"),
+            &rules,
+            120_000,
+        ),
     )
     .await
     .expect("rule-set evaluation with state persistence");
@@ -34,7 +38,7 @@ rules:
             }
     );
     assert2::assert!(
-        state_sink.group_records()
+        sinks.ruler_state.group_records()
             == vec![
                 super::super::RulerGroupStateRecord {
                     tenant: "tenant-a".to_string(),
@@ -51,7 +55,7 @@ rules:
             ]
     );
     assert2::assert!(
-        state_sink.alert_records()
+        sinks.ruler_state.alert_records()
             == vec![super::super::RulerAlertStateRecord {
                 tenant: "tenant-a".to_string(),
                 rule_id: "InstanceUp\nup > 0".to_string(),

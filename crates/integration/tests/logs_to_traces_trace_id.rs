@@ -28,6 +28,9 @@ use krabka_observability::{InMemoryWalSink, QuerierState, distributor_router, lo
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+#[path = "json_response.rs"]
+mod json_response;
+
 // The trace this log line belongs to, written into the push body as hex.
 use crate::correlated_span::{SPAN_ID, TRACE_ID};
 
@@ -212,11 +215,7 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
             )
             .await
             .unwrap();
-        assert!(response.status() == StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let body: Value = serde_json::from_slice(&body).unwrap();
+        let body = json_response::body(response, "logs query").await;
         check!(collect_lines(&body).is_empty());
     }
 

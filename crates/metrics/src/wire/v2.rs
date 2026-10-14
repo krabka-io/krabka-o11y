@@ -16,7 +16,9 @@ mod tests {
     use prost::Message;
 
     use super::*;
-    use crate::wire::test_support::{check_up_sample_with_trace_exemplar, snappy, up_v2_request};
+    use crate::wire::test_support::{
+        assert_duplicate_job_label, check_up_sample_with_trace_exemplar, snappy, up_v2_request,
+    };
 
     #[test]
     fn decodes_v2_symbols_samples_exemplars_and_counts() {
@@ -118,8 +120,7 @@ mod tests {
 
         let err = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap_err();
 
-        assert!(matches!(err, WireError::Invalid(_)));
-        assert!(format!("{err}").contains("duplicate label `job`"));
+        assert_duplicate_job_label(err);
     }
 
     #[test]

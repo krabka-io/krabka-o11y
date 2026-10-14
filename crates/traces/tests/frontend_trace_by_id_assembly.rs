@@ -18,17 +18,11 @@ use krabka_traces::frontend::{
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
+#[path = "support/mod.rs"]
+mod support;
+
 fn block(id: &str, start: i64, end: i64) -> BlockMetaInfo {
-    BlockMetaInfo {
-        block_id: id.to_string(),
-        start_ns: start,
-        end_ns: end,
-        size: ByteSize::from_bytes(100),
-        row_groups: vec![RowGroupInfo {
-            index: 0,
-            compressed: ByteSize::from_bytes(100),
-        }],
-    }
+    support::block_info(id, start, end)
 }
 
 fn otlp_span(id: &str) -> OtlpSpanJson {

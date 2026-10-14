@@ -262,13 +262,7 @@ async fn status_metrics_endpoint_returns_prometheus_text_for_distributor_router(
 
 #[tokio::test]
 async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
-    let config = ServiceConfig {
-        index_prefix: Some("observability/logs".to_string()),
-        ..minimal_service_config(Role::BlockBuilder)
-    };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let app = support::blockbuilder_service_router().await;
 
     let ready_response = send_bare(&app, Method::GET, "/ready").await;
     assert!(ready_response.status() == StatusCode::OK);

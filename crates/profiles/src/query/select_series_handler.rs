@@ -1,6 +1,6 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierRequestParts, QuerierState, pb, select_series_inner, timed_query,
+    ProfileStore, QuerierState, pb, select_series_inner, timed_connect_query,
 };
 
 pub(crate) async fn select_series_handler<S>(
@@ -12,18 +12,13 @@ pub(crate) async fn select_series_handler<S>(
 where
     S: ProfileStore,
 {
-    let metrics = state.0.metrics.clone();
-    timed_query(
-        &metrics,
+    timed_connect_query(
+        state,
+        principal,
+        headers,
+        req,
         "select_series",
-        select_series_inner(
-            QuerierRequestParts {
-                state: state.0,
-                principal: principal.0,
-                headers,
-            },
-            req,
-        ),
+        select_series_inner,
     )
     .await
 }

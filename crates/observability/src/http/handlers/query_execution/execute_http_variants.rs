@@ -165,17 +165,10 @@ fn apply_variant_aggregation(
     }
     match &aggregation.op {
         VectorAggregationOp::ApproxTopK(limit) => {
-            if !state
-                .limits
-                .shard_aggregations
-                .iter()
-                .any(|name| name == "approx_topk")
-            {
-                return Err(HttpQueryError::ApproxTopKDisabled);
-            }
-            if matches!(kind, QueryKind::Range) {
-                return Err(HttpQueryError::ApproxTopKRangeQuery);
-            }
+            crate::querier::metric_eval::scalar_samples::validate_approximate_topk_enabled(
+                &state.limits.shard_aggregations,
+                kind,
+            )?;
             apply_approx_metric_selection(
                 value,
                 usize::try_from(*limit).unwrap_or(usize::MAX),

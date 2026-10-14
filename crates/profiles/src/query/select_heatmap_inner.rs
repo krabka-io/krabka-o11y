@@ -1,21 +1,18 @@
 use super::{
-    Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
-    HeatmapExemplarRequest, HeatmapSlotsMillis, Principal, ProfileStore, QuerierState,
-    SpanHeatmapRequest, StartMs, TimeExt, connect_error, heatmap_from_points, heatmap_time_buckets,
-    limit, pb, step_from_secs,
+    BTreeMap, ConnectError, ConnectQueryRequest, ConnectResponse, EndMs, HeatmapExemplarRequest,
+    HeatmapSlotsMillis, ProfileStore, QuerierState, SpanHeatmapRequest, StartMs, TimeExt,
+    connect_error, heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs,
 };
 
 pub(crate) async fn select_heatmap_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::SelectHeatmapRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::SelectHeatmapRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SelectHeatmapResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
-    let req = req.0;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
+    let req = request.request.0;
     state
         .validate_query_range(&tenant, req.start, req.end)
         .map_err(connect_error)?;

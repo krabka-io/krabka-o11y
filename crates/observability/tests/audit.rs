@@ -11,7 +11,6 @@ use std::{
 
 use assert2::{assert, check};
 use krabka_audit::{AuditRecord, ChainState, TrustedKeys, to_ocsf, verify_partition_dir};
-use krabka_broker::{Broker, BrokerConfig};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::{
@@ -25,6 +24,11 @@ use krabka_observability::{
         source_endpoint,
     },
 };
+
+#[path = "support/in_process_broker.rs"]
+mod in_process_broker;
+
+use in_process_broker::InProcessBroker;
 use krabka_units::secs;
 use serde_json::{Value, json};
 
@@ -44,11 +48,8 @@ const BROKER_DEADLINE: Duration = Duration::from_secs(20);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn audit_events_reach_one_partition_of_the_topic_in_order_on_a_valid_chain() {
-    let broker_dir = tempfile::tempdir().expect("broker tempdir");
-    let broker = Broker::start(BrokerConfig::for_tests(broker_dir.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let broker = InProcessBroker::start().await;
+    let bootstrap = broker.bootstrap.clone();
     create_audit_topic(&bootstrap).await;
 
     let args = AuditArgs {
@@ -158,8 +159,8 @@ async fn audit_events_reach_one_partition_of_the_topic_in_order_on_a_valid_chain
     // The broker's own partition files, read by the verifier the broker's
     // audit trail uses. No signing key is set, so no record is anchored.
     let report = verify_partition_dir(
-        &broker_dir
-            .path()
+        &broker
+            .data_dir()
             .join(format!("{AUDIT_TOPIC}-{AUDIT_PARTITION}")),
         &TrustedKeys::default(),
     )

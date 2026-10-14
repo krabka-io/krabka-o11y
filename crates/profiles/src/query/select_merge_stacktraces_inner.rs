@@ -1,21 +1,18 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Message, Principal,
-    ProfileError, ProfileStore, QuerierState, SampleSelector, apply_go_pgo, connect_error,
-    merge_profile_id_selector, parse_span_selectors, parse_trace_selectors, pb, pprof_dot,
-    stack_trace_call_sites,
+    ConnectError, ConnectQueryRequest, ConnectResponse, Message, ProfileError, ProfileStore,
+    QuerierState, SampleSelector, apply_go_pgo, connect_error, merge_profile_id_selector,
+    parse_span_selectors, parse_trace_selectors, pb, pprof_dot, stack_trace_call_sites,
 };
 
 pub(crate) async fn select_merge_stacktraces_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::SelectMergeStacktracesRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::SelectMergeStacktracesRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SelectMergeStacktracesResponse>, ConnectError>
 where
     S: ProfileStore + 'static,
 {
-    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
-    let req = req.0;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
+    let req = request.request.0;
     if state.query_architecture == super::PyroscopeQueryArchitecture::V2
         && state.async_queries_enabled
         && req.r#async.as_ref().is_some_and(|query| query.r#type != 0)

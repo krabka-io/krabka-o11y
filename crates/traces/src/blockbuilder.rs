@@ -33,6 +33,10 @@ use crate::{
 };
 
 #[cfg(test)]
+#[path = "../../observability/tests/support/recording_trace_subscriber.rs"]
+mod recording_trace_subscriber;
+
+#[cfg(test)]
 mod tests {
 
     use super::*;
@@ -50,22 +54,10 @@ mod tests {
     /// is observable.
     #[test]
     fn set_remote_parent_from_records_reparents_into_header_trace() {
-        use opentelemetry::trace::{TraceContextExt as _, TraceId, TracerProvider as _};
-        use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+        use opentelemetry::trace::{TraceContextExt as _, TraceId};
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        use tracing_subscriber::prelude::*;
 
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
-        let provider = SdkTracerProvider::builder()
-            .with_sampler(Sampler::AlwaysOn)
-            .build();
-        let tracer = provider.tracer("blockbuilder-test");
-        let subscriber =
-            tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
-
-        tracing::subscriber::with_default(subscriber, || {
+        super::recording_trace_subscriber::with_recording_trace("blockbuilder-test", || {
             fn record(headers: Vec<krabka_client_consumer::Header>) -> ConsumerRecord {
                 ConsumerRecord {
                     topic: "wal".into(),

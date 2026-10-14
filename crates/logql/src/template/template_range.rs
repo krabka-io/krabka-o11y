@@ -16,6 +16,19 @@ impl TemplateRangeEntry {
 
 pub(super) type Entries = Box<dyn Iterator<Item = TemplateRangeEntry>>;
 
+fn indexed_range_entries(
+    values: impl IntoIterator<Item = TemplateRuntimeValue> + 'static,
+) -> Entries {
+    Box::new(values.into_iter().enumerate().map(|entry| {
+        TemplateRangeEntry::new(
+            TemplateRuntimeValue::Integer(
+                i64::try_from(entry.0).expect("template collection index fits"),
+            ),
+            entry.1,
+        )
+    }))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemplateRange {
     pub(crate) binding: TemplateRangeBinding,
@@ -50,14 +63,7 @@ impl TemplateRange {
                 }))
             }
             TemplateRuntimeValue::ByteSlice(values) => {
-                Box::new(values.into_iter().enumerate().map(|entry| {
-                    TemplateRangeEntry::new(
-                        TemplateRuntimeValue::Integer(
-                            i64::try_from(entry.0).expect("template collection index fits"),
-                        ),
-                        TemplateRuntimeValue::Byte(entry.1),
-                    )
-                }))
+                indexed_range_entries(values.into_iter().map(TemplateRuntimeValue::Byte))
             }
             TemplateRuntimeValue::QueryResult(values) => {
                 Box::new((0..values.len()).map(move |index| {
@@ -69,16 +75,7 @@ impl TemplateRange {
                     )
                 }))
             }
-            TemplateRuntimeValue::Array(values) => {
-                Box::new(values.into_iter().enumerate().map(|entry| {
-                    TemplateRangeEntry::new(
-                        TemplateRuntimeValue::Integer(
-                            i64::try_from(entry.0).expect("template collection index fits"),
-                        ),
-                        entry.1,
-                    )
-                }))
-            }
+            TemplateRuntimeValue::Array(values) => indexed_range_entries(values),
             TemplateRuntimeValue::Object(values) => Box::new(values.into_iter().map(|entry| {
                 TemplateRangeEntry::new(TemplateRuntimeValue::String(entry.0), entry.1)
             })),
@@ -95,14 +92,7 @@ impl TemplateRange {
                 )
             })),
             TemplateRuntimeValue::Json(serde_json::Value::Array(values)) => {
-                Box::new(values.into_iter().enumerate().map(|entry| {
-                    TemplateRangeEntry::new(
-                        TemplateRuntimeValue::Integer(
-                            i64::try_from(entry.0).expect("template collection index fits"),
-                        ),
-                        TemplateRuntimeValue::Json(entry.1),
-                    )
-                }))
+                indexed_range_entries(values.into_iter().map(TemplateRuntimeValue::Json))
             }
             TemplateRuntimeValue::Json(serde_json::Value::Object(values)) => {
                 let mut values = values.into_iter().collect::<Vec<_>>();

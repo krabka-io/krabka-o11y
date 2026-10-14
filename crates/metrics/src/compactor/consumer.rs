@@ -43,6 +43,13 @@ struct WalPartition {
     partition: i32,
 }
 
+fn drain_partitions(frontier: &HashMap<WalPartition, i64>) -> Vec<(String, i32)> {
+    frontier
+        .keys()
+        .map(|partition| (partition.topic.clone(), partition.partition))
+        .collect()
+}
+
 impl WalDrain {
     async fn capture(&mut self, consumer: &Consumer) -> Result<(), CompactionConsumerPollError> {
         if self.frontier.is_none() {
@@ -131,11 +138,8 @@ impl WalDrain {
         &self,
         consumer: &Consumer,
     ) -> Result<(), CompactionConsumerPollError> {
-        let frontier = self.frontier.as_ref().expect("drain boundary was captured");
-        let partitions = frontier
-            .keys()
-            .map(|partition| (partition.topic.clone(), partition.partition))
-            .collect::<Vec<_>>();
+        let partitions =
+            drain_partitions(self.frontier.as_ref().expect("drain boundary was captured"));
         let begin = self
             .query
             .as_ref()
@@ -247,10 +251,7 @@ impl CompactionConsumerPoll for WalAssignmentConsumer {
             .frontier
             .as_ref()
             .expect("drain boundary was captured");
-        let partitions = frontier
-            .keys()
-            .map(|partition| (partition.topic.clone(), partition.partition))
-            .collect::<Vec<_>>();
+        let partitions = drain_partitions(frontier);
         let committed = self
             .consumer
             .committed(&partitions)

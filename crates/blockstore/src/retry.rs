@@ -120,6 +120,17 @@ mod tests {
         }
     }
 
+    fn retrying_flaky_store(
+        flaky: &Arc<FlakyObjectStore>,
+        metrics: &ObjectStoreMetrics,
+    ) -> Arc<dyn ObjectStore> {
+        RetryingObjectStore::wrap(
+            Arc::clone(flaky) as Arc<dyn ObjectStore>,
+            ObjectStoreRetryPolicy::immediate(4),
+            metrics.clone(),
+        )
+    }
+
     impl std::fmt::Display for FlakyObjectStore {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             formatter.write_str("FlakyObjectStore")
@@ -419,11 +430,7 @@ mod tests {
             let labelled = case.metric;
             let flaky = Arc::new(FlakyObjectStore::failing(flaky_operation, 2, timeout));
             let metrics = ObjectStoreMetrics::unregistered();
-            let store = RetryingObjectStore::wrap(
-                Arc::clone(&flaky) as Arc<dyn ObjectStore>,
-                ObjectStoreRetryPolicy::immediate(4),
-                metrics.clone(),
-            );
+            let store = retrying_flaky_store(&flaky, &metrics);
             // The source of the copy has to exist before the copy runs, and
             // putting it is itself an operation the wrapper covers -- so it
             // goes in through the inner store, leaving the counters alone.
@@ -489,11 +496,7 @@ mod tests {
             timeout,
         ));
         let metrics = ObjectStoreMetrics::unregistered();
-        let store = RetryingObjectStore::wrap(
-            Arc::clone(&flaky) as Arc<dyn ObjectStore>,
-            ObjectStoreRetryPolicy::immediate(4),
-            metrics.clone(),
-        );
+        let store = retrying_flaky_store(&flaky, &metrics);
 
         let refused = store.put_multipart(&Path::from("blocks/a.parquet")).await;
 

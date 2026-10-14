@@ -64,6 +64,31 @@ use crate::{
     },
 };
 
+macro_rules! ingest_push_handler {
+    ($name:ident, $inner:ident, $respond:path) => {
+        pub(crate) async fn $name(
+            State(state): State<Arc<DistributorState>>,
+            Extension(principal): Extension<Principal>,
+            headers: HeaderMap,
+            body: BodyBytes,
+        ) -> Response {
+            let ingest = IngestRequestStart::begin(&headers, &principal, &body);
+            let result = ingest.run(&state, &headers, &body, $inner).await;
+            $respond(&state, &ingest, result)
+        }
+    };
+}
+
+pub(crate) use ingest_push_handler;
+
+fn respond_ingest_request(
+    state: &DistributorState,
+    ingest: &IngestRequestStart,
+    result: Result<PushOutcome, PushError>,
+) -> Response {
+    ingest.respond(state, result)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::test_support::DeliveredRecord;

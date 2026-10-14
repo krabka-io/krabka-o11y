@@ -30,6 +30,11 @@ pub(super) struct LatestSample<T> {
     pub value: T,
 }
 
+struct SelectorEvaluationBounds {
+    eval_time_ms: i64,
+    lookback_start_ms: i64,
+}
+
 pub(super) fn retain_latest_by_fingerprint<T: Clone>(
     latest: &mut BTreeMap<SeriesFingerprint, LatestSample<T>>,
     fingerprint: SeriesFingerprint,
@@ -58,6 +63,30 @@ pub(super) fn retain_latest_by_fingerprint<T: Clone>(
 }
 
 impl<S: MetricStore> PromqlEngine<S> {
+    fn selector_evaluation_bounds(
+        &self,
+        selector: &VectorSelector,
+        time_ms: i64,
+    ) -> Result<SelectorEvaluationBounds> {
+        let eval_time_ms = selector_eval_time_ms(selector, time_ms)?;
+        Ok(SelectorEvaluationBounds {
+            eval_time_ms,
+            lookback_start_ms: self.lookback_start_ms(eval_time_ms),
+        })
+    }
+
+    async fn scan_selected_rows(
+        &self,
+        tenant: &str,
+        selector: &VectorSelector,
+        typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
+        window: ScanWindowMs,
+    ) -> Result<SelectorScanRows> {
+        let default_matchers = label_matcher_sets(selector);
+        self.scan_selector_rows(tenant, typed_matchers.unwrap_or(&default_matchers), window)
+            .await
+    }
+
     /// The start of the lookback window that ends at `eval_time_ms`.
     fn lookback_start_ms(&self, eval_time_ms: i64) -> i64 {
         eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64())
@@ -80,8 +109,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<QueryResult> {
-        let eval_time_ms = selector_eval_time_ms(selector, time_ms)?;
-        let start_ms = self.lookback_start_ms(eval_time_ms);
+        let SelectorEvaluationBounds {
+            eval_time_ms,
+            lookback_start_ms: start_ms,
+        } = self.selector_evaluation_bounds(selector, time_ms)?;
         let default_matchers = label_matcher_sets(selector);
         let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         if let Some(series) = self
@@ -172,19 +203,20 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<QueryResult> {
-        let eval_time_ms = selector_eval_time_ms(selector, time_ms)?;
-        let scan_start_ms = self.lookback_start_ms(eval_time_ms);
+        let SelectorEvaluationBounds {
+            eval_time_ms,
+            lookback_start_ms: scan_start_ms,
+        } = self.selector_evaluation_bounds(selector, time_ms)?;
         let scan_end_ms = eval_time_ms.saturating_add(self.opts.lookback_delta.millis_i64());
-        let default_matchers = label_matcher_sets(selector);
-        let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         let SelectorScanRows {
             labels_by_fp,
             float_rows: rows,
             histogram_rows: hist_rows,
         } = self
-            .scan_selector_rows(
+            .scan_selected_rows(
                 tenant,
-                matcher_sets,
+                selector,
+                typed_matchers,
                 ScanWindowMs {
                     start_ms: scan_start_ms,
                     end_ms: scan_end_ms,
@@ -346,16 +378,15 @@ impl<S: MetricStore> PromqlEngine<S> {
             }
             Some(ExtendedSelectorModifier::Anchored) | None => eval_end_ms,
         };
-        let default_matchers = label_matcher_sets(&selector.vs);
-        let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         let SelectorScanRows {
             labels_by_fp,
             float_rows: rows,
             histogram_rows: hist_rows,
         } = self
-            .scan_selector_rows(
+            .scan_selected_rows(
                 tenant,
-                matcher_sets,
+                &selector.vs,
+                typed_matchers,
                 ScanWindowMs {
                     start_ms: scan_start_ms,
                     end_ms: scan_end_ms,

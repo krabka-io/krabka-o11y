@@ -1,6 +1,8 @@
 use super::{
     BitReader, ChunkError, HistogramChunkState, HistogramLayout, NativeHistogram, ResetHint,
-    STALE_NAN_BITS, XorState, decode_histogram_samples, stale_histogram,
+    STALE_NAN_BITS, XorState, decode_histogram_samples,
+    histogram_chunk_state::{read_initial_timestamp, read_next_timestamp},
+    stale_histogram,
 };
 
 /// Decodes a Prometheus float native-histogram chunk.
@@ -50,7 +52,7 @@ impl HistogramChunkState for FloatState {
     }
 
     fn read_first(&mut self, reader: &mut BitReader<'_>) -> Result<(), ChunkError> {
-        self.timestamp = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
+        self.timestamp = read_initial_timestamp(reader)?;
         for value in self
             .scalars
             .iter_mut()
@@ -63,9 +65,7 @@ impl HistogramChunkState for FloatState {
     }
 
     fn read_next(&mut self, reader: &mut BitReader<'_>) -> Result<bool, ChunkError> {
-        let dod = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
-        self.timestamp_delta = self.timestamp_delta.wrapping_add(dod);
-        self.timestamp = self.timestamp.wrapping_add(self.timestamp_delta);
+        read_next_timestamp(reader, &mut self.timestamp_delta, &mut self.timestamp)?;
         for decoded in &mut self.scalars {
             reader
                 .read_xor_value(&mut decoded.value, &mut decoded.state)

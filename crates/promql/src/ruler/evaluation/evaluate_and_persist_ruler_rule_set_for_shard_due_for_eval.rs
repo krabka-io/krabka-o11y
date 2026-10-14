@@ -36,15 +36,16 @@ where
         shard,
         eval_time_ms,
     );
-    let evaluation = evaluate_and_persist_ruler_rule_set_with_report(
-        engine,
-        sinks,
-        alert_state,
-        tenant,
-        &scheduled,
-        eval_time_ms,
-    )
-    .await?;
+    let evaluation =
+        evaluate_and_persist_ruler_rule_set_with_report(super::RulerRuleSetEvaluationRequest::new(
+            engine,
+            sinks,
+            alert_state,
+            tenant,
+            &scheduled,
+            eval_time_ms,
+        ))
+        .await?;
     for namespace_entry in &scheduled {
         let namespace = namespace_entry.0;
         let namespace_groups = namespace_entry.1;

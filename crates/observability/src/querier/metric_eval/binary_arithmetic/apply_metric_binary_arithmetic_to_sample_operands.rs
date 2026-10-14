@@ -1,6 +1,6 @@
 use super::{
-    MetricScalarArithmeticOp, SampleOperands, ScalarOperands, ScalarSide, Value,
-    format_metric_value, json, metric_binary_operand_values, metric_scalar_arithmetic_value,
+    MetricScalarArithmeticOp, SampleOperands, Value, format_metric_value, json,
+    metric_scalar_arithmetic_value, output_sample_scalar_operands,
 };
 
 pub(crate) fn apply_metric_binary_arithmetic_to_sample_operands(
@@ -8,16 +8,10 @@ pub(crate) fn apply_metric_binary_arithmetic_to_sample_operands(
     operands: SampleOperands<'_>,
     op: MetricScalarArithmeticOp,
 ) -> bool {
-    let Some(output_values) = output_sample.as_array_mut() else {
+    let Some((output_values, scalar_operands)) =
+        output_sample_scalar_operands(output_sample, operands)
+    else {
         return false;
-    };
-    let Some(values) = metric_binary_operand_values(operands) else {
-        return false;
-    };
-    let scalar_operands = ScalarOperands {
-        sample: values.left,
-        scalar: values.right,
-        scalar_side: ScalarSide::Right,
     };
     let Some(result) = metric_scalar_arithmetic_value(scalar_operands, op) else {
         return false;

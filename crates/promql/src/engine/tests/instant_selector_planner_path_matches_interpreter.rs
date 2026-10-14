@@ -7,6 +7,12 @@ struct SelectorSample {
     value: f64,
 }
 
+impl FloatSampleSeed for SelectorSample {
+    fn push_into(self, store: &mut InMemoryMetricStore) {
+        store.push_float("t", self.labels, self.timestamp_ms, self.value);
+    }
+}
+
 struct SelectorCase {
     query: &'static str,
     timestamp_ms: i64,
@@ -37,33 +43,34 @@ pub(crate) async fn instant_selector_planner_path_matches_interpreter() {
     // on both paths).
     let mut store = InMemoryMetricStore::new();
     let stale_bits = stale_nan();
-    for sample in [
-        up_sample("api", 0, 1.0),
-        up_sample("api", 60_000, 2.0),
-        up_sample("api", 120_000, 3.0),
-        up_sample("db", 60_000, 9.0),
-        up_sample("db", 120_000, stale_bits),
-        // Genuine NaN as the latest in-window sample: kept as a NaN value.
-        up_sample("nan", 60_000, 5.0),
-        up_sample("nan", 120_000, f64::NAN),
-        SelectorSample::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "down"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(7.0)
-            .build(),
-        SelectorSample::builder()
-            .labels(labels(&[crate::test_support::TestLabelPair::new(
-                "__name__", "lonely",
-            )]))
-            .timestamp_ms(120_000)
-            .value(42.0)
-            .build(),
-    ] {
-        store.push_float("t", sample.labels, sample.timestamp_ms, sample.value);
-    }
+    push_float_samples(
+        &mut store,
+        [
+            up_sample("api", 0, 1.0),
+            up_sample("api", 60_000, 2.0),
+            up_sample("api", 120_000, 3.0),
+            up_sample("db", 60_000, 9.0),
+            up_sample("db", 120_000, stale_bits),
+            // Genuine NaN as the latest in-window sample: kept as a NaN value.
+            up_sample("nan", 60_000, 5.0),
+            up_sample("nan", 120_000, f64::NAN),
+            SelectorSample::builder()
+                .labels(labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "down"),
+                    crate::test_support::TestLabelPair::new("job", "api"),
+                ]))
+                .timestamp_ms(120_000)
+                .value(7.0)
+                .build(),
+            SelectorSample::builder()
+                .labels(labels(&[crate::test_support::TestLabelPair::new(
+                    "__name__", "lonely",
+                )]))
+                .timestamp_ms(120_000)
+                .value(42.0)
+                .build(),
+        ],
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let selectors = [

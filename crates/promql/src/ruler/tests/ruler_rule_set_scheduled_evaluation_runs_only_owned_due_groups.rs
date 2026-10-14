@@ -69,12 +69,14 @@ rules:
         .collect::<BTreeSet<_>>();
 
     let engine = up_api_engine(&[180_000]);
-    let (wal_sink, alert_sink, state_sink, mut alert_state) = recording_sinks_and_alert_state();
+    let fixture = recording_sinks_and_alert_state();
+    let sinks = fixture.sinks;
+    let mut alert_state = fixture.alert_state;
 
     let evaluation =
         super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
             &engine,
-            super::super::RulerSinks::new(&wal_sink, &alert_sink, &state_sink),
+            super::super::RulerSinks::new(&sinks.wal, &sinks.alertmanager, &sinks.ruler_state),
             &mut alert_state,
             &tenant_id("tenant-a"),
             &rules,
@@ -86,20 +88,21 @@ rules:
 
     assert2::assert!(evaluation.recording_records == expected_groups.len());
     assert2::assert!(
-        state_sink
+        sinks
+            .ruler_state
             .group_records()
             .iter()
             .map(|record| record.group.clone())
             .collect::<BTreeSet<_>>()
             == expected_groups
     );
-    for record in state_sink.group_records() {
+    for record in sinks.ruler_state.group_records() {
         assert2::assert!(
             group_state.last_eval_ms(&record.tenant, &record.namespace, &record.group)
                 == Some(record.last_eval_ms)
         );
     }
-    assert2::assert!(wal_sink.records().len() == expected_groups.len());
+    assert2::assert!(sinks.wal.records().len() == expected_groups.len());
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, Labels,
-    push_dictionary_id, push_len, push_string, push_uvarint,
+    assign_sorted_string_ids, push_dictionary_id, push_len, push_string, push_uvarint,
 };
 
 /// Encodes one shard.
@@ -30,12 +30,8 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
     // Ids are assigned on the sorted order rather than on first sight, so the
     // same index encodes to the same bytes whichever order its series were
     // registered in.
-    let mut strings = dictionary.keys().cloned().collect::<Vec<_>>();
-    strings.sort();
-    for id in 0..strings.len() {
-        let text = &strings[id];
-        dictionary.insert(text.clone(), id);
-    }
+    let dictionary = assign_sorted_string_ids(dictionary);
+    let strings = dictionary.strings;
 
     let mut out = Vec::new();
     out.extend_from_slice(&INDEX_SHARD_MAGIC);
@@ -55,8 +51,8 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
         push_len(&mut out, count);
         if let Some(labels) = labels {
             for pair in labels.iter() {
-                push_dictionary_id(&mut out, &dictionary, pair.name);
-                push_dictionary_id(&mut out, &dictionary, pair.value);
+                push_dictionary_id(&mut out, &dictionary.ids, pair.name);
+                push_dictionary_id(&mut out, &dictionary.ids, pair.value);
             }
         }
     }

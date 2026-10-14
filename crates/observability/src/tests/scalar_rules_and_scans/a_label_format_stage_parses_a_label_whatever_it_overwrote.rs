@@ -11,20 +11,17 @@ use super::*;
 /// the stage takes over.
 #[test]
 pub(crate) fn a_label_format_stage_parses_a_label_whatever_it_overwrote() {
-    let mut label_index = LabelIndex::default();
     let mut labels = Labels::default();
     labels.insert("app".to_string(), "api".to_string());
     labels.insert("env".to_string(), "prod".to_string());
-    let api = label_index.insert_series("tenant", labels);
-
-    let plan = StreamPlan {
-        tenant: "tenant".to_string(),
-        time_range: TimeRange::new(0, 100).expect("a valid range"),
-        query: parse_query("{app=\"api\"} | label_format env=\"prod\", shard=\"z\", region=\"eu\"")
-            .expect("the query parses"),
-        fingerprints: [api].into_iter().collect(),
-        blocks: Vec::new(),
-    };
+    let ApiSeriesPlan {
+        label_index,
+        api,
+        plan,
+    } = ApiSeriesPlan::with_labels(
+        "{app=\"api\"} | label_format env=\"prod\", shard=\"z\", region=\"eu\"",
+        labels,
+    );
 
     let mut structured_metadata = Labels::default();
     structured_metadata.insert("shard".to_string(), "a".to_string());

@@ -23,6 +23,16 @@ mod span_matching;
 mod store;
 pub mod testkit;
 
+pub fn string_array_from_arrow<'a>(
+    array: &'a dyn arrow::array::Array,
+    error: impl FnOnce() -> TraceqlError,
+) -> Result<&'a arrow::array::StringArray, TraceqlError> {
+    array
+        .as_any()
+        .downcast_ref::<arrow::array::StringArray>()
+        .ok_or_else(error)
+}
+
 pub use ast::{
     Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
     QueryHintValue, ScalarAggregate, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
@@ -60,3 +70,22 @@ pub use store::{
     MatchCmp, MatchScope, MatchValue, ScanJob, ScanOptions, ScanResult, SpanMatcher, SpanStore,
     TagCatalog, filter_trace_spans_by_time,
 };
+
+/// Returns whether a matcher selects links, including link-scoped intrinsic keys.
+pub fn scope_is_link_matcher(scope: MatchScope, key: &str) -> bool {
+    scope == MatchScope::Link || (scope == MatchScope::Intrinsic && key.starts_with("link:"))
+}
+
+/// Returns whether a matcher selects events, including event-scoped intrinsic keys.
+pub fn scope_is_event_matcher(scope: MatchScope, key: &str) -> bool {
+    scope == MatchScope::Event || (scope == MatchScope::Intrinsic && key.starts_with("event:"))
+}
+
+/// Returns whether a legacy Tempo `tags=` key can be interpolated as a
+/// TraceQL attribute without introducing query syntax.
+pub fn key_is_safe_attribute(key: &str) -> bool {
+    !key.is_empty()
+        && key.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | ':' | '-')
+        })
+}

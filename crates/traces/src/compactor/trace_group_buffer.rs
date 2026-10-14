@@ -1,6 +1,6 @@
-use super::{
-    Array, FixedSizeBinaryArray, RecordBatch, SCOL_TRACE_ID, SchemaRef, TracesError, concat_batches,
-};
+use krabka_blockstore::BufferedRecordBatches;
+
+use super::{Array, FixedSizeBinaryArray, RecordBatch, SCOL_TRACE_ID, SchemaRef, TracesError};
 
 /// Holds merged spans back until whole traces can be handed on.
 ///
@@ -18,23 +18,18 @@ use super::{
 /// straddling its end. A single trace is the one thing this cannot stream, and
 /// nothing can: its spans have to meet somewhere for the tree to be numbered.
 pub(crate) struct TraceGroupBuffer {
-    schema: SchemaRef,
-    pending: Vec<RecordBatch>,
-    rows: usize,
+    batches: BufferedRecordBatches,
 }
 
 impl TraceGroupBuffer {
     pub(crate) fn new(schema: SchemaRef) -> Self {
         Self {
-            schema,
-            pending: Vec::new(),
-            rows: 0,
+            batches: BufferedRecordBatches::new(schema),
         }
     }
 
     pub(crate) fn push(&mut self, batch: RecordBatch) {
-        self.rows += batch.num_rows();
-        self.pending.push(batch);
+        self.batches.push(batch);
     }
 
     /// The buffered spans whose traces are certainly complete, once at least
@@ -51,14 +46,10 @@ impl TraceGroupBuffer {
         &mut self,
         min_rows: usize,
     ) -> Result<Option<RecordBatch>, TracesError> {
-        krabka_blockstore::take_complete_batch(
-            &self.schema,
-            &mut self.pending,
-            &mut self.rows,
-            min_rows,
-            last_trace_start,
-            |error| TracesError::Block(error.to_string()),
-        )
+        self.batches
+            .take_complete(min_rows, last_trace_start, |error| {
+                TracesError::Block(error.to_string())
+            })
     }
 
     /// Everything left once the merge is spent, at which point the last trace
@@ -68,22 +59,8 @@ impl TraceGroupBuffer {
     /// Returns [`TracesError::Block`] when the buffered batches cannot be
     /// concatenated.
     pub(crate) fn take_rest(&mut self) -> Result<Option<RecordBatch>, TracesError> {
-        if self.rows == 0 {
-            return Ok(None);
-        }
-        let gathered = self.gather()?;
-        self.rows = 0;
-        Ok(Some(gathered))
-    }
-
-    fn gather(&mut self) -> Result<RecordBatch, TracesError> {
-        let gathered = match self.pending.as_slice() {
-            [only] => only.clone(),
-            many => concat_batches(&self.schema, many)
-                .map_err(|err| TracesError::Block(err.to_string()))?,
-        };
-        self.pending.clear();
-        Ok(gathered)
+        self.batches
+            .take_rest(|error| TracesError::Block(error.to_string()))
     }
 }
 

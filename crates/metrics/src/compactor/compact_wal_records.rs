@@ -78,14 +78,7 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
                 .cmp(&right.fingerprint)
                 .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
         });
-        rows.metadata_rows.sort_by(|left, right| {
-            left.fingerprint
-                .cmp(&right.fingerprint)
-                .then_with(|| left.metric_family_name.cmp(&right.metric_family_name))
-                .then_with(|| left.metric_type.cmp(&right.metric_type))
-                .then_with(|| left.help.cmp(&right.help))
-                .then_with(|| left.unit.cmp(&right.unit))
-        });
+        rows.metadata_rows.sort();
     }
     out
 }

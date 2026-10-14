@@ -17,3 +17,10 @@ pub(crate) fn up_instance_labels(instance: &str) -> Labels {
         TestLabelPair::new("job", "api"),
     ])
 }
+
+pub(crate) fn http_requests_total_api_labels() -> krabka_metrics::MetricLabels {
+    krabka_metrics::MetricLabels::from_pairs([
+        krabka_metrics::MetricLabelPair::new("__name__", "http_requests_total"),
+        krabka_metrics::MetricLabelPair::new("job", "api"),
+    ])
+}

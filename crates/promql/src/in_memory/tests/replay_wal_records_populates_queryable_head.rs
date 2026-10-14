@@ -57,15 +57,7 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         }],
     });
 
-    let engine = PromqlEngine::new(std::sync::Arc::new(store.clone()), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "up", 10_000)
-        .await
-        .expect("query");
-    let QueryResult::InstantVector(vector) = result else {
-        panic!("expected vector");
-    };
-    check!(vector[0].value == SampleValue::Float(1.0));
+    assert_up_query_value(store.clone()).await;
     let scan = store.scan("tenant-a", &[], 0, 10_000).await.unwrap();
     let float_table = scan.float_table.as_deref().expect("float table");
     let batches = scan

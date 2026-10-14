@@ -1,6 +1,6 @@
 use super::{
-    Arc, BlockStoreError, ListingTable, ListingTableConfig, ListingTableUrl, ObjectPath,
-    ObjectStoreUrl, Schema, log_listing_options,
+    Arc, BlockStoreError, ListingTable, ListingTableUrl, ObjectPath, ObjectStoreUrl, Schema,
+    log_listing_table_from_paths,
 };
 
 /// The `ListingTable` that reads `block_paths` out of the object store
@@ -22,8 +22,5 @@ pub(crate) fn object_store_log_listing_table(
         .iter()
         .map(|path| ListingTableUrl::parse(format!("{object_store_url}{path}")))
         .collect::<Result<Vec<_>, _>>()?;
-    let config = ListingTableConfig::new_with_multi_paths(table_paths)
-        .with_listing_options(log_listing_options())
-        .with_schema(schema);
-    Ok(ListingTable::try_new(config)?)
+    log_listing_table_from_paths(table_paths, schema)
 }

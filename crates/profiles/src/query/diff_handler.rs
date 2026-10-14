@@ -1,6 +1,6 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, diff_inner, pb, timed_query,
+    Arc, ConnectError, ConnectQueryRequest, ConnectRequest, ConnectResponse, Extension, HeaderMap,
+    Principal, ProfileStore, QuerierState, diff_inner, pb, timed_query,
 };
 
 pub(crate) async fn diff_handler<S>(
@@ -13,5 +13,10 @@ where
     S: ProfileStore,
 {
     let metrics = state.0.metrics.clone();
-    timed_query(&metrics, "diff", diff_inner(state, principal, headers, req)).await
+    timed_query(
+        &metrics,
+        "diff",
+        diff_inner(ConnectQueryRequest::new(state, principal, headers, req)),
+    )
+    .await
 }

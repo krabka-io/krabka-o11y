@@ -225,25 +225,37 @@ async fn one_expired_and_one_live(store: &Arc<dyn ObjectStore>) -> ExpirationFix
     }
 }
 
-/// A block past its tenant's window loses its index entry, its object and its
-/// symbol database. A block inside the window keeps all three.
-#[tokio::test]
-async fn an_expired_block_and_its_symbol_database_leave_the_bucket() {
+async fn run_one_hour_expiration_pass() -> (
+    Arc<dyn ObjectStore>,
+    ExpirationFixture,
+    krabka_profiles::lifecycle::LifecycleReport,
+) {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let ExpirationFixture {
-        mut index,
-        expired,
-        live,
-    } = one_expired_and_one_live(&store).await;
+    let mut fixture = one_expired_and_one_live(&store).await;
     let windows = one_hour_retention();
-
     let report = run_lifecycle_pass(
         &store,
-        &mut index,
+        &mut fixture.index,
         &options(no_merges(), &windows, at(NOW_MS)),
     )
     .await
     .expect("the pass runs");
+    (store, fixture, report)
+}
+
+/// A block past its tenant's window loses its index entry, its object and its
+/// symbol database. A block inside the window keeps all three.
+#[tokio::test]
+async fn an_expired_block_and_its_symbol_database_leave_the_bucket() {
+    let (
+        store,
+        ExpirationFixture {
+            index,
+            expired,
+            live,
+        },
+        report,
+    ) = run_one_hour_expiration_pass().await;
 
     check!(report.expired == 1);
     check!(report.deletions.blocks_deleted == 1);
@@ -271,21 +283,15 @@ async fn an_expired_block_and_its_symbol_database_leave_the_bucket() {
 /// so a removal the merge did not pin would be unioned straight back in.
 #[tokio::test]
 async fn an_expired_block_is_not_resurrected_by_the_snapshot_merge() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let ExpirationFixture {
-        mut index,
-        expired,
-        live,
-    } = one_expired_and_one_live(&store).await;
-    let windows = one_hour_retention();
-
-    run_lifecycle_pass(
-        &store,
-        &mut index,
-        &options(no_merges(), &windows, at(NOW_MS)),
-    )
-    .await
-    .expect("the pass runs");
+    let (
+        store,
+        ExpirationFixture {
+            index,
+            expired,
+            live,
+        },
+        _,
+    ) = run_one_hour_expiration_pass().await;
     let reloaded = reload(&store).await;
 
     check!(block_keys(&reloaded) == vec![live.object_key.clone()]);

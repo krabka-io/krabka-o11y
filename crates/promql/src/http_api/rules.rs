@@ -118,7 +118,6 @@ mod validate_rule;
 mod validate_rule_group;
 mod yaml_duration;
 mod yaml_mapping_json;
-mod yaml_optional_string;
 mod yaml_response;
 mod yaml_string;
 mod zero_evaluation_time;
@@ -151,10 +150,11 @@ use validate_rule::validate_rule;
 use validate_rule_group::validate_rule_group;
 use yaml_duration::yaml_duration;
 use yaml_mapping_json::yaml_mapping_json;
-use yaml_optional_string::yaml_optional_string;
 use yaml_response::yaml_response;
 use yaml_string::yaml_string;
 use zero_evaluation_time::zero_evaluation_time;
+
+pub(super) use crate::yaml_optional_string;
 
 async fn persist_ruler_config_or_restore<S: MetricStore>(
     state: &PrometheusApiState<S>,

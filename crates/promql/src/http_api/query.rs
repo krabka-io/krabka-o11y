@@ -12,7 +12,7 @@ use url::form_urlencoded;
 
 use super::{
     ApiError, ERASURE_REQUEST_PREFIX, Extension, Principal, PrometheusApiState, QueryResponseStats,
-    RequestAuth, TenantId, acquire_query_permit, apply_result_limit,
+    RequestAuth, StdDurationExt, TenantId, acquire_query_permit, apply_result_limit,
     authorized_tenant_from_headers, check_range_resolution, duration_param,
     enforce_query_range_limit, exemplar_key, exemplars_json, has_erasure_requests,
     optional_timestamp_ms, parse_limit_parameter, query_timeout, record_query_response,
@@ -25,6 +25,32 @@ fn authorized_query_tenant(
     principal: &Principal,
 ) -> Result<TenantId, Response> {
     authorized_tenant_from_headers(headers, principal).map_err(IntoResponse::into_response)
+}
+
+pub(super) struct QueryDispatchRequest<'a, S: MetricStore, P> {
+    pub state: &'a Arc<PrometheusApiState<S>>,
+    pub headers: &'a HeaderMap,
+    pub principal: &'a Principal,
+    pub params: P,
+    pub timing: QueryRequestTiming,
+}
+
+fn finish_query_evaluation<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    query_kind: &'static str,
+    mut evaluated: EvaluatedQuery,
+    eval_started: std::time::Instant,
+    limit: Option<usize>,
+    timing: QueryRequestTiming,
+) -> Response {
+    let evaluation = eval_started.elapsed();
+    state.record_eval(
+        query_kind,
+        krabka_observability::service_metrics::RequestOutcome::from_result(&evaluated.outcome),
+        evaluation.as_time(),
+    );
+    evaluated.evaluation = evaluation;
+    evaluated_query_response(evaluated, limit, timing)
 }
 use crate::{
     AnnotatedQueryResult, MetricStore,

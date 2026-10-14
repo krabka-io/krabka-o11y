@@ -56,6 +56,20 @@ mod col_value;
 mod decode_float_samples;
 mod encode_float_samples;
 
+impl crate::numeric_sample_columns::NumericSampleRow for FloatSampleRow {
+    fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.timestamp_ms
+    }
+
+    fn value(&self) -> f64 {
+        self.value
+    }
+}
+
 use col_value::COL_VALUE;
 pub use decode_float_samples::decode_float_samples;
 pub use encode_float_samples::encode_float_samples;

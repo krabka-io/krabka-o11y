@@ -8,37 +8,18 @@ use krabka_observability::{
 };
 use krabka_units::{days, hours, kibibytes, mebibytes, millis, minutes, secs};
 
+#[path = "support/environment_overrides.rs"]
+mod environment_overrides;
+
+use environment_overrides::{EnvironmentOverride, with_environment};
+
 #[path = "support/scoped_querier_config.rs"]
 mod scoped_querier_config;
 
 use scoped_querier_config::scoped_querier_config;
 
-struct EnvironmentOverride {
-    name: &'static str,
-    value: &'static str,
-}
-
-fn environment_override(name: &'static str, value: &'static str) -> EnvironmentOverride {
-    EnvironmentOverride { name, value }
-}
-
-fn with_environment<T>(
-    overrides: impl IntoIterator<Item = EnvironmentOverride>,
-    run: impl FnOnce() -> T,
-) -> T {
-    let overrides = overrides.into_iter().collect::<Vec<_>>();
-    with_environment_recursive(&overrides, run)
-}
-
-fn with_environment_recursive<T>(overrides: &[EnvironmentOverride], run: impl FnOnce() -> T) -> T {
-    if overrides.is_empty() {
-        return run();
-    }
-    let override_value = &overrides[0];
-    let remaining = &overrides[1..];
-    temp_env::with_var(override_value.name, Some(override_value.value), || {
-        with_environment_recursive(remaining, run)
-    })
+fn environment_override(name: &'static str, value: &'static str) -> EnvironmentOverride<'static> {
+    EnvironmentOverride::new(name, Some(value))
 }
 
 #[test]

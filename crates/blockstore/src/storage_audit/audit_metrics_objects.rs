@@ -1,7 +1,8 @@
 use super::{
     Arc, DEFAULT_BLOCK_READ_MAX, LiveBlockSet, MetricsIndexManifest, ObjectRole, ObjectStore,
     StorageAuditError, StorageAuditOptions, StorageFinding, StorageFindingKind, StorageInventory,
-    StorageSignal, read_capped_object, unindexed_block_finding,
+    StorageSignal, compare_with_live::append_unindexed_blocks, read_capped_object,
+    unindexed_block_finding,
 };
 
 /// Reads every metrics `.index` manifest and checks the metrics blocks
@@ -74,17 +75,13 @@ pub async fn audit_metrics_objects(
             findings.push(problem);
         }
     }
-    for entry in inventory.blocks(StorageSignal::Metrics) {
-        let key = entry.key;
-        let listed = entry.listed;
-        if !live.contains(key) && live.knows(listed.object.tenant.as_deref()) {
-            findings.push(unindexed_block_finding(
-                key,
-                listed,
-                options,
-                "`.index` manifest",
-            ));
-        }
-    }
+    append_unindexed_blocks(
+        &mut findings,
+        inventory,
+        StorageSignal::Metrics,
+        &live,
+        options,
+        "`.index` manifest",
+    );
     Ok(findings)
 }

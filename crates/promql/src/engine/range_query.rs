@@ -159,14 +159,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         }
     }
 
-    /// Per-step planner range driver with both evaluation scopes applied.
-    ///
-    /// The driver runs in `QUERY_RANGE_CONTEXT`, so any nested duration-helper
-    /// scalar fold (`step()`, `start()`, and the other experimental forms)
-    /// resolves to the query's range grid. It also runs in `AT_MODIFIER_BOUNDS`,
-    /// so a bare top-level selector's `@ start()` / `@ end()` resolves to the
-    /// query's range bounds.
-    #[cfg(feature = "experimental-functions")]
+    /// Per-step planner range driver with every configured evaluation scope.
     async fn eval_range_via_planner_scoped(
         &self,
         tenant: &str,
@@ -175,39 +168,18 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
         step: Time,
     ) -> Result<Option<Vec<RangeSeries>>> {
+        let future = self.eval_range_via_planner(tenant, expr, start_ms, end_ms, step);
+        #[cfg(feature = "experimental-functions")]
+        let future = QUERY_RANGE_CONTEXT.scope(
+            QueryRangeContext {
+                start_ms,
+                end_ms,
+                step,
+            },
+            future,
+        );
         AT_MODIFIER_BOUNDS
-            .scope(
-                AtModifierBounds { start_ms, end_ms },
-                QUERY_RANGE_CONTEXT.scope(
-                    QueryRangeContext {
-                        start_ms,
-                        end_ms,
-                        step,
-                    },
-                    self.eval_range_via_planner(tenant, expr, start_ms, end_ms, step),
-                ),
-            )
-            .await
-    }
-
-    /// Per-step planner range driver with the `AT_MODIFIER_BOUNDS` scope applied.
-    ///
-    /// The driver runs in `AT_MODIFIER_BOUNDS`, so a bare top-level selector's
-    /// `@ start()` / `@ end()` resolves to the query's range bounds.
-    #[cfg(not(feature = "experimental-functions"))]
-    async fn eval_range_via_planner_scoped(
-        &self,
-        tenant: &str,
-        expr: &Expr,
-        start_ms: i64,
-        end_ms: i64,
-        step: Time,
-    ) -> Result<Option<Vec<RangeSeries>>> {
-        AT_MODIFIER_BOUNDS
-            .scope(
-                AtModifierBounds { start_ms, end_ms },
-                self.eval_range_via_planner(tenant, expr, start_ms, end_ms, step),
-            )
+            .scope(AtModifierBounds { start_ms, end_ms }, future)
             .await
     }
 

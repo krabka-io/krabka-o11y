@@ -1,12 +1,109 @@
-use std::path::Path;
+use std::{borrow::Borrow, path::Path};
 
 use datafusion::{arrow::record_batch::RecordBatch, prelude::SessionContext};
 
 use crate::{
-    Arc, BlockDescriptor, LabelIndex, MetricQuery, ObjectPath, ObjectStore, QueryError,
-    QueryHotTail, StreamPlan, TimeRange, checked_eval_times, register_log_blocks,
-    register_log_blocks_from_object_store,
+    Arc, BTreeMap, BlockDescriptor, HotTailMetricSamples, LabelIndex, MetricQuery, ObjectPath,
+    ObjectStore, QueryError, QueryHotTail, StreamPlan, TimeRange, Value, WalLogRecord,
+    checked_eval_times, collect_object_store_metric_log_batches,
+    loki_matrix_response_with_warnings, merge_metric_samples, metric_samples_from_batches,
+    register_log_blocks, register_log_blocks_from_object_store,
 };
+
+pub(crate) enum MetricRangeScanSource<'a> {
+    Local(&'a Path),
+    ObjectStore(object_store_scans::ColdBlockScan<'a>),
+}
+
+struct MetricBlockCollectionResult<'a> {
+    block: &'a BlockDescriptor,
+    result: Result<Vec<RecordBatch>, QueryError>,
+}
+
+pub(crate) async fn execute_metric_range_scan_with_deletes<R>(
+    source: MetricRangeScanSource<'_>,
+    request: MetricRangeScanRequest<'_, R>,
+) -> Result<Value, QueryError>
+where
+    R: Borrow<WalLogRecord> + Sync,
+{
+    let PreparedMetricRangeScan {
+        plan,
+        query,
+        label_index,
+        eval_range,
+        eval_times,
+        hot_tail,
+    } = request.prepare()?;
+    let mut samples = BTreeMap::new();
+    let mut warnings = Vec::new();
+
+    if !plan.blocks.is_empty() && !plan.fingerprints.is_empty() {
+        match source {
+            MetricRangeScanSource::Local(root) => {
+                let ctx = registered_local_log_session(root, &plan.blocks)?;
+                let sql = stream_scans::metric_plan_scan_sql(plan, query, eval_range)?;
+                let batches = ctx.sql(&sql).await?.collect().await?;
+                samples = metric_samples_from_batches(
+                    &batches,
+                    plan,
+                    query,
+                    label_index,
+                    &eval_times,
+                    hot_tail.delete_filters,
+                )?;
+            }
+            MetricRangeScanSource::ObjectStore(cold) => {
+                for block_batch in plan.blocks.chunks(cold.block_fetch_concurrency.get()) {
+                    let results = futures_util::future::join_all(block_batch.iter().map(|block| {
+                        let store = Arc::clone(&cold.store);
+                        async move {
+                            let result = collect_object_store_metric_log_batches(
+                                store,
+                                cold.prefix,
+                                block,
+                                plan,
+                                query,
+                                eval_range,
+                            )
+                            .await;
+                            MetricBlockCollectionResult { block, result }
+                        }
+                    }))
+                    .await;
+
+                    for result in results {
+                        let block = result.block;
+                        let Ok(batches) = result.result else {
+                            warnings
+                                .push(format!("failed to read block {}", block.key.object_key()));
+                            continue;
+                        };
+                        let block_samples = metric_samples_from_batches(
+                            &batches,
+                            plan,
+                            query,
+                            label_index,
+                            &eval_times,
+                            hot_tail.delete_filters,
+                        )?;
+                        merge_metric_samples(&mut samples, block_samples);
+                    }
+                }
+            }
+        }
+    }
+
+    let series = HotTailMetricSamples {
+        plan,
+        query,
+        eval_times: &eval_times,
+        hot_tail,
+    }
+    .merge_into(samples)?;
+
+    Ok(loki_matrix_response_with_warnings(series, &warnings))
+}
 
 pub(crate) async fn collect_object_store_log_batches(
     store: Arc<dyn ObjectStore>,

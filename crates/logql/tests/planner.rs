@@ -7,6 +7,21 @@ use krabka_blockstore::{
 };
 use krabka_logql::{LineFilterOp, PipelineStage, parse_query, plan_stream_query};
 
+fn plan_for_tenant(
+    query: &str,
+    labels: &LabelIndex,
+    blocks: &BlockIndex,
+) -> krabka_logql::StreamPlan {
+    plan_stream_query(
+        "tenant-a",
+        TimeRange::new(1, 30).unwrap(),
+        parse_query(query).unwrap(),
+        labels,
+        blocks,
+    )
+    .unwrap()
+}
+
 fn add_test_block(
     blocks: &mut BlockIndex,
     partition: i32,
@@ -116,15 +131,11 @@ fn stream_planner_keeps_regex_and_negative_matchers_in_index_filter() {
 
     let blocks = block_index_for_series([api_prod, web_prod, admin_prod]);
 
-    let query = parse_query(r#"{app=~"api|web|admin", app!~"admin"} !~ "debug""#).unwrap();
-    let plan = plan_stream_query(
-        "tenant-a",
-        TimeRange::new(1, 30).unwrap(),
-        query,
+    let plan = plan_for_tenant(
+        r#"{app=~"api|web|admin", app!~"admin"} !~ "debug""#,
         &labels_index,
         &blocks,
-    )
-    .unwrap();
+    );
 
     assert!(plan.fingerprints == BTreeSet::from([api_prod, web_prod]));
     assert!(plan.blocks.len() == 1);
@@ -149,15 +160,7 @@ fn stream_planner_treats_empty_compatible_regex_matcher_as_matching_absent_label
 
     let blocks = block_index_for_series([api_without_env, api_prod, worker_prod]);
 
-    let query = parse_query(r#"{app="api", env=~".*"}"#).unwrap();
-    let plan = plan_stream_query(
-        "tenant-a",
-        TimeRange::new(1, 30).unwrap(),
-        query,
-        &labels_index,
-        &blocks,
-    )
-    .unwrap();
+    let plan = plan_for_tenant(r#"{app="api", env=~".*"}"#, &labels_index, &blocks);
 
     assert!(plan.fingerprints == BTreeSet::from([api_without_env, api_prod]));
     assert!(plan.blocks.len() == 1);
@@ -179,15 +182,7 @@ fn stream_planner_anchors_regex_label_matchers() {
         BTreeSet::from([api, worker, prefixed_api, suffixed_api]),
     ));
 
-    let query = parse_query(r#"{app=~"api|worker"}"#).unwrap();
-    let plan = plan_stream_query(
-        "tenant-a",
-        TimeRange::new(1, 30).unwrap(),
-        query,
-        &labels_index,
-        &blocks,
-    )
-    .unwrap();
+    let plan = plan_for_tenant(r#"{app=~"api|worker"}"#, &labels_index, &blocks);
 
     assert!(plan.fingerprints == BTreeSet::from([api, worker]));
     assert!(plan.blocks.len() == 1);

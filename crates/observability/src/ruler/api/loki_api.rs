@@ -7,7 +7,7 @@ use super::{
 use crate::{
     BTreeMap, BTreeSet, Bytes, HeaderMap, HttpQueryError, LokiRuleNamespaces, LokiRuleTenants,
     Path, QuerierState, RawQuery, RequestSecurity, Response, Serialize, State, StatusCode,
-    StreamQuery, TenantErrorSurface, TenantId,
+    StreamQuery, TenantErrorSurface, TenantId, Value,
     audit::{
         AuditOutcome, AuditResource, OPERATION_RULE_GROUP_DELETE, OPERATION_RULE_GROUP_SET,
         OPERATION_RULE_NAMESPACE_DELETE, RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE,
@@ -38,6 +38,32 @@ mod ring_status_page;
 mod ruler_status_page;
 mod validate_loki_rule;
 mod validate_loki_rule_group;
+
+fn prometheus_ruler_success(data: Value) -> Response {
+    json_response(
+        StatusCode::OK,
+        &json!({
+            "status": "success",
+            "data": data,
+            "errorType": "",
+            "error": "",
+        }),
+    )
+}
+
+fn status_html_page(title: &str, body: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/html; charset=utf-8")
+        .body(
+            format!(
+                "<!doctype html><html><head><title>{title}</title></head>\
+                 <body><h1>{title}</h1>{body}</body></html>"
+            )
+            .into(),
+        )
+        .expect("status page headers are valid")
+}
 
 pub(crate) use authorized_ruler_tenant::{RulerTenant, authorized_ruler_tenant};
 pub(crate) use create_loki_rule_group::create_loki_rule_group;

@@ -251,22 +251,23 @@ pub(crate) mod test_fixtures {
     }
 
     fn cpu_profile() -> PprofProfile {
-        PprofProfile::from(krabka_pprof::proto::Profile {
-            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![krabka_pprof::proto::Sample {
-                location_id: vec![1],
-                value: vec![42],
-                ..Default::default()
-            }],
-            string_table: vec![
-                String::new(),
-                "cpu".to_string(),
-                "nanoseconds".to_string(),
-                "main".to_string(),
-            ],
-            period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
-            ..main_frame_profile(3)
-        })
+        let mut profile = main_frame_profile(3);
+        profile
+            .sample_type
+            .push(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 });
+        profile.sample.push(krabka_pprof::proto::Sample {
+            location_id: vec![1],
+            value: vec![42],
+            ..Default::default()
+        });
+        profile.string_table = vec![
+            String::new(),
+            "cpu".to_string(),
+            "nanoseconds".to_string(),
+            "main".to_string(),
+        ];
+        profile.period_type = Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 });
+        PprofProfile::from(profile)
     }
 }
 

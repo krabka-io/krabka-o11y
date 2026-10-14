@@ -6,6 +6,7 @@ use super::{
     BlockWriter, CompactionConsumerCommitMut, CompactionIndexSink, CompactionLoopResult,
     CompactionPartitionOffset, CompactionPollError, CompactionWalRecord, ServiceMetrics,
     process_compaction_record_batch_with_consumer,
+    record_compaction_batch::record_compaction_batch,
 };
 
 /// Writes one block from the buffered records and commits through the consumer
@@ -41,14 +42,5 @@ where
     metrics
         .compaction
         .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
-    let batch = outcome?;
-    // The per-signal counter is moved here rather than once at shutdown, so it
-    // reports what the compactor has written rather than what it wrote before
-    // it stopped.
-    metrics.record_blocks_compacted(batch.writes.len() as u64);
-    summary.writes += batch.writes.len();
-    summary
-        .committed_offsets
-        .extend(batch.committed_offsets.iter().cloned());
-    Ok(batch.committed_offsets)
+    Ok(record_compaction_batch(outcome?, summary, metrics))
 }

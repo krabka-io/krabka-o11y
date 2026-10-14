@@ -7,6 +7,12 @@ struct FloatSampleCase {
     value: f64,
 }
 
+impl FloatSampleSeed for FloatSampleCase {
+    fn push_into(self, store: &mut InMemoryMetricStore) {
+        store.push_float("t", self.labels, self.timestamp_ms, self.value);
+    }
+}
+
 struct QueryResultTypeCase {
     query: &'static str,
     time_ms: i64,
@@ -27,88 +33,89 @@ pub(crate) async fn structural_node_planner_path_matches_interpreter() {
 
     let mut store = InMemoryMetricStore::new();
     let stale_bits = stale_nan();
-    for sample in [
-        FloatSampleCase::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "m"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-            ]))
-            .timestamp_ms(60_000)
-            .value(2.0)
-            .build(),
-        FloatSampleCase::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "m"),
-                crate::test_support::TestLabelPair::new("job", "api"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(3.0)
-            .build(),
-        FloatSampleCase::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "m"),
-                crate::test_support::TestLabelPair::new("job", "db"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(7.0)
-            .build(),
-        // A genuine NaN latest-in-window sample (kept, negated to NaN).
-        FloatSampleCase::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "m"),
-                crate::test_support::TestLabelPair::new("job", "nan"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(f64::NAN)
-            .build(),
-        // A stale marker (dropped on both paths).
-        FloatSampleCase::builder()
-            .labels(labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "m"),
-                crate::test_support::TestLabelPair::new("job", "stale"),
-            ]))
-            .timestamp_ms(120_000)
-            .value(stale_bits)
-            .build(),
-        // A series with a short history for the matrix / subquery / smoothed shapes.
-        FloatSampleCase::builder()
-            .labels(labels(&[crate::test_support::TestLabelPair::new(
-                "__name__", "g",
-            )]))
-            .timestamp_ms(0)
-            .value(1.0)
-            .build(),
-        FloatSampleCase::builder()
-            .labels(labels(&[crate::test_support::TestLabelPair::new(
-                "__name__", "g",
-            )]))
-            .timestamp_ms(60_000)
-            .value(2.0)
-            .build(),
-        FloatSampleCase::builder()
-            .labels(labels(&[crate::test_support::TestLabelPair::new(
-                "__name__", "g",
-            )]))
-            .timestamp_ms(120_000)
-            .value(4.0)
-            .build(),
-        FloatSampleCase::builder()
-            .labels(labels(&[crate::test_support::TestLabelPair::new(
-                "__name__", "g",
-            )]))
-            .timestamp_ms(180_000)
-            .value(8.0)
-            .build(),
-        FloatSampleCase::builder()
-            .labels(labels(&[crate::test_support::TestLabelPair::new(
-                "__name__", "g",
-            )]))
-            .timestamp_ms(240_000)
-            .value(16.0)
-            .build(),
-    ] {
-        store.push_float("t", sample.labels, sample.timestamp_ms, sample.value);
-    }
+    push_float_samples(
+        &mut store,
+        [
+            FloatSampleCase::builder()
+                .labels(labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "m"),
+                    crate::test_support::TestLabelPair::new("job", "api"),
+                ]))
+                .timestamp_ms(60_000)
+                .value(2.0)
+                .build(),
+            FloatSampleCase::builder()
+                .labels(labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "m"),
+                    crate::test_support::TestLabelPair::new("job", "api"),
+                ]))
+                .timestamp_ms(120_000)
+                .value(3.0)
+                .build(),
+            FloatSampleCase::builder()
+                .labels(labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "m"),
+                    crate::test_support::TestLabelPair::new("job", "db"),
+                ]))
+                .timestamp_ms(120_000)
+                .value(7.0)
+                .build(),
+            // A genuine NaN latest-in-window sample (kept, negated to NaN).
+            FloatSampleCase::builder()
+                .labels(labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "m"),
+                    crate::test_support::TestLabelPair::new("job", "nan"),
+                ]))
+                .timestamp_ms(120_000)
+                .value(f64::NAN)
+                .build(),
+            // A stale marker (dropped on both paths).
+            FloatSampleCase::builder()
+                .labels(labels(&[
+                    crate::test_support::TestLabelPair::new("__name__", "m"),
+                    crate::test_support::TestLabelPair::new("job", "stale"),
+                ]))
+                .timestamp_ms(120_000)
+                .value(stale_bits)
+                .build(),
+            // A series with a short history for the matrix / subquery / smoothed shapes.
+            FloatSampleCase::builder()
+                .labels(labels(&[crate::test_support::TestLabelPair::new(
+                    "__name__", "g",
+                )]))
+                .timestamp_ms(0)
+                .value(1.0)
+                .build(),
+            FloatSampleCase::builder()
+                .labels(labels(&[crate::test_support::TestLabelPair::new(
+                    "__name__", "g",
+                )]))
+                .timestamp_ms(60_000)
+                .value(2.0)
+                .build(),
+            FloatSampleCase::builder()
+                .labels(labels(&[crate::test_support::TestLabelPair::new(
+                    "__name__", "g",
+                )]))
+                .timestamp_ms(120_000)
+                .value(4.0)
+                .build(),
+            FloatSampleCase::builder()
+                .labels(labels(&[crate::test_support::TestLabelPair::new(
+                    "__name__", "g",
+                )]))
+                .timestamp_ms(180_000)
+                .value(8.0)
+                .build(),
+            FloatSampleCase::builder()
+                .labels(labels(&[crate::test_support::TestLabelPair::new(
+                    "__name__", "g",
+                )]))
+                .timestamp_ms(240_000)
+                .value(16.0)
+                .build(),
+        ],
+    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let queries: &[QueryAt] = &[

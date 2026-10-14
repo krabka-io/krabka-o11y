@@ -358,34 +358,88 @@ impl<S: ProfileStore> QuerierState<S> {
         stack_trace_call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<FlameGraph, ProfileError> {
+        match self
+            .select_merge_stacktraces_output(
+                target,
+                range,
+                max_nodes,
+                stack_trace_call_sites,
+                sample_selector,
+                false,
+            )
+            .await?
+        {
+            SpanProfileOutput::Graph(graph) => Ok(graph),
+            SpanProfileOutput::Tree(_) => unreachable!("graph query returned a tree"),
+        }
+    }
+
+    async fn select_merge_stacktraces_output(
+        &self,
+        target: QueryTarget<'_>,
+        range: QueryRange,
+        max_nodes: i64,
+        stack_trace_call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+        tree: bool,
+    ) -> Result<SpanProfileOutput, ProfileError> {
         let QueryTarget {
             tenant,
             profile_type,
             label_selector,
         } = target;
         let AdmittedMerge { max_nodes, ranges } = self.admit_merge(tenant, range, max_nodes)?;
+        let selection = ProfileSelection::new(tenant.as_str(), profile_type, label_selector);
         match ranges {
             MergeRanges::Whole(whole) => {
-                self.engine
-                    .select_merge_stacktraces_with_selectors(
-                        ProfileSelection::new(tenant.as_str(), profile_type, label_selector),
-                        whole,
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
+                if tree {
+                    self.engine
+                        .select_merge_stacktraces_tree_with_selectors(
+                            selection,
+                            whole,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Tree)
+                } else {
+                    self.engine
+                        .select_merge_stacktraces_with_selectors(
+                            selection,
+                            whole,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Graph)
+                }
             }
             MergeRanges::Shards(shards) => {
-                self.engine
-                    .select_merge_stacktraces_with_selectors_sharded(
-                        ProfileSelection::new(tenant.as_str(), profile_type, label_selector),
-                        &shards,
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
+                if tree {
+                    self.engine
+                        .select_merge_stacktraces_tree_with_selectors_sharded(
+                            selection,
+                            &shards,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Tree)
+                } else {
+                    self.engine
+                        .select_merge_stacktraces_with_selectors_sharded(
+                            selection,
+                            &shards,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Graph)
+                }
             }
         }
     }
@@ -398,35 +452,19 @@ impl<S: ProfileStore> QuerierState<S> {
         stack_trace_call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
-        let QueryTarget {
-            tenant,
-            profile_type,
-            label_selector,
-        } = target;
-        let AdmittedMerge { max_nodes, ranges } = self.admit_merge(tenant, range, max_nodes)?;
-        match ranges {
-            MergeRanges::Whole(whole) => {
-                self.engine
-                    .select_merge_stacktraces_tree_with_selectors(
-                        ProfileSelection::new(tenant.as_str(), profile_type, label_selector),
-                        whole,
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
-            }
-            MergeRanges::Shards(shards) => {
-                self.engine
-                    .select_merge_stacktraces_tree_with_selectors_sharded(
-                        ProfileSelection::new(tenant.as_str(), profile_type, label_selector),
-                        &shards,
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
-            }
+        match self
+            .select_merge_stacktraces_output(
+                target,
+                range,
+                max_nodes,
+                stack_trace_call_sites,
+                sample_selector,
+                true,
+            )
+            .await?
+        {
+            SpanProfileOutput::Tree(tree) => Ok(tree),
+            SpanProfileOutput::Graph(_) => unreachable!("tree query returned a graph"),
         }
     }
 

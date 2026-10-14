@@ -209,15 +209,38 @@ mod parse_pattern_parts;
 mod parse_selected_json_fields;
 mod parse_selected_logfmt_fields;
 mod parser_stage;
-mod pattern_parse_error;
 mod pattern_parser;
 mod pattern_part;
 mod pipeline_evaluation;
 mod pipeline_stage;
-mod regexp_parse_error;
 mod regexp_parser;
 mod sanitize_json_field_name;
 mod sanitize_logfmt_field_name;
+
+fn sanitize_field_name(name: &str, collapse_invalid_runs: bool) -> String {
+    let mut sanitized = String::new();
+    let mut last_was_underscore = false;
+    for ch in name.chars() {
+        if ch == '_' || ch == ':' || ch.is_ascii_alphanumeric() {
+            sanitized.push(ch);
+            last_was_underscore = false;
+        } else if !collapse_invalid_runs || !last_was_underscore {
+            sanitized.push('_');
+            last_was_underscore = true;
+        }
+    }
+    if sanitized.is_empty() {
+        sanitized.push('_');
+    }
+    if sanitized
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_digit())
+    {
+        sanitized.insert(0, '_');
+    }
+    sanitized
+}
 mod selected_json_value_to_string;
 mod stream_query;
 mod unpack_json_line;
@@ -239,16 +262,18 @@ use parse_logfmt_fields::parse_logfmt_fields;
 use parse_pattern_parts::parse_pattern_parts;
 use parse_selected_logfmt_fields::parse_selected_logfmt_fields;
 pub use parser_stage::ParserStage;
-use pattern_parse_error::pattern_parse_error;
 pub(crate) use pattern_parser::PatternCapture;
 pub use pattern_parser::PatternParser;
 use pattern_part::PatternPart;
 pub use pipeline_evaluation::PipelineEvaluation;
 pub use pipeline_stage::PipelineStage;
-use regexp_parse_error::regexp_parse_error;
 pub use regexp_parser::RegexpParser;
 use sanitize_json_field_name::sanitize_json_field_name;
 use sanitize_logfmt_field_name::sanitize_logfmt_field_name;
 use selected_json_value_to_string::selected_json_value_to_string;
 pub use stream_query::StreamQuery;
 use unpack_json_line::unpack_json_line;
+
+use crate::error::{
+    syntax_parse_error as pattern_parse_error, syntax_parse_error as regexp_parse_error,
+};

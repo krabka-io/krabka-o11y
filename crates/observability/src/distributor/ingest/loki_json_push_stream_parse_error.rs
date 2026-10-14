@@ -1,4 +1,4 @@
-use super::{Value, loki_decode_error_context};
+use super::{Value, loki_decode_error_context, loki_json_push_unclosed_object_error};
 
 pub(crate) fn loki_json_push_stream_parse_error(body: &[u8], value: &Value) -> String {
     let body = String::from_utf8_lossy(body);
@@ -7,7 +7,5 @@ pub(crate) fn loki_json_push_stream_parse_error(body: &[u8], value: &Value) -> S
     let context = loki_decode_error_context(&body, value_start.saturating_add(4));
     let bigger_context = loki_decode_error_context(&body, value_start.saturating_sub(12));
 
-    format!(
-        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like object, but can't find closing '}}' symbol, error found in #10 byte of ...|{context}|..., bigger context ...|{bigger_context}|...\n"
-    )
+    loki_json_push_unclosed_object_error(&context, &bigger_context)
 }

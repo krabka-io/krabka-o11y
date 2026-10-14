@@ -1,6 +1,6 @@
 use super::{
     ClientResourcePolicy, ClientSecurity, KafkaLogWalConsumer, ServiceConfig, ServiceDependencies,
-    ServiceRuntimeError, WalConsumerMetrics, deferred_query_authorizer_connect,
+    ServiceRuntimeError, WalDependenciesRequest, deferred_query_authorizer_connect,
 };
 
 /// Adds the WAL consumer the block builder reads its records from, and the
@@ -15,13 +15,16 @@ use super::{
 /// Both connect under `security`, the WAL client security that the service
 /// loaded. `None` connects in plain text.
 pub(crate) async fn with_block_builder_dependencies(
-    dependencies: ServiceDependencies,
-    config: &ServiceConfig,
-    group_id: String,
-    client_resource_policy: ClientResourcePolicy,
-    security: Option<&ClientSecurity>,
-    metrics: WalConsumerMetrics,
+    request: WalDependenciesRequest<'_>,
 ) -> Result<ServiceDependencies, ServiceRuntimeError> {
+    let WalDependenciesRequest {
+        dependencies,
+        config,
+        group_id,
+        client_resource_policy,
+        security,
+        metrics,
+    } = request;
     let deferred_authorizer =
         deferred_query_authorizer_connect(config, client_resource_policy, security)?;
     // `Consumer::start` (called by `KafkaLogWalConsumer::connect`) retries

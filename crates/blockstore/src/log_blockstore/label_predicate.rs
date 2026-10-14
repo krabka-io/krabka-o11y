@@ -45,11 +45,10 @@ impl LabelPredicate {
 
     #[must_use]
     pub fn matches(&self, labels: &Labels) -> bool {
-        self.op.accepts(
-            &self.value,
-            labels.get(&self.name).map(String::as_str),
-            |value| self.regex_matches(value),
-        )
+        self.op
+            .accepts_named_label(&self.name, &self.value, labels, |value| {
+                self.regex_matches(value)
+            })
     }
 
     pub(crate) fn exact_posting_key(&self) -> Option<ExactPostingKey<'_>> {

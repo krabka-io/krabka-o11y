@@ -27,6 +27,7 @@ use crate::{
     labels::{Labels, SeriesFingerprint},
     matcher::{LabelMatcher, MatchOp, QUERY_SHARD_LABEL, parse_query_shard_selector},
     path_escape::{escape_object_path_segment, unescape_object_path_segment},
+    shard_string_dictionary::assign_sorted_string_ids,
 };
 
 #[cfg(test)]

@@ -5,6 +5,23 @@
 //! append, and compactor block and index writes. Query execution lives in
 //! `krabka-promql`.
 
+/// Adds the registry-backed constructors shared by metric service bundles.
+#[macro_export]
+macro_rules! impl_service_metrics_registry_constructors {
+    ($shared_registry:ty, $role:ty, $register_bundle:path, $register_role:path) => {
+        /// Builds a fresh registry, registers every metric, and returns the bundle.
+        #[must_use]
+        pub fn new() -> Self {
+            $register_bundle(Self::register)
+        }
+
+        /// Registers this role's instruments in the process registry.
+        pub async fn for_role(shared: $shared_registry, role: $role) -> Self {
+            $register_role(shared, role, Self::register).await
+        }
+    };
+}
+
 fn append_optional_i64(builder: &mut arrow::array::Int64Builder, value: Option<i64>) {
     if let Some(value) = value {
         builder.append_value(value);
@@ -14,6 +31,7 @@ fn append_optional_i64(builder: &mut arrow::array::Int64Builder, value: Option<i
 }
 
 mod arrow_codec;
+mod least_recently_touched;
 mod metric_labels;
 mod metric_string;
 pub use metric_labels::{IntoMetricLabelsArc, MetricLabelPair, MetricLabelRef, MetricLabels};
@@ -25,6 +43,7 @@ pub mod histogram;
 pub mod limits;
 pub mod metadata;
 pub mod metrics;
+mod numeric_sample_columns;
 pub mod otlp;
 pub mod request_tenant;
 pub mod runtime;

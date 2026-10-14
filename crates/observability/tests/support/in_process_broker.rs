@@ -3,6 +3,8 @@
 //! The `krabka-traces` and `krabka-profiles` binaries' unit tests reach this
 //! file with `#[path]`, so it depends only on `krabka-broker` and `tempfile`.
 
+use std::path::Path;
+
 use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use tempfile::TempDir;
 
@@ -31,5 +33,15 @@ impl InProcessBroker {
             _directory: directory,
             bootstrap,
         }
+    }
+
+    /// Stops the broker before its temporary directory is dropped.
+    pub async fn shutdown(self) {
+        self._handle.shutdown().await;
+    }
+
+    /// Returns the broker's partition data directory.
+    pub fn data_dir(&self) -> &Path {
+        self._directory.path()
     }
 }

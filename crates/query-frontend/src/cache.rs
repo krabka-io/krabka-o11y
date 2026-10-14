@@ -3,7 +3,7 @@ use std::{
     fmt::Write as _,
     marker::PhantomData,
     num::NonZeroUsize,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -180,6 +180,11 @@ struct MemoryCacheEntry<V> {
     value: V,
 }
 
+struct MemoryCacheLocks<'a, V> {
+    entries: MutexGuard<'a, BTreeMap<CacheKey, MemoryCacheEntry<V>>>,
+    order: MutexGuard<'a, VecDeque<CacheKey>>,
+}
+
 impl<V> Default for InMemoryCache<V> {
     fn default() -> Self {
         Self {
@@ -190,6 +195,21 @@ impl<V> Default for InMemoryCache<V> {
             weigh: std::mem::size_of_val,
             clock: Arc::new(SystemClock),
             metrics: Arc::new(CacheMetrics::default()),
+        }
+    }
+}
+
+impl<V> InMemoryCache<V> {
+    fn lock_memory(&self) -> MemoryCacheLocks<'_, V> {
+        MemoryCacheLocks {
+            entries: self
+                .entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            order: self
+                .order
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
         }
     }
 }
@@ -316,14 +336,10 @@ where
 
     async fn insert(&self, key: &CacheKey, value: &V) -> Result<(), Self::Error> {
         self.sweep_expired();
-        let mut entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut order = self
-            .order
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let MemoryCacheLocks {
+            mut entries,
+            mut order,
+        } = self.lock_memory();
         if entries.contains_key(key) {
             remove_memory_entry(&mut entries, &mut order, key, &self.metrics);
         }
@@ -389,14 +405,10 @@ where
     }
 
     async fn invalidate_tenant(&self, tenant: &str) -> Result<usize, Self::Error> {
-        let mut entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut order = self
-            .order
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let MemoryCacheLocks {
+            mut entries,
+            mut order,
+        } = self.lock_memory();
         let keys = entries
             .keys()
             .filter(|key| key.tenant() == tenant)

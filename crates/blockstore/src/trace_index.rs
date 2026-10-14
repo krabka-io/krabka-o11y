@@ -22,6 +22,7 @@ use crate::{
         PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,
         shard_ranges_for_span, touched_shard_ranges,
     },
+    shard_string_dictionary::assign_sorted_string_ids,
 };
 
 #[cfg(test)]
@@ -32,6 +33,10 @@ mod tests {
 
     use super::*;
     use crate::bloom::ShardedTraceBloom;
+
+    mod sorted_trace_block_keys {
+        include!("../tests/support/sorted_trace_block_keys.rs");
+    }
 
     struct TraceQueryCase {
         name: &'static str,
@@ -106,13 +111,12 @@ mod tests {
     }
 
     fn block_keys(index: &TraceIndex) -> Vec<String> {
-        let mut keys: Vec<String> = index
-            .trace_blocks("t")
-            .iter()
-            .map(|block| block.object_key.clone())
-            .collect();
-        keys.sort_unstable();
-        keys
+        sorted_trace_block_keys::sorted_trace_block_keys(
+            index
+                .trace_blocks("t")
+                .iter()
+                .map(|block| block.object_key.as_str()),
+        )
     }
 
     async fn save_and_load_snapshot(
@@ -365,17 +369,6 @@ mod tests {
         assert2::assert!(idx.block_count("t") == 2);
     }
 
-    /// Publishes `index` under `index/traces.json` and loads it back.
-    async fn save_and_reload(
-        index: &TraceIndex,
-        store: &std::sync::Arc<dyn object_store::ObjectStore>,
-    ) -> TraceIndex {
-        save_snapshot(index, store).await;
-        TraceIndex::load_latest_snapshot(store, "index/traces.json")
-            .await
-            .unwrap()
-    }
-
     async fn save_snapshot(
         index: &TraceIndex,
         store: &std::sync::Arc<dyn object_store::ObjectStore>,
@@ -476,7 +469,7 @@ mod tests {
     async fn snapshot_round_trips() {
         let idx = seed();
         let store = memory_store();
-        let loaded = save_and_reload(&idx, &store).await;
+        let loaded = save_and_load_snapshot(&idx, &store).await;
         let got = loaded.candidate_blocks_for_trace("t", &tid(1), 0, 1_000);
         assert2::assert!(got == vec!["b1".to_string()]);
     }
@@ -667,12 +660,12 @@ mod tests {
             &strings(&["b1", "b2"]),
             stats("c1", 0, 300, &[1, 2, 3], &[]),
         );
-        let loaded = save_and_reload(&idx, &store).await;
+        let loaded = save_and_load_snapshot(&idx, &store).await;
         check!(block_keys(&loaded) == vec!["c1".to_string()]);
 
         // The removal is durable now, so the next write need not replay it and
         // must not undo it either.
-        let loaded = save_and_reload(&idx, &store).await;
+        let loaded = save_and_load_snapshot(&idx, &store).await;
         check!(block_keys(&loaded) == vec!["c1".to_string()]);
     }
 
@@ -945,7 +938,7 @@ mod tests {
             &strings(&["b1", "b2"]),
             sized(stats("c1", 0, 300, &[1, 2, 3], &[]), 42),
         );
-        let loaded = save_and_reload(&idx, &store).await;
+        let loaded = save_and_load_snapshot(&idx, &store).await;
         check!(loaded.block_level("c1") == BlockLevel(1));
         check!(
             loaded.compaction_candidates()

@@ -43,20 +43,7 @@ pub(crate) async fn range_duration_expression_helpers_return_query_range_and_ste
             expected: 180.0,
         },
     ] {
-        let result = engine
-            .query_range(
-                &tenant_id("tenant-a"),
-                case.query,
-                60_000,
-                180_000,
-                millis(30_000),
-            )
-            .await
-            .unwrap();
-
-        let QueryResult::RangeMatrix(series) = result else {
-            panic!("expected matrix");
-        };
+        let series = query_range_matrix(&engine, case.query, 30_000).await;
         assert2::assert!(series.len() == 1);
         assert2::assert!(series[0].labels.len() == 0);
         assert2::assert!(

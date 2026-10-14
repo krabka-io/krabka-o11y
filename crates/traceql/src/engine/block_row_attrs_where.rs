@@ -27,10 +27,9 @@ pub fn block_row_attrs_where(
         return Ok(Vec::new());
     }
     let key_values = keys.value(row);
-    let key_values = key_values
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| TraceqlError::Exec("attr_keys row is not Utf8".into()))?;
+    let key_values = crate::string_array_from_arrow(key_values.as_ref(), || {
+        TraceqlError::Exec("attr_keys row is not Utf8".into())
+    })?;
     let str_values = optional_list_column(batch, BLOCK_ATTR_VALUE)?;
     let int_values = optional_list_column(batch, BLOCK_ATTR_VALUE_INT)?;
     let double_values = optional_list_column(batch, BLOCK_ATTR_VALUE_DOUBLE)?;

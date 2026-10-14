@@ -23,6 +23,9 @@ use object_store::{
 };
 use storage_fixtures::listed_keys;
 
+#[path = "support/sorted_trace_block_keys.rs"]
+mod sorted_trace_block_keys;
+
 mod storage_fixtures;
 
 const CPU_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -56,13 +59,12 @@ fn trace_stats(object_key: &str, min_ts: i64, max_ts: i64) -> TraceBlockStats {
 }
 
 fn trace_keys(index: &TraceIndex) -> Vec<String> {
-    let mut keys: Vec<String> = index
-        .trace_blocks("t")
-        .iter()
-        .map(|block| block.object_key.clone())
-        .collect();
-    keys.sort();
-    keys
+    sorted_trace_block_keys::sorted_trace_block_keys(
+        index
+            .trace_blocks("t")
+            .iter()
+            .map(|block| block.object_key.as_str()),
+    )
 }
 
 fn profile_keys(index: &ProfileIndex) -> Vec<String> {

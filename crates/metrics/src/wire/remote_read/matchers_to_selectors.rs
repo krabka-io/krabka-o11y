@@ -15,13 +15,8 @@ pub fn matchers_to_selectors(query: &v1::Query) -> Result<RemoteReadSelectors, R
         .matchers
         .iter()
         .map(|matcher| {
-            let op = match matcher.r#type {
-                0 => MatchOp::Eq,
-                1 => MatchOp::Neq,
-                2 => MatchOp::Re,
-                3 => MatchOp::Nre,
-                other => return Err(RemoteReadError::UnsupportedMatcher(other)),
-            };
+            let op =
+                MatchOp::try_from(matcher.r#type).map_err(RemoteReadError::UnsupportedMatcher)?;
             Ok(LabelMatcher::new(&matcher.name, op, &matcher.value))
         })
         .collect::<Result<Vec<_>, _>>()?;

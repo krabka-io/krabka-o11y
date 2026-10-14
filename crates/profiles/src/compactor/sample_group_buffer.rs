@@ -1,6 +1,8 @@
+use krabka_blockstore::BufferedRecordBatches;
+
 use super::{
     AsArray, COL_FINGERPRINT, COL_TIMESTAMP, Int32Type, Int64Type, PCOL_PROFILE_TYPE,
-    ProfilesError, RecordBatch, SchemaRef, UInt64Type, concat_batches,
+    ProfilesError, RecordBatch, SchemaRef, UInt64Type,
 };
 
 /// Holds merged samples back until whole time buckets can be handed on.
@@ -16,25 +18,20 @@ use super::{
 /// What stays resident is one output batch plus the cell straddling its end,
 /// rather than every sample of every input.
 pub(crate) struct SampleGroupBuffer {
-    schema: SchemaRef,
+    batches: BufferedRecordBatches,
     resolution_ns: i64,
-    pending: Vec<RecordBatch>,
-    rows: usize,
 }
 
 impl SampleGroupBuffer {
     pub(crate) fn new(schema: SchemaRef, resolution_ns: i64) -> Self {
         Self {
-            schema,
+            batches: BufferedRecordBatches::new(schema),
             resolution_ns,
-            pending: Vec::new(),
-            rows: 0,
         }
     }
 
     pub(crate) fn push(&mut self, batch: RecordBatch) {
-        self.rows += batch.num_rows();
-        self.pending.push(batch);
+        self.batches.push(batch);
     }
 
     /// The buffered samples whose buckets are certainly complete, once at
@@ -50,10 +47,7 @@ impl SampleGroupBuffer {
         &mut self,
         min_rows: usize,
     ) -> Result<Option<RecordBatch>, ProfilesError> {
-        krabka_blockstore::take_complete_batch(
-            &self.schema,
-            &mut self.pending,
-            &mut self.rows,
+        self.batches.take_complete(
             min_rows,
             |batch| last_bucket_start(batch, self.resolution_ns),
             |error| ProfilesError::Block(error.to_string()),
@@ -67,22 +61,8 @@ impl SampleGroupBuffer {
     /// Returns [`ProfilesError::Block`] when the buffered batches cannot be
     /// concatenated.
     pub(crate) fn take_rest(&mut self) -> Result<Option<RecordBatch>, ProfilesError> {
-        if self.rows == 0 {
-            return Ok(None);
-        }
-        let gathered = self.gather()?;
-        self.rows = 0;
-        Ok(Some(gathered))
-    }
-
-    fn gather(&mut self) -> Result<RecordBatch, ProfilesError> {
-        let gathered = match self.pending.as_slice() {
-            [only] => only.clone(),
-            many => concat_batches(&self.schema, many)
-                .map_err(|err| ProfilesError::Block(err.to_string()))?,
-        };
-        self.pending.clear();
-        Ok(gathered)
+        self.batches
+            .take_rest(|error| ProfilesError::Block(error.to_string()))
     }
 }
 

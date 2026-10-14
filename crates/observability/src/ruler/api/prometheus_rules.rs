@@ -29,6 +29,21 @@ mod yaml_string_field;
 mod yaml_string_labels_field;
 mod yaml_string_map_field;
 
+fn yaml_string_entries(fields: &serde_yaml::Mapping, name: &'static str) -> Vec<(String, String)> {
+    fields
+        .get(serde_yaml_key(name))
+        .and_then(loki_yaml_mapping)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|(key, value)| {
+                    Some((key.as_str()?.to_string(), value.as_str()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) use expand_prometheus_alert_template::expand_prometheus_alert_template;
 pub(crate) use loki_yaml_mapping::loki_yaml_mapping;
 pub(crate) use prometheus_alert_template_map::prometheus_alert_template_map;

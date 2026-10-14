@@ -20,16 +20,19 @@ rules:
     groups.insert("mixed".to_string(), group);
     let mut rules = BTreeMap::new();
     rules.insert("ns".to_string(), groups);
-    let wal = RecordingSink::default();
-    let alerts = RecordingAlertmanagerSink::default();
-    let states = RecordingRulerStateSink::default();
+    let sinks = super::RecordingRulerSinks::default();
+    let wal = sinks.wal;
+    let alerts = sinks.alertmanager;
+    let states = sinks.ruler_state;
     let report = super::super::evaluate_and_persist_ruler_rule_set_with_report(
-        &engine,
-        super::super::RulerSinks::new(&wal, &alerts, &states),
-        &mut super::super::RulerAlertState::default(),
-        &tenant,
-        &rules,
-        60_000,
+        super::super::RulerRuleSetEvaluationRequest::new(
+            &engine,
+            super::super::RulerSinks::new(&wal, &alerts, &states),
+            &mut super::super::RulerAlertState::default(),
+            &tenant,
+            &rules,
+            60_000,
+        ),
     )
     .await
     .unwrap();

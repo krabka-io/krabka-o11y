@@ -48,3 +48,24 @@ pub(crate) use parse_list_delete_requests_params::parse_list_delete_requests_par
 pub(crate) use parse_loki_delete_timestamp_query_param::parse_loki_delete_timestamp_query_param;
 pub(crate) use ranges_overlap::ranges_overlap;
 pub(crate) use request_query_or_form_body::request_query_or_form_body;
+
+fn audit_delete_request_write<E>(
+    security: &RequestSecurity,
+    operation: &'static str,
+    tenant: &TenantId,
+    request_id: &str,
+    persisted: &Result<(), E>,
+) {
+    security.admin_operation(
+        operation,
+        vec![
+            resource(RESOURCE_TENANT, tenant.as_str()),
+            resource(RESOURCE_DELETE_REQUEST, request_id),
+        ],
+        if persisted.is_ok() {
+            AuditOutcome::Success
+        } else {
+            AuditOutcome::Failure
+        },
+    );
+}

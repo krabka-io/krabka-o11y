@@ -22,24 +22,19 @@ mod tests {
     fn default_limits_are_generous_and_finite() {
         let limits = Limits::default();
 
-        assert!(
-            limits
-                == Limits {
-                    max_async_query_concurrency: 5,
-                    query_admission: AdmissionLimits::default(),
-                    ingestion_rate: per_sec(10_000),
-                    ingestion_burst_profiles: 10_000,
-                    max_series: 0,
-                    max_label_name: bytes(1024),
-                    max_label_value: bytes(2048),
-                    max_label_names_per_series: 40,
-                    max_flamegraph_nodes_default: 8192,
-                    max_flamegraph_nodes_max: 0,
-                    max_query_length: secs(2_595_600),
-                    max_session_id_cardinality: 0,
-                    compactor_blocks_retention_period: <Time as TimeExt>::ZERO,
-                }
-        );
+        check!(limits.max_async_query_concurrency == 5);
+        check!(limits.query_admission == AdmissionLimits::default());
+        check!(limits.ingestion_rate == per_sec(10_000));
+        check!(limits.ingestion_burst_profiles == 10_000);
+        check!(limits.max_series == 0);
+        check!(limits.max_label_name == bytes(1024));
+        check!(limits.max_label_value == bytes(2048));
+        check!(limits.max_label_names_per_series == 40);
+        check!(limits.max_flamegraph_nodes_default == 8192);
+        check!(limits.max_flamegraph_nodes_max == 0);
+        check!(limits.max_query_length == secs(2_595_600));
+        check!(limits.max_session_id_cardinality == 0);
+        check!(limits.compactor_blocks_retention_period == <Time as TimeExt>::ZERO);
     }
 
     #[test]

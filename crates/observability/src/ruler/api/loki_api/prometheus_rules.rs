@@ -1,6 +1,6 @@
 use super::{
     HeaderMap, IntoResponse, PrometheusRulerRequest, QuerierState, RawQuery, RequestSecurity,
-    Response, State, StatusCode, json, json_response, prometheus_rule_groups_response,
+    Response, State, json, prometheus_rule_groups_response, prometheus_ruler_success,
 };
 
 pub(crate) async fn prometheus_rules(
@@ -46,13 +46,5 @@ pub(crate) async fn prometheus_rules(
     if let Some(token) = page.next_token {
         data["groupNextToken"] = json!(token);
     }
-    json_response(
-        StatusCode::OK,
-        &json!({
-            "status": "success",
-            "data": data,
-            "errorType": "",
-            "error": "",
-        }),
-    )
+    prometheus_ruler_success(data)
 }

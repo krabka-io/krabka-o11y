@@ -28,6 +28,21 @@ pub trait HistogramChunkState: Sized {
     fn timestamp(&self) -> i64;
 }
 
+pub(super) fn read_initial_timestamp(reader: &mut BitReader<'_>) -> Result<i64, ChunkError> {
+    reader.read_varbit_int().ok_or(ChunkError::Truncated)
+}
+
+pub(super) fn read_next_timestamp(
+    reader: &mut BitReader<'_>,
+    timestamp_delta: &mut i64,
+    timestamp: &mut i64,
+) -> Result<(), ChunkError> {
+    let delta_of_delta = reader.read_varbit_int().ok_or(ChunkError::Truncated)?;
+    *timestamp_delta = timestamp_delta.wrapping_add(delta_of_delta);
+    *timestamp = timestamp.wrapping_add(*timestamp_delta);
+    Ok(())
+}
+
 /// Decodes the samples of a native-histogram chunk in the encoding `S` reads.
 pub fn decode_histogram_samples<S: HistogramChunkState>(
     chunk: &[u8],

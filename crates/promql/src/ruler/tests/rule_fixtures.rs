@@ -53,6 +53,30 @@ pub(crate) fn up_samples_engine(samples: &[UpSample<'_>]) -> PromqlEngine<InMemo
     PromqlEngine::new(Arc::new(store), EngineOpts::default())
 }
 
+pub(crate) fn up_transition_engine() -> PromqlEngine<InMemoryMetricStore> {
+    up_samples_engine(&[
+        UpSample {
+            job: "api",
+            ts_ms: 60_000,
+            value: 1.0,
+        },
+        UpSample {
+            job: "api",
+            ts_ms: 120_000,
+            value: 0.0,
+        },
+    ])
+}
+
+pub(crate) fn up_alert_rule(with_for_duration: bool) -> serde_yaml::Value {
+    let yaml = if with_for_duration {
+        "alert: InstanceUp\nexpr: up > 0\nfor: 5m\n"
+    } else {
+        "alert: InstanceUp\nexpr: up > 0\n"
+    };
+    serde_yaml::from_str(yaml).expect("alerting rule yaml")
+}
+
 /// Two same-time `up` series for rule-label merge and collision cases.
 pub(crate) fn two_job_up_engine() -> PromqlEngine<InMemoryMetricStore> {
     up_samples_engine(&[

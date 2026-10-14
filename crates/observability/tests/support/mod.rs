@@ -22,8 +22,8 @@ use krabka_blockstore::{
 use krabka_observability::{
     IngestLimitError, KafkaWalHeader, KafkaWalRecord, LogIngestLimiter, LogQueryAuthorizer,
     LogWalSink, Offset, PartitionIndex, QuerierIndexSource, QuerierState, QueryAuthorizationError,
-    Role, ServiceConfig, WalLogRecord, WalSinkError, build_kafka_wal_record, build_querier_state,
-    loki_router,
+    Role, ServiceConfig, ServiceDependencies, WalLogRecord, WalSinkError, build_kafka_wal_record,
+    build_querier_state, build_service_router, loki_router,
 };
 use krabka_units::convert::ByteSizeExt as _;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
@@ -37,6 +37,16 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tower::ServiceExt as _;
+
+pub async fn blockbuilder_service_router() -> Router {
+    let config = ServiceConfig {
+        index_prefix: Some("observability/logs".to_string()),
+        ..minimal_service_config(Role::BlockBuilder)
+    };
+    build_service_router(&config, ServiceDependencies::default(), None)
+        .await
+        .unwrap()
+}
 
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LokiProtoPushRequest {

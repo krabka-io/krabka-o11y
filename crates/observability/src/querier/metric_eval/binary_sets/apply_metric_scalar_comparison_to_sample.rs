@@ -1,8 +1,8 @@
 #[cfg(test)]
 use super::MetricScalarComparison;
 use super::{
-    ComparisonResult, MetricValue, SampleValueSlot, ScalarComparison, ScalarOperands, Value, json,
-    metric_scalar_comparison_matches, sample_value_slot,
+    ComparisonResult, MetricValue, ScalarComparison, Value, json, metric_scalar_comparison_matches,
+    scalar_operands_for_sample,
 };
 
 #[cfg(test)]
@@ -19,13 +19,9 @@ pub(crate) fn apply_scalar_comparison_to_sample(
     comparison: ScalarComparison,
     scalar: MetricValue,
 ) -> bool {
-    let Some(SampleValueSlot { slot, sample_value }) = sample_value_slot(sample) else {
+    let Some((slot, operands)) = scalar_operands_for_sample(sample, scalar, comparison.scalar_side)
+    else {
         return false;
-    };
-    let operands = ScalarOperands {
-        sample: sample_value,
-        scalar,
-        scalar_side: comparison.scalar_side,
     };
     let matches = metric_scalar_comparison_matches(operands, comparison.comparison.op);
     match comparison.comparison.result {

@@ -24,14 +24,18 @@ use support::{
 };
 use tower::ServiceExt as _;
 
-#[tokio::test]
-async fn query_endpoint_returns_loki_streams_json_for_tenant() {
+const LOKI_QUERY_RANGE: &str = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000";
+
+async fn assert_forwarded_api_error_query() {
     let state = loki_forwarded_fixture();
     let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
-
+    let response = Tenant("tenant-a").get(&app, LOKI_QUERY_RANGE).await;
     assert_json_ok(response, &expected_loki_forwarded_api_error()).await;
+}
+
+#[tokio::test]
+async fn query_endpoint_returns_loki_streams_json_for_tenant() {
+    assert_forwarded_api_error_query().await;
 }
 
 #[tokio::test]
@@ -127,12 +131,7 @@ async fn deprecated_api_prom_query_endpoint_rejects_metric_results_like_loki() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_fractional_unix_seconds_time() {
-    let state = loki_forwarded_fixture();
-    let app = loki_router(state);
-
-    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000").await;
-
-    assert_json_ok(response, &expected_loki_forwarded_api_error()).await;
+    assert_forwarded_api_error_query().await;
 }
 
 #[tokio::test]

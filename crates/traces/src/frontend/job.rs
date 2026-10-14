@@ -170,7 +170,7 @@ pub use blocks_for_tenant::blocks_for_tenant;
 pub use catalog_error::CatalogError;
 pub use job_plan::JobPlan;
 pub use job_shard::JobShard;
-pub use mock_catalog::MockCatalog;
+pub use mock_catalog::{MockBlock, MockCatalog};
 use plan_block_jobs::plan_block_jobs;
 pub use plan_search_jobs::plan_search_jobs;
 pub use row_group_info::RowGroupInfo;

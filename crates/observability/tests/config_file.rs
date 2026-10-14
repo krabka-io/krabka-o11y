@@ -20,6 +20,11 @@ use krabka_observability::{
     wal_client_security::{WalClientSecurityArgs, WalSaslMechanism, WalSecurityProtocol},
 };
 
+#[path = "support/environment_overrides.rs"]
+mod environment_overrides;
+
+use environment_overrides::{EnvironmentOverride, with_environment};
+
 /// A binary's `Cli` in miniature: one required argument with no default, one
 /// with a default, a switch, and a repeatable value.
 #[derive(Debug, Parser, PartialEq, Eq)]
@@ -41,33 +46,6 @@ struct TestCli {
     tenants: Vec<String>,
     #[arg(long, env = "KRABKA_TEST_CONFIG_MAX_BODY")]
     max_body: Option<String>,
-}
-
-struct EnvironmentOverride<'a> {
-    name: &'a str,
-    value: Option<&'a str>,
-}
-
-fn with_environment<'a, T>(
-    overrides: impl IntoIterator<Item = EnvironmentOverride<'a>>,
-    run: impl FnOnce() -> T,
-) -> T {
-    let overrides = overrides.into_iter().collect::<Vec<_>>();
-    with_environment_recursive(&overrides, run)
-}
-
-fn with_environment_recursive<T>(
-    overrides: &[EnvironmentOverride<'_>],
-    run: impl FnOnce() -> T,
-) -> T {
-    if overrides.is_empty() {
-        return run();
-    }
-    let override_value = &overrides[0];
-    let remaining = &overrides[1..];
-    temp_env::with_var(override_value.name, override_value.value, || {
-        with_environment_recursive(remaining, run)
-    })
 }
 
 /// Every case here reads the same environment through `clap`, and some of them

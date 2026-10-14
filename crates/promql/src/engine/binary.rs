@@ -53,7 +53,8 @@ mod validate_set_modifier;
 mod vector_operands;
 
 use append_left_fill_results::{
-    append_left_fill_results, append_matched_binary_result, default_left_fill_labels,
+    append_left_fill_results, append_matched_binary_result, append_right_fill_result,
+    default_left_fill_labels,
 };
 use apply_binary_fill_value::apply_binary_fill_value;
 use apply_binary_sample_value::apply_binary_sample_value;
@@ -84,6 +85,63 @@ fn visit_left_sample_matches<'a>(
         visit(sample)?;
     }
     Ok(())
+}
+
+struct LeftMatchResults {
+    samples: Vec<InstantSample>,
+    matched_keys: BTreeSet<String>,
+}
+
+fn append_left_match_results(
+    left: Vec<InstantSample>,
+    right_by_key: &BTreeMap<String, InstantSample>,
+    matching: VectorMatching<'_>,
+    reject_duplicate_left_keys: bool,
+    mut right_fill_labels: impl FnMut(&InstantSample, bool) -> Labels,
+    mut matched_labels: impl FnMut(&InstantSample, &InstantSample, bool) -> Labels,
+) -> Result<LeftMatchResults> {
+    let VectorMatching { op, modifier } = matching;
+    let mut samples = Vec::new();
+    let mut matched_keys = BTreeSet::new();
+    visit_left_sample_matches(
+        left,
+        right_by_key,
+        modifier,
+        |LeftSampleMatch {
+             left: left_sample,
+             key,
+             right,
+         }| {
+            let Some(right_sample) = right else {
+                append_right_fill_result(&mut samples, &left_sample, matching, |preserves_name| {
+                    right_fill_labels(&left_sample, preserves_name)
+                })?;
+                return Ok(());
+            };
+            if reject_duplicate_left_keys {
+                if !matched_keys.insert(key.clone()) {
+                    return Err(PromqlError::Exec(format!(
+                        "many-to-one matching must be explicit for key `{key}`"
+                    )));
+                }
+            } else {
+                matched_keys.insert(key);
+            }
+            append_matched_binary_result(
+                &mut samples,
+                &left_sample,
+                right_sample,
+                op,
+                modifier,
+                |preserves_name| matched_labels(&left_sample, right_sample, preserves_name),
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(LeftMatchResults {
+        samples,
+        matched_keys,
+    })
 }
 use missing_side::MissingSide;
 use one_to_one_binary_result_labels::one_to_one_binary_result_labels;

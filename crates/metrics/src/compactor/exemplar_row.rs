@@ -11,6 +11,20 @@ pub struct ExemplarRow {
     pub labels: Vec<krabka_blockstore::LabelPair>,
 }
 
+impl crate::numeric_sample_columns::NumericSampleRow for ExemplarRow {
+    fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.timestamp_ms
+    }
+
+    fn value(&self) -> f64 {
+        self.value
+    }
+}
+
 pub(crate) fn exemplar_row(fingerprint: u64, exemplar: &WalExemplar) -> ExemplarRow {
     let mut trace_id = None;
     let mut span_id = None;

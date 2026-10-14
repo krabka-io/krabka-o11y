@@ -1,26 +1,24 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, connect_error, merge_profile_type_selector, parse_label_selector,
-    parse_render_query, parse_render_query::ParsedRenderQuery, pb,
+    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileStore, QuerierState, connect_error,
+    merge_profile_type_selector, parse_label_selector, parse_render_query,
+    parse_render_query::ParsedRenderQuery, pb,
 };
 
 pub(crate) async fn analyze_query_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::AnalyzeQueryRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::AnalyzeQueryRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::AnalyzeQueryResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
     // The pinned v2 query frontend exposes this diagnostic as an empty stub.
     if state.query_architecture == super::PyroscopeQueryArchitecture::V2 {
         return Ok(ConnectResponse::new(
             pb::querier::v1::AnalyzeQueryResponse::default(),
         ));
     }
-    let req = req.0;
+    let req = request.request.0;
     // The pinned public frontend returns an empty diagnostic before parsing
     // the selector whenever either bound is omitted (frontend_analyze_query.go).
     if req.start == 0 || req.end == 0 {

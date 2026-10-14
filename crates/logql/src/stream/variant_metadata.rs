@@ -20,12 +20,13 @@ pub(super) fn initial_pipeline_fields(labels: &Labels, initial: &Labels) -> Init
             fields.insert(name.to_owned(), value.to_owned());
             continue;
         }
-        let name = extracted_name(
+        insert_extracted_metadata(
+            &mut fields,
+            &mut metadata,
             name,
+            value,
             labels.get(name).is_some_and(|value| !value.is_empty()),
         );
-        fields.insert(name.clone(), value.to_owned());
-        metadata.insert(name, value.to_owned());
     }
     InitialPipelineFields { fields, metadata }
 }
@@ -54,12 +55,13 @@ impl PipelineLabels {
         for entry in &self.metadata {
             let name = entry.0;
             let value = entry.1;
-            let name = extracted_name(
+            insert_extracted_metadata(
+                fields,
+                &mut metadata,
                 name,
+                value,
                 self.base.get(name).is_some_and(|value| !value.is_empty()),
             );
-            fields.insert(name.clone(), value.to_owned());
-            metadata.insert(name, value.to_owned());
         }
         self.metadata = metadata;
     }
@@ -121,6 +123,18 @@ impl PipelineLabels {
     pub(super) fn retain_metadata(&mut self, fields: &Labels) {
         self.metadata.retain(|name, _| fields.contains_key(name));
     }
+}
+
+fn insert_extracted_metadata(
+    fields: &mut Labels,
+    metadata: &mut Labels,
+    name: &str,
+    value: &str,
+    collides: bool,
+) {
+    let name = extracted_name(name, collides);
+    fields.insert(name.clone(), value.to_owned());
+    metadata.insert(name, value.to_owned());
 }
 
 fn extracted_name(name: &str, collision: bool) -> String {

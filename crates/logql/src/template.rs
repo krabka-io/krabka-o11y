@@ -563,6 +563,26 @@ mod current_template_timestamp;
 mod decode_quoted_fragment;
 mod ensure_template_parenthesized_token;
 mod ensure_template_quoted_token;
+
+fn ensure_template_token(
+    command: &str,
+    pos: usize,
+    token: &str,
+    next: usize,
+    validate: impl FnOnce(&str) -> Result<(), ParseError>,
+) -> Result<(), ParseError> {
+    if next <= pos {
+        return Err(template_parse_error(
+            "template token parser did not advance",
+        ));
+    }
+    if next > command.len() {
+        return Err(template_parse_error(
+            "template token parser advanced past command",
+        ));
+    }
+    validate(token)
+}
 mod epoch_template_timestamp;
 mod evaluate_common_string_function;
 mod evaluate_template_byte_function;
@@ -668,7 +688,6 @@ mod template_index_value;
 mod template_integer_args;
 mod template_json_value_to_string;
 mod template_json_value_truthy;
-mod template_parse_error;
 mod template_part;
 mod template_quote_scanner;
 mod template_range;
@@ -803,7 +822,6 @@ use template_index_value::template_index_value;
 use template_integer_args::template_integer_args;
 use template_json_value_to_string::template_json_value_to_string;
 use template_json_value_truthy::template_json_value_truthy;
-pub(crate) use template_parse_error::template_parse_error;
 use template_part::TemplatePart;
 use template_range::TemplateRange;
 use template_range_binding::TemplateRangeBinding;
@@ -829,3 +847,5 @@ use unix_to_template_timestamp::unix_to_template_timestamp;
 use urldecode_template_string::urldecode_template_string;
 use urlencode_template_string::urlencode_template_string;
 use urlquery_template_string::urlquery_template_string;
+
+pub(crate) use crate::error::syntax_parse_error as template_parse_error;

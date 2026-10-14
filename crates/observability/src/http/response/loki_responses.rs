@@ -30,6 +30,27 @@ fn loki_parquet_columns(
     })
 }
 
+fn loki_parquet_value_response(
+    columns: LokiParquetColumns,
+    value_column_name: &str,
+    value_array: ArrayRef,
+) -> Result<Response, HttpQueryError> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("timestamp", columns.timestamp_data_type, false),
+        Field::new("labels", columns.labels_array.data_type().clone(), false),
+        Field::new(value_column_name, value_array.data_type().clone(), false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(columns.timestamp_array) as ArrayRef,
+            Arc::new(columns.labels_array) as ArrayRef,
+            value_array,
+        ],
+    )?;
+    loki_parquet_batch_response(&batch)
+}
+
 mod accept_parameter_is_zero_quality;
 mod accept_part_allows_loki_parquet;
 mod add_loki_encoding_flags;
@@ -119,4 +140,12 @@ fn update_loki_stream_values(value: &mut Value, mut update_values: impl FnMut(&m
             .and_then(Value::as_array)
             .is_some_and(|values| !values.is_empty())
     });
+}
+
+fn loki_stream_entry_timestamp(entry: &Value) -> Option<i64> {
+    entry
+        .as_array()
+        .and_then(|entry| entry.first())
+        .and_then(Value::as_str)
+        .and_then(|timestamp| timestamp.parse::<i64>().ok())
 }

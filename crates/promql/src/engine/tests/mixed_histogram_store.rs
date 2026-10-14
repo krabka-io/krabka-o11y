@@ -6,6 +6,14 @@ struct ClassicBucket {
     cumulative_count: f64,
 }
 
+fn mixed_metric_labels(metric: &str, instance: &str) -> Labels {
+    labels(&[
+        crate::test_support::TestLabelPair::new("__name__", metric),
+        crate::test_support::TestLabelPair::new("job", "api"),
+        crate::test_support::TestLabelPair::new("instance", instance),
+    ])
+}
+
 pub(crate) fn mixed_histogram_store() -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
@@ -52,21 +60,13 @@ pub(crate) fn mixed_api_group_store() -> InMemoryMetricStore {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "float"),
-        ]),
+        mixed_metric_labels("mixed_metric", "float"),
         10_000,
         4.0,
     );
     store.push_histogram(
         "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "mixed_metric"),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "hist"),
-        ]),
+        mixed_metric_labels("mixed_metric", "hist"),
         10_000,
         native_histogram(4.0, 10.0),
     );
@@ -87,22 +87,14 @@ pub(crate) fn mixed_metric_store(
     for sample in float_samples {
         store.push_float(
             "tenant-a",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", metric),
-                crate::test_support::TestLabelPair::new("job", "api"),
-                crate::test_support::TestLabelPair::new("instance", sample.instance),
-            ]),
+            mixed_metric_labels(metric, sample.instance),
             10_000,
             sample.value,
         );
     }
     store.push_histogram(
         "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", metric),
-            crate::test_support::TestLabelPair::new("job", "api"),
-            crate::test_support::TestLabelPair::new("instance", "hist"),
-        ]),
+        mixed_metric_labels(metric, "hist"),
         10_000,
         native_histogram(4.0, 10.0),
     );

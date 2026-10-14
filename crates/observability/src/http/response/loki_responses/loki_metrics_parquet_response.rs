@@ -1,5 +1,20 @@
 use super::*;
 
+fn append_metric_sample(
+    sample: &Value,
+    kind: LokiMetricParquetKind,
+    labels: &[krabka_blockstore::LabelPair],
+    timestamps: &mut Vec<i64>,
+    label_sets: &mut Vec<Vec<krabka_blockstore::LabelPair>>,
+    values: &mut Vec<f64>,
+) -> Result<(), HttpQueryError> {
+    let point = loki_parquet_metric_sample(sample, kind)?;
+    timestamps.push(point.timestamp_ns);
+    label_sets.push(labels.to_vec());
+    values.push(point.value);
+    Ok(())
+}
+
 pub(crate) fn loki_metrics_parquet_response(
     value: &Value,
     kind: LokiMetricParquetKind,
@@ -20,38 +35,32 @@ pub(crate) fn loki_metrics_parquet_response(
                     .and_then(Value::as_array)
                     .ok_or(HttpQueryError::LokiParquet("missing matrix values array"))?;
                 for sample in samples {
-                    let point = loki_parquet_metric_sample(sample, kind)?;
-                    timestamps.push(point.timestamp_ns);
-                    label_sets.push(labels.clone());
-                    values.push(point.value);
+                    append_metric_sample(
+                        sample,
+                        kind,
+                        &labels,
+                        &mut timestamps,
+                        &mut label_sets,
+                        &mut values,
+                    )?;
                 }
             }
             LokiMetricParquetKind::Vector => {
                 let sample = series
                     .get("value")
                     .ok_or(HttpQueryError::LokiParquet("missing vector value"))?;
-                let point = loki_parquet_metric_sample(sample, kind)?;
-                timestamps.push(point.timestamp_ns);
-                label_sets.push(labels.clone());
-                values.push(point.value);
+                append_metric_sample(
+                    sample,
+                    kind,
+                    &labels,
+                    &mut timestamps,
+                    &mut label_sets,
+                    &mut values,
+                )?;
             }
         }
     }
 
     let columns = loki_parquet_columns(timestamps, &label_sets)?;
-    let value_array = Float64Array::from(values);
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("timestamp", columns.timestamp_data_type, false),
-        Field::new("labels", columns.labels_array.data_type().clone(), false),
-        Field::new("value", DataType::Float64, false),
-    ]));
-    let batch = RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(columns.timestamp_array) as ArrayRef,
-            Arc::new(columns.labels_array) as ArrayRef,
-            Arc::new(value_array) as ArrayRef,
-        ],
-    )?;
-    loki_parquet_batch_response(&batch)
+    loki_parquet_value_response(columns, "value", Arc::new(Float64Array::from(values)))
 }

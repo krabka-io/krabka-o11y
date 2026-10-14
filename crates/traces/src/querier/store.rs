@@ -41,6 +41,10 @@ struct TagScopeTags {
     tags: BTreeSet<String>,
 }
 
+fn insert_typed_value(values: &mut BTreeSet<TypedValue>, kind: &'static str, value: String) {
+    values.insert(TypedValue::new(kind, value));
+}
+
 use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt},
@@ -4142,7 +4146,6 @@ mod int32_value;
 mod int64_array_value;
 mod int64_value;
 mod intrinsic_matches;
-mod intrinsic_tags;
 mod intrinsic_values_from_batches;
 mod is_event_matcher;
 mod is_intrinsic_tag;
@@ -4229,7 +4232,6 @@ use int32_value::int32_value;
 use int64_array_value::int64_array_value;
 use int64_value::int64_value;
 use intrinsic_matches::intrinsic_matches;
-use intrinsic_tags::INTRINSIC_TAGS;
 use intrinsic_values_from_batches::intrinsic_values_from_batches;
 use is_event_matcher::is_event_matcher;
 use is_intrinsic_tag::is_intrinsic_tag;
@@ -4274,3 +4276,5 @@ use struct_string_field::struct_string_field;
 use tag_scope_key::tag_scope_key;
 use trace_from_batches::trace_from_batches;
 use unscoped_attribute_tag::unscoped_attribute_tag;
+
+use super::INTRINSIC_TAGS;

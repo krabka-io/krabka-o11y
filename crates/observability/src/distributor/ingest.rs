@@ -39,6 +39,12 @@ mod validate_loki_json_push_timestamp_types;
 mod validate_loki_json_push_value_arrays;
 mod validate_loki_json_structured_metadata_value_types;
 
+fn loki_json_push_unclosed_object_error(context: &str, bigger_context: &str) -> String {
+    format!(
+        "loghttp.PushRequest.Streams: []loghttp.LogProtoStream: unmarshalerDecoder: Value looks like object, but can't find closing '}}' symbol, error found in #10 byte of ...|{context}|..., bigger context ...|{bigger_context}|...\n"
+    )
+}
+
 fn validate_typed_loki_values(
     payload: &LokiTypedPushRequest,
     mut validate: impl FnMut(&Value) -> Result<(), DistributorError>,

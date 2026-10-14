@@ -1,5 +1,11 @@
 use super::Labels;
 
+fn preserve_unexpanded_action(expanded: &mut String, action: &str) {
+    expanded.push_str("{{");
+    expanded.push_str(action);
+    expanded.push_str("}}");
+}
+
 pub(crate) fn expand_prometheus_alert_template(
     template: &str,
     labels: &Labels,
@@ -22,14 +28,10 @@ pub(crate) fn expand_prometheus_alert_template(
             if let Some(label_value) = labels.get(name) {
                 expanded.push_str(label_value);
             } else {
-                expanded.push_str("{{");
-                expanded.push_str(&action[..end]);
-                expanded.push_str("}}");
+                preserve_unexpanded_action(&mut expanded, &action[..end]);
             }
         } else {
-            expanded.push_str("{{");
-            expanded.push_str(&action[..end]);
-            expanded.push_str("}}");
+            preserve_unexpanded_action(&mut expanded, &action[..end]);
         }
         remaining = &action[end + "}}".len()..];
     }

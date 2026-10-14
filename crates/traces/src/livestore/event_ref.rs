@@ -1,16 +1,11 @@
-use super::*;
+use krabka_units::convert::TimeExt as _;
+
+use super::{EventRecord, Span, Time, traceql_attributes};
 
 pub(crate) fn event_ref(span: &Span, event: &EventRecord) -> krabka_traceql::EventRef {
     krabka_traceql::EventRef {
         time_since_start: Time::from_nanos(event.time_unix_nano.saturating_sub(span.start_ns)),
         name: event.name.clone(),
-        attributes: event
-            .attrs
-            .iter()
-            .filter_map(|attr| {
-                traceql_attr(attr)
-                    .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
-            })
-            .collect(),
+        attributes: traceql_attributes(&event.attrs),
     }
 }

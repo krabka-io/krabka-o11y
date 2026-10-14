@@ -1,7 +1,4 @@
-use super::{
-    HeaderMap, HttpQueryError, QuerierState, RequestSecurity, Value, collect_detected_fields, json,
-    parse_detected_fields_params,
-};
+use super::{HeaderMap, HttpQueryError, QuerierState, RequestSecurity, Value, json};
 
 pub(crate) async fn execute_detected_fields_query(
     state: &QuerierState,
@@ -9,9 +6,8 @@ pub(crate) async fn execute_detected_fields_query(
     headers: &HeaderMap,
     raw_query: Option<&str>,
 ) -> Result<Value, HttpQueryError> {
-    let params = parse_detected_fields_params(raw_query)?;
-    let limit = params.limit;
-    let fields = collect_detected_fields(state, security, headers, &params).await?;
+    let super::DetectedFieldsQuery { limit, fields } =
+        super::detected_fields_query(state, security, headers, raw_query).await?;
     let fields = fields
         .into_iter()
         .take(limit)

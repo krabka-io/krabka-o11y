@@ -301,13 +301,9 @@ impl<S: MetricStore> PromqlEngine<S> {
                     .selector_has_histogram_series(tenant, selector, time_ms)
                     .await?
                 {
-                    let QueryResult::InstantVector(samples) = engine
-                        .eval_instant_selector(tenant, selector, time_ms)
-                        .await?
-                    else {
-                        return Ok(None);
-                    };
-                    return Ok(Some(samples));
+                    return engine
+                        .eval_instant_vector_selector(tenant, selector, time_ms)
+                        .await;
                 }
                 let samples = engine
                     .scalar_math_selector_samples(tenant, selector, time_ms)

@@ -1,7 +1,4 @@
-use super::{
-    AuditOutcome, DistributorState, IntoResponse, OPERATION_INGESTER_SHUTDOWN, RequestSecurity,
-    Response, State, StatusCode,
-};
+use super::{DistributorState, OPERATION_INGESTER_SHUTDOWN, RequestSecurity, Response, State};
 
 /// `/ingester/shutdown`: leave rotation for good.
 ///
@@ -19,14 +16,5 @@ pub(crate) async fn shutdown_ingester(
     State(state): State<DistributorState>,
     security: RequestSecurity,
 ) -> Response {
-    if let Err(denied) = security.authorize_admin() {
-        return denied.into_response();
-    }
-    state.prepare_shutdown.mark_unready();
-    security.admin_operation(
-        OPERATION_INGESTER_SHUTDOWN,
-        vec![security.ingester()],
-        AuditOutcome::Success,
-    );
-    StatusCode::NO_CONTENT.into_response()
+    super::prepare_ingester_shutdown(&state, &security, OPERATION_INGESTER_SHUTDOWN)
 }

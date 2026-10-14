@@ -1,22 +1,9 @@
-use super::{Value, json, loki_yaml_mapping, serde_yaml_key};
+use super::{Value, json, yaml_string_entries};
 
 pub(crate) fn yaml_string_map_field(fields: &serde_yaml::Mapping, name: &'static str) -> Value {
-    let values = fields
-        .get(serde_yaml_key(name))
-        .and_then(loki_yaml_mapping)
-        .map(|values| {
-            let mut decoded = serde_json::Map::new();
-            for entry in values {
-                let Some(key) = entry.0.as_str() else {
-                    continue;
-                };
-                let Some(value) = entry.1.as_str() else {
-                    continue;
-                };
-                decoded.insert(key.to_string(), json!(value));
-            }
-            decoded
-        })
-        .unwrap_or_default();
+    let values = yaml_string_entries(fields, name)
+        .into_iter()
+        .map(|(key, value)| (key, json!(value)))
+        .collect();
     Value::Object(values)
 }

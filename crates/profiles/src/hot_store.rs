@@ -81,6 +81,12 @@ mod tests {
         }
     }
 
+    fn engine_with_hot_record() -> FlameEngine<super::WalTailProfileStore> {
+        let store = super::WalTailProfileStore::new();
+        store.append_record(record()).unwrap();
+        FlameEngine::new(Arc::new(store), EngineOpts::default())
+    }
+
     /// A rebuild is amortized: it happens once evictions reach a
     /// `1 / REBUILD_AMORTIZE_FACTOR` share of what is still retained, and
     /// never when nothing has been evicted. Both halves of that condition are
@@ -235,9 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn appended_wal_records_are_queryable_as_hot_profiles() {
-        let store = super::WalTailProfileStore::new();
-        store.append_record(record()).unwrap();
-        let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = engine_with_hot_record();
 
         let flamegraph = engine
             .select_merge_stacktraces("tenant-a", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
@@ -250,9 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn appended_wal_records_are_queryable_with_millisecond_timestamps() {
-        let store = super::WalTailProfileStore::new();
-        store.append_record(record()).unwrap();
-        let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = engine_with_hot_record();
 
         let series = engine
             .select_series(

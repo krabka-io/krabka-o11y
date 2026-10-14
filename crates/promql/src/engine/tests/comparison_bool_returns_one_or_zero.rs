@@ -2,13 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn comparison_bool_returns_one_or_zero() {
-    let engine = FloatStore::default()
-        .named_sample(
-            "a",
-            &[crate::test_support::TestLabelPair::new("x", "1")],
-            10.0,
-        )
-        .engine();
+    let engine = comparison_test_engine();
     let samples = instant_vector(&engine, "a > bool 0", 10_000).await;
     check!(samples.len() == 1);
     check!(samples[0].labels.get("__name__").is_none());

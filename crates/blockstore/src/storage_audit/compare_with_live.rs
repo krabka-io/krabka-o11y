@@ -17,13 +17,7 @@ pub fn compare_with_live(
     what: &str,
 ) -> Vec<StorageFinding> {
     let mut findings = Vec::new();
-    for entry in inventory.blocks(signal) {
-        let key = entry.key;
-        let listed = entry.listed;
-        if !live.contains(key) && live.knows(listed.object.tenant.as_deref()) {
-            findings.push(unindexed_block_finding(key, listed, options, what));
-        }
-    }
+    append_unindexed_blocks(&mut findings, inventory, signal, live, options, what);
     for key in live.live.keys() {
         let tenant = &live.live[key];
         if !inventory.contains(key) {
@@ -37,4 +31,21 @@ pub fn compare_with_live(
         }
     }
     findings
+}
+
+pub(super) fn append_unindexed_blocks(
+    findings: &mut Vec<StorageFinding>,
+    inventory: &StorageInventory,
+    signal: StorageSignal,
+    live: &LiveBlockSet,
+    options: &StorageAuditOptions,
+    what: &str,
+) {
+    for entry in inventory.blocks(signal) {
+        let key = entry.key;
+        let listed = entry.listed;
+        if !live.contains(key) && live.knows(listed.object.tenant.as_deref()) {
+            findings.push(unindexed_block_finding(key, listed, options, what));
+        }
+    }
 }

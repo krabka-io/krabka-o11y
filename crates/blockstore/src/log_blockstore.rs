@@ -1521,8 +1521,18 @@ pub use log_tenant_index_shard_list_offset_start_ns::log_tenant_index_shard_list
 pub use log_tenant_index_shard_manifest_object_path::log_tenant_index_shard_manifest_object_path;
 pub use log_tenant_index_shards_object_prefix::log_tenant_index_shards_object_prefix;
 use manifest_series::ManifestSeries;
-pub use match_op::MatchOp;
+pub use match_op::{LabelValueLookup, MatchOp};
 use object_store_log_listing_table::object_store_log_listing_table;
+
+fn log_listing_table_from_paths(
+    table_paths: Vec<ListingTableUrl>,
+    schema: Arc<Schema>,
+) -> Result<ListingTable, BlockStoreError> {
+    let config = ListingTableConfig::new_with_multi_paths(table_paths)
+        .with_listing_options(log_listing_options())
+        .with_schema(schema);
+    Ok(ListingTable::try_new(config)?)
+}
 use parse_log_tenant_index_shard_range_from_object_path::parse_log_tenant_index_shard_range_from_object_path;
 use planned_log_listing_table::planned_log_listing_table;
 pub use read_log_block::read_log_block;

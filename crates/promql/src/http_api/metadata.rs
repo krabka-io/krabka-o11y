@@ -44,3 +44,40 @@ where
         Err(rejection) => rejection.into_response(),
     }
 }
+
+#[derive(Clone, Copy)]
+pub(super) enum MetadataRepresentation {
+    Series,
+    Targets,
+}
+
+pub(super) async fn metadata_route<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    caller: RequestCaller,
+    RawQuery(raw_query): RawQuery,
+    representation: MetadataRepresentation,
+) -> Response {
+    metadata_response(
+        &state,
+        caller.auth(),
+        raw_query.as_deref(),
+        |params, metadata| match representation {
+            MetadataRepresentation::Series => {
+                success_data_response(metadata_json(metadata, params.limit_per_metric))
+            }
+            MetadataRepresentation::Targets => {
+                success_data_response(target_metadata_json(metadata))
+            }
+        },
+    )
+    .await
+}
+
+pub(super) async fn metadata_response_for_representation<S: MetricStore>(
+    state: Arc<PrometheusApiState<S>>,
+    caller: RequestCaller,
+    raw_query: Option<String>,
+    representation: MetadataRepresentation,
+) -> Response {
+    metadata_route(State(state), caller, RawQuery(raw_query), representation).await
+}

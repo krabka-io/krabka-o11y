@@ -28,20 +28,7 @@ pub(crate) async fn range_selector_at_start_and_end_use_query_bounds() {
             .value(3.0)
             .build(),
     ] {
-        let result = engine
-            .query_range(
-                &tenant_id("tenant-a"),
-                expected.query,
-                60_000,
-                180_000,
-                millis(60_000),
-            )
-            .await
-            .unwrap();
-
-        let QueryResult::RangeMatrix(series) = result else {
-            panic!("expected matrix");
-        };
+        let series = query_range_matrix(&engine, expected.query, 60_000).await;
         assert2::assert!(series.len() == 1);
         assert2::assert!(series[0].samples.len() == 3);
         for sample in &series[0].samples {

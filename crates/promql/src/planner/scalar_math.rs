@@ -45,6 +45,19 @@ mod tests {
 
     use super::*;
 
+    struct ExpectedJobValue {
+        job: &'static str,
+        value: f64,
+    }
+
+    fn assert_job_values(got: &[crate::planner::JobValue], expected: &[ExpectedJobValue]) {
+        assert2::assert!(got.len() == expected.len());
+        for (actual, expected) in got.iter().zip(expected) {
+            check!(actual.job == expected.job);
+            check!(actual.value == expected.value);
+        }
+    }
+
     fn labeled(name: &str, l: &str, value: f64) -> LabeledValue {
         let mut labels = Labels::new();
         labels.insert("__name__", name);
@@ -104,17 +117,18 @@ mod tests {
             &[],
         )
         .await;
-        assert2::assert!(
-            got == vec![
-                crate::planner::JobValue {
-                    job: "x".to_string(),
-                    value: 3.0
+        assert_job_values(
+            &got,
+            &[
+                ExpectedJobValue {
+                    job: "x",
+                    value: 3.0,
                 },
-                crate::planner::JobValue {
-                    job: "y".to_string(),
-                    value: 4.0
+                ExpectedJobValue {
+                    job: "y",
+                    value: 4.0,
                 },
-            ]
+            ],
         );
     }
 
@@ -141,17 +155,18 @@ mod tests {
             &[0.0, 3.0],
         )
         .await;
-        assert2::assert!(
-            got == vec![
-                crate::planner::JobValue {
-                    job: "x".to_string(),
-                    value: 3.0
+        assert_job_values(
+            &got,
+            &[
+                ExpectedJobValue {
+                    job: "x",
+                    value: 3.0,
                 },
-                crate::planner::JobValue {
-                    job: "y".to_string(),
-                    value: 0.0
+                ExpectedJobValue {
+                    job: "y",
+                    value: 0.0,
                 },
-            ]
+            ],
         );
     }
 

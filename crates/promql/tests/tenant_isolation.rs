@@ -51,6 +51,28 @@ fn labels(pairs: &[LabelPair]) -> Labels {
     labels
 }
 
+fn push_up_sample(
+    store: &mut InMemoryMetricStore,
+    tenant: &'static str,
+    job: &'static str,
+    instance: &'static str,
+    zone: &'static str,
+    timestamp_ms: i64,
+    value: f64,
+) {
+    store.push_float(
+        tenant,
+        labels(&[
+            LabelPair::new("__name__", "up"),
+            LabelPair::new("job", job),
+            LabelPair::new("instance", instance),
+            LabelPair::new("zone", zone),
+        ]),
+        timestamp_ms,
+        value,
+    );
+}
+
 /// Seeds disjoint series for the two tenants and boots the API on a real socket.
 async fn boot_isolated_api() -> SocketAddr {
     boot_isolated_api_with(ServerSecurity::default()).await
@@ -61,28 +83,8 @@ async fn boot_isolated_api_with(security: ServerSecurity) -> SocketAddr {
     let mut store = InMemoryMetricStore::new();
 
     // org-a: `up{job=alpha-job-a, instance=alpha-instance-a, zone=alpha-zone-a}`
-    store.push_float(
-        ORG_A,
-        labels(&[
-            LabelPair::new("__name__", "up"),
-            LabelPair::new("job", A_JOB),
-            LabelPair::new("instance", A_INSTANCE),
-            LabelPair::new("zone", A_ZONE),
-        ]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        ORG_A,
-        labels(&[
-            LabelPair::new("__name__", "up"),
-            LabelPair::new("job", A_JOB),
-            LabelPair::new("instance", A_INSTANCE),
-            LabelPair::new("zone", A_ZONE),
-        ]),
-        20_000,
-        2.0,
-    );
+    push_up_sample(&mut store, ORG_A, A_JOB, A_INSTANCE, A_ZONE, 10_000, 1.0);
+    push_up_sample(&mut store, ORG_A, A_JOB, A_INSTANCE, A_ZONE, 20_000, 2.0);
     store.push_exemplar(
         ORG_A,
         labels(&[
@@ -95,28 +97,8 @@ async fn boot_isolated_api_with(security: ServerSecurity) -> SocketAddr {
     );
 
     // org-b: `up{job=bravo-job-b, instance=bravo-instance-b, zone=bravo-zone-b}`
-    store.push_float(
-        ORG_B,
-        labels(&[
-            LabelPair::new("__name__", "up"),
-            LabelPair::new("job", B_JOB),
-            LabelPair::new("instance", B_INSTANCE),
-            LabelPair::new("zone", B_ZONE),
-        ]),
-        10_000,
-        3.0,
-    );
-    store.push_float(
-        ORG_B,
-        labels(&[
-            LabelPair::new("__name__", "up"),
-            LabelPair::new("job", B_JOB),
-            LabelPair::new("instance", B_INSTANCE),
-            LabelPair::new("zone", B_ZONE),
-        ]),
-        20_000,
-        4.0,
-    );
+    push_up_sample(&mut store, ORG_B, B_JOB, B_INSTANCE, B_ZONE, 10_000, 3.0);
+    push_up_sample(&mut store, ORG_B, B_JOB, B_INSTANCE, B_ZONE, 20_000, 4.0);
     store.push_exemplar(
         ORG_B,
         labels(&[

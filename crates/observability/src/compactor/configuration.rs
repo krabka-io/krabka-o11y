@@ -29,6 +29,15 @@ struct DeferredQueryAuthorizerDependencies {
     connect: DeferredQueryAuthorizerConnect,
 }
 
+pub(crate) struct WalDependenciesRequest<'a> {
+    pub(crate) dependencies: ServiceDependencies,
+    pub(crate) config: &'a ServiceConfig,
+    pub(crate) group_id: String,
+    pub(crate) client_resource_policy: ClientResourcePolicy,
+    pub(crate) security: Option<&'a ClientSecurity>,
+    pub(crate) metrics: WalConsumerMetrics,
+}
+
 fn deferred_query_authorizer_connect(
     config: &ServiceConfig,
     client_resource_policy: ClientResourcePolicy,

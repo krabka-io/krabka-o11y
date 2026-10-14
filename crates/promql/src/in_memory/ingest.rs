@@ -9,7 +9,7 @@ use krabka_units::prelude::*;
 
 use super::{
     ExemplarRow, FloatHeadSummary, FloatRow, HistRow, InMemoryMetricStore, PartitionWatermark,
-    PruneStats,
+    PruneStats, RowChunks,
 };
 use crate::{
     PromqlLabels as Labels,
@@ -20,6 +20,48 @@ use crate::{
 struct InternedSeriesLabels {
     fingerprint: SeriesFingerprint,
     labels: Arc<Labels>,
+}
+
+trait RetentionSample {
+    fn fingerprint(&self) -> SeriesFingerprint;
+    fn timestamp_ms(&self) -> i64;
+}
+
+impl RetentionSample for FloatRow {
+    fn fingerprint(&self) -> SeriesFingerprint {
+        self.fp
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.ts_ms
+    }
+}
+
+impl RetentionSample for HistRow {
+    fn fingerprint(&self) -> SeriesFingerprint {
+        self.fp
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.ts_ms
+    }
+}
+
+fn remember_sample_series<R: RetentionSample>(
+    rows: &RowChunks<R>,
+    seen: &mut BTreeSet<SeriesFingerprint>,
+) {
+    seen.extend(rows.iter().map(RetentionSample::fingerprint));
+}
+
+fn retain_samples<R: RetentionSample + Clone>(
+    rows: &mut RowChunks<R>,
+    cutoff: i64,
+    stats: &mut PruneStats,
+) {
+    let before = rows.len();
+    rows.retain(|row| row.timestamp_ms() >= cutoff);
+    stats.samples_dropped += before - rows.len();
 }
 
 impl InMemoryMetricStore {
@@ -382,12 +424,8 @@ impl InMemoryMetricStore {
             let Some(rows) = self.floats.get_mut(&tenant) else {
                 continue;
             };
-            for row in rows.iter() {
-                seen.insert(row.fp);
-            }
-            let before = rows.len();
-            rows.retain(|row| row.ts_ms >= cutoff);
-            stats.samples_dropped += before - rows.len();
+            remember_sample_series(rows, &mut seen);
+            retain_samples(rows, cutoff, &mut stats);
             // Rebuild in the survivor pass already needed for retention.
             // Never mutate from retain's predicate: it may run twice per row.
             let mut summary = FloatHeadSummary::default();
@@ -403,12 +441,8 @@ impl InMemoryMetricStore {
             }
         }
         for rows in self.hists.values_mut() {
-            for row in rows.iter() {
-                seen.insert(row.fp);
-            }
-            let before = rows.len();
-            rows.retain(|row| row.ts_ms >= cutoff);
-            stats.samples_dropped += before - rows.len();
+            remember_sample_series(rows, &mut seen);
+            retain_samples(rows, cutoff, &mut stats);
             for row in rows.iter() {
                 live.insert(row.fp);
                 oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));

@@ -14,6 +14,23 @@ pub mod servicegraph;
 pub mod sink;
 pub mod spanmetrics;
 
+fn read_length_prefixed_bytes(
+    buf: &mut &[u8],
+) -> Result<Vec<u8>, checkpoint::CheckpointCodecError> {
+    use bytes::Buf;
+
+    if buf.len() < 4 {
+        return Err(checkpoint::CheckpointCodecError::Truncated);
+    }
+    let len = buf.get_u32() as usize;
+    if buf.len() < len {
+        return Err(checkpoint::CheckpointCodecError::Truncated);
+    }
+    let bytes = buf[..len].to_vec();
+    buf.advance(len);
+    Ok(bytes)
+}
+
 /// Single point of truth for types consumed from sibling traces/metrics slices.
 pub mod contract {
     pub use krabka_units::ByteSize;

@@ -23,6 +23,15 @@ use crate::{
     wal::SpanRecord,
 };
 
+fn traceql_attributes(attrs: &[KeyValue]) -> Vec<krabka_traceql::Attribute> {
+    attrs
+        .iter()
+        .filter_map(|attr| {
+            traceql_attr(attr).map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     mod span_batch_packing;

@@ -142,24 +142,7 @@ mod orch_tests {
     // Blocks `b1` over [0, 100) and `b2` over [100, 200), one 500-byte row
     // group each.
     fn two_small_cold_blocks() -> MockCatalog {
-        MockCatalog::new(vec![
-            BlockMetaInfo::with_row_groups(
-                "b1",
-                TimeRange {
-                    start_ns: 0,
-                    end_ns: 100,
-                },
-                &[500],
-            ),
-            BlockMetaInfo::with_row_groups(
-                "b2",
-                TimeRange {
-                    start_ns: 100,
-                    end_ns: 200,
-                },
-                &[500],
-            ),
-        ])
+        MockCatalog::two_small_blocks()
     }
 
     #[tokio::test]

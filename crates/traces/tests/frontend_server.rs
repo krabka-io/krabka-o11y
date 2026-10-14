@@ -18,6 +18,9 @@ use krabka_traces::frontend::{
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
 
+#[path = "support/mod.rs"]
+mod support;
+
 fn block(id: &str) -> BlockMetaInfo {
     BlockMetaInfo {
         block_id: id.to_string(),
@@ -32,10 +35,7 @@ fn block(id: &str) -> BlockMetaInfo {
 }
 
 async fn spawn(app: axum::Router) -> std::net::SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, authenticated(app)).await.unwrap() });
-    addr
+    support::spawn_axum(authenticated(app)).await
 }
 
 // Serve a frontend over `backend` and `catalog`, with every block cold and

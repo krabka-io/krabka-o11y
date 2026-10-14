@@ -53,6 +53,19 @@ struct LabeledFloatSeries {
     samples: Vec<FloatSampleInput>,
 }
 
+trait FloatSampleSeed {
+    fn push_into(self, store: &mut InMemoryMetricStore);
+}
+
+fn push_float_samples<S: FloatSampleSeed>(
+    store: &mut InMemoryMetricStore,
+    samples: impl IntoIterator<Item = S>,
+) {
+    for sample in samples {
+        sample.push_into(store);
+    }
+}
+
 fn push_float_series(
     store: &mut InMemoryMetricStore,
     series: impl IntoIterator<Item = LabeledFloatSeries>,
@@ -67,6 +80,43 @@ fn push_float_series(
             );
         }
     }
+}
+
+async fn query_range_matrix<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    step_ms: i64,
+) -> Vec<crate::RangeSeries> {
+    let result = engine
+        .query_range(
+            &tenant_id("tenant-a"),
+            query,
+            60_000,
+            180_000,
+            millis(u32::try_from(step_ms).expect("step duration fits u32 milliseconds")),
+        )
+        .await
+        .unwrap();
+    let QueryResult::RangeMatrix(series) = result else {
+        panic!("expected matrix");
+    };
+    series
+}
+
+async fn query_instant_vector<S: MetricStore>(
+    engine: &PromqlEngine<S>,
+    tenant: &str,
+    query: &str,
+    time_ms: i64,
+) -> Vec<crate::InstantSample> {
+    let result = engine
+        .query_instant(&tenant_id(tenant), query, time_ms)
+        .await
+        .unwrap();
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    samples
 }
 
 async fn assert_call_planner_matches_interpreter<S: MetricStore>(
@@ -181,12 +231,12 @@ mod instant_count_values_counts_native_histogram_sample_values;
 mod instant_count_values_formats_infinity_as_prometheus;
 mod instant_delta_is_gauge_delta_without_reset_correction;
 mod instant_deriv_returns_gauge_slope_per_second;
-mod instant_double_exponential_smoothing_requires_experimental_feature;
 mod instant_double_exponential_smoothing_smooths_gauge_series;
 mod instant_double_exponential_smoothing_validates_factors;
 mod instant_double_exponential_smoothing_weights_each_factor_distinctly;
 mod instant_duration_expression_helpers_require_experimental_feature;
 mod instant_duration_expression_helpers_return_zero;
+mod instant_experimental_functions_require_feature;
 mod instant_first_and_last_over_time_return_native_histograms;
 mod instant_group_returns_one_for_each_group;
 mod instant_histogram_avg_returns_native_histogram_average;
@@ -205,10 +255,8 @@ mod instant_irate_uses_last_two_samples_per_second;
 mod instant_label_join_combines_source_labels;
 mod instant_label_replace_uses_regex_capture_groups;
 mod instant_limit_ratio_negative_selects_complement_subset;
-mod instant_limit_ratio_requires_experimental_feature;
 mod instant_limit_ratio_selects_deterministic_hash_subset;
 mod instant_limitk_by_selects_deterministic_hash_subset_per_group;
-mod instant_limitk_requires_experimental_feature;
 mod instant_limitk_selects_deterministic_hash_subset;
 mod instant_min_max_and_std_aggregations_ignore_histograms;
 mod instant_over_time_accepts_subquery_range_argument;
@@ -399,16 +447,17 @@ pub(crate) fn push_named_job_instance_sample(
     instance: &str,
     value: f64,
 ) {
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", metric),
-            crate::test_support::TestLabelPair::new("job", job),
-            crate::test_support::TestLabelPair::new("instance", instance),
-        ]),
-        10_000,
-        value,
-    );
+    push_metric_sample(store, metric, Some(job), instance, value);
+}
+
+pub(crate) fn comparison_test_engine() -> PromqlEngine<InMemoryMetricStore> {
+    FloatStore::default()
+        .named_sample(
+            "a",
+            &[crate::test_support::TestLabelPair::new("x", "1")],
+            10.0,
+        )
+        .engine()
 }
 
 pub(crate) fn push_metric_instance_sample(
@@ -417,15 +466,24 @@ pub(crate) fn push_metric_instance_sample(
     instance: &str,
     value: f64,
 ) {
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", metric),
-            crate::test_support::TestLabelPair::new("instance", instance),
-        ]),
-        10_000,
-        value,
-    );
+    push_metric_sample(store, metric, None, instance, value);
+}
+
+fn push_metric_sample(
+    store: &mut InMemoryMetricStore,
+    metric: &str,
+    job: Option<&str>,
+    instance: &str,
+    value: f64,
+) {
+    let mut pairs = vec![
+        crate::test_support::TestLabelPair::new("__name__", metric),
+        crate::test_support::TestLabelPair::new("instance", instance),
+    ];
+    if let Some(job) = job {
+        pairs.push(crate::test_support::TestLabelPair::new("job", job));
+    }
+    store.push_float("tenant-a", labels(&pairs), 10_000, value);
 }
 
 pub(crate) fn push_metric_job_samples(
@@ -534,13 +592,7 @@ async fn assert_label_transform<S: MetricStore>(
     preserved_label: &str,
     expected_preserved: &str,
 ) {
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), query, 10_000)
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = query_instant_vector(&engine, "tenant-a", query, 10_000).await;
     assert2::assert!(samples.len() == 1);
     assert2::assert!(samples[0].labels.get(result_label) == Some(expected_result));
     assert2::assert!(samples[0].labels.get(preserved_label) == Some(expected_preserved));

@@ -152,15 +152,7 @@ async fn a_pass_leaves_the_bucket_holding_exactly_what_the_index_names() {
     let expired = publish_block(&store, 3, now - 30 * DAY_NS, 30).await;
     let cli = compactor_cli("336h");
 
-    let outputs = run_compactor_once(
-        &cli,
-        &configured(store.clone()),
-        compaction_policy_from_cli(&cli),
-        &load_overrides(&cli),
-        &ServiceMetrics::new(),
-    )
-    .await
-    .expect("the pass runs");
+    let outputs = run_compaction_pass(&store, &cli).await;
 
     check!(outputs == 1, "the two fresh blocks merged into one");
     let published = published_block_keys(&store).await;
@@ -186,15 +178,7 @@ async fn a_pass_with_nothing_to_do_deletes_nothing() {
     let cli = compactor_cli("0s");
     let before = block_keys_in_store(&store).await;
 
-    let outputs = run_compactor_once(
-        &cli,
-        &configured(store.clone()),
-        compaction_policy_from_cli(&cli),
-        &load_overrides(&cli),
-        &ServiceMetrics::new(),
-    )
-    .await
-    .expect("the pass runs");
+    let outputs = run_compaction_pass(&store, &cli).await;
 
     check!(outputs == 0);
     check!(block_keys_in_store(&store).await == before);
@@ -204,4 +188,16 @@ async fn a_pass_with_nothing_to_do_deletes_nothing() {
 fn load_overrides(cli: &Cli) -> OverridesProvider {
     load_traces_limits_overrides_config(None, None, limits_from_cli(cli))
         .expect("the overrides load")
+}
+
+async fn run_compaction_pass(store: &Arc<dyn ObjectStore>, cli: &Cli) -> usize {
+    run_compactor_once(
+        cli,
+        &configured(Arc::clone(store)),
+        compaction_policy_from_cli(cli),
+        &load_overrides(cli),
+        &ServiceMetrics::new(),
+    )
+    .await
+    .expect("the pass runs")
 }

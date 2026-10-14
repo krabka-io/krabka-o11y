@@ -1,6 +1,6 @@
 use super::{
     HeaderMap, IntoResponse, PrometheusRulerRequest, QuerierState, RawQuery, RequestSecurity,
-    Response, State, StatusCode, json, json_response, prometheus_alerts_response,
+    Response, State, json, prometheus_alerts_response, prometheus_ruler_success,
 };
 
 pub(crate) async fn prometheus_alerts(
@@ -29,15 +29,5 @@ pub(crate) async fn prometheus_alerts(
         }
         None => Vec::new(),
     };
-    json_response(
-        StatusCode::OK,
-        &json!({
-            "status": "success",
-            "data": {
-                "alerts": alerts
-            },
-            "errorType": "",
-            "error": "",
-        }),
-    )
+    prometheus_ruler_success(json!({ "alerts": alerts }))
 }

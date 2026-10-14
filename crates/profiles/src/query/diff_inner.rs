@@ -1,20 +1,18 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileError, ProfileStore, QuerierState, SampleSelector, connect_error,
-    merge_profile_id_selector, parse_span_selectors, parse_trace_selectors, pb,
-    stack_trace_call_sites,
+    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileError, ProfileStore, QuerierState,
+    SampleSelector, connect_error, merge_profile_id_selector, parse_span_selectors,
+    parse_trace_selectors, pb, stack_trace_call_sites,
 };
 
 pub(crate) async fn diff_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::DiffRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::DiffRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::DiffResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = super::authorized_connect_tenant(&headers, &principal, &state.tenant_policy)?;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
+    let req = request.request;
     let left = req
         .0
         .left

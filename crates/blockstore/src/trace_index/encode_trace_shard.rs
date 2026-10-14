@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats, push_dictionary_id,
-    push_len, push_string, push_uvarint,
+    BTreeMap, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats,
+    assign_sorted_string_ids, push_dictionary_id, push_len, push_string, push_uvarint,
 };
 
 /// Encodes one tenant's trace-block records as a shard payload.
@@ -32,11 +32,8 @@ pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Ve
     }
     // Ids are assigned on the sorted order rather than on first sight, so the
     // same records encode to the same bytes whichever order they arrived in.
-    let strings = dictionary.keys().cloned().collect::<Vec<_>>();
-    for id in 0..strings.len() {
-        let text = &strings[id];
-        dictionary.insert(text.clone(), id);
-    }
+    let dictionary = assign_sorted_string_ids(dictionary);
+    let strings = dictionary.strings;
 
     let mut out = Vec::new();
     out.extend_from_slice(&TRACE_SHARD_MAGIC);
@@ -63,16 +60,16 @@ pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Ve
 
         push_len(&mut out, block.tag_names.len());
         for tag in &block.tag_names {
-            push_dictionary_id(&mut out, &dictionary, tag);
+            push_dictionary_id(&mut out, &dictionary.ids, tag);
         }
 
         push_len(&mut out, block.tag_values.len());
         for tag in block.tag_values.keys() {
             let values = &block.tag_values[tag];
-            push_dictionary_id(&mut out, &dictionary, tag);
+            push_dictionary_id(&mut out, &dictionary.ids, tag);
             push_len(&mut out, values.len());
             for value in values {
-                push_dictionary_id(&mut out, &dictionary, value);
+                push_dictionary_id(&mut out, &dictionary.ids, value);
             }
         }
 

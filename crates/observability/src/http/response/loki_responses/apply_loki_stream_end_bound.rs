@@ -6,12 +6,7 @@ pub(crate) fn apply_loki_stream_end_bound(value: &mut Value, end_exclusive: Opti
     };
     update_loki_stream_values(value, |values| {
         values.retain(|entry| {
-            entry
-                .as_array()
-                .and_then(|entry| entry.first())
-                .and_then(Value::as_str)
-                .and_then(|timestamp| timestamp.parse::<i64>().ok())
-                .is_none_or(|timestamp| timestamp < end_exclusive)
+            loki_stream_entry_timestamp(entry).is_none_or(|timestamp| timestamp < end_exclusive)
         });
     });
 }

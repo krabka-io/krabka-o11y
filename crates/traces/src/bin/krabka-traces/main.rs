@@ -2562,6 +2562,7 @@ mod build_live_store_router;
 mod build_object_store;
 mod build_querier_router;
 mod build_querier_router_with_live;
+pub(crate) mod build_query_frontend_app;
 mod build_query_frontend_router;
 mod build_trace_index_catalog;
 mod cli;

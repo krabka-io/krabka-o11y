@@ -14,6 +14,30 @@ use krabka_blockstore::{
     write_log_block_to_object_store,
 };
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
+use tempfile::TempDir;
+
+struct PlannedObjectStoreFixture {
+    _directory: TempDir,
+    store: Arc<LocalFileSystem>,
+    prefix: ObjectPath,
+    planned: krabka_blockstore::BlockDescriptor,
+}
+
+async fn planned_object_store_fixture() -> PlannedObjectStoreFixture {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(LocalFileSystem::new_with_prefix(directory.path()).unwrap());
+    let prefix = ObjectPath::from("logs");
+    let planned =
+        write_log_block_to_object_store(store.as_ref(), &prefix, &planned_key(), planned_rows())
+            .await
+            .unwrap();
+    PlannedObjectStoreFixture {
+        _directory: directory,
+        store,
+        prefix,
+        planned,
+    }
+}
 
 fn series(app: &str) -> u64 {
     series_fingerprint(&labels([
@@ -143,23 +167,24 @@ async fn log_block_table_provider_exposes_planned_filter_pushdown() {
 
 #[tokio::test]
 async fn log_block_table_provider_scans_planned_object_store_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
-    let prefix = ObjectPath::from("logs");
+    let fixture = planned_object_store_fixture().await;
     let api = series("api");
+    write_log_block_to_object_store(
+        fixture.store.as_ref(),
+        &fixture.prefix,
+        &worker_key(),
+        worker_rows(),
+    )
+    .await
+    .unwrap();
 
-    let planned =
-        write_log_block_to_object_store(store.as_ref(), &prefix, &planned_key(), planned_rows())
-            .await
-            .unwrap();
-    write_log_block_to_object_store(store.as_ref(), &prefix, &worker_key(), worker_rows())
-        .await
-        .unwrap();
-
-    let provider =
-        LogBlockTableProvider::try_new_object_store(store, &prefix, std::slice::from_ref(&planned))
-            .unwrap();
-    assert2::assert!(provider.planned_blocks() == std::slice::from_ref(&planned));
+    let provider = LogBlockTableProvider::try_new_object_store(
+        fixture.store,
+        &fixture.prefix,
+        std::slice::from_ref(&fixture.planned),
+    )
+    .unwrap();
+    assert2::assert!(provider.planned_blocks() == std::slice::from_ref(&fixture.planned));
 
     let ctx = SessionContext::new();
     ctx.register_table("logs", Arc::new(provider)).unwrap();
@@ -179,17 +204,17 @@ async fn log_block_table_provider_scans_planned_object_store_blocks() {
 
 #[tokio::test]
 async fn registers_planned_object_store_blocks_as_datafusion_table() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
-    let prefix = ObjectPath::from("logs");
-
-    let planned =
-        write_log_block_to_object_store(store.as_ref(), &prefix, &planned_key(), planned_rows())
-            .await
-            .unwrap();
+    let fixture = planned_object_store_fixture().await;
 
     let ctx = SessionContext::new();
-    register_log_blocks_from_object_store(&ctx, "logs", store, &prefix, &[planned]).unwrap();
+    register_log_blocks_from_object_store(
+        &ctx,
+        "logs",
+        fixture.store,
+        &fixture.prefix,
+        &[fixture.planned],
+    )
+    .unwrap();
     let batches = run_sql(
         &ctx,
         "select timestamp_ns, line \

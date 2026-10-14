@@ -29,7 +29,6 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_observability::{
     QuerierIndexSource, Role, ServiceConfig, ServiceDependencies, build_service_dependencies,
@@ -40,6 +39,11 @@ use serde_json::{Value, json};
 use support::test_service_config;
 use tempfile::TempDir;
 use tower::ServiceExt as _;
+
+#[path = "support/in_process_broker.rs"]
+mod in_process_broker;
+
+use in_process_broker::InProcessBroker;
 
 /// The tenant the seed push and every query name.
 const TENANT: &str = "tenant-a";
@@ -116,7 +120,7 @@ async fn the_querier_serves_queries_after_its_authorizer_connects() {
 
 /// A broker, a seeded block, and the querier that reads it.
 struct Stack {
-    broker: BrokerHandle,
+    broker: InProcessBroker,
     querier: Router,
     start_ns: i64,
     end_ns: i64,
@@ -125,11 +129,8 @@ struct Stack {
 
 impl Stack {
     async fn boot() -> Self {
-        let broker_dir = TempDir::new().expect("broker tempdir");
-        let broker = Broker::start(BrokerConfig::for_tests(broker_dir.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let broker = InProcessBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
         create_wal_topic(&bootstrap).await;
 
         let data_root = TempDir::new().expect("data root");
@@ -175,7 +176,7 @@ impl Stack {
             querier: router(&querier_config).await,
             start_ns,
             end_ns,
-            _dirs: vec![broker_dir, data_root, object_root],
+            _dirs: vec![data_root, object_root],
         }
     }
 

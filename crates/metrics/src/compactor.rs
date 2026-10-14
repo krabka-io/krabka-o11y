@@ -3089,6 +3089,7 @@ mod process_compaction_partition_window;
 mod process_compaction_record_batch;
 mod process_compaction_record_batch_with_consumer;
 mod read_compaction_manifests;
+mod record_compaction_batch;
 mod run_compactor_consumer_loop;
 mod run_compactor_consumer_loop_with_clock;
 mod run_compactor_loop;

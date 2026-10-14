@@ -1,5 +1,5 @@
 use super::{
-    BTreeMap, BTreeSet, BinModifier, BinaryOp, InstantSample, MissingSide, Result,
+    BTreeMap, BTreeSet, BinModifier, BinaryOp, InstantSample, MissingSide, Result, VectorMatching,
     apply_binary_fill_value, apply_binary_sample_value, binary_returns_bool,
     one_to_one_binary_result_labels,
 };
@@ -22,6 +22,20 @@ pub(crate) fn append_matched_binary_result(
         value,
         drop_name: !preserves_name || left.drop_name,
     });
+    Ok(())
+}
+
+pub(crate) fn append_right_fill_result(
+    output: &mut Vec<InstantSample>,
+    left: &InstantSample,
+    matching: VectorMatching<'_>,
+    result_labels: impl FnOnce(bool) -> super::Labels,
+) -> Result<()> {
+    if let Some(sample) =
+        super::fill_missing_right(left, matching, |fill| result_labels(fill.preserves_name))?
+    {
+        output.push(sample);
+    }
     Ok(())
 }
 

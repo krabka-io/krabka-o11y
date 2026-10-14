@@ -199,13 +199,7 @@ impl MetricStore for InMemoryMetricStore {
             })
             .cloned()
             .collect::<Vec<_>>();
-        metadata.sort_by(|left, right| {
-            left.metric_family_name
-                .cmp(&right.metric_family_name)
-                .then_with(|| left.metric_type.cmp(&right.metric_type))
-                .then_with(|| left.help.cmp(&right.help))
-                .then_with(|| left.unit.cmp(&right.unit))
-        });
+        metadata.sort();
         Ok(MetadataScan {
             metadata,
             warnings: Vec::new(),

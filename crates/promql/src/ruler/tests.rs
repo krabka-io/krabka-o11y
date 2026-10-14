@@ -51,22 +51,27 @@ use recording_sink::RecordingSink;
 use rule_fixtures::{
     GroupLastEval, UpRuleSinks, UpSample, assert_up_rules_fired_at_six_minutes, group_state,
     instance_up_alert, job_up_current_record, mixed_rule_group, namespaced_rule_set,
-    staggered_group_state, standard_due_interval_rule_set, two_job_up_engine, up_api_engine,
-    up_samples_engine,
+    staggered_group_state, standard_due_interval_rule_set, two_job_up_engine, up_alert_rule,
+    up_api_engine, up_samples_engine, up_transition_engine,
 };
 
-fn recording_sinks_and_alert_state() -> (
-    RecordingSink,
-    RecordingAlertmanagerSink,
-    RecordingRulerStateSink,
-    super::RulerAlertState,
-) {
-    (
-        RecordingSink::default(),
-        RecordingAlertmanagerSink::default(),
-        RecordingRulerStateSink::default(),
-        super::RulerAlertState::default(),
-    )
+#[derive(Default)]
+struct RecordingRulerSinks {
+    wal: RecordingSink,
+    alertmanager: RecordingAlertmanagerSink,
+    ruler_state: RecordingRulerStateSink,
+}
+
+struct RecordingRulerSinksAndState {
+    sinks: RecordingRulerSinks,
+    alert_state: super::RulerAlertState,
+}
+
+fn recording_sinks_and_alert_state() -> RecordingRulerSinksAndState {
+    RecordingRulerSinksAndState {
+        sinks: RecordingRulerSinks::default(),
+        alert_state: super::RulerAlertState::default(),
+    }
 }
 
 #[derive(bon::Builder)]

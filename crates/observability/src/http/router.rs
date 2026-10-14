@@ -55,6 +55,19 @@ mod status_config;
 mod status_services;
 mod unset_prepare_shutdown;
 
+fn prepare_ingester_shutdown(
+    state: &DistributorState,
+    security: &RequestSecurity,
+    operation: &'static str,
+) -> Response {
+    if let Err(denied) = security.authorize_admin() {
+        return denied.into_response();
+    }
+    state.prepare_shutdown.mark_unready();
+    security.admin_operation(operation, vec![security.ingester()], AuditOutcome::Success);
+    StatusCode::NO_CONTENT.into_response()
+}
+
 pub(crate) use compactor_router_with_delete_requests::compactor_router_with_delete_requests;
 pub(crate) use delete_request_routes::delete_request_routes;
 pub(crate) use flush_ingester_chunks::flush_ingester_chunks;

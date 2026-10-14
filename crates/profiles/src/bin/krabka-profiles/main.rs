@@ -1203,6 +1203,7 @@ mod build_all_stages;
 mod build_distributor_state;
 mod build_object_store;
 mod build_profile_read_path;
+mod build_ready_object_store;
 mod cli;
 mod client_resource_policy;
 mod compaction_loop;

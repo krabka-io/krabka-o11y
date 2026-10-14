@@ -440,12 +440,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_keeps_consuming_while_a_flush_is_pending() {
-        let svc = service();
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
-        svc.poll_once(100).await.unwrap();
-        // A failed write leaves a payload pending (sink down).
-        svc.sink.fail_next();
+        let svc = service_with_pending_failed_write().await;
         assert2::assert!(svc.collect_once().await.is_err());
 
         // With a payload pending, polling MUST still consume spans. Previously

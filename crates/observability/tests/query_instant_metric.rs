@@ -166,106 +166,54 @@ async fn query_endpoint_applies_vector_metric_set_or_on_modifier() {
     .await;
 }
 
-#[tokio::test]
-async fn query_endpoint_applies_metric_query_scalar_arithmetic() {
-    FixtureVector {
-        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&time=0.000000019",
-        data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod"
-                    },
-                    "value": [19, "2"]
-                }
-            ]),
-    }
-    .assert_served()
-    .await;
-}
-
-#[tokio::test]
-async fn query_endpoint_applies_metric_vector_arithmetic_on_modifier() {
-    FixtureVector {
-        uri: "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2B%20on%28%29%20vector%281%29&time=0.000000019",
-        data_result: json!([
-                {
-                    "metric": {},
-                    "value": [19, "2"]
-                }
-            ]),
-    }
-    .assert_served()
-    .await;
-}
-
-#[tokio::test]
-async fn query_endpoint_applies_vector_metric_arithmetic_group_right_modifier() {
-    FixtureVector {
-        uri: "/loki/api/v1/query?query=vector%281%29%20%2B%20on%28%29%20group_right%28app%2C%20env%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
-        data_result: json!([
-                {
-                    "metric": {},
-                    "value": [19, "2"]
-                }
-            ]),
-    }
-    .assert_served()
-    .await;
-}
-
-#[tokio::test]
-async fn query_endpoint_applies_scalar_metric_query_arithmetic() {
-    FixtureVector {
-        uri: "/loki/api/v1/query?query=2%20-%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
-        data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod"
-                    },
-                    "value": [19, "1"]
-                }
-            ]),
-    }
-    .assert_served()
-    .await;
-}
-
-#[tokio::test]
-async fn query_endpoint_applies_parenthesized_metric_query_scalar_arithmetic() {
-    FixtureVector {
-        uri: "/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202%29&time=0.000000019",
-        data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod"
-                    },
-                    "value": [19, "2"]
-                }
-            ]),
-    }
-    .assert_served()
-    .await;
-}
-
-#[tokio::test]
-async fn query_endpoint_applies_parenthesized_metric_operand_scalar_arithmetic() {
-    FixtureVector {
-        uri: "/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%29%20%2A%202&time=0.000000019",
-        data_result: json!([
-                {
-                    "metric": {
-                        "app": "api",
-                        "env": "prod"
-                    },
-                    "value": [19, "2"]
-                }
-            ]),
-    }
-    .assert_served()
-    .await;
+#[yare::parameterized(
+    metric_query_scalar = {
+        "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&time=0.000000019",
+        "2",
+        true
+    },
+    metric_vector_on_modifier = {
+        "/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2B%20on%28%29%20vector%281%29&time=0.000000019",
+        "2",
+        false
+    },
+    vector_metric_group_right = {
+        "/loki/api/v1/query?query=vector%281%29%20%2B%20on%28%29%20group_right%28app%2C%20env%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        "2",
+        false
+    },
+    scalar_metric_query = {
+        "/loki/api/v1/query?query=2%20-%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019",
+        "1",
+        true
+    },
+    parenthesized_metric_query = {
+        "/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202%29&time=0.000000019",
+        "2",
+        true
+    },
+    parenthesized_metric_operand = {
+        "/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%29%20%2A%202&time=0.000000019",
+        "2",
+        true
+    },
+)]
+fn query_endpoint_applies_scalar_arithmetic(
+    uri: &'static str,
+    value: &'static str,
+    metric_labels: bool,
+) {
+    let metric = if metric_labels {
+        json!({"app": "api", "env": "prod"})
+    } else {
+        json!({})
+    };
+    let data_result = json!([{"metric": metric, "value": [19, value]}]);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the async test runtime builds");
+    runtime.block_on(FixtureVector { uri, data_result }.assert_served());
 }
 
 #[tokio::test]

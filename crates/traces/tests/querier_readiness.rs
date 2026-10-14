@@ -20,6 +20,9 @@ use krabka_traces::{
     querier::http::{HttpConfig, router_with_config},
 };
 
+#[path = "support/mod.rs"]
+mod support;
+
 /// Serve the querier router on loopback with `readiness`, and return its
 /// address.
 async fn serve_querier(readiness: RoleReadiness) -> std::net::SocketAddr {
@@ -28,10 +31,7 @@ async fn serve_querier(readiness: RoleReadiness) -> std::net::SocketAddr {
         EngineOpts::default(),
     ));
     let app = router_with_config(engine, HttpConfig::default(), readiness);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
+    support::spawn_axum(app).await
 }
 
 struct HttpTextResponse {

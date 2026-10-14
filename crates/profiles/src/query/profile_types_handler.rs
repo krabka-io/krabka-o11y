@@ -1,6 +1,6 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, pb, profile_types_inner, timed_query,
+    Arc, ConnectError, ConnectQueryRequest, ConnectRequest, ConnectResponse, Extension, HeaderMap,
+    Principal, ProfileStore, QuerierState, pb, profile_types_inner, timed_query,
 };
 
 pub(crate) async fn profile_types_handler<S>(
@@ -16,7 +16,7 @@ where
     timed_query(
         &metrics,
         "profile_types",
-        profile_types_inner(state, principal, headers, req),
+        profile_types_inner(ConnectQueryRequest::new(state, principal, headers, req)),
     )
     .await
 }

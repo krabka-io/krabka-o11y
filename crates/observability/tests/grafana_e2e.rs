@@ -162,7 +162,7 @@ async fn grafana_reads_the_same_answer_from_krabka_and_from_loki() -> TestResult
     let timeline = Timeline::new()?;
     let payload = dataset(&timeline);
 
-    let loki = start_loki().await?;
+    let loki = grafana_loki::start_loki(LOKI_CONFIG, LOKI_PORT).await?;
     let loki_port = loki.get_host_port_ipv4(LOKI_PORT.tcp()).await?;
     HttpBase {
         client: &client,
@@ -746,31 +746,6 @@ fn summary(differences: &[String], healed: &[Divergence]) -> String {
 // ---------------------------------------------------------------------------
 // The two containers, and the Krabka process.
 // ---------------------------------------------------------------------------
-
-async fn start_loki() -> TestResult<ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_LOKI_IMAGE_TAG").expect(
-        "KRABKA_LOKI_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under cargo, set it to \
-         that image's tag in //bazel/images/images.bzl.",
-    );
-    start_image_with_timeout(
-        GenericImage::new("mirror.gcr.io/grafana/loki".to_string(), tag)
-            .with_exposed_port(LOKI_PORT.tcp())
-            // No log-line wait condition: this config sets `log_level: warn`,
-            // and a healthy single-binary Loki says nothing at that level at
-            // all. `/ready` is polled instead.
-            .with_copy_to(
-                "/etc/loki/local-config.yaml",
-                LOKI_CONFIG.as_bytes().to_vec(),
-            ),
-    )
-    .await
-}
 
 async fn push_to_loki(client: &reqwest::Client, port: u16, payload: &Value) -> TestResult {
     let response = client

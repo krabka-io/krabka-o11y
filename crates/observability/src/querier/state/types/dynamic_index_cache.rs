@@ -5,6 +5,44 @@ use super::{
 };
 use crate::SharedCompactionFrontier;
 
+// `>` is deliberate: a monotonic clock does not hand out the exact TTL age,
+// so changing this to `>=` survives ordinary cache tests.
+fn get_cached_index<K: Ord>(
+    entries: &mut BTreeMap<K, CachedDynamicIndex>,
+    key: &K,
+    ttl: Time,
+) -> Option<TenantIndexPair> {
+    let entry = entries.get(key)?;
+    if entry.loaded_at.elapsed().as_time() > ttl {
+        entries.remove(key);
+        return None;
+    }
+    Some(TenantIndexPair {
+        label_index: Arc::clone(&entry.label_index),
+        block_index: Arc::clone(&entry.block_index),
+    })
+}
+
+fn insert_cached_index<K: Ord>(
+    entries: &mut BTreeMap<K, CachedDynamicIndex>,
+    key: K,
+    ttl: Time,
+    label_index: impl Into<Arc<LabelIndex>>,
+    block_index: impl Into<Arc<BlockIndex>>,
+) {
+    // Moving windows and retired shards may never request the same key again.
+    // Reclaim their expired snapshots when admitting a new one.
+    entries.retain(|_, entry| entry.loaded_at.elapsed().as_time() <= ttl);
+    entries.insert(
+        key,
+        CachedDynamicIndex {
+            loaded_at: Instant::now(),
+            label_index: label_index.into(),
+            block_index: block_index.into(),
+        },
+    );
+}
+
 #[derive(Clone, Default)]
 struct IndexCacheMaps {
     entries: Arc<Mutex<BTreeMap<DynamicIndexCacheKey, CachedDynamicIndex>>>,
@@ -93,18 +131,7 @@ impl DynamicIndexCache {
             .entries
             .lock()
             .expect("dynamic index cache lock poisoned");
-        let entry = entries.get(key)?;
-        // `>` is a permanent mutation survivor against `>=` in all three of
-        // these lookups: they differ only for an entry whose age equals its TTL
-        // to the nanosecond, which a monotonic clock does not hand out.
-        if entry.loaded_at.elapsed().as_time() > self.cache_ttl {
-            entries.remove(key);
-            return None;
-        }
-        Some(TenantIndexPair {
-            label_index: Arc::clone(&entry.label_index),
-            block_index: Arc::clone(&entry.block_index),
-        })
+        get_cached_index(&mut entries, key, self.cache_ttl)
     }
 
     pub(crate) fn insert(
@@ -117,17 +144,7 @@ impl DynamicIndexCache {
             .entries
             .lock()
             .expect("dynamic index cache lock poisoned");
-        // Moving windows and retired shards may never request the same key
-        // again. Reclaim their expired snapshots when admitting a new one.
-        entries.retain(|_, entry| entry.loaded_at.elapsed().as_time() <= self.cache_ttl);
-        entries.insert(
-            key,
-            CachedDynamicIndex {
-                loaded_at: Instant::now(),
-                label_index: label_index.into(),
-                block_index: block_index.into(),
-            },
-        );
+        insert_cached_index(&mut entries, key, self.cache_ttl, label_index, block_index);
     }
 
     pub(crate) fn get_shard_ranges(
@@ -182,17 +199,7 @@ impl DynamicIndexCache {
             .shard_indexes
             .lock()
             .expect("dynamic index shard cache lock poisoned");
-        let entry = entries.get(key)?;
-        // The TTL comparison is a permanent survivor for the reason given at
-        // `DynamicIndexCache::get`.
-        if entry.loaded_at.elapsed().as_time() > self.shard_cache_ttl {
-            entries.remove(key);
-            return None;
-        }
-        Some(TenantIndexPair {
-            label_index: Arc::clone(&entry.label_index),
-            block_index: Arc::clone(&entry.block_index),
-        })
+        get_cached_index(&mut entries, key, self.shard_cache_ttl)
     }
 
     pub(crate) fn insert_shard_index(
@@ -205,16 +212,12 @@ impl DynamicIndexCache {
             .shard_indexes
             .lock()
             .expect("dynamic index shard cache lock poisoned");
-        // Moving windows and retired shards may never request the same key
-        // again. Reclaim their expired snapshots when admitting a new one.
-        entries.retain(|_, entry| entry.loaded_at.elapsed().as_time() <= self.shard_cache_ttl);
-        entries.insert(
+        insert_cached_index(
+            &mut entries,
             key,
-            CachedDynamicIndex {
-                loaded_at: Instant::now(),
-                label_index: label_index.into(),
-                block_index: block_index.into(),
-            },
+            self.shard_cache_ttl,
+            label_index,
+            block_index,
         );
     }
 }

@@ -80,6 +80,18 @@ pub(crate) fn up_series() -> Labels {
     ])
 }
 
+pub(crate) async fn assert_up_query_value<S: MetricStore + 'static>(store: S) {
+    let engine = PromqlEngine::new(std::sync::Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant(&tenant_id("tenant-a"), "up", 10_000)
+        .await
+        .expect("query");
+    let QueryResult::InstantVector(vector) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(vector[0].value == SampleValue::Float(1.0));
+}
+
 pub(crate) fn head_with_initial_up_sample() -> HeadWithUpSeries {
     let head = WalHead::new();
     let series = lbls(&[

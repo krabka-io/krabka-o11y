@@ -268,14 +268,11 @@ pub(super) async fn renew<S: ProfileStore>(
     if is_expired(state, tenant, id).await? {
         return Ok(false);
     }
-    let loaded = load(state, tenant, id).await?;
+    let Some(loaded) = owned_in_progress_record(state, tenant, id).await? else {
+        return Ok(false);
+    };
     let mut record = loaded.record;
     let version = loaded.version;
-    if record.owner != state.async_runtime.owner
-        || record.status != AsyncQueryStatus::InProgress as i32
-    {
-        return Ok(false);
-    }
     record.heartbeat_ms = if release { 1 } else { now_ms() };
     write(state, &record, PutMode::Update(version)).await
 }
@@ -288,17 +285,28 @@ pub(super) async fn terminal<S: ProfileStore>(
     status: i32,
     error: String,
 ) -> Result<(), ConnectError> {
-    let loaded = load(state, tenant, id).await?;
+    let Some(loaded) = owned_in_progress_record(state, tenant, id).await? else {
+        return Ok(());
+    };
     let mut record = loaded.record;
     let version = loaded.version;
-    if record.owner != state.async_runtime.owner
-        || record.status != AsyncQueryStatus::InProgress as i32
-    {
-        return Ok(());
-    }
     record.status = status;
     record.error = error;
     record.heartbeat_ms = now_ms();
     write(state, &record, PutMode::Update(version)).await?;
     Ok(())
+}
+
+async fn owned_in_progress_record<S: ProfileStore>(
+    state: &QuerierState<S>,
+    tenant: &TenantId,
+    id: &str,
+) -> Result<Option<LoadedRecord>, ConnectError> {
+    let loaded = load(state, tenant, id).await?;
+    if loaded.record.owner != state.async_runtime.owner
+        || loaded.record.status != AsyncQueryStatus::InProgress as i32
+    {
+        return Ok(None);
+    }
+    Ok(Some(loaded))
 }

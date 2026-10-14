@@ -2,6 +2,7 @@ use krabka_client_core::{ClientSecurity, SaslCredentials};
 use krabka_security::ListenerProtocol;
 
 use super::*;
+use crate::tests::prelude::WalDependenciesRequest;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PlainCredentials {
@@ -72,14 +73,14 @@ pub(crate) fn wal_client_security_flags_reach_every_wal_connection() {
         let expected = case.expected;
         let security = config.wal_client_security.load().expect("the flags load");
         let options = admin_connection_options(policy, security.as_ref());
-        let dependencies = with_querier_dependencies(
-            ServiceDependencies::default(),
+        let dependencies = with_querier_dependencies(WalDependenciesRequest {
+            dependencies: ServiceDependencies::default(),
             config,
-            "group".to_string(),
-            policy,
-            security.as_ref(),
-            crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
-        )
+            group_id: "group".to_string(),
+            client_resource_policy: policy,
+            security: security.as_ref(),
+            metrics: crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
+        })
         .expect("the querier dependencies build");
         let authorizer = dependencies
             .deferred_query_authorizer_connect

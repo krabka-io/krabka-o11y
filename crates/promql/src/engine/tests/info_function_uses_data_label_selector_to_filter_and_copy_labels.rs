@@ -3,18 +3,13 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn info_function_uses_data_label_selector_to_filter_and_copy_labels() {
     let engine = target_info_engine();
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            r#"info(http_requests_total, {region="east"})"#,
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = query_instant_vector(
+        &engine,
+        "tenant-a",
+        r#"info(http_requests_total, {region="east"})"#,
+        10_000,
+    )
+    .await;
     assert2::assert!(samples.len() == 1);
     assert2::assert!(
         samples[0].labels.clone()

@@ -1,5 +1,5 @@
 use futures::{FutureExt, future::BoxFuture};
-use promql_parser::parser::Call;
+use promql_parser::parser::{Call, VectorSelector};
 
 #[cfg(feature = "experimental-functions")]
 use super::histogram::apply_histogram_quantiles;
@@ -23,6 +23,21 @@ use crate::{
 };
 
 impl<S: MetricStore> PromqlEngine<S> {
+    pub(super) async fn eval_instant_vector_selector(
+        &self,
+        tenant: &str,
+        selector: &VectorSelector,
+        time_ms: i64,
+    ) -> Result<Option<Vec<InstantSample>>> {
+        let QueryResult::InstantVector(samples) = self
+            .eval_instant_selector(tenant, selector, time_ms)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(samples))
+    }
+
     /// Plans a `histogram_quantile(phi, v)` call onto the operator path.
     ///
     /// This method resolves `phi` to a scalar. It selects the inner
@@ -252,16 +267,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         query: super::InnerVectorQuery<'a>,
     ) -> BoxFuture<'a, Result<Option<Vec<InstantSample>>>> {
         self.resolve_inner_vector(query, |engine, tenant, selector, time_ms| {
-            async move {
-                let QueryResult::InstantVector(samples) = engine
-                    .eval_instant_selector(tenant, selector, time_ms)
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(samples))
-            }
-            .boxed()
+            engine
+                .eval_instant_vector_selector(tenant, selector, time_ms)
+                .boxed()
         })
     }
 }

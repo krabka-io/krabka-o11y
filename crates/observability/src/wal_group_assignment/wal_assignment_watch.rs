@@ -402,6 +402,17 @@ mod recovery_tests {
         }
     }
 
+    fn held_wal_partition() -> [WalPartitionAssignment; 1] {
+        [WalPartitionAssignment {
+            topic: "wal".to_string(),
+            partition: 0,
+        }]
+    }
+
+    fn hold_fetched_batch(watch: &mut WalAssignmentWatch) {
+        watch.unapplied = Unapplied::Held;
+    }
+
     #[test]
     fn only_records_fenced_by_a_revocation_may_be_settled_by_the_broker() {
         let wal = |partition| WalPartitionAssignment {
@@ -468,12 +479,9 @@ mod recovery_tests {
             gate,
             mut watch,
         } = CatchUpFixture::new();
-        let assigned = [WalPartitionAssignment {
-            topic: "wal".to_string(),
-            partition: 0,
-        }];
+        let assigned = held_wal_partition();
 
-        watch.unapplied = Unapplied::Held;
+        hold_fetched_batch(&mut watch);
         watch.record_recovery(&assigned, true);
         assert2::check!(!gate.is_ready());
         assert2::check!(!metrics.recovery_status().caught_up);
@@ -486,17 +494,13 @@ mod recovery_tests {
 
     #[test]
     fn applied_log_end_snapshot_stays_ready_when_the_broker_advances() {
-        let CatchUpFixture {
-            metrics,
-            gate,
-            mut watch,
-        } = CatchUpFixture::new();
-        let assigned = [WalPartitionAssignment {
-            topic: "wal".to_string(),
-            partition: 0,
-        }];
+        let fixture = CatchUpFixture::new();
+        let metrics = fixture.metrics;
+        let gate = fixture.gate;
+        let mut watch = fixture.watch;
+        let assigned = held_wal_partition();
 
-        watch.unapplied = Unapplied::Held;
+        hold_fetched_batch(&mut watch);
         watch.caught_up_after_apply = true;
         watch.record_applied(&assigned, false);
 

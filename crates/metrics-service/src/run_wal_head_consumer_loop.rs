@@ -25,10 +25,11 @@ where
     loop {
         let result =
             poll_wal_head_consumer_once(consumer, head, wal_topic, timeout, metrics).await?;
-        summary.polls += 1;
-        summary.polled_records += result.polled_records;
-        summary.replayed_records += result.replayed_records;
-        summary.committed_offsets.extend(result.committed_offsets);
+        summary.record_poll(
+            result.polled_records,
+            result.replayed_records,
+            result.committed_offsets,
+        );
 
         if let Some(recovery) = consumer.recovery_state().await {
             if let Some(metrics) = metrics {

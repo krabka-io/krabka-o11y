@@ -6,9 +6,6 @@ pub(crate) fn insert_string_value(
     values: &mut BTreeSet<super::TypedValue>,
     column: &str,
 ) -> Result<(), TraceqlError> {
-    values.insert(super::TypedValue::new(
-        "string",
-        string_value(batch, column, row)?,
-    ));
+    super::insert_typed_value(values, "string", string_value(batch, column, row)?);
     Ok(())
 }

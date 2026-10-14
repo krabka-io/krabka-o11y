@@ -1,9 +1,9 @@
 use super::*;
 
-fn histogram_group_labels(instance: &str) -> Labels {
+fn group_labels(group: &str, instance: &str) -> Labels {
     labels(&[
         crate::test_support::TestLabelPair::new("__name__", "m"),
-        crate::test_support::TestLabelPair::new("g", "hist"),
+        crate::test_support::TestLabelPair::new("g", group),
         crate::test_support::TestLabelPair::new("instance", instance),
     ])
 }
@@ -46,13 +46,13 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     // them into one group.
     store.push_histogram(
         "t",
-        histogram_group_labels("0"),
+        group_labels("hist", "0"),
         300_000,
         two_positive_bucket_histogram(4.0, 6.0),
     );
     store.push_histogram(
         "t",
-        histogram_group_labels("1"),
+        group_labels("hist", "1"),
         300_000,
         two_positive_bucket_histogram(8.0, 20.0),
     );
@@ -70,11 +70,7 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     ] {
         store.push_float(
             "t",
-            labels(&[
-                crate::test_support::TestLabelPair::new("__name__", "m"),
-                crate::test_support::TestLabelPair::new("g", "float"),
-                crate::test_support::TestLabelPair::new("instance", sample.instance),
-            ]),
+            group_labels("float", sample.instance),
             300_000,
             sample.value,
         );
@@ -83,23 +79,10 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     // `sum`/`avg` this group is dropped (mixed-sample rule); under
     // `count`/`group` it counts 2; under the histogram-ignoring ops only the
     // float survives.
-    store.push_float(
-        "t",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "m"),
-            crate::test_support::TestLabelPair::new("g", "mixed"),
-            crate::test_support::TestLabelPair::new("instance", "0"),
-        ]),
-        300_000,
-        10.0,
-    );
+    store.push_float("t", group_labels("mixed", "0"), 300_000, 10.0);
     store.push_histogram(
         "t",
-        labels(&[
-            crate::test_support::TestLabelPair::new("__name__", "m"),
-            crate::test_support::TestLabelPair::new("g", "mixed"),
-            crate::test_support::TestLabelPair::new("instance", "1"),
-        ]),
+        group_labels("mixed", "1"),
         300_000,
         two_positive_bucket_histogram(2.0, 3.0),
     );

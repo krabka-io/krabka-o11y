@@ -94,18 +94,12 @@ pub struct ServiceMetrics {
 }
 
 impl ServiceMetrics {
-    /// Builds a fresh registry, registers every metric, and returns the
-    /// bundle.
-    #[must_use]
-    pub fn new() -> Self {
-        register_metrics_bundle(Self::register)
-    }
-
-    /// Registers this role's instruments in the process registry. See
-    /// [`register_metrics_role_bundle`].
-    pub async fn for_role(shared: SharedRegistry, role: RoleKind) -> Self {
-        register_metrics_role_bundle(shared, role, Self::register).await
-    }
+    crate::impl_service_metrics_registry_constructors!(
+        SharedRegistry,
+        RoleKind,
+        register_metrics_bundle,
+        register_metrics_role_bundle
+    );
 
     fn register(
         registry: &mut Registry,

@@ -13,6 +13,7 @@ mod extract;
 mod filters;
 mod labels;
 mod planner;
+mod regex_cache;
 mod stream;
 mod syntax;
 mod template;
@@ -45,7 +46,7 @@ pub use syntax::{
     MetricLabelJoin, MetricLabelReplace, MetricQuery, MetricScalarArithmetic,
     MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
     MetricVectorMatching, Quantile, RangeAggregation, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
+    VectorGrouping, arithmetic_text, parse_logql_expr, parse_metric_binary_arithmetic_query,
     parse_metric_binary_comparison_query, parse_metric_binary_set_query,
     parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
     parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,

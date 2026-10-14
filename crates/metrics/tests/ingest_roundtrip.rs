@@ -171,9 +171,9 @@ async fn remote_write_v1_lands_as_block() {
 /// does not match, scrapes exactly like a handle that was never incremented,
 /// and only a scrape tells them apart.
 async fn check_instruments_moved(metrics: &ServiceMetrics) {
-    let mut buffer = String::new();
-    let registry = metrics.registry.lock().await;
-    prometheus_client::encoding::text::encode(&mut buffer, &registry).expect("encode the registry");
+    let buffer = krabka_observability::service_metrics::encode_registry(&metrics.registry)
+        .await
+        .expect("encode the registry");
 
     for needle in [
         // The compactor consumed the WAL record the distributor produced, and

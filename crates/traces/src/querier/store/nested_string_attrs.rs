@@ -9,10 +9,9 @@ pub(crate) fn nested_string_attrs(
         return Ok(Vec::new());
     }
     let key_values = keys.value(row);
-    let key_values = key_values
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| TraceqlError::Store("nested attribute keys are not strings".into()))?;
+    let key_values = krabka_traceql::string_array_from_arrow(key_values.as_ref(), || {
+        TraceqlError::Store("nested attribute keys are not strings".into())
+    })?;
     let value_lists = values.value(row);
     let value_lists = value_lists
         .as_any()

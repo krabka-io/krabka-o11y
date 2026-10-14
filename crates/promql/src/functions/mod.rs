@@ -22,6 +22,17 @@ mod udf_test_support;
 
 use arrow::datatypes::DataType;
 
+pub(crate) fn extremum_should_replace(minimum: bool, running: f64, candidate: f64) -> bool {
+    if running.is_nan() {
+        return true;
+    }
+    if minimum {
+        running > candidate
+    } else {
+        running < candidate
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum UdfArityPhase {
     Plan,

@@ -279,6 +279,13 @@ mod span_json;
 mod span_ref;
 mod span_set;
 mod span_set_json;
+
+fn attributes_from_json(values: &[key_value_json::KeyValueJson]) -> Vec<Attribute> {
+    values
+        .iter()
+        .map(|kv| Attribute::new(kv.key.clone(), AttrValue::from(&kv.value)))
+        .collect()
+}
 mod trace_by_id_response_json;
 mod trace_envelope_json;
 mod trace_json;

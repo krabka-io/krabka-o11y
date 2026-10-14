@@ -26,6 +26,23 @@ mod log_pattern_token;
 mod pattern_value_is_variable;
 mod templatize_text;
 
+struct DetectedFieldsQuery {
+    limit: usize,
+    fields: BTreeMap<String, crate::DetectedFieldStats>,
+}
+
+async fn detected_fields_query(
+    state: &QuerierState,
+    security: &RequestSecurity,
+    headers: &HeaderMap,
+    raw_query: Option<&str>,
+) -> Result<DetectedFieldsQuery, HttpQueryError> {
+    let params = parse_detected_fields_params(raw_query)?;
+    let limit = params.limit;
+    let fields = collect_detected_fields(state, security, headers, &params).await?;
+    Ok(DetectedFieldsQuery { limit, fields })
+}
+
 pub(crate) use count_index_stats_entries::count_index_stats_entries;
 pub(crate) use execute_detected_field_values_query::execute_detected_field_values_query;
 pub(crate) use execute_detected_fields_query::execute_detected_fields_query;

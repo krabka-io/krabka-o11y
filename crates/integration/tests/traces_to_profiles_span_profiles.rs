@@ -51,6 +51,9 @@ use object_store::{ObjectStore, memory::InMemory};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+#[path = "json_response.rs"]
+mod json_response;
+
 mod one_frame_profile;
 
 use self::one_frame_profile::one_frame_symbols;
@@ -212,11 +215,7 @@ async fn profile_query(
         .await
         .unwrap();
 
-    assert!(response.status() == StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("span profile body");
-    let json: Value = serde_json::from_slice(&body).expect("span profile json");
+    let json = json_response::body(response, "span profile").await;
 
     let names = json["flamegraph"]["names"]
         .as_array()

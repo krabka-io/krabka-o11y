@@ -8,7 +8,7 @@ use krabka_o11y_benches::{
     index::TENANT,
     profile_samples::{PROFILE_TYPE, profile_samples},
 };
-use krabka_pprof::{EngineOpts, FlameEngine, SampleSelector};
+use krabka_pprof::{EngineOpts, FlameEngine, MillisRange, ProfileSelection, SampleSelector};
 use tokio::runtime::Runtime;
 
 fn profile_query(criterion: &mut Criterion) {
@@ -46,8 +46,8 @@ fn profile_query(criterion: &mut Criterion) {
         for (case, selector, sites, expected) in cases {
             let actual = runtime
                 .block_on(engine.select_merge_stacktraces_with_selectors(
-                    (TENANT, PROFILE_TYPE, "{service=\"api\"}"),
-                    (0, fixture.end_ms),
+                    ProfileSelection::new(TENANT, PROFILE_TYPE, "{service=\"api\"}"),
+                    MillisRange::new(0, fixture.end_ms),
                     i64::MAX,
                     sites,
                     selector,
@@ -62,8 +62,8 @@ fn profile_query(criterion: &mut Criterion) {
                     black_box(
                         engine
                             .select_merge_stacktraces_with_selectors(
-                                (TENANT, PROFILE_TYPE, "{service=\"api\"}"),
-                                (0, fixture.end_ms),
+                                ProfileSelection::new(TENANT, PROFILE_TYPE, "{service=\"api\"}"),
+                                MillisRange::new(0, fixture.end_ms),
                                 i64::MAX,
                                 sites,
                                 selector,

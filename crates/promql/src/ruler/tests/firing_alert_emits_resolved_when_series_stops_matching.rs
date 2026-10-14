@@ -2,25 +2,8 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn firing_alert_emits_resolved_when_series_stops_matching() {
-    let rule: serde_yaml::Value = serde_yaml::from_str(
-        r"
-alert: InstanceUp
-expr: up > 0
-",
-    )
-    .expect("alerting rule yaml");
-    let engine = up_samples_engine(&[
-        UpSample {
-            job: "api",
-            ts_ms: 60_000,
-            value: 1.0,
-        },
-        UpSample {
-            job: "api",
-            ts_ms: 120_000,
-            value: 0.0,
-        },
-    ]);
+    let rule = up_alert_rule(false);
+    let engine = up_transition_engine();
     let mut state = super::super::RulerAlertState::default();
 
     // First tick: fires immediately (no `for`).

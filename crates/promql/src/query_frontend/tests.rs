@@ -14,7 +14,6 @@ use crate::{
 
 mod a_cached_range_query_reports_the_annotations_of_the_miss;
 mod an_object_store_cached_range_query_reports_the_annotations_of_the_miss;
-mod avg_partial_recording_executor;
 mod cached_up_matrix;
 mod concurrency_probe_executor;
 mod frontend_range_execution_dispatches_subqueries_concurrently;
@@ -29,11 +28,11 @@ mod frontend_requests;
 mod in_memory_round_trips_then_expires;
 mod in_memory_without_ttl_never_expires;
 mod manual_clock;
-mod moment_partial_recording_executor;
 mod moving_window_reuses_cached_subranges;
 mod native_histogram_with_positive_buckets;
 mod object_store_range_result_cache_expires_stale_objects;
 mod object_store_range_result_cache_persists_across_instances;
+mod partial_recording_executor;
 mod range_query_merge_combines_time_split_samples_for_same_series;
 mod range_query_merge_rejects_non_matrix_subquery_results;
 mod range_query_merge_sums_native_histograms_with_different_span_layouts;
@@ -56,13 +55,12 @@ mod unannotated;
 mod unlabeled_matrix;
 mod warning_executor;
 
-use avg_partial_recording_executor::AvgPartialRecordingExecutor;
 use cached_up_matrix::{FloatPoint, one_sample_matrix, up_api_matrix, up_range_query};
 use concurrency_probe_executor::ConcurrencyProbeExecutor;
 use frontend_requests::{split_up_request, two_shard_instant_request};
 use manual_clock::ManualClock;
-use moment_partial_recording_executor::MomentPartialRecordingExecutor;
 use native_histogram_with_positive_buckets::native_histogram_with_positive_buckets;
+use partial_recording_executor::PartialRecordingExecutor;
 use rank_recording_executor::RankRecordingExecutor;
 use recording_executor::RecordingExecutor;
 use shard_calls::{on_both_shards, shard_calls};

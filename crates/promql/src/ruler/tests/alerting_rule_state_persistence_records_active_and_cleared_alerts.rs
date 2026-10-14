@@ -2,26 +2,8 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn alerting_rule_state_persistence_records_active_and_cleared_alerts() {
-    let rule: serde_yaml::Value = serde_yaml::from_str(
-        r"
-alert: InstanceUp
-expr: up > 0
-for: 5m
-",
-    )
-    .expect("alerting rule yaml");
-    let engine = up_samples_engine(&[
-        UpSample {
-            job: "api",
-            ts_ms: 60_000,
-            value: 1.0,
-        },
-        UpSample {
-            job: "api",
-            ts_ms: 120_000,
-            value: 0.0,
-        },
-    ]);
+    let rule = up_alert_rule(true);
+    let engine = up_transition_engine();
     let alert_sink = RecordingAlertmanagerSink::default();
     let state_sink = RecordingRulerStateSink::default();
     let mut state = super::super::RulerAlertState::default();

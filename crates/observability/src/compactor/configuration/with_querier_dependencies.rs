@@ -1,6 +1,6 @@
 use super::{
     ClientResourcePolicy, ClientSecurity, DeferredWalConsumerConnect, ServiceConfig,
-    ServiceDependencies, ServiceRuntimeError, WalConsumerMetrics,
+    ServiceDependencies, ServiceRuntimeError, WalDependenciesRequest,
     deferred_query_authorizer_connect,
 };
 
@@ -19,13 +19,16 @@ use super::{
 /// Both deferred connects keep `security`, the WAL client security that the
 /// service loaded. `None` connects in plain text.
 pub(crate) fn with_querier_dependencies(
-    dependencies: ServiceDependencies,
-    config: &ServiceConfig,
-    group_id: String,
-    client_resource_policy: ClientResourcePolicy,
-    security: Option<&ClientSecurity>,
-    metrics: WalConsumerMetrics,
+    request: WalDependenciesRequest<'_>,
 ) -> Result<ServiceDependencies, ServiceRuntimeError> {
+    let WalDependenciesRequest {
+        dependencies,
+        config,
+        group_id,
+        client_resource_policy,
+        security,
+        metrics,
+    } = request;
     let deferred_authorizer =
         deferred_query_authorizer_connect(config, client_resource_policy, security)?;
     Ok(dependencies

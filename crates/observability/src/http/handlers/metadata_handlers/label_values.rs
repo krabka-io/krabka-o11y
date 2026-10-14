@@ -1,6 +1,6 @@
 use super::{
     HeaderMap, Instant, IntoResponse, LabelValuesRequest, Path, QuerierState, RawQuery,
-    RequestSecurity, Response, State, execute_label_values_query, parse_series_params,
+    RequestSecurity, Response, State, execute_label_values_response, parse_series_params,
 };
 
 pub(crate) async fn label_values(
@@ -13,20 +13,7 @@ pub(crate) async fn label_values(
     let start = Instant::now();
     let resp = match parse_series_params(raw_query.as_deref()) {
         Ok(params) => {
-            match execute_label_values_query(
-                &state,
-                LabelValuesRequest {
-                    security: &security,
-                    headers: &headers,
-                    label_name: &name,
-                    series_params: &params,
-                },
-            )
-            .await
-            {
-                Ok(response) => response,
-                Err(error) => error.into_response(),
-            }
+            execute_label_values_response(&state, &security, &headers, &name, &params).await
         }
         Err(error) => error.into_response(),
     };

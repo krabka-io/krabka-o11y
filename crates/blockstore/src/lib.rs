@@ -27,6 +27,7 @@ mod awkward_tenants;
 mod block;
 mod block_index;
 mod bloom;
+mod build_metered_object_store;
 mod compaction;
 mod delegate_object_store;
 mod erasure;
@@ -55,6 +56,7 @@ mod profile_schema;
 mod reader;
 mod recovery;
 mod retry;
+mod shard_string_dictionary;
 mod span_block;
 mod span_id;
 mod span_schema;
@@ -71,6 +73,7 @@ pub use block::{
 };
 pub use block_index::{BlockIndex, BlockSchema, RequiredColumn, series_block_schema};
 pub use bloom::{ShardedTraceBloom, fnv1_32};
+pub use build_metered_object_store::build_metered_object_store;
 pub use compaction::{
     BlockLevel, CompactionCandidate, CompactionJob, CompactionPolicy, DEFAULT_LEVEL_WINDOW,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
@@ -105,9 +108,10 @@ pub use lifecycle::{
 // (traces/shared) abstractions above are re-exported under `Log*` names.
 pub use log_blockstore::{
     BlockDescriptor, BlockIndex as LogBlockIndex, BlockKey, BlockStoreError as LogBlockStoreError,
-    LabelIndex, LabelPredicate, Labels as LogLabels, LogBlockTableProvider, LogIndexes, LogRow,
-    MatchOp as LogMatchOp, SeriesFingerprint as LogSeriesFingerprint, StructuredMetadata,
-    TenantSeries, TimeRange, block_path, delete_tenant_log_index_shard_from_object_store, labels,
+    LabelIndex, LabelPredicate, LabelValueLookup as LogLabelValueLookup, Labels as LogLabels,
+    LogBlockTableProvider, LogIndexes, LogRow, MatchOp as LogMatchOp,
+    SeriesFingerprint as LogSeriesFingerprint, StructuredMetadata, TenantSeries, TimeRange,
+    block_path, delete_tenant_log_index_shard_from_object_store, labels,
     list_tenant_log_index_shard_ranges_from_object_store,
     list_tenant_log_index_shard_ranges_overlapping_query_from_object_store, log_block_object_path,
     log_index_manifest_object_path, log_index_manifest_path, log_tenant_index_manifest_object_path,
@@ -202,7 +206,9 @@ pub use storage_audit::{
     StorageFindingSeverity, StorageSignal, audit_store, repair_store,
 };
 pub use store::{BlockScan, BlockStore, RegisteredTable, ScanReport, ScanTableRequest};
-pub use take_complete_batch::take_complete_batch;
+pub use take_complete_batch::{
+    BufferedRecordBatches, push_buffered_batch, take_buffered_rest, take_complete_batch,
+};
 pub use tenant::{
     ANONYMOUS_TENANT, MAX_TENANT_ID_LEN, TENANT_HEADER, TenantId, TenantIdError, TenantPolicy,
     TenantResolveError,

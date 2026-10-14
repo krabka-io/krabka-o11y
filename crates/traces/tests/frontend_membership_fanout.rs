@@ -47,8 +47,11 @@ use krabka_units::{
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
+
 #[path = "support/complete_trace_response.rs"]
 mod complete_trace_response;
+#[path = "support/mod.rs"]
+mod support;
 
 /// Every query string one stub querier was asked, in arrival order.
 type Log = Arc<Mutex<Vec<String>>>;
@@ -203,22 +206,12 @@ fn trace_json(trace_id: &str) -> Value {
 
 /// Two cold blocks for `t1`, each a whole-block job.
 fn two_block_catalog() -> TraceIndexCatalog {
-    let block = |id: &str, start: i64, end: i64| BlockMetaInfo {
-        block_id: id.to_string(),
-        start_ns: start,
-        end_ns: end,
-        size: ByteSize::from_bytes(100),
-        row_groups: vec![RowGroupInfo {
-            index: 0,
-            compressed: ByteSize::from_bytes(100),
-        }],
-    };
     let mut catalog = BTreeMap::new();
     catalog.insert(
         "t1".to_string(),
         vec![
-            block("blocks/a.parquet", 0, 1_000_000_000),
-            block("blocks/b.parquet", 1_000_000_000, 2_000_000_000),
+            support::block_info("blocks/a.parquet", 0, 1_000_000_000),
+            support::block_info("blocks/b.parquet", 1_000_000_000, 2_000_000_000),
         ],
     );
     TraceIndexCatalog::new(catalog)

@@ -200,6 +200,29 @@ async fn check_limit_scan(case: LimitScanCase<'_>) {
     }
 }
 
+async fn check_backward_single_result(
+    cold: &[ColdLimitRow],
+    query: &str,
+    end_exclusive: Option<i64>,
+    expected: &[HotLimitRow],
+    expected_scanned: usize,
+) {
+    check_limit_scan(LimitScanCase {
+        cold,
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive,
+        query,
+        expected,
+        expected_scanned,
+    })
+    .await;
+}
+
 async fn check_hot_limit_scan(direction: LokiDirection, hot_instance: &'static str) {
     check_limit_scan(LimitScanCase {
         cold: &[cold_row("a", 10, 10, 10, "error cold")],
@@ -378,32 +401,20 @@ async fn limited_cold_scan_prunes_only_beyond_the_timestamp_boundary() {
         expected_scanned: 4,
     })
     .await;
-    check_limit_scan(LimitScanCase {
-        cold: &cold,
-        hot: &[],
-        options: LokiStreamOptions {
-            direction: LokiDirection::Backward,
-            limit: Some(1),
-            interval: None,
-        },
-        end_exclusive: None,
-        query: r#"{app="a"} |= "error" | distinct app"#,
-        expected: &[hot_row("a", 1, "error one")],
-        expected_scanned: 4,
-    })
+    check_backward_single_result(
+        &cold,
+        r#"{app="a"} |= "error" | distinct app"#,
+        None,
+        &[hot_row("a", 1, "error one")],
+        4,
+    )
     .await;
-    check_limit_scan(LimitScanCase {
-        cold: &cold,
-        hot: &[],
-        options: LokiStreamOptions {
-            direction: LokiDirection::Backward,
-            limit: Some(1),
-            interval: None,
-        },
-        end_exclusive: Some(20),
+    check_backward_single_result(
+        &cold,
         query,
-        expected: &[hot_row("a", 11, "error eleven")],
-        expected_scanned: 3,
-    })
+        Some(20),
+        &[hot_row("a", 11, "error eleven")],
+        3,
+    )
     .await;
 }

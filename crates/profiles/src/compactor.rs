@@ -55,6 +55,18 @@ mod tests {
         expected_jobs: usize,
     }
 
+    fn index_with_two_profile_blocks<'a>(
+        records: impl IntoIterator<Item = &'a crate::wal::ProfileRecord>,
+        first: &BlockMeta,
+        second: &BlockMeta,
+    ) -> ProfileIndex {
+        let mut index = index_with_series(records, &[first]);
+        index.add_profile_block("t", &first.object_key, vec![STACKTRACE_PARTITION]);
+        index.add_block(second);
+        index.add_profile_block("t", &second.object_key, vec![STACKTRACE_PARTITION]);
+        index
+    }
+
     /// The compacted object key spans the whole job -- the earliest start and
     /// the latest end across every input -- and names the level the output
     /// lands at. Two jobs over the same range with different inputs must not
@@ -190,10 +202,7 @@ mod tests {
         let rec_b = record("t", "api", 7, "worker");
         let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), 0).await;
         let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), 1).await;
-        let mut index = index_with_series([&rec_a, &rec_b], &[&meta_a]);
-        index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
-        index.add_block(&meta_b);
-        index.add_profile_block("t", &meta_b.object_key, vec![STACKTRACE_PARTITION]);
+        let mut index = index_with_two_profile_blocks([&rec_a, &rec_b], &meta_a, &meta_b);
 
         let meta = compact_blocks(
             &store,
@@ -358,10 +367,7 @@ mod tests {
         .await
         .unwrap()
         .remove(0);
-        let mut index = index_with_series([&rec_a, &rec_b, &rec_c], &[&meta_a]);
-        index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
-        index.add_block(&meta_b);
-        index.add_profile_block("t", &meta_b.object_key, vec![STACKTRACE_PARTITION]);
+        let mut index = index_with_two_profile_blocks([&rec_a, &rec_b, &rec_c], &meta_a, &meta_b);
 
         let meta = compact_blocks_with_policy(
             &store,

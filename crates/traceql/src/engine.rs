@@ -6229,6 +6229,7 @@ mod f64_from_usize;
 mod field_expr_matches_row;
 mod fixed_16;
 mod fixed_8;
+mod fixed_bytes;
 mod float_cmp;
 mod hinted_max_exemplars;
 mod histogram_points;

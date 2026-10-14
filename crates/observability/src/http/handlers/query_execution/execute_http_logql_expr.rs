@@ -227,34 +227,35 @@ pub(crate) async fn execute_http_logql_expr(
             matching,
             right,
         } => {
-            if let Some(value) = scalar_expression_response(expression, time_range, step, kind)? {
-                return Ok(value);
-            }
-            if let Some(operand) = scalar_operand(left, right) {
-                let mut value = scope.execute(operand.vector).await?;
-                apply_scalar_arithmetic_to_loki_result(
-                    &mut value,
-                    ScalarArithmetic {
-                        op: *op,
-                        scalar_side: operand.scalar_side,
-                    },
-                    ScalarLiteral {
-                        text: &operand.scalar,
-                        query: full_query,
-                    },
-                )?;
-                return Ok(value);
-            }
-            let mut operands = BinaryOperands::evaluate(scope, left, right).await?;
-            apply_metric_binary_arithmetic_to_loki_result(
-                &mut operands.left,
-                &operands.right,
-                VectorArithmetic {
-                    op: *op,
-                    matching: matching.as_ref(),
+            execute_binary_expression(
+                scope,
+                expression,
+                left,
+                right,
+                |value, operand, full_query| {
+                    apply_scalar_arithmetic_to_loki_result(
+                        value,
+                        ScalarArithmetic {
+                            op: *op,
+                            scalar_side: operand.scalar_side,
+                        },
+                        scalar_literal(&operand, full_query),
+                    )
                 },
-            );
-            Ok(operands.into_matched_result(matching.as_ref()))
+                |operands| {
+                    apply_vector_binary(operands, matching.as_ref(), |left, right| {
+                        apply_metric_binary_arithmetic_to_loki_result(
+                            left,
+                            right,
+                            VectorArithmetic {
+                                op: *op,
+                                matching: matching.as_ref(),
+                            },
+                        );
+                    })
+                },
+            )
+            .await
         }
         LogqlExpr::Comparison {
             left,
@@ -263,39 +264,40 @@ pub(crate) async fn execute_http_logql_expr(
             matching,
             right,
         } => {
-            if let Some(value) = scalar_expression_response(expression, time_range, step, kind)? {
-                return Ok(value);
-            }
             // `krabka_logql` spells the `bool` modifier as a flag.
             let comparison = MetricComparison {
                 op: *op,
                 result: ComparisonResult::from_bool_modifier(*bool_modifier),
             };
-            if let Some(operand) = scalar_operand(left, right) {
-                let mut value = scope.execute(operand.vector).await?;
-                apply_scalar_comparison_to_loki_result(
-                    &mut value,
-                    ScalarComparison {
-                        comparison,
-                        scalar_side: operand.scalar_side,
-                    },
-                    ScalarLiteral {
-                        text: &operand.scalar,
-                        query: full_query,
-                    },
-                )?;
-                return Ok(value);
-            }
-            let mut operands = BinaryOperands::evaluate(scope, left, right).await?;
-            apply_metric_binary_comparison_to_loki_result(
-                &mut operands.left,
-                &operands.right,
-                VectorComparison {
-                    comparison,
-                    matching: matching.as_ref(),
+            execute_binary_expression(
+                scope,
+                expression,
+                left,
+                right,
+                |value, operand, full_query| {
+                    apply_scalar_comparison_to_loki_result(
+                        value,
+                        ScalarComparison {
+                            comparison,
+                            scalar_side: operand.scalar_side,
+                        },
+                        scalar_literal(&operand, full_query),
+                    )
                 },
-            );
-            Ok(operands.into_matched_result(matching.as_ref()))
+                |operands| {
+                    apply_vector_binary(operands, matching.as_ref(), |left, right| {
+                        apply_metric_binary_comparison_to_loki_result(
+                            left,
+                            right,
+                            VectorComparison {
+                                comparison,
+                                matching: matching.as_ref(),
+                            },
+                        );
+                    })
+                },
+            )
+            .await
         }
         LogqlExpr::Set {
             left,
@@ -365,6 +367,40 @@ impl BinaryOperands {
     }
 }
 
+async fn execute_binary_expression(
+    scope: LogqlExprScope<'_>,
+    expression: &LogqlExpr,
+    left: &LogqlExpr,
+    right: &LogqlExpr,
+    apply_scalar: impl FnOnce(&mut Value, ScalarOperand<'_>, &str) -> Result<(), HttpQueryError>,
+    apply_vectors: impl FnOnce(BinaryOperands) -> Value,
+) -> Result<Value, HttpQueryError> {
+    if let Some(value) = scalar_expression_response(
+        expression,
+        scope.query.time_range,
+        scope.query.step,
+        scope.query.kind,
+    )? {
+        return Ok(value);
+    }
+    if let Some(operand) = scalar_operand(left, right) {
+        let mut value = scope.execute(operand.vector).await?;
+        apply_scalar(&mut value, operand, scope.full_query)?;
+        return Ok(value);
+    }
+    let operands = BinaryOperands::evaluate(scope, left, right).await?;
+    Ok(apply_vectors(operands))
+}
+
+fn apply_vector_binary(
+    mut operands: BinaryOperands,
+    matching: Option<&MetricVectorMatching>,
+    apply: impl FnOnce(&mut Value, &Value),
+) -> Value {
+    apply(&mut operands.left, &operands.right);
+    operands.into_matched_result(matching)
+}
+
 fn is_scalar_vector_only(expression: &LogqlExpr) -> bool {
     match expression {
         LogqlExpr::Scalar(_) | LogqlExpr::Vector(_) => true,
@@ -406,6 +442,13 @@ fn scalar_operand<'a>(left: &'a LogqlExpr, right: &'a LogqlExpr) -> Option<Scala
                 vector: left,
             })
         })
+}
+
+fn scalar_literal<'a>(operand: &'a ScalarOperand<'_>, query: &'a str) -> ScalarLiteral<'a> {
+    ScalarLiteral {
+        text: &operand.scalar,
+        query,
+    }
 }
 
 fn scalar_sample(expression: &LogqlExpr) -> Option<String> {

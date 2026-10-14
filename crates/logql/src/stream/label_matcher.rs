@@ -1,19 +1,14 @@
 use std::borrow::Cow;
 
 use super::{Labels, MatchOp, ParseError, Regex, anchored_regex_pattern};
-
-#[derive(Clone, Debug)]
-struct CompiledRegex {
-    pattern: String,
-    regex: Regex,
-}
+use crate::regex_cache::{RegexCache, resolve_regex};
 
 #[derive(Clone, Debug)]
 pub struct LabelMatcher {
     pub name: String,
     pub op: MatchOp,
     pub value: String,
-    compiled_regex: Option<CompiledRegex>,
+    compiled_regex: Option<RegexCache>,
 }
 
 impl LabelMatcher {
@@ -36,11 +31,10 @@ impl LabelMatcher {
 
     #[must_use]
     pub fn matches(&self, labels: &Labels) -> bool {
-        self.op.accepts(
-            &self.value,
-            labels.get(&self.name).map(String::as_str),
-            |value| self.regex().is_match(value),
-        )
+        self.op
+            .accepts_named_label(&self.name, &self.value, labels, |value| {
+                self.regex().is_match(value)
+            })
     }
 
     #[must_use]
@@ -61,25 +55,19 @@ impl LabelMatcher {
                     source,
                 }
             })?;
-            self.compiled_regex = Some(CompiledRegex {
-                pattern: self.value.clone(),
-                regex,
-            });
+            self.compiled_regex = Some(RegexCache::new(self.value.clone(), regex));
         }
         Ok(())
     }
 
     pub(crate) fn regex(&self) -> Cow<'_, Regex> {
-        if let Some(compiled) = &self.compiled_regex
-            && compiled.pattern == self.value
-        {
-            return Cow::Borrowed(&compiled.regex);
-        }
         // The source fields are public. A caller can change the pattern or
         // operation after construction; never use a stale compiled pattern.
-        Cow::Owned(
-            Regex::new(&anchored_regex_pattern(&self.value))
-                .expect("regex matcher validated at construction"),
+        resolve_regex(
+            self.compiled_regex.as_ref(),
+            &self.value,
+            anchored_regex_pattern,
+            "regex matcher validated at construction",
         )
     }
 }
