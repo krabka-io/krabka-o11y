@@ -38,7 +38,7 @@ pub(crate) struct TemplateRange {
 }
 
 impl TemplateRange {
-    pub(crate) fn entries(
+    pub(super) fn entries(
         &self,
         context: &TemplateRenderContext<'_>,
         value: TemplateRuntimeValue,

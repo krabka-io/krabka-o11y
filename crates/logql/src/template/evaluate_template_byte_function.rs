@@ -139,14 +139,12 @@ pub(crate) fn evaluate_template_byte_function(
                 result.push(b'\n');
             }
             result.extend(&padding);
-            let mut line_index = 0;
-            for part in bytes(1).split(|byte| *byte == b'\n') {
+            for (line_index, part) in bytes(1).split(|byte| *byte == b'\n').enumerate() {
                 if line_index > 0 {
                     result.push(b'\n');
                     result.extend(&padding);
                 }
                 result.extend(part);
-                line_index += 1;
             }
             result
         }
@@ -325,8 +323,7 @@ fn query_escape(value: &[u8]) -> Vec<u8> {
 
 fn decode_base64(value: &[u8]) -> Vec<u8> {
     let mut positions = Vec::new();
-    for index in 0..value.len() {
-        let byte = value[index];
+    for (index, byte) in value.iter().copied().enumerate() {
         if byte != b'\r' && byte != b'\n' {
             positions.push(BytePosition { index, byte });
         }

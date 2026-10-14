@@ -71,8 +71,7 @@ impl TemplateCommand {
             }
             Self::Call { callee, args } => {
                 let mut values = Vec::with_capacity(args.len() + usize::from(input.is_some()));
-                for index in 0..args.len() {
-                    let arg = &args[index];
+                for (index, arg) in args.iter().enumerate() {
                     let signature = callee.method_name().and_then(|name| {
                         histogram_method_signature(name, index)
                             .or_else(|| super::template_time::methods::signature(name, index))
@@ -303,8 +302,7 @@ fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Re
         if name != "addf" && values.is_empty() {
             return Err(format!("wrong number of args for {name}"));
         }
-        for index in 0..values.len() {
-            let value = &values[index];
+        for (index, value) in values.iter().enumerate() {
             let value = value
                 .as_numeric_string(false)
                 .parse::<f64>()
@@ -508,8 +506,7 @@ fn validate_template_arguments(name: &str, values: &[TemplateRuntimeValue]) -> R
         if count < minimum || (!signature.variadic && count != signature.parameters.len()) {
             return Err(format!("wrong number of args for {name}"));
         }
-        for index in 0..values.len() {
-            let value = &values[index];
+        for (index, value) in values.iter().enumerate() {
             let parameter = signature
                 .parameters
                 .get(index)

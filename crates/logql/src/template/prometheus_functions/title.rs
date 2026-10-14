@@ -10,7 +10,10 @@ pub(super) fn format(bytes: &[u8]) -> Vec<u8> {
     for rune in super::super::format_template_printf::raw::runes(bytes) {
         let code = u32::from(rune.character);
         let index = data::RANGES.partition_point(|range| range.end < code);
-        let flags = data::RANGES[index].flags;
+        let flags = data::RANGES
+            .get(index)
+            .filter(|range| range.start <= code)
+            .map_or(0, |range| range.flags);
         let is_mid = flags & 4 != 0;
         if previous_mid && is_mid {
             mid_word = false;

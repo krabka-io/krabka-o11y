@@ -31,6 +31,7 @@
 
 #[derive(Clone, Copy)]
 pub(super) struct RangeFlags {
+    #[allow(dead_code)] // Retained from the generated Unicode range table.
     pub start: u32,
     pub end: u32,
     pub flags: u8,

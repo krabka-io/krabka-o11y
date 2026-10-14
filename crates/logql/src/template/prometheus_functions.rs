@@ -297,14 +297,14 @@ fn url_path(value: &[u8]) -> Vec<u8> {
     let mut output = Vec::new();
     let mut index = 0;
     while index < value.len() {
-        if value[index] == b'%' && index + 2 < value.len() {
-            if let Some(high) = hex_digit_value(value[index + 1]) {
-                if let Some(low) = hex_digit_value(value[index + 2]) {
-                    output.push(high * 16 + low);
-                    index += 3;
-                    continue;
-                }
-            }
+        if value[index] == b'%'
+            && index + 2 < value.len()
+            && let Some(high) = hex_digit_value(value[index + 1])
+            && let Some(low) = hex_digit_value(value[index + 2])
+        {
+            output.push(high * 16 + low);
+            index += 3;
+            continue;
         }
         output.push(value[index]);
         index += 1;

@@ -148,8 +148,7 @@ impl TemplateRuntimeValue {
             Self::QueryResult(values) => Self::Array(values.snapshot()).rendered_bytes(),
             Self::Array(values) => {
                 let mut output = b"[".to_vec();
-                for index in 0..values.len() {
-                    let value = &values[index];
+                for (index, value) in values.iter().enumerate() {
                     if index > 0 {
                         output.push(b' ');
                     }
@@ -267,15 +266,13 @@ struct RenderedMapEntry<'a> {
 
 fn render_map<'a>(entries: impl Iterator<Item = RenderedMapEntry<'a>>) -> Vec<u8> {
     let mut output = b"map[".to_vec();
-    let mut index = 0;
-    for entry in entries {
+    for (index, entry) in entries.enumerate() {
         if index > 0 {
             output.push(b' ');
         }
         output.extend_from_slice(entry.key.as_bytes());
         output.push(b':');
         output.extend(entry.value);
-        index += 1;
     }
     output.push(b']');
     output

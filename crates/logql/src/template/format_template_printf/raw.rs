@@ -144,8 +144,7 @@ pub(super) fn render(
             } else {
                 b"[".to_vec()
             };
-            for index in 0..values.len() {
-                let value = &values[index];
+            for (index, value) in values.iter().enumerate() {
                 if index > 0 {
                     output.extend_from_slice(if sharp { b", " } else { b" " });
                 }
@@ -177,15 +176,13 @@ fn map<'a>(
     } else {
         b"map[".to_vec()
     };
-    let mut index = 0;
-    for entry in values {
+    for (index, entry) in values.enumerate() {
         if index > 0 {
             output.extend_from_slice(if sharp { b", " } else { b" " });
         }
         output.extend_from_slice(&string(entry.key.as_bytes(), verb, spec));
         output.push(b':');
         output.extend_from_slice(&render(&entry.value, verb, spec, true));
-        index += 1;
     }
     output.push(if sharp { b'}' } else { b']' });
     output
@@ -249,8 +246,7 @@ pub(super) fn string(value: &[u8], verb: char, spec: Spec) -> Vec<u8> {
         'x' | 'X' => {
             let mut output = Vec::new();
             let bytes = &value[..spec.precision.unwrap_or(value.len()).min(value.len())];
-            for index in 0..bytes.len() {
-                let byte = &bytes[index];
+            for (index, byte) in bytes.iter().enumerate() {
                 if index > 0 && spec.flags[Spec::SPACE] {
                     output.push(b' ');
                 }

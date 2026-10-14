@@ -26,16 +26,6 @@ pub(crate) struct TemplateTimeReflectionFields {
     pub location: Option<usize>,
 }
 
-pub(crate) struct ParsedTemplateTimeFields {
-    pub year: i32,
-    pub month: u32,
-    pub day: u32,
-    pub hour: u32,
-    pub minute: u32,
-    pub second: u32,
-    pub nanosecond: u32,
-    pub offset: i32,
-}
 #[derive(Clone, Debug)]
 enum Location {
     Utc,
@@ -267,20 +257,6 @@ impl TemplateTime {
             location,
         }
     }
-    #[cfg(test)]
-    pub(crate) fn parsed_fields(&self) -> ParsedTemplateTimeFields {
-        let parts = self.parts();
-        ParsedTemplateTimeFields {
-            year: i32::try_from(parts.year).expect("parsed test year fits i32"),
-            month: parts.month,
-            day: parts.day,
-            hour: parts.hour,
-            minute: parts.minute,
-            second: parts.second,
-            nanosecond: self.nanos,
-            offset: self.zone().offset,
-        }
-    }
     fn parts(&self) -> calendar::Parts {
         let zone = self.zone();
         calendar::parts(self.seconds.wrapping_add(i64::from(zone.offset)))
@@ -366,7 +342,6 @@ impl PartialEq for Location {
                 } => std::sync::Arc::ptr_eq(left, right),
                 _ => false,
             },
-            _ => false,
         }
     }
 }

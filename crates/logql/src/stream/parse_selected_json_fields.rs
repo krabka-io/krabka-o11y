@@ -78,8 +78,7 @@ impl JsonParserConfig {
             insert_raw_parsed_field(fields, "__error_details__", details);
         }
         let mut selected = Vec::new();
-        let mut index = 0;
-        for selected_text in selection.values {
+        for (index, selected_text) in selection.values.into_iter().enumerate() {
             if let Some(selected_text) = selected_text {
                 selected.push(SelectedField {
                     position: selected_text.position,
@@ -87,7 +86,6 @@ impl JsonParserConfig {
                     extracted_text: selected_text.extracted_text,
                 });
             }
-            index += 1;
         }
         SelectedFields(selected).insert_into(fields, self, &has_existing);
     }

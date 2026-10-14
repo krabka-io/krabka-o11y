@@ -45,8 +45,7 @@ impl PatternParser {
     pub(crate) fn captures(&self, line: &str) -> Option<Vec<PatternCapture>> {
         let mut pos = 0;
         let mut captures = Vec::new();
-        let mut index: usize = 0;
-        for part in &self.parts {
+        for (index, part) in self.parts.iter().enumerate() {
             match part {
                 PatternPart::Literal(literal) => {
                     if !line[pos..].starts_with(literal) {
@@ -85,7 +84,6 @@ impl PatternParser {
                     pos = value_end;
                 }
             }
-            index += 1;
         }
         Some(captures)
     }

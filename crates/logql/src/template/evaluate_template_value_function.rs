@@ -210,14 +210,14 @@ fn evaluate_template_comparison(name: &str, args: &[TemplateRuntimeValue]) -> Te
         return TemplateRuntimeValue::Json(serde_json::Value::Bool(false));
     };
     let compare = |right: &TemplateRuntimeValue| {
-        if let TemplateRuntimeValue::Time(left_time) = left {
-            if let TemplateRuntimeValue::Time(right_time) = right {
-                return Some(if left_time == right_time {
-                    std::cmp::Ordering::Equal
-                } else {
-                    std::cmp::Ordering::Less
-                });
-            }
+        if let TemplateRuntimeValue::Time(left_time) = left
+            && let TemplateRuntimeValue::Time(right_time) = right
+        {
+            return Some(if left_time == right_time {
+                std::cmp::Ordering::Equal
+            } else {
+                std::cmp::Ordering::Less
+            });
         }
         let same_pointer = match left {
             TemplateRuntimeValue::TimePointer(left) => match right {
@@ -280,62 +280,62 @@ fn evaluate_template_comparison(name: &str, args: &[TemplateRuntimeValue]) -> Te
         if left.is_template_string() && right.is_template_string() {
             return Some(left.string_bytes().cmp(&right.string_bytes()));
         }
-        if let Some(left_integer) = left.signed_integer() {
-            if let Some(right_integer) = right.signed_integer() {
-                return Some(left_integer.cmp(&right_integer));
-            }
+        if let Some(left_integer) = left.signed_integer()
+            && let Some(right_integer) = right.signed_integer()
+        {
+            return Some(left_integer.cmp(&right_integer));
         }
-        if let TemplateRuntimeValue::Byte(left_byte) = left {
-            if let TemplateRuntimeValue::Byte(right_byte) = right {
-                return Some(left_byte.cmp(right_byte));
-            }
+        if let TemplateRuntimeValue::Byte(left_byte) = left
+            && let TemplateRuntimeValue::Byte(right_byte) = right
+        {
+            return Some(left_byte.cmp(right_byte));
         }
-        if let Some(left_integer) = left.signed_integer() {
-            if let TemplateRuntimeValue::Byte(right_byte) = right {
-                return Some(
-                    u8::try_from(left_integer).map_or(std::cmp::Ordering::Less, |left_byte| {
-                        left_byte.cmp(right_byte)
-                    }),
-                );
-            }
+        if let Some(left_integer) = left.signed_integer()
+            && let TemplateRuntimeValue::Byte(right_byte) = right
+        {
+            return Some(
+                u8::try_from(left_integer).map_or(std::cmp::Ordering::Less, |left_byte| {
+                    left_byte.cmp(right_byte)
+                }),
+            );
         }
-        if let TemplateRuntimeValue::Byte(left_byte) = left {
-            if let Some(right_integer) = right.signed_integer() {
-                return Some(
-                    u8::try_from(right_integer).map_or(std::cmp::Ordering::Greater, |right_byte| {
-                        left_byte.cmp(&right_byte)
-                    }),
-                );
-            }
+        if let TemplateRuntimeValue::Byte(left_byte) = left
+            && let Some(right_integer) = right.signed_integer()
+        {
+            return Some(
+                u8::try_from(right_integer).map_or(std::cmp::Ordering::Greater, |right_byte| {
+                    left_byte.cmp(&right_byte)
+                }),
+            );
         }
-        if let TemplateRuntimeValue::Complex(left_real, left_imaginary) = left {
-            if let TemplateRuntimeValue::Complex(right_real, right_imaginary) = right {
-                return Some(
-                    if left_real.partial_cmp(right_real) == Some(std::cmp::Ordering::Equal)
-                        && left_imaginary.partial_cmp(right_imaginary)
-                            == Some(std::cmp::Ordering::Equal)
-                    {
-                        std::cmp::Ordering::Equal
-                    } else {
-                        std::cmp::Ordering::Less
-                    },
-                );
-            }
+        if let TemplateRuntimeValue::Complex(left_real, left_imaginary) = left
+            && let TemplateRuntimeValue::Complex(right_real, right_imaginary) = right
+        {
+            return Some(
+                if left_real.partial_cmp(right_real) == Some(std::cmp::Ordering::Equal)
+                    && left_imaginary.partial_cmp(right_imaginary)
+                        == Some(std::cmp::Ordering::Equal)
+                {
+                    std::cmp::Ordering::Equal
+                } else {
+                    std::cmp::Ordering::Less
+                },
+            );
         }
         let number = |value: &TemplateRuntimeValue| match value {
             TemplateRuntimeValue::Float(value) => Some(*value),
             TemplateRuntimeValue::Json(serde_json::Value::Number(value)) => value.as_f64(),
             _ => None,
         };
-        if let Some(left_number) = number(left) {
-            if let Some(right_number) = number(right) {
-                return left_number.partial_cmp(&right_number);
-            }
+        if let Some(left_number) = number(left)
+            && let Some(right_number) = number(right)
+        {
+            return left_number.partial_cmp(&right_number);
         }
-        if let TemplateRuntimeValue::Json(serde_json::Value::Bool(left_bool)) = left {
-            if let TemplateRuntimeValue::Json(serde_json::Value::Bool(right_bool)) = right {
-                return Some(left_bool.cmp(right_bool));
-            }
+        if let TemplateRuntimeValue::Json(serde_json::Value::Bool(left_bool)) = left
+            && let TemplateRuntimeValue::Json(serde_json::Value::Bool(right_bool)) = right
+        {
+            return Some(left_bool.cmp(right_bool));
         }
         None
     };

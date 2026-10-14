@@ -209,8 +209,8 @@ pub(super) fn render(value: &TemplateRuntimeValue, verb: char, spec: Spec) -> St
                 .map(|entry| {
                     format!(
                         "{}:{}",
-                        string(&entry.0, verb, spec),
-                        string(&entry.1, verb, spec)
+                        string(entry.0, verb, spec),
+                        string(entry.1, verb, spec)
                     )
                 })
                 .collect::<Vec<_>>();
@@ -365,8 +365,7 @@ fn string(value: &str, verb: char, spec: Spec) -> String {
             let bytes = &value.as_bytes()[..spec.precision.unwrap_or(value.len()).min(value.len())];
             let prefix = if verb == 'x' { "0x" } else { "0X" };
             let mut output = String::new();
-            for i in 0..bytes.len() {
-                let byte = &bytes[i];
+            for (i, byte) in bytes.iter().enumerate() {
                 if i > 0 && spec.flags[Spec::SPACE] {
                     output.push(' ');
                 }

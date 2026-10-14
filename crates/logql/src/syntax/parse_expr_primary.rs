@@ -32,8 +32,7 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
             descending: false,
         },
     ];
-    for function_index in 0..sort_functions.len() {
-        let function = &sort_functions[function_index];
+    for function in &sort_functions {
         if let Some(args) = function_args(input, function.name)? {
             if args.len() != 1 {
                 return Err(syntax_error("expected one function argument"));
@@ -61,8 +60,7 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
             approximate: true,
         },
     ];
-    for function_index in 0..selection_functions.len() {
-        let function = &selection_functions[function_index];
+    for function in &selection_functions {
         if let Some(args) = function_args(input, function.name)? {
             if let Ok(query) = parse_metric_query(input) {
                 return Ok(LogqlExpr::Metric {

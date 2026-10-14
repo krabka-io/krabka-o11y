@@ -276,12 +276,8 @@ fn digits(value: &mut &str, max: usize, fixed: bool) -> Option<u32> {
     Some(number)
 }
 fn name<const N: usize>(value: &mut &str, names: &[&str; N], long: bool) -> Option<u32> {
-    for index in 0..names.len() {
-        let name = if long {
-            names[index]
-        } else {
-            &names[index][..3]
-        };
+    for (index, name) in names.iter().enumerate() {
+        let name = if long { *name } else { &name[..3] };
         if value
             .get(..name.len())
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case(name))

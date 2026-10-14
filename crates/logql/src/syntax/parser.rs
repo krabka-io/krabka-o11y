@@ -440,7 +440,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    pub(crate) fn parse_metric_arithmetic_argument(
+    fn parse_metric_arithmetic_argument(
         &mut self,
     ) -> Result<MetricOperatorArgument<MetricScalarArithmeticOp>, ParseError> {
         self.scan_metric_argument(
@@ -464,7 +464,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    pub(crate) fn parse_metric_set_argument(
+    fn parse_metric_set_argument(
         &mut self,
     ) -> Result<MetricOperatorArgument<MetricBinarySetOp>, ParseError> {
         self.scan_metric_argument(
@@ -559,7 +559,7 @@ impl<'a> Parser<'a> {
         Ok(metric_query.to_string())
     }
 
-    pub(crate) fn match_metric_set_op_at(&self, position: usize) -> Option<MetricSetOperatorAt> {
+    fn match_metric_set_op_at(&self, position: usize) -> Option<MetricSetOperatorAt> {
         for spelling in [
             OperatorSpelling {
                 text: "unless",
@@ -1291,7 +1291,7 @@ impl<'a> Parser<'a> {
         JsonParserConfig::new(extractions)
     }
 
-    pub(crate) fn parse_logfmt_parser_flags(&mut self) -> LogfmtParserFlags {
+    fn parse_logfmt_parser_flags(&mut self) -> LogfmtParserFlags {
         let mut strict = false;
         let mut keep_empty = false;
         loop {
