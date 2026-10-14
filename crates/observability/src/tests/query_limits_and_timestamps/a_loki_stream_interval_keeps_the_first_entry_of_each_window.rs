@@ -26,7 +26,7 @@ pub(crate) fn a_loki_stream_interval_keeps_the_first_entry_of_each_window() {
         value
             .pointer("/data/result")
             .and_then(serde_json::Value::as_array)
-            .map_or_default(|streams| {
+            .map_or_else(Default::default, |streams| {
                 streams
                     .iter()
                     .flat_map(|s| s["values"].as_array().cloned().unwrap_or_default())

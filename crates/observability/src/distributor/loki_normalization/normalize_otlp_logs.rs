@@ -56,7 +56,7 @@ pub(crate) fn normalize_otlp_logs(
                 line: log_record
                     .body
                     .as_ref()
-                    .map_or_default(otlp_value_to_string),
+                    .map_or_else(Default::default, otlp_value_to_string),
                 attributes: log_record.attributes.as_deref().unwrap_or_default(),
             }
             .into_wal_record(|| otlp_log_record_structured_metadata(&log_record), limits)

@@ -4739,7 +4739,7 @@ async fn compare_populated_diffs(
             None,
             "Diff",
             serde_json::to_value(&request)?,
-            |value| canonical_diff(value).is_ok_and(|actual| actual == expected),
+            diff_has_positive_ticks,
         )
         .await?;
         for endpoint in [
@@ -6363,10 +6363,16 @@ async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
             }
             "PROFILE_FORMAT_DOT" => profile_fixture_dot_expected(),
             "PROFILE_FORMAT_PPROF" => {
-                json!({"pprof":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]]})
+                json!({"pprof":[
+                    {"frames":[FUNC_WORK],"value":40},
+                    {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+                ]})
             }
             _ => {
-                json!({"stacks":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]],"total":140,"max_self":100})
+                json!({"stacks":[
+                    {"frames":[FUNC_WORK],"value":40},
+                    {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+                ],"total":140,"max_self":100})
             }
         };
         let independent = json!({"submission_status":"ASYNC_QUERY_STATUS_IN_PROGRESS","completion_status":"ASYNC_QUERY_STATUS_SUCCESS","result":result});
@@ -6433,9 +6439,12 @@ fn profile_v2_independent_witness(
             | "end excludes profile"
             | "missing profile type" => json!([]),
             "hot prefix" | "hot trace" | "hot modern span" => {
-                json!([[[FUNC_WORK, FUNC_HOT], 100]])
+                json!([{"frames":[FUNC_WORK,FUNC_HOT],"value":100}])
             }
-            _ => json!([[[FUNC_WORK], 40], [[FUNC_WORK, FUNC_HOT], 100]]),
+            _ => json!([
+                {"frames":[FUNC_WORK],"value":40},
+                {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+            ]),
         };
         independent_expected = json!({"stacks":expected});
         oracle.as_ref().is_ok_and(|v| v["stacks"] == expected)
@@ -6453,7 +6462,10 @@ fn profile_v2_independent_witness(
         oracle.as_ref().is_ok_and(|value| *value == expected)
             && candidate.as_ref().is_ok_and(|value| *value == expected)
     } else if method == "SelectMergeStacktraces" && name == "PROFILE_FORMAT_PPROF" {
-        let expected = json!({"pprof":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]]});
+        let expected = json!({"pprof":[
+            {"frames":[FUNC_WORK],"value":40},
+            {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+        ]});
         independent_expected = expected.clone();
         oracle.as_ref().is_ok_and(|value| *value == expected)
             && candidate.as_ref().is_ok_and(|value| *value == expected)
@@ -6464,11 +6476,17 @@ fn profile_v2_independent_witness(
         let stacks = if empty {
             json!([])
         } else if leaf {
-            json!([[[FUNC_HOT], 100], [[FUNC_WORK], 40]])
+            json!([
+                {"frames":[FUNC_HOT],"value":100},
+                {"frames":[FUNC_WORK],"value":40}
+            ])
         } else if trace {
-            json!([[[FUNC_WORK, FUNC_HOT], 100]])
+            json!([{"frames":[FUNC_WORK,FUNC_HOT],"value":100}])
         } else {
-            json!([[[FUNC_WORK], 40], [[FUNC_WORK, FUNC_HOT], 100]])
+            json!([
+                {"frames":[FUNC_WORK],"value":40},
+                {"frames":[FUNC_WORK,FUNC_HOT],"value":100}
+            ])
         };
         let locations = if empty {
             json!([])

@@ -16,7 +16,7 @@ pub enum TopicContractError {
     /// exists".
     #[error(
         "create topic {topic}: {name} (code {code}){detail}",
-        detail = .message.as_deref().map_or_default(|m| format!(": {m}"))
+        detail = .message.as_deref().map_or_else(Default::default, |m| format!(": {m}"))
     )]
     Create {
         topic: String,

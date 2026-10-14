@@ -432,7 +432,16 @@ def experimental_query_binding_errors(name, report):
                              "discovery/bounded-json-depth", "discovery/unlimited-json-depth"):
                 try:
                     empty = discovery in ("discovery/disabled-does-not-synthesize-unknown", "discovery/bounded-json-depth")
-                    instant = dict(request["params"])["time"]
+                    params = request["params"]
+                    if isinstance(params, list) and all(
+                        isinstance(param, dict) for param in params
+                    ):
+                        instant = next(
+                            param["value"] for param in params
+                            if isinstance(param, dict) and param.get("name") == "time"
+                        )
+                    else:
+                        instant = dict(params)["time"]
                     # The fixtures use Loki's integer form: at most ten
                     # characters means seconds, otherwise nanoseconds.
                     integer = int(instant)
@@ -442,7 +451,7 @@ def experimental_query_binding_errors(name, report):
                     expected_discovery = {"samples":[] if empty else [{"metric":{}, "points":[[timestamp, "1"]]}], "warnings":[]}
                     if not math.isfinite(timestamp) or not EVIDENCE_TYPED_EQUAL(ledger, expected_discovery):
                         errors.append("Loki discovery differs from its independent eligible-entry count")
-                except (KeyError, ValueError, TypeError):
+                except (KeyError, ValueError, TypeError, StopIteration):
                     errors.append("Loki discovery lacks its bound instant timestamp")
             if row.get("expected_status") != 200 or not EVIDENCE_TYPED_EQUAL(row.get("oracle"), row.get("candidate")):
                 errors.append("Loki positive query lacks matching complete normalized responses")
@@ -1143,6 +1152,13 @@ def self_check():
         changed[side + "_semantic"] = changed["independent_expected"]
         changed["raw_" + side] = {"status":200, "body":discovered}
     assert not experimental_query_binding_errors("loki-experimental-query-conformance.json", discovery)
+    structured_params = copy.deepcopy(discovery)
+    structured_params["cases"][0]["request"]["params"] = [
+        {"name": "time", "value": "40"}
+    ]
+    assert not experimental_query_binding_errors(
+        "loki-experimental-query-conformance.json", structured_params
+    )
     nanos_discovery = copy.deepcopy(discovery)
     nanos_case = nanos_discovery["cases"][0]
     nanos_case["request"]["params"] = [["time", "1791287680000000000"]]

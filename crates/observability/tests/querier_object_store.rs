@@ -344,9 +344,9 @@ async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
                     expected_rows: 2,
                 },
             ] {
-                let interval_query = case
-                    .interval
-                    .map_or_default(|interval| format!("&interval=0.{interval:09}"));
+                let interval_query = case.interval.map_or_else(Default::default, |interval| {
+                    format!("&interval=0.{interval:09}")
+                });
                 let result = query_streams(&app, &format!(
                         "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.{:09}&direction={direction}&limit={}{}",
                         case.end, case.limit, interval_query

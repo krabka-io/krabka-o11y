@@ -168,11 +168,13 @@ impl TenantIndex {
     }
 
     pub(crate) fn present_fingerprints(&self, name: &str) -> BTreeSet<SeriesFingerprint> {
-        self.postings.get(name).map_or_default(|values| {
-            values
-                .values()
-                .flat_map(|fps| fps.iter().copied())
-                .collect()
-        })
+        self.postings
+            .get(name)
+            .map_or_else(Default::default, |values| {
+                values
+                    .values()
+                    .flat_map(|fps| fps.iter().copied())
+                    .collect()
+            })
     }
 }

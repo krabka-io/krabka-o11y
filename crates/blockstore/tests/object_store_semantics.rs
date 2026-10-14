@@ -218,7 +218,7 @@ krabka_blockstore::delegate_object_store! {
             return futures::stream::empty().boxed();
         }
         if self.quirk == Quirk::ListingRefused {
-            let path = prefix.map_or_default(ToString::to_string);
+            let path = prefix.map_or_else(Default::default, ToString::to_string);
             return futures::stream::once(async move { Err(permission_denied(&Path::from(path))) })
                 .boxed();
         }

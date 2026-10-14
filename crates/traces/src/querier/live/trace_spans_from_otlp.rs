@@ -94,7 +94,10 @@ pub(crate) fn trace_spans_from_otlp(trace_id: &[u8; 16], data: TracesData) -> Re
         }
     }
     if trace.root_trace_name.is_empty() {
-        trace.root_trace_name = trace.spans.first().map_or_default(|span| span.name.clone());
+        trace.root_trace_name = trace
+            .spans
+            .first()
+            .map_or_else(Default::default, |span| span.name.clone());
     }
     Ok(trace)
 }

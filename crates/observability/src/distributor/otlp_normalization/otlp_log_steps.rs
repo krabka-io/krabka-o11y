@@ -113,7 +113,7 @@ impl<'a> OtlpScope<'a, ProtoKeyValue> {
         scope: Option<&'a opentelemetry_proto::tonic::common::v1::InstrumentationScope>,
     ) -> Self {
         Self {
-            attributes: scope.map_or_default(|scope| scope.attributes.as_slice()),
+            attributes: scope.map_or_else(Default::default, |scope| scope.attributes.as_slice()),
             name: scope.map_or("", |scope| scope.name.as_str()),
             version: scope.map_or("", |scope| scope.version.as_str()),
         }
@@ -135,7 +135,7 @@ pub(crate) fn otlp_scope_metadata<A: OtlpAttribute>(
             .scope_attributes
             .iter()
             .find(|rule| rule.matches(attribute.key()))
-            .map_or_default(|rule| rule.action);
+            .map_or_else(Default::default, |rule| rule.action);
         if action != OtlpAttributeAction::Drop {
             inherited_metadata.extend(attribute.labels()?);
         }

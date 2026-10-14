@@ -48,7 +48,7 @@ pub(crate) async fn execute_stacktrace_query<S: ProfileStore>(
     } else {
         SampleSelector::None
     };
-    let max_nodes = req.max_nodes.map_or_default(|count| {
+    let max_nodes = req.max_nodes.map_or_else(Default::default, |count| {
         if count > 0 {
             count.saturating_add(1)
         } else {

@@ -227,7 +227,7 @@ fn arb_matching(allow_group: bool) -> impl Strategy<Value = String> {
         )
             .prop_map(|(kind, labels, group_kind)| {
                 let group = group_kind
-                    .map_or_default(|group| format!(" {group} ({})", labels[1]));
+                    .map_or_else(Default::default, |group| format!(" {group} ({})", labels[1]));
                 format!(" {kind} ({}){group}", labels[0])
             })
             .boxed(),

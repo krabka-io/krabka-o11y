@@ -55,7 +55,7 @@ pub(crate) fn apply_grouped_metric_selection(
         selected.extend(
             group["data"]["result"]
                 .as_array_mut()
-                .map_or_default(std::mem::take),
+                .map_or_else(Default::default, std::mem::take),
         );
     }
     value["data"]["result"] = Value::Array(selected);

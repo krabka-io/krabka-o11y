@@ -15,7 +15,7 @@ pub fn decode_zipkin(body: &[u8]) -> Result<Vec<Span>, WireError> {
         let resource_attrs = span
             .local_endpoint
             .and_then(|endpoint| endpoint.service_name)
-            .map_or_default(|service| {
+            .map_or_else(Default::default, |service| {
                 vec![KeyValue {
                     key: "service.name".into(),
                     value: AttrValue::Str(service),

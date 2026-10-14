@@ -10,8 +10,8 @@ pub(crate) fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> krabka_traceql
         root_service_name: root
             .and_then(|span| attr_string(&span.resource_attrs, "service.name"))
             .unwrap_or_default(),
-        root_trace_name: root.map_or_default(|span| span.name.clone()),
-        resource_attributes: root.map_or_default(|span| {
+        root_trace_name: root.map_or_else(Default::default, |span| span.name.clone()),
+        resource_attributes: root.map_or_else(Default::default, |span| {
             span.resource_attrs
                 .iter()
                 .filter_map(|attr| {

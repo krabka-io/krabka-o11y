@@ -141,14 +141,18 @@ impl Index {
     pub fn all_blocks(&self, tenant: &str) -> Vec<BlockMeta> {
         self.tenants
             .get(tenant)
-            .map_or_default(|tenant_index| tenant_index.blocks.metas(tenant))
+            .map_or_else(Default::default, |tenant_index| {
+                tenant_index.blocks.metas(tenant)
+            })
     }
 
     #[must_use]
     pub fn label_names(&self, tenant: &str) -> Vec<String> {
         self.tenants
             .get(tenant)
-            .map_or_default(|tenant_index| tenant_index.values.keys().cloned().collect())
+            .map_or_else(Default::default, |tenant_index| {
+                tenant_index.values.keys().cloned().collect()
+            })
     }
 
     #[must_use]
@@ -156,7 +160,7 @@ impl Index {
         self.tenants
             .get(tenant)
             .and_then(|tenant_index| tenant_index.values.get(name))
-            .map_or_default(|values| values.iter().cloned().collect())
+            .map_or_else(Default::default, |values| values.iter().cloned().collect())
     }
 
     /// Full label sets for the series that match `matchers`. An empty
@@ -494,16 +498,18 @@ impl Index {
     /// [`Labels::fingerprint`], so a caller that indexes by it agrees with
     /// every other lookup in the index.
     pub(crate) fn series_pairs(&self, tenant: &str) -> Vec<SeriesLabels> {
-        self.tenants.get(tenant).map_or_default(|tenant_index| {
-            tenant_index
-                .series
-                .keys()
-                .map(|fingerprint| SeriesLabels {
-                    fingerprint: *fingerprint,
-                    labels: tenant_index.series[fingerprint].clone(),
-                })
-                .collect()
-        })
+        self.tenants
+            .get(tenant)
+            .map_or_else(Default::default, |tenant_index| {
+                tenant_index
+                    .series
+                    .keys()
+                    .map(|fingerprint| SeriesLabels {
+                        fingerprint: *fingerprint,
+                        labels: tenant_index.series[fingerprint].clone(),
+                    })
+                    .collect()
+            })
     }
 
     /// The labels behind one fingerprint.

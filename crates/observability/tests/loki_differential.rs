@@ -4100,7 +4100,9 @@ async fn probe_websocket(
             let body = response
                 .body()
                 .as_ref()
-                .map_or_default(|body| String::from_utf8_lossy(body).to_string());
+                .map_or_else(Default::default, |body| {
+                    String::from_utf8_lossy(body).to_string()
+                });
             Ok(json!({
                 "status": response.status().as_u16(),
                 "contentType": media_type(response.headers().get("content-type")),
@@ -4273,9 +4275,9 @@ fn reduce_tail_frame(status: u16, text: &str) -> Value {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return json!({"status": status, "frame": text});
     };
-    let keys = frame
-        .as_object()
-        .map_or_default(|object| object.keys().cloned().collect::<Vec<_>>());
+    let keys = frame.as_object().map_or_else(Default::default, |object| {
+        object.keys().cloned().collect::<Vec<_>>()
+    });
     let mut body = sort_object_keys(&frame);
     if let Some(streams) = body.get_mut("streams") {
         *streams = tail_entries(streams);

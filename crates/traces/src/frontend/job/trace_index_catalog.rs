@@ -46,12 +46,15 @@ impl BlockCatalog for TraceIndexCatalog {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<Vec<BlockMetaInfo>, CatalogError> {
-        Ok(self.by_tenant.get(tenant).map_or_default(|blocks| {
-            blocks
-                .iter()
-                .filter(|b| b.end_ns >= start_ns && b.start_ns <= end_ns)
-                .cloned()
-                .collect()
-        }))
+        Ok(self
+            .by_tenant
+            .get(tenant)
+            .map_or_else(Default::default, |blocks| {
+                blocks
+                    .iter()
+                    .filter(|b| b.end_ns >= start_ns && b.start_ns <= end_ns)
+                    .cloned()
+                    .collect()
+            }))
     }
 }

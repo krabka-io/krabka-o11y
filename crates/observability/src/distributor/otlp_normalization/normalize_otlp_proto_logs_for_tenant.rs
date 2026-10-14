@@ -18,7 +18,7 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
                 resource_logs
                     .resource
                     .as_ref()
-                    .map_or_default(|resource| resource.attributes.as_slice()),
+                    .map_or_else(Default::default, |resource| resource.attributes.as_slice()),
                 resource_logs.scope_logs,
                 limits,
             )
@@ -44,7 +44,7 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
                 line: log_record
                     .body
                     .as_ref()
-                    .map_or_default(proto_value_to_string),
+                    .map_or_else(Default::default, proto_value_to_string),
                 attributes: &log_record.attributes,
             }
             .into_wal_record(|| proto_log_record_structured_metadata(&log_record), limits)

@@ -26,7 +26,7 @@ pub(crate) async fn execute_http_query_for_tenant(
         let queue_time = response
             .pointer("/data/stats/summary/queueTime")
             .and_then(Value::as_f64)
-            .map_or_default(std::time::Duration::from_secs_f64);
+            .map_or_else(Default::default, std::time::Duration::from_secs_f64);
         populate_loki_query_execution_stats(response, started.elapsed(), queue_time);
     }
     result

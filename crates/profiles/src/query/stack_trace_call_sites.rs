@@ -5,7 +5,7 @@ pub(crate) fn stack_trace_call_sites(
 ) -> Vec<String> {
     selector
         .filter(|selector| selector.go_pgo.is_none())
-        .map_or_default(|selector| {
+        .map_or_else(Default::default, |selector| {
             selector
                 .call_site
                 .iter()

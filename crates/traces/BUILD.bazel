@@ -81,7 +81,10 @@ crate_tests(
         "frontend_membership_fanout": ["//crates/integration:tests/support/test_broker.rs"],
         "frontend_server": ["//crates/integration:tests/support/test_broker.rs"],
         "frontend_trace_by_id_assembly": ["//crates/integration:tests/support/test_broker.rs"],
+        "ingest_roundtrip": ["//crates/integration:tests/support/test_broker.rs"],
         "querier_readiness": ["//crates/integration:tests/support/test_broker.rs"],
+        "wal_group_rebalance": ["//crates/integration:tests/support/test_broker.rs"],
+        "wal_group_scale_out": ["//crates/integration:tests/support/test_broker.rs"],
         "blockbuilder": ["//crates/blockstore:tests/support/hooked_store.rs"],
         "grafana_e2e": [
             "src/wire/jaeger/thrift_fixture.rs",

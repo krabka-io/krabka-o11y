@@ -738,7 +738,7 @@ async fn export(
     Ok(response
         .into_inner()
         .partial_success
-        .map_or_default(|success| success.error_message))
+        .map_or_else(Default::default, |success| success.error_message))
 }
 
 #[tokio::test]

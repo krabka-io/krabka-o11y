@@ -219,7 +219,7 @@ async fn profile_query(
 
     let names = json["flamegraph"]["names"]
         .as_array()
-        .map_or_default(Vec::as_slice)
+        .map_or_else(Default::default, Vec::as_slice)
         .iter()
         .filter_map(|name| name.as_str().map(str::to_string))
         .collect();

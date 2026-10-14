@@ -244,12 +244,12 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
 fn collect_lines(json: &Value) -> Vec<&str> {
     json["data"]["result"]
         .as_array()
-        .map_or_default(Vec::as_slice)
+        .map_or_else(Default::default, Vec::as_slice)
         .iter()
         .flat_map(|stream| {
             stream["values"]
                 .as_array()
-                .map_or_default(Vec::as_slice)
+                .map_or_else(Default::default, Vec::as_slice)
                 .iter()
         })
         .filter_map(|entry| entry.get(1).and_then(Value::as_str))

@@ -33,7 +33,7 @@ fn yaml_string_entries(fields: &serde_yaml::Mapping, name: &'static str) -> Vec<
     fields
         .get(serde_yaml_key(name))
         .and_then(loki_yaml_mapping)
-        .map_or_default(|values| {
+        .map_or_else(Default::default, |values| {
             values
                 .iter()
                 .filter_map(|(key, value)| {

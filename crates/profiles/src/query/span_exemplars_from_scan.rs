@@ -78,7 +78,7 @@ pub(crate) async fn span_exemplars_from_scan(
                 timestamp: span_key.timestamp,
                 profile_id: String::new(),
                 span_id: span_id_hex_from_u64(span_key.span_id),
-                trace_id: span_key.trace_id.map_or_default(hex::encode),
+                trace_id: span_key.trace_id.map_or_else(Default::default, hex::encode),
                 value,
                 labels: label_pairs.clone(),
             });

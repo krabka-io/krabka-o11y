@@ -37,6 +37,6 @@ mod tests {
         infinity = { f64::INFINITY, "+Inf" },
     )]
     fn quantile_labels_preserve_openmetrics_float_contract(value: f64, expected: &str) {
-        assert2::assert!(super::format_quantile_label(value) == expected);
+        assert2::assert!(crate::engine::histogram::format_quantile_label(value) == expected);
     }
 }

@@ -757,7 +757,7 @@ fn label_values_tenant(body: &str) -> String {
     values
         .get("names")
         .and_then(Value::as_array)
-        .map_or_default(|names| {
+        .map_or_else(Default::default, |names| {
             names
                 .iter()
                 .filter_map(Value::as_str)

@@ -12,17 +12,17 @@ pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
         let resource_attrs = resource_spans
             .resource
             .as_ref()
-            .map_or_default(|resource| kvs(&resource.attributes));
+            .map_or_else(Default::default, |resource| kvs(&resource.attributes));
 
         for scope_spans in &resource_spans.scope_spans {
             let scope_name = scope_spans
                 .scope
                 .as_ref()
-                .map_or_default(|scope| scope.name.clone());
+                .map_or_else(Default::default, |scope| scope.name.clone());
             let scope_version = scope_spans
                 .scope
                 .as_ref()
-                .map_or_default(|scope| scope.version.clone());
+                .map_or_else(Default::default, |scope| scope.version.clone());
             let instrumentation_attrs = scope_spans.scope.as_ref().map_or_else(Vec::new, |scope| {
                 kvs(&scope.attributes)
                     .into_iter()

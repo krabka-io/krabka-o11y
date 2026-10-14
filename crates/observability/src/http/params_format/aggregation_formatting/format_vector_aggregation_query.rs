@@ -7,7 +7,9 @@ pub(crate) fn format_vector_aggregation_query(
     let grouping = aggregation
         .grouping
         .as_ref()
-        .map_or_default(|grouping| format!(" {}", format_vector_grouping(grouping)));
+        .map_or_else(Default::default, |grouping| {
+            format!(" {}", format_vector_grouping(grouping))
+        });
     match &aggregation.op {
         VectorAggregationOp::Sum => Some(format!("sum{grouping}({inner})")),
         VectorAggregationOp::Count => Some(format!("count{grouping}({inner})")),

@@ -3880,7 +3880,7 @@ fn metric_series_label_keys(resp: &JsonValue) -> BTreeSet<String> {
 fn metric_prom_labels_list(resp: &JsonValue) -> Vec<String> {
     resp.get("series")
         .and_then(JsonValue::as_array)
-        .map_or_default(|series| {
+        .map_or_else(Default::default, |series| {
             series
                 .iter()
                 .filter_map(|s| {

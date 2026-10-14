@@ -82,8 +82,9 @@ impl PrometheusRulesFilters {
         if self.label_selectors.is_empty() {
             return true;
         }
-        let labels = loki_yaml_mapping(source_rule)
-            .map_or_default(|fields| yaml_string_labels_field(fields, "labels"));
+        let labels = loki_yaml_mapping(source_rule).map_or_else(Default::default, |fields| {
+            yaml_string_labels_field(fields, "labels")
+        });
         self.label_selectors.iter().any(|selector| {
             selector
                 .matchers

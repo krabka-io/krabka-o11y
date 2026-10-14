@@ -33,5 +33,5 @@ fn attribute_label_value(attribute: &ProtoKeyValue) -> String {
     attribute
         .value
         .as_ref()
-        .map_or_default(proto_value_to_string)
+        .map_or_else(Default::default, proto_value_to_string)
 }

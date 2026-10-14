@@ -434,6 +434,12 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "experimental-functions")]
+    struct BoundaryFeatureCase {
+        query: &'static str,
+        expected: &'static str,
+    }
+
     #[test]
     fn feature_gate_classification_requires_source_bound_call_and_actual_gate_error() {
         let metadata =
