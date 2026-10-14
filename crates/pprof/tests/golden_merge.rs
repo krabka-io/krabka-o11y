@@ -45,8 +45,7 @@ fn fixture() -> Fixture {
 
 fn intern_location(db: &mut krabka_pprof::SymbolDb, file: &str, function_names: &[&str]) -> u32 {
     let mut lines = Vec::with_capacity(function_names.len());
-    for idx in 0..function_names.len() {
-        let name = function_names[idx];
+    for (idx, name) in function_names.iter().enumerate() {
         let name_ref = db.intern_string(name);
         let filename_ref = db.intern_string(&format!("{file}.go"));
         let function_id = db.intern_function(FunctionRec {
