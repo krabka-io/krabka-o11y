@@ -1,3 +1,6 @@
+// The PromQL query future in the soak suite carries DataFusion state, whose
+// `Send` check needs the same trait recursion depth as the other query suites.
+#![recursion_limit = "512"]
 //! The operating-envelope soak: every signal, through its real writer and
 //! read path, against one real object store, in eight phases.
 //!
@@ -38,6 +41,7 @@
 //! ```text
 //! KRABKA_MINIO_IMAGE_REF=<ref> KRABKA_SOAK_PHASE_SECONDS=4 \
 //!     cargo test -p krabka-integration --test soak_envelope -- --ignored --nocapture
+
 //! ```
 
 mod support;

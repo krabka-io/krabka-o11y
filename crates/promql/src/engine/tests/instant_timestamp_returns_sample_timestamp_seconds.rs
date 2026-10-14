@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn instant_timestamp_returns_sample_timestamp_seconds() {
-    let store = crate::test_support::up_api_store(&[(60_000, 1.0)]);
+    let store = crate::test_support::up_api_store("tenant-a", &[(60_000, 1.0)]);
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let samples = instant_vector(&engine, "timestamp(up)", 120_000).await;

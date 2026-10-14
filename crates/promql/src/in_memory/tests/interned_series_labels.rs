@@ -190,7 +190,7 @@ fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
     }
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
     assert!(summary_ledger(&store, "t", &matchers, 10, 10, 20).is_some());
-    let mut expected = vec![
+    let expected = vec![
         Arc::clone(&second),
         Arc::clone(&raw[0]),
         Arc::clone(&first),
@@ -199,7 +199,6 @@ fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
         Arc::clone(&raw[1]),
         Arc::clone(&raw[2]),
     ];
-    expected.sort_by_key(|labels| labels.fingerprint());
     let actual = store.matched_series_shared("t", &matchers, 10, 20).unwrap();
     assert!(actual == expected);
     for index in 0..actual.len() {

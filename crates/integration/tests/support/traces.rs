@@ -1,10 +1,7 @@
 //! Traces: the block builder and its index snapshot, the level compactor, the
 //! retention pass, and `TraceQL` search through the querier's span store.
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -38,7 +35,7 @@ struct CompactionIndexUpdate {
     report: Value,
 }
 
-pub struct TracesSignal {
+pub(crate) struct TracesSignal {
     core: super::SignalCore<TraceqlEngine<KrabkaSpanStore>, IngestEnforcer, Limits>,
     /// Each write builds its own index, as one block builder per partition
     /// does, and publishes it by merging into the latest snapshot.
@@ -193,13 +190,20 @@ impl Signal for TracesSignal {
         Ok(WriteOutcome::Accepted)
     }
 
-    crate::query_signal_engine!(now_ns(), end - window_ns(window), {
-        let response = engine
-            .search(tenant, "{ }", start, end, SEARCH_LIMIT)
-            .await
-            .map_err(err)?;
-        u64::try_from(response.traces.len()).map_err(err)
-    });
+    async fn query(&self, tenant: &str, window: Duration, fresh: bool) -> Result<u64, String> {
+        crate::query_signal_engine!(
+            self.engine(fresh).await?,
+            now_ns(),
+            end - window_ns(window),
+            |engine, end, start| {
+                let response = engine
+                    .search(tenant, "{ }", start, end, SEARCH_LIMIT)
+                    .await
+                    .map_err(err)?;
+                u64::try_from(response.traces.len()).map_err(err)
+            }
+        )
+    }
 
     async fn compact(&self) -> Result<Value, String> {
         let store = Arc::clone(&self.stores.maintenance);

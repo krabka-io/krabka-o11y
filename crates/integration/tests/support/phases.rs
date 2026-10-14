@@ -245,7 +245,7 @@ fn stepped(levels: Vec<SteppedLevel>, unit: &str) -> Value {
                 "write_p99_us": step.entry["ingest"]["latency_us"]["p99"],
                 "query_p99_us": step.entry["query"]["latency_us"]["p99"],
                 "rss_kib": step.entry["rss_kib"],
-                "object_store": e["object_store"],
+                "object_store": step.entry["object_store"],
             })
         })
         .collect();

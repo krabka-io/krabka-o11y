@@ -18,7 +18,7 @@ use krabka_blockstore::{
     read_tenant_log_index_manifest_from_object_store,
     write_tenant_log_index_manifest_to_object_store,
 };
-use krabka_integration::LabelEntry;
+use krabka_integration::MapEntry;
 use krabka_logql::{parse_query, plan_stream_query};
 use krabka_observability::{
     CompactionCommitError, CompactionOffsetCommitter, Offset, PartitionIndex, WalLogRecord,
@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::{
-    Batch, Signal, Stores, TENANTS, WriteOutcome, config::mix, due, err, labels, now_ns, window_ns,
+    Batch, Signal, Stores, TENANTS, WriteOutcome, config::mix, due, err, now_ns, window_ns,
 };
 
 const PREFIX: &str = "observability/logs";
@@ -211,8 +211,8 @@ async fn load(
 ) -> Result<LoadedLogIndex, String> {
     match read_tenant_log_index_manifest_from_object_store(&**store, prefix, tenant).await {
         Ok(indexes) => Ok(LoadedLogIndex {
-            labels: indexes.0,
-            blocks: indexes.1,
+            labels: indexes.labels,
+            blocks: indexes.blocks,
         }),
         Err(LogBlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
             Ok(LoadedLogIndex {
@@ -250,17 +250,17 @@ impl Signal for LogsSignal {
                 let value = mix(self.seed, batch.seq, series, point);
                 records.push(WalLogRecord {
                     tenant: tenant.to_string(),
-                    labels: labels([
-                        LabelEntry {
-                            name: "app".into(),
+                    labels: krabka_integration::ordered_map([
+                        MapEntry {
+                            key: "app".into(),
                             value: "api".into(),
                         },
-                        LabelEntry {
-                            name: "env".into(),
+                        MapEntry {
+                            key: "env".into(),
                             value: "prod".into(),
                         },
-                        LabelEntry {
-                            name: "series".into(),
+                        MapEntry {
+                            key: "series".into(),
                             value: stream.clone(),
                         },
                     ]),

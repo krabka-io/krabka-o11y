@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn frontend_range_execution_runs_against_promql_engine() {
-    let store = crate::test_support::up_api_store(&[(0, 1.0), (60_000, 2.0), (120_000, 3.0)]);
+    let store =
+        crate::test_support::up_api_store("tenant-a", &[(0, 1.0), (60_000, 2.0), (120_000, 3.0)]);
     let engine = PromqlEngine::new(std::sync::Arc::new(store), EngineOpts::default());
     let cache = QueryFrontendCache::default();
 

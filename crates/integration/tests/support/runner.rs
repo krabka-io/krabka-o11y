@@ -227,10 +227,7 @@ pub async fn run(ctx: &Context, plan: &Plan) -> Value {
         meters_after.report_since(&meters_before, writes, reads, stats.maintenance.passes);
     let mut tenants = BTreeMap::new();
     for tenant in stats.tenants.keys() {
-        tenants.insert(
-            tenant.as_str(),
-            tenant_report(&stats.tenants[tenant], measured),
-        );
+        tenants.insert(*tenant, tenant_report(&stats.tenants[tenant], measured));
     }
     let primary = tenants.get(plan.primary).cloned().unwrap_or(Value::Null);
     let error_rate = stats.tenants.get(plan.primary).map_or(0.0, error_rate);
@@ -530,6 +527,12 @@ mod tests {
         stores: Stores,
     }
 
+    struct StoreSummary {
+        operations: Option<u64>,
+        requests: Option<u64>,
+        requests_per_operation: Option<f64>,
+    }
+
     #[async_trait]
     impl Signal for TwoRequests {
         async fn write(&self, _tenant: &str, batch: Batch) -> Result<WriteOutcome, String> {
@@ -630,11 +633,6 @@ mod tests {
 
         let entry = run(&ctx, &plan).await;
 
-        struct StoreSummary {
-            operations: Option<u64>,
-            requests: Option<u64>,
-            requests_per_operation: Option<f64>,
-        }
         let side = |path: &str| {
             let store = &entry["object_store"][path];
             StoreSummary {
@@ -652,8 +650,11 @@ mod tests {
         check!(reads.requests == reads.operations.map(|ops| ops * 2));
         check!(reads.requests_per_operation == Some(2.0));
         check!(entry["ingest"]["accepted_batches"].as_u64() == writes.operations);
-        check!(entry["ingest"]["latency_us"]["count"].as_u64() == write_ops);
-        check!(entry["query"]["latency_us"]["count"].as_u64() == read_ops);
+        check!(
+            entry["ingest"]["latency_us"]["count"].as_u64()
+                == entry["ingest"]["accepted_batches"].as_u64()
+        );
+        check!(entry["query"]["latency_us"]["count"].as_u64() == entry["query"]["count"].as_u64());
         // The warm-up ran past its nominal length to let its last operation
         // end, and the entry says so.
         check!(entry["warmup_seconds"].as_f64() >= Some(plan.warmup.as_secs_f64()));

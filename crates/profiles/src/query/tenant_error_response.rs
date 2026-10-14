@@ -11,6 +11,10 @@ use super::{Response, StatusCode, TenantResolveError};
 pub(crate) fn tenant_error_response(error: &TenantResolveError) -> Response {
     Response::builder()
         .status(StatusCode::BAD_REQUEST)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )
         .body(axum::body::Body::from(error.to_string()))
         .expect("valid tenant error response")
 }

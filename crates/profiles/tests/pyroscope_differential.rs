@@ -3175,7 +3175,7 @@ async fn every_querier_rpc_accepts_binary_connect() -> TestResult {
         let response = client
             .post(format!(
                 "http://127.0.0.1:{}/querier.v1.QuerierService/{}",
-                case.method, krabka.querier_port
+                krabka.querier_port, case.method
             ))
             .header(reqwest::header::CONTENT_TYPE, "application/proto")
             .header("x-scope-orgid", TENANT)
@@ -7746,8 +7746,14 @@ async fn async_lifecycle_compares_recorded_success_and_rejects_result_drift() ->
     use std::sync::atomic::{AtomicUsize, Ordering};
     let id = "12345678-1234-1234-1234-123456789abc";
     let completed = json!({"async":{"requestId":id,"status":"ASYNC_QUERY_STATUS_SUCCESS"},"flamegraph":{"names":["total",FUNC_WORK,FUNC_HOT],"levels":[{"values":["0","140","0","0"]},{"values":["0","140","40","1"]},{"values":["40","100","100","2"]}],"total":"140","maxSelf":"100"}});
-    let expected =
-        json!({"stacks":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]],"total":140,"max_self":100});
+    let expected = json!({
+        "stacks": [
+            {"frames": [FUNC_WORK], "value": 40},
+            {"frames": [FUNC_WORK, FUNC_HOT], "value": 100}
+        ],
+        "total": 140,
+        "max_self": 100
+    });
     let calls = Arc::new(AtomicUsize::new(0));
     let observed_calls = Arc::clone(&calls);
     let captured = completed.clone();

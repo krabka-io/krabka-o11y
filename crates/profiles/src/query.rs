@@ -407,7 +407,10 @@ mod tests {
 
         // The unit is the last character and the count is everything before it.
         let err = parse("1w").unwrap_err().to_string();
-        check!(err.contains("duration unit \"w\""), "got: {err}");
+        check!(
+            err.contains("invalid render relative duration unit 'w'"),
+            "got: {err}"
+        );
         let err = parse("s").unwrap_err().to_string();
         check!(
             err.contains("invalid render relative duration"),

@@ -4,13 +4,13 @@
 use std::{
     collections::BTreeMap,
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 use async_trait::async_trait;
 use krabka_blockstore::{
     BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
-    DEFAULT_BLOCK_READ_MAX, Labels, RetentionWindows, TenantId,
+    DEFAULT_BLOCK_READ_MAX, RetentionWindows, TenantId,
 };
 use krabka_integration::LabelEntry;
 use krabka_metrics::{
@@ -28,7 +28,7 @@ use super::{Batch, Signal, Stores, WriteOutcome, config::mix, err, labels, now_m
 
 const METRIC: &str = "soak_samples";
 
-pub struct MetricsSignal {
+pub(crate) struct MetricsSignal {
     core: super::SignalCore<PromqlEngine<MetricBlockStore>, IngestEnforcer, Limits>,
     deferred: AsyncMutex<DeferredBlockDeletions>,
 }

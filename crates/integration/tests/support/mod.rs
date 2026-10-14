@@ -19,7 +19,7 @@ use std::{
     fmt::Display,
     future::Future,
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
@@ -223,17 +223,10 @@ pub fn now_ms() -> i64 {
 }
 #[macro_export]
 macro_rules! query_signal_engine {
-    ($clock:expr, $start:expr, $body:block) => {
-        async fn query(
-            &self,
-            tenant: &str,
-            window: std::time::Duration,
-            fresh: bool,
-        ) -> Result<u64, String> {
-            let engine = self.engine(fresh).await?;
-            let end = $clock;
-            let start = $start;
-            $body
-        }
-    };
+    ($engine_expr:expr, $clock:expr, $start:expr, |$engine:ident, $end:ident, $start_time:ident| $body:block) => {{
+        let $engine = $engine_expr;
+        let $end = $clock;
+        let $start_time = $start;
+        $body
+    }};
 }
