@@ -326,12 +326,12 @@ async fn a_plan_deletes_nothing_and_logs_every_planned_action() {
         );
         check!(listed_keys(&store).await == before, "{signal}");
         check!(log.len() == planned.len(), "{signal}");
-        for index in 0..log.len() {
+        for entry in &log {
             check!(
-                !log[index].applied
-                    && log[index].tenant == "t"
-                    && log[index].signal == signal
-                    && log[index].phase == RepairLogPhase::Outcome,
+                !entry.applied
+                    && entry.tenant == "t"
+                    && entry.signal == signal
+                    && entry.phase == RepairLogPhase::Outcome,
                 "{signal}"
             );
         }
