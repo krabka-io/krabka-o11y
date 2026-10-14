@@ -282,7 +282,15 @@ def loki_template_seed():
     # identities define the independent timestamp/line ledger for every case.
     source = (ROOT / "crates/observability/tests/loki_differential.rs").read_text()
     parser_streams = source.partition("const PARSER_STREAMS:")[2]
-    stream = re.search(r'labels:\s*&\[\("app", "api"\), \("env", "prod"\), \("format", "logfmt"\)\],\s*entries:\s*&\[(.*?)\n        \],', parser_streams, re.S)
+    stream = re.search(
+        r'labels:\s*&\[\s*'
+        r'StaticLabelPair\s*\{\s*name:\s*"app",\s*value:\s*"api",\s*\},\s*'
+        r'StaticLabelPair\s*\{\s*name:\s*"env",\s*value:\s*"prod",\s*\},\s*'
+        r'StaticLabelPair\s*\{\s*name:\s*"format",\s*value:\s*"logfmt",\s*\},\s*'
+        r'\],\s*entries:\s*&\[(.*?)\n        \],',
+        parser_streams,
+        re.S,
+    )
     if stream is None:
         raise ValueError("reviewed Loki logfmt seed absent")
     literal = r'r(?P<h>#+)"(?P<raw>[\s\S]*?)"(?P=h)|(?P<normal>"(?:\\.|[^"\\])*")'

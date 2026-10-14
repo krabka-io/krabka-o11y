@@ -62,11 +62,6 @@ ruler_evaluation_fn!(
     }
 );
 
-/// Evaluates one tenant without publishing its status. A fenced ruler uses
-/// this form and publishes only after its epoch-bound Kafka transaction commits.
-///
-/// # Errors
-/// Returns the evaluation or sink error without publishing the report.
 ruler_evaluation_fn!(
     /// Evaluates one tenant without publishing its status. A fenced ruler uses
     /// this form and publishes only after its epoch-bound Kafka transaction commits.

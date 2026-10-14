@@ -35,6 +35,11 @@ ignore = [
     # `refined_type`, which `krabka-blockstore` uses. Neither upstream offers
     # a release that drops it.
     "RUSTSEC-2024-0436",
+    # `serde_yaml` depends on unsafe-libyaml 0.2.11, which has no maintained
+    # release to upgrade to. The compatibility fork `serde_yaml_ng` currently
+    # uses the same dependency, so changing YAML frontends would not resolve
+    # this advisory. This is an unmaintained notice, not a reported vulnerability.
+    "RUSTSEC-2024-0449",
 ]
 
 [licenses]
