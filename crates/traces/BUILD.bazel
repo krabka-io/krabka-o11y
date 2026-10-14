@@ -13,9 +13,9 @@ crate_library(
         ["src/**/*.rs"],
         exclude = ["src/bin/**"],
     ) + [
+        "//crates/blockstore:tests/support/compaction_levels.rs",
         "//crates/observability:tests/support/pipeline_bundle_metrics.rs",
         "//crates/observability:tests/support/recording_trace_subscriber.rs",
-        "//crates/blockstore:tests/support/compaction_levels.rs",
     ],
     # `build.rs` generates prost types from these.
     build_script_data = glob(["proto/**"]),
