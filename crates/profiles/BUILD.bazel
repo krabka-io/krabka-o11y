@@ -36,6 +36,7 @@ crate_binary(
     # Test helpers shared with the other signal binaries, reached with
     # `#[path]` from //crates/observability.
     extra_srcs = [
+        "//crates/integration:tests/support/test_broker.rs",
         "//crates/observability:tests/support/compaction_passes.rs",
         "//crates/observability:tests/support/in_process_broker.rs",
         "//crates/observability:tests/support/index_snapshot_flags.rs",
@@ -75,9 +76,13 @@ crate_tests(
     # and the unit tests, reached with `#[path]` from `src/bin/krabka-profiles`
     # and `src`.
     extra_srcs = {
-        "block_builder_drain": ["src/bin/krabka-profiles/wal_topic.rs"],
+        "block_builder_drain": [
+            "//crates/integration:tests/support/test_broker.rs",
+            "src/bin/krabka-profiles/wal_topic.rs",
+        ],
         "block_builder_object_store_retry": [
             "//crates/blockstore:tests/support/hooked_store.rs",
+            "//crates/integration:tests/support/test_broker.rs",
             "src/bin/krabka-profiles/wal_topic.rs",
         ],
         "ingest_query_proptest": [
@@ -85,6 +90,7 @@ crate_tests(
             "//crates/logql:tests/support/unicode_noise.rs",
         ],
         "ingest_roundtrip": [
+            "//crates/integration:tests/support/test_broker.rs",
             "src/bin/krabka-profiles/render_roundtrip.rs",
             "src/bin/krabka-profiles/synthetic_cpu_profile.rs",
             "src/bin/krabka-profiles/wal_topic.rs",

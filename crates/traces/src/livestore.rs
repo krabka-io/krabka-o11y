@@ -198,9 +198,9 @@ mod tests {
                 == vec![
                     TagScope::Resource,
                     TagScope::Span,
+                    TagScope::Intrinsic,
                     TagScope::Event,
                     TagScope::Link,
-                    TagScope::Intrinsic,
                     TagScope::Instrumentation,
                 ],
             "got {scopes:?}"
