@@ -425,7 +425,7 @@ async fn persist_result<S: ProfileStore>(
     for _ in 0..16 {
         let record::LoadedRecord {
             record: metadata,
-            version: version,
+            version,
         } = record::load(state, tenant, id).await?;
         if publish_result(state, metadata, version, response).await? {
             return Ok(());
@@ -1063,7 +1063,7 @@ mod tests {
             publish_pending(&first, &tenant, id, 1, 0).await;
             let record::LoadedRecord {
                 record: mut initial,
-                version: version,
+                version,
             } = record::load(&first, &tenant, id).await.unwrap();
             initial.owner.clone_from(&first.async_runtime.owner);
             check!(
@@ -1073,7 +1073,7 @@ mod tests {
             );
             let record::LoadedRecord {
                 record: saved,
-                version: version,
+                version,
             } = record::load(&first, &tenant, id).await.unwrap();
             let mut stale_answer = pending_response(id);
             stale_answer.r#async.as_mut().unwrap().status = AsyncQueryStatus::Success as i32;
@@ -1090,7 +1090,7 @@ mod tests {
                 .unwrap();
             let record::LoadedRecord {
                 record: mut adopted,
-                version: version,
+                version,
             } = record::load(&second, &tenant, id).await.unwrap();
             adopted.owner.clone_from(&second.async_runtime.owner);
             adopted.adoptions += 1;
@@ -1205,7 +1205,7 @@ mod tests {
             let tenant: TenantId = "tenant-a".parse().unwrap();
             let id = "99999999-9999-4999-8999-999999999999";
             publish_pending(&state, &tenant, id, 1, 0).await;
-            let record::LoadedRecord { record: mut metadata, version: version } = record::load(&state, &tenant, id).await.unwrap();
+            let record::LoadedRecord { record: mut metadata, version } = record::load(&state, &tenant, id).await.unwrap();
             metadata.status = AsyncQueryStatus::Success as i32;
             let seal = record::expiry_path(&tenant, id);
             state.admin_store.put(&seal, bytes.clone().into()).await.unwrap();
@@ -1282,7 +1282,7 @@ mod tests {
         publish_pending(state, tenant, id, heartbeat_ms, 0).await;
         let record::LoadedRecord {
             record: mut metadata,
-            version: version,
+            version,
         } = record::load(state, tenant, id).await.unwrap();
         metadata.owner.clone_from(&state.async_runtime.owner);
         check!(

@@ -27,10 +27,9 @@ fn combine_parent_predicates(
         }
         (Some(predicate), None, ParentPredicateOperator::And)
         | (None, Some(predicate), ParentPredicateOperator::And) => Some(predicate),
-        (None, None, ParentPredicateOperator::And)
+        (None, None, ParentPredicateOperator::And | ParentPredicateOperator::Or)
         | (Some(_), None, ParentPredicateOperator::Or)
-        | (None, Some(_), ParentPredicateOperator::Or)
-        | (None, None, ParentPredicateOperator::Or) => None,
+        | (None, Some(_), ParentPredicateOperator::Or) => None,
     }
 }
 

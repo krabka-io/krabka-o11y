@@ -19,10 +19,7 @@ use krabka_observability::{
     wal_consumer_metrics::WalConsumerMetrics,
     wal_group_assignment::{WalAssignmentWatch, WalRebalanceListener},
 };
-use krabka_pprof::{
-    FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, MappingSymbolizationParts,
-    SymbolDb,
-};
+use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
 use krabka_units::{
     ByteSize, Time, convert::StdDurationExt as _, kibibytes, mebibytes, millis, secs,
 };
@@ -55,7 +52,7 @@ mod tests {
     use assert2::{assert, check};
     use bytes::Bytes;
     use krabka_client_consumer::ConsumerRecord;
-    use krabka_pprof::SymbolDb;
+    use krabka_pprof::{MappingSymbolizationParts, SymbolDb};
     use krabka_units::{convert::TimeExt as _, minutes};
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
 

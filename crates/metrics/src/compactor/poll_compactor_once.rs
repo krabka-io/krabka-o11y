@@ -22,14 +22,18 @@ where
     S: CompactionIndexSink + ?Sized,
     C: CompactionOffsetCommitter + ?Sized,
 {
-    let polled = poll_compaction_wal_records(poller, wal_topic, timeout, metrics).await?;
-    let compacted_records = polled.wal_records.len();
-    let batch =
-        process_compaction_record_batch(block_writer, index_sink, committer, &polled.wal_records)
-            .await?;
+    let poll_result = poll_compaction_wal_records(poller, wal_topic, timeout, metrics).await?;
+    let compacted_records = poll_result.wal_records.len();
+    let batch = process_compaction_record_batch(
+        block_writer,
+        index_sink,
+        committer,
+        &poll_result.wal_records,
+    )
+    .await?;
 
     Ok(CompactionPollResult {
-        polled_records: polled.polled_records,
+        polled_records: poll_result.polled_records,
         compacted_records,
         batch,
     })

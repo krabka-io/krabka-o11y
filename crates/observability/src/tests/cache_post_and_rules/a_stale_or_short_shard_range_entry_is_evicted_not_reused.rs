@@ -95,6 +95,7 @@ pub(crate) fn a_stale_or_short_shard_range_entry_is_evicted_not_reused() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn tenant_shard_range_cache_keeps_later_earlier_and_long_shards() {
     let cases = [
         ShardRangeQueryCase {
@@ -248,8 +249,7 @@ async fn tenant_shard_range_cache_keeps_later_earlier_and_long_shards() {
         let prefix = ObjectPath::from("logs");
         let tenant = "tenant-a";
         let mut ledger: Vec<IndexedShardBlock> = Vec::new();
-        for index in 0..case.ranges.len() {
-            let range = case.ranges[index].clone();
+        for (index, range) in case.ranges.iter().copied().enumerate() {
             let mut labels = BTreeMap::new();
             labels.insert("app".into(), format!("stream-{index}"));
             let mut label_index = LabelIndex::default();
@@ -279,7 +279,7 @@ async fn tenant_shard_range_cache_keeps_later_earlier_and_long_shards() {
             let start_ns = query.range.start_ns;
             let end_ns = query.range.end_ns;
             let request = state
-                .with_request_tenant_index(tenant, query.range.clone())
+                .with_request_tenant_index(tenant, query.range)
                 .await
                 .unwrap();
             let mut expected_labels = LabelIndex::default();
@@ -311,7 +311,7 @@ async fn tenant_shard_range_cache_keeps_later_earlier_and_long_shards() {
                 store.as_ref(),
                 &prefix,
                 tenant,
-                query.range.clone(),
+                query.range,
             )
             .await
             .unwrap();

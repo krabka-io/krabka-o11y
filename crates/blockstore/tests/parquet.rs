@@ -41,8 +41,8 @@ fn mixed_rows(series: &ApiAndWorker) -> Vec<LogRow> {
 }
 
 fn assert_round_trip(
-    descriptor: BlockDescriptor,
-    rows: Vec<LogRow>,
+    descriptor: &BlockDescriptor,
+    rows: &[LogRow],
     key: &BlockKey,
     series: &ApiAndWorker,
 ) {
@@ -67,7 +67,7 @@ fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
     let series = ApiAndWorker { api, worker };
     let descriptor = write_log_block(dir.path(), &key, mixed_rows(&series)).unwrap();
     let rows = read_log_block(dir.path(), &key).unwrap();
-    assert_round_trip(descriptor, rows, &key, &series);
+    assert_round_trip(&descriptor, &rows, &key, &series);
 }
 
 #[test]
@@ -171,5 +171,5 @@ async fn parquet_log_block_round_trips_through_object_store() {
     let rows = read_log_block_from_object_store(&store, &prefix, &key)
         .await
         .unwrap();
-    assert_round_trip(descriptor, rows, &key, &series);
+    assert_round_trip(&descriptor, &rows, &key, &series);
 }

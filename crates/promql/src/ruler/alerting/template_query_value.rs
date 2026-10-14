@@ -25,7 +25,7 @@ pub(crate) fn template_query_value(result: QueryResult) -> TemplateData {
                 let value = template_sample_value(sample.value);
                 let mut labels = BTreeMap::new();
                 for pair in sample.labels.iter() {
-                    labels.insert(pair.name.to_string(), pair.value.as_bytes().to_vec());
+                    labels.insert(pair.name.clone(), pair.value.as_bytes().to_vec());
                 }
                 let mut row = BTreeMap::new();
                 row.insert("Labels".to_owned(), TemplateData::ByteLabels(labels));

@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) fn metric_series_for_group(
     labels: MetricLabels,
-    buckets: Vec<MetricBucket>,
+    buckets: &[MetricBucket],
     metric: &MetricPlan,
     grid: MetricGrid,
     step: Time,
@@ -12,7 +12,7 @@ pub(crate) fn metric_series_for_group(
     let start_ns = grid.start_ns;
     let step_ns = grid.step_ns;
     let exemplars = metric_exemplars(
-        &buckets,
+        buckets,
         metric_policy.max_exemplars_per_series,
         exemplar_range.start_ns,
         exemplar_range.end_ns,
@@ -48,7 +48,7 @@ pub(crate) fn metric_series_for_group(
     if matches!(metric.function, MetricFunction::HistogramOverTime) {
         return histogram_series_for_group(
             labels,
-            &buckets,
+            buckets,
             start_ns,
             step_ns,
             &exemplars,

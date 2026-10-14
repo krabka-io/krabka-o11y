@@ -122,25 +122,27 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
             &mut reordered,
             &mut good,
         );
-        if let Some(width) = star_value(&chars, &mut cursor, values, &mut arg) {
-            match width {
-                Some(width) => {
-                    spec.width = Some(
-                        usize::try_from(width.unsigned_abs())
-                            .expect("validated formatter width fits usize"),
-                    );
-                    if width < 0 {
-                        spec.flags[Spec::MINUS] = true;
-                        spec.flags[Spec::ZERO] = false;
-                    }
+        match star_value(&chars, &mut cursor, values, &mut arg) {
+            StarFormatValue::Integer(width) => {
+                spec.width = Some(
+                    usize::try_from(width.unsigned_abs())
+                        .expect("validated formatter width fits usize"),
+                );
+                if width < 0 {
+                    spec.flags[Spec::MINUS] = true;
+                    spec.flags[Spec::ZERO] = false;
                 }
-                None => output.extend_from_slice(b"%!(BADWIDTH)"),
+                indexed = false;
             }
-            indexed = false;
-        } else {
-            spec.width = number(&chars, &mut cursor);
-            if indexed && spec.width.is_some() {
-                good = false;
+            StarFormatValue::Invalid => {
+                output.extend_from_slice(b"%!(BADWIDTH)");
+                indexed = false;
+            }
+            StarFormatValue::NotPresent => {
+                spec.width = number(&chars, &mut cursor);
+                if indexed && spec.width.is_some() {
+                    good = false;
+                }
             }
         }
         if chars.get(cursor) == Some(&'.') && cursor + 1 < chars.len() {
@@ -156,19 +158,21 @@ pub(crate) fn format_template_printf_bytes(args: &[TemplateRuntimeValue]) -> Vec
                 &mut reordered,
                 &mut good,
             );
-            if let Some(precision) = star_value(&chars, &mut cursor, values, &mut arg) {
-                match precision {
-                    Some(precision) if precision >= 0 => {
-                        spec.precision = Some(
-                            usize::try_from(precision)
-                                .expect("validated formatter precision fits usize"),
-                        );
-                    }
-                    _ => output.extend_from_slice(b"%!(BADPREC)"),
+            match star_value(&chars, &mut cursor, values, &mut arg) {
+                StarFormatValue::Integer(precision) if precision >= 0 => {
+                    spec.precision = Some(
+                        usize::try_from(precision)
+                            .expect("validated formatter precision fits usize"),
+                    );
+                    indexed = false;
                 }
-                indexed = false;
-            } else {
-                spec.precision = Some(number(&chars, &mut cursor).unwrap_or(0));
+                StarFormatValue::Integer(_) | StarFormatValue::Invalid => {
+                    output.extend_from_slice(b"%!(BADPREC)");
+                    indexed = false;
+                }
+                StarFormatValue::NotPresent => {
+                    spec.precision = Some(number(&chars, &mut cursor).unwrap_or(0));
+                }
             }
         }
         if !indexed {
@@ -306,17 +310,26 @@ fn star(values: &[TemplateRuntimeValue], arg: &mut usize) -> Option<i64> {
     (integer.unsigned_abs() <= 1_000_000).then_some(integer)
 }
 
+enum StarFormatValue {
+    NotPresent,
+    Invalid,
+    Integer(i64),
+}
+
 fn star_value(
     chars: &[char],
     cursor: &mut usize,
     values: &[TemplateRuntimeValue],
     arg: &mut usize,
-) -> Option<Option<i64>> {
+) -> StarFormatValue {
     if chars.get(*cursor) != Some(&'*') {
-        return None;
+        return StarFormatValue::NotPresent;
     }
     *cursor += 1;
-    Some(star(values, arg))
+    match star(values, arg) {
+        Some(integer) => StarFormatValue::Integer(integer),
+        None => StarFormatValue::Invalid,
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +398,7 @@ mod tests {
         );
     }
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn go_time_stringer_go_string_and_reflected_fields_keep_their_types() {
         let time = super::super::TemplateTime::parse(
             "2006-01-02 15:04:05.000000000",
@@ -431,8 +445,7 @@ mod tests {
                 expected: "{%!f(uint64=123456789) %!f(int64=63839793845) %!f(*time.Location=<nil>)}",
             },
         ];
-        for case_index in 0..cases.len() {
-            let case = &cases[case_index];
+        for case in &cases {
             check!(printf(case.format, std::slice::from_ref(&value)) == case.expected);
         }
     }

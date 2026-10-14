@@ -6,6 +6,7 @@
 //! `SpanStore` trait.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 mod ast;
 mod duration;
@@ -23,6 +24,11 @@ mod span_matching;
 mod store;
 pub mod testkit;
 
+/// Converts an Arrow array into its string-array representation.
+///
+/// # Errors
+///
+/// Returns the error constructed by `error` when `array` is not a string array.
 pub fn string_array_from_arrow(
     array: &dyn arrow::array::Array,
     error: impl FnOnce() -> TraceqlError,
@@ -72,17 +78,20 @@ pub use store::{
 };
 
 /// Returns whether a matcher selects links, including link-scoped intrinsic keys.
+#[must_use]
 pub fn scope_is_link_matcher(scope: MatchScope, key: &str) -> bool {
     scope == MatchScope::Link || (scope == MatchScope::Intrinsic && key.starts_with("link:"))
 }
 
 /// Returns whether a matcher selects events, including event-scoped intrinsic keys.
+#[must_use]
 pub fn scope_is_event_matcher(scope: MatchScope, key: &str) -> bool {
     scope == MatchScope::Event || (scope == MatchScope::Intrinsic && key.starts_with("event:"))
 }
 
 /// Returns whether a legacy Tempo `tags=` key can be interpolated as a
-/// TraceQL attribute without introducing query syntax.
+/// `TraceQL` attribute without introducing query syntax.
+#[must_use]
 pub fn key_is_safe_attribute(key: &str) -> bool {
     !key.is_empty()
         && key.chars().all(|character| {

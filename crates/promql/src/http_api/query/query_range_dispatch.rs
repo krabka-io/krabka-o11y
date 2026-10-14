@@ -1,12 +1,9 @@
-use krabka_observability::service_metrics::RequestOutcome;
-
 use super::{
-    ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery, FrontendRangeRequest, HeaderMap,
-    IntoResponse, MetricStore, PerStepSampleStats, Principal, PrometheusApiState,
-    QueryDispatchRequest, QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid,
+    ApiError, ERASURE_REQUEST_PREFIX, EvaluatedQuery, FrontendRangeRequest, IntoResponse,
+    MetricStore, PerStepSampleStats, QueryDispatchRequest, RangeQueryParams, Response, StepGrid,
     TimeExt, authorized_query_tenant, check_range_resolution, collect_query_sample_stats,
-    duration_param, enforce_query_range_limit, evaluated_query_response,
-    execute_range_query_frontend, has_erasure_requests, timestamp_ms, validate_timestamp_range,
+    duration_param, enforce_query_range_limit, execute_range_query_frontend, has_erasure_requests,
+    timestamp_ms, validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
@@ -96,7 +93,7 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
                 .await
         }
     };
-    let mut evaluated = if stats_requested {
+    let evaluated = if stats_requested {
         let per_step = if per_step_stats {
             PerStepSampleStats::Include(StepGrid {
                 start: start_ms,

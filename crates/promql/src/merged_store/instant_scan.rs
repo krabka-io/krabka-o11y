@@ -61,6 +61,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
     ///
     /// # Errors
     /// Returns an error when label matchers or cold metadata are invalid.
+    #[allow(clippy::too_many_lines)]
     pub async fn try_latest_float_scan(
         &self,
         tenant: &str,

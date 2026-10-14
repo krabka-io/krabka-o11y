@@ -1,5 +1,3 @@
-#[cfg(test)]
-use super::CompareGroup;
 use super::{
     BTreeMap, COL_SPAN_ID, COL_TRACE_ID, CompareAttributeKey, CompareCountKey, CompareCounts,
     CompareRegexCache, CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange, RecordBatch,

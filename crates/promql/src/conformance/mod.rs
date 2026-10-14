@@ -268,11 +268,10 @@ pub mod testkit {
                     // map keyed by the series, so the second line replaces the
                     // first rather than colliding with it at the same timestamps.
                     let mut last_definition = BTreeMap::new();
-                    for index in 0..series.len() {
-                        last_definition.insert(series[index].metric.as_str(), index);
+                    for (index, item) in series.iter().enumerate() {
+                        last_definition.insert(item.metric.as_str(), index);
                     }
-                    for index in 0..series.len() {
-                        let load_series = &series[index];
+                    for (index, load_series) in series.iter().enumerate() {
                         if last_definition.get(load_series.metric.as_str()) != Some(&index) {
                             continue;
                         }
@@ -1429,8 +1428,7 @@ pub mod testkit {
     ) -> Result<Vec<TimestampedSample>> {
         let step_ms = step.millis_i64();
         let mut samples = Vec::new();
-        for index in 0..line.values.len() {
-            let sample = &line.values[index];
+        for (index, sample) in line.values.iter().enumerate() {
             let timestamp =
                 start_ms + i64::try_from(index).expect("sample index fits i64") * step_ms;
             match sample {

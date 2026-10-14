@@ -9,7 +9,7 @@ use num_traits::ToPrimitive as _;
 use crate::metricsgen::{
     checkpoint::{CheckpointCodecError, encode_checkpoint_key, parse_checkpoint_key},
     config::MetricsGenConfig,
-    contract::{SpanAttribute, SpanKind, SpanRecord, StatusCode},
+    contract::{SpanKind, SpanRecord, StatusCode},
     series::{Series, SeriesSample, sorted_labels},
 };
 
@@ -321,6 +321,7 @@ mod tests {
 
     use super::*;
     use crate::metricsgen::{
+        SpanAttribute,
         config::MetricsGenConfig,
         contract::{SpanKind, SpanRecord, StatusCode},
         series::{Series, SeriesSample},

@@ -13,16 +13,12 @@ pub(crate) fn parse_leading_metric_vector_group_modifier(
             continue;
         };
         let rest = rest.trim_start();
-        let labels;
-        let remaining;
-        if rest.starts_with('(') {
+        let (labels, remaining) = if rest.starts_with('(') {
             let parsed = parse_leading_label_list(rest)?;
-            labels = parsed.labels;
-            remaining = parsed.remaining;
+            (parsed.labels, parsed.remaining)
         } else {
-            labels = Vec::new();
-            remaining = rest;
-        }
+            (Vec::new(), rest)
+        };
         let group = match modifier {
             "group_left" => MetricVectorGroupModifier::Left(labels),
             "group_right" => MetricVectorGroupModifier::Right(labels),

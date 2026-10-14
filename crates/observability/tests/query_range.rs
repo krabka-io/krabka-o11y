@@ -1,5 +1,7 @@
 //! The range query endpoint, over both stream and matrix results.
 
+#![allow(clippy::items_after_statements)]
+
 mod support;
 
 use std::collections::BTreeMap;

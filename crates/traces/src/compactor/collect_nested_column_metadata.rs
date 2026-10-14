@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, BTreeSet, ListArray, RecordBatch, StructArray, TagCatalog, TracesError,
-    collect_nested_metadata, optional_list_column,
+    BTreeMap, BTreeSet, RecordBatch, StructArray, TagCatalog, TracesError, collect_nested_metadata,
+    optional_list_column,
 };
 
 pub(crate) fn collect_nested_column_metadata(

@@ -332,6 +332,7 @@ impl<'a> QueryParameter<'a> {
 }
 
 #[derive(Clone, Copy)]
+#[allow(clippy::struct_field_names)]
 struct RangeBounds {
     start_ms: i64,
     end_ms: i64,
@@ -392,6 +393,7 @@ async fn wait_data(client: &Client, url: &url::Url, tenant: &str, expected: &Val
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn matrix(series: Value) -> Value {
     json!({ "resultType": "matrix", "result": series })
 }
@@ -1277,6 +1279,7 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
 
 #[tokio::test]
 #[ignore = "requires the Bazel Docker deployment"]
+#[allow(clippy::too_many_lines)]
 async fn otlp_gauges_counters_and_histograms_preserve_translation_and_metadata() -> TestResult {
     use opentelemetry_proto::tonic::{
         common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value},

@@ -227,8 +227,7 @@ fn arb_matching(allow_group: bool) -> impl Strategy<Value = String> {
         )
             .prop_map(|(kind, labels, group_kind)| {
                 let group = group_kind
-                    .map(|group| format!(" {group} ({})", labels[1]))
-                    .unwrap_or_default();
+                    .map_or_default(|group| format!(" {group} ({})", labels[1]));
                 format!(" {kind} ({}){group}", labels[0])
             })
             .boxed(),
@@ -413,8 +412,7 @@ fn the_formatter_sorts_a_selectors_matchers() {
             expected: r#"up{instance="a",job="api"}"#,
         },
     ];
-    for case_index in 0..cases.len() {
-        let case = &cases[case_index];
+    for case in &cases {
         let rendered = parse_promql(case.query)
             .expect("the query parses")
             .to_string();

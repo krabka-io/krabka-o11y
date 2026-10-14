@@ -14,9 +14,9 @@ pub(crate) fn histogram_series(
         let mut point_series = classic_histogram_series(
             point,
             &PointFamily {
-                name: &name,
+                name,
                 resource_attributes: scope.resource_attributes,
-                metadata: Some(&metadata),
+                metadata: Some(metadata),
                 strategy: scope.strategy,
             },
         )?;

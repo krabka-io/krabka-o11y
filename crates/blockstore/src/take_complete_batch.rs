@@ -21,6 +21,11 @@ impl BufferedRecordBatches {
         push_buffered_batch(&mut self.pending, &mut self.rows, batch);
     }
 
+    /// Takes buffered rows through the last complete group.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `last_group_start` or `map_concat_error`.
     pub fn take_complete<E>(
         &mut self,
         min_rows: usize,
@@ -37,6 +42,12 @@ impl BufferedRecordBatches {
         )
     }
 
+    /// Takes all remaining buffered rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `map_concat_error` when buffered batches
+    /// cannot be concatenated.
     pub fn take_rest<E>(
         &mut self,
         map_concat_error: impl FnOnce(ArrowError) -> E,
@@ -54,6 +65,10 @@ impl BufferedRecordBatches {
 ///
 /// `last_group_start` returns the row where the final, possibly incomplete
 /// group starts. Rows from that point remain buffered for the next call.
+///
+/// # Errors
+///
+/// Returns the error produced by `last_group_start` or `map_concat_error`.
 pub fn take_complete_batch<E>(
     schema: &SchemaRef,
     pending: &mut Vec<RecordBatch>,
@@ -84,6 +99,11 @@ pub fn push_buffered_batch(pending: &mut Vec<RecordBatch>, rows: &mut usize, bat
 }
 
 /// Takes and clears every buffered row after its final group becomes complete.
+///
+/// # Errors
+///
+/// Returns the error produced by `map_concat_error` when buffered batches
+/// cannot be concatenated.
 pub fn take_buffered_rest<E>(
     schema: &SchemaRef,
     pending: &mut Vec<RecordBatch>,

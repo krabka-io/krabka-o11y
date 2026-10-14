@@ -11,6 +11,7 @@ mod tests {
     use crate::wire::test_support::declared_length_bomb;
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn a_sample_retains_timestamp_value_and_start_timestamp() {
         use super::DecodedSample;
 

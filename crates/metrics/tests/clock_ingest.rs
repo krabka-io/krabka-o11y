@@ -146,7 +146,7 @@ fn projection(
         let labels = series
             .labels
             .iter()
-            .map(|pair| MetricLabelPair::new(pair.name.clone(), pair.value.clone().into()))
+            .map(|pair| MetricLabelPair::new(pair.name, pair.value.into()))
             .collect();
         projection.insert(labels, sample.value);
     }

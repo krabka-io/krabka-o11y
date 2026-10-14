@@ -127,7 +127,7 @@ delegate_object_store!(ThrottlingStore, [get_opts] {
         self.attempts.fetch_add(1, Ordering::SeqCst);
         let refused = self
             .remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             })
             .is_ok();

@@ -7,6 +7,7 @@
 //! `ProfileIndex`. The compactor merges those blocks and deletes the ones
 //! nothing needs any more; see [`lifecycle`].
 #![forbid(unsafe_code)]
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 pub mod all;
 pub mod blockbuilder;

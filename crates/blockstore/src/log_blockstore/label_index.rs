@@ -103,18 +103,15 @@ impl LabelIndex {
 
     #[must_use]
     pub fn tenant_series(&self, tenant: &str) -> Vec<TenantSeries> {
-        self.series
-            .get(tenant)
-            .map(|series| {
-                series
-                    .keys()
-                    .map(|fingerprint| TenantSeries {
-                        fingerprint: *fingerprint,
-                        labels: series[fingerprint].clone(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.series.get(tenant).map_or_default(|series| {
+            series
+                .keys()
+                .map(|fingerprint| TenantSeries {
+                    fingerprint: *fingerprint,
+                    labels: series[fingerprint].clone(),
+                })
+                .collect()
+        })
     }
 
     pub(crate) fn exact_candidates(

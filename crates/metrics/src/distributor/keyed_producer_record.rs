@@ -1,6 +1,6 @@
 use krabka_observability::persisted_format::keyed_persisted_record;
 
-use super::{Bytes, ProducerHeader, ProducerRecord};
+use super::{Bytes, ProducerRecord};
 
 #[must_use]
 /// Builds a keyed producer record for a compacted topic.

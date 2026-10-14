@@ -49,9 +49,8 @@ pub(crate) fn apply_metric_binary_set_to_loki_result(
             (MetricBinarySetOp::And | MetricBinarySetOp::Unless, Some(right_series)) => {
                 apply_metric_binary_set_to_series(left_series, right_series, op)
             }
-            (MetricBinarySetOp::Unless, None) => true,
+            (MetricBinarySetOp::Unless, None) | (MetricBinarySetOp::Or, Some(_)) => true,
             (MetricBinarySetOp::And | MetricBinarySetOp::Or, None) => false,
-            (MetricBinarySetOp::Or, Some(_)) => true,
         },
     );
 }

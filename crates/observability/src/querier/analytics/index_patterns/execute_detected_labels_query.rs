@@ -29,9 +29,9 @@ pub(crate) async fn execute_detected_labels_query(
     for labels in label_sets {
         for label in labels {
             values_by_label
-                .entry(label.0.to_owned())
+                .entry(label.0.clone())
                 .or_default()
-                .insert(label.1.to_owned());
+                .insert(label.1.clone());
         }
     }
     if values_by_label.is_empty() {

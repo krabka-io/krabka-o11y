@@ -757,14 +757,13 @@ fn label_values_tenant(body: &str) -> String {
     values
         .get("names")
         .and_then(Value::as_array)
-        .map(|names| {
+        .map_or_default(|names| {
             names
                 .iter()
                 .filter_map(Value::as_str)
                 .collect::<Vec<_>>()
                 .join(",")
         })
-        .unwrap_or_default()
 }
 
 /// A store with one sample for `anonymous` and one for `tenant-a`. Each

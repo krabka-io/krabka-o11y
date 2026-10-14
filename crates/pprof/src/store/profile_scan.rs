@@ -13,6 +13,10 @@ pub struct ProfileScan {
 
 impl ProfileScan {
     /// Registers a profile sample table and pairs it with its symbol source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProfileError::Store`] if the table cannot be registered.
     pub fn from_mem_table(
         table: MemTable,
         symbols: Arc<dyn SymbolSource>,

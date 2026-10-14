@@ -211,6 +211,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn assert_accepted_push(response: Response, sink: &RecordingSink, span_name: &str) {
         check!(response.status() == StatusCode::ACCEPTED);
         assert2::assert!(sink.count() == 1);

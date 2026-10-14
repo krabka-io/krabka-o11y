@@ -29,5 +29,5 @@ pub(crate) async fn prometheus_alerts(
         }
         None => Vec::new(),
     };
-    prometheus_ruler_success(json!({ "alerts": alerts }))
+    prometheus_ruler_success(&json!({ "alerts": alerts }))
 }

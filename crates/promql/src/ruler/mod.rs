@@ -25,9 +25,10 @@ pub use alerting::{
 };
 #[cfg(test)]
 use config::parse_duration;
+#[cfg(test)]
+pub(crate) use evaluation::RulerRuleSetEvaluationRequest;
 pub use evaluation::{
-    RulerRuleSetEvaluationRequest, evaluate_and_persist_ruler_rule_group,
-    evaluate_and_persist_ruler_rule_set,
+    evaluate_and_persist_ruler_rule_group, evaluate_and_persist_ruler_rule_set,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
     evaluate_and_persist_ruler_rule_set_with_report, evaluate_ruler_rule_group,
     evaluate_ruler_rule_set,

@@ -211,8 +211,7 @@ fn header(record: &AuditRecord, key: &str) -> Option<String> {
 /// next number, and its `prev_hash` is the head after the record before it.
 fn check_chain(records: &[AuditRecord]) {
     let mut head = GENESIS_HEAD;
-    for index in 0..records.len() {
-        let record = &records[index];
+    for (index, record) in records.iter().enumerate() {
         let seq = u64::try_from(index).expect("record count fits the audit sequence");
         let prev_hash = header(record, "prev_hash").and_then(|hex| from_hex32(&hex));
         check!(

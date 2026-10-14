@@ -177,7 +177,7 @@ mod tests {
         let mut cache = std::collections::HashMap::new();
         let mut first = record(10);
         apply_cumulative_delta(&mut first, "tenant-a", &mut cache);
-        assert!(first.samples.is_empty());
+        assert_eq!(first.samples.len(), 0);
 
         let mut second = record(16);
         apply_cumulative_delta(&mut second, "tenant-a", &mut cache);

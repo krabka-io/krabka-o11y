@@ -560,7 +560,7 @@ mod tests {
             .map(|id| {
                 labels(&[
                     LabelPair::new("app", "api"),
-                    LabelPair::new("series", &id.to_string()),
+                    LabelPair::new("series", id.to_string()),
                 ])
             })
             .collect::<Vec<_>>();
@@ -1142,9 +1142,9 @@ mod tests {
         let saved = saved_index().await;
         let store = &saved.store;
         let key = &saved.key;
-        let before = Index::load(&store, &key).await.unwrap();
+        let before = Index::load(store, key).await.unwrap();
 
-        let loaded = Index::load(&store, &key).await.unwrap();
+        let loaded = Index::load(store, key).await.unwrap();
         let got = loaded
             .resolve("t", &[LabelMatcher::new("app", MatchOp::Eq, "api")])
             .unwrap();
@@ -1193,11 +1193,8 @@ mod tests {
 
         // And a second save from the loaded copy is the same index again,
         // which is what a writer restarting from storage does.
-        loaded
-            .save_with_shard_width(&store, &key, 100)
-            .await
-            .unwrap();
-        let again = Index::load(&store, &key).await.unwrap();
+        loaded.save_with_shard_width(store, key, 100).await.unwrap();
+        let again = Index::load(store, key).await.unwrap();
         assert2::assert!(again.all_blocks_unscoped() == before.all_blocks_unscoped());
         assert2::assert!(again.label_names("t") == before.label_names("t"));
     }
@@ -1210,11 +1207,11 @@ mod tests {
 
         // The cap is per shard now that an index is many objects, so the
         // rejection has to name the shard and its own size, not the index.
-        let shard = one_shard_object(&store).await;
+        let shard = one_shard_object(store).await;
         let size = store.head(&shard).await.unwrap().size;
         assert2::assert!(size > 1);
 
-        let got = Index::load_with_cap(&store, &key, bytes(1)).await;
+        let got = Index::load_with_cap(store, key, bytes(1)).await;
         let Err(BlockStoreError::InvalidBlock(msg)) = got else {
             panic!("expected InvalidBlock for an oversized index shard");
         };
@@ -1223,7 +1220,7 @@ mod tests {
         );
 
         // A cap at or above every shard still loads.
-        let loaded = Index::load_with_cap(&store, &key, mebibytes(1))
+        let loaded = Index::load_with_cap(store, key, mebibytes(1))
             .await
             .unwrap();
         assert2::assert!(loaded.block_count("t") == 2);
@@ -1263,7 +1260,7 @@ mod tests {
         // decode it, and one that pruned it by the span in its key never sees
         // the bytes.
         let far = Path::from(index_shard_object_key(
-            &key,
+            key,
             "t",
             IndexShardRange::new(1_000, 1_099),
         ));
@@ -1272,13 +1269,11 @@ mod tests {
             .await
             .unwrap();
 
-        let near = Index::load_for_range(&store, &key, "t", 0, 60)
-            .await
-            .unwrap();
+        let near = Index::load_for_range(store, key, "t", 0, 60).await.unwrap();
         assert2::assert!(near.blocks_in_range("t", 0, 2_000) == vec!["b1.parquet".to_string()]);
 
         // The same load over the whole span does read it, and says so.
-        let whole = Index::load_for_range(&store, &key, "t", 0, 2_000).await;
+        let whole = Index::load_for_range(store, key, "t", 0, 2_000).await;
         let Err(BlockStoreError::InvalidBlock(msg)) = whole else {
             panic!("expected the corrupt shard to be reported");
         };
@@ -1293,9 +1288,7 @@ mod tests {
         let api_prod =
             labels(&[LabelPair::new("app", "api"), LabelPair::new("env", "prod")]).fingerprint();
 
-        let loaded = Index::load_for_range(&store, &key, "t", 0, 60)
-            .await
-            .unwrap();
+        let loaded = Index::load_for_range(store, key, "t", 0, 60).await.unwrap();
 
         // The labels, the postings rebuilt from them, and the block-to-series
         // pairs all survive the shard the range selected.
@@ -1345,29 +1338,26 @@ mod tests {
         let saved = saved_index().await;
         let store = &saved.store;
         let key = &saved.key;
-        let before = shard_object_keys(&store).await;
+        let before = shard_object_keys(store).await;
         assert2::assert!(before.len() == 2);
 
         // Drop the later block and save again. The shard that held it is no
         // longer part of the index, and leaving it behind would make the next
         // whole-index load resurrect the block.
-        let mut index = Index::load(&store, &key).await.unwrap();
+        let mut index = Index::load(store, key).await.unwrap();
         index.replace_blocks("t", &["b2.parquet".to_string()], &[]);
-        index
-            .save_with_shard_width(&store, &key, 100)
-            .await
-            .unwrap();
+        index.save_with_shard_width(store, key, 100).await.unwrap();
 
-        let after = shard_object_keys(&store).await;
+        let after = shard_object_keys(store).await;
         assert2::assert!(
             after
                 == vec![Path::from(index_shard_object_key(
-                    &key,
+                    key,
                     "t",
                     IndexShardRange::new(0, 99),
                 ))]
         );
-        let reloaded = Index::load(&store, &key).await.unwrap();
+        let reloaded = Index::load(store, key).await.unwrap();
         assert2::assert!(reloaded.blocks_in_range("t", 0, 2_000) == vec!["b1.parquet".to_string()]);
     }
 
@@ -1577,7 +1567,7 @@ mod tests {
         let saved = saved_index().await;
         let store = &saved.store;
         let key = &saved.key;
-        let shard = one_shard_object(&store).await;
+        let shard = one_shard_object(store).await;
 
         // A shard truncated mid-body: the magic and version are right, so this
         // reaches the body decoder rather than the header check.
@@ -1590,7 +1580,7 @@ mod tests {
             .await
             .unwrap();
 
-        let Err(BlockStoreError::InvalidBlock(msg)) = Index::load(&store, &key).await else {
+        let Err(BlockStoreError::InvalidBlock(msg)) = Index::load(store, key).await else {
             panic!("expected a truncated shard to be reported");
         };
         assert2::assert!(msg.starts_with(&format!("index shard `{shard}`: ")));

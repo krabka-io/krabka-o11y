@@ -12,6 +12,7 @@ pub(crate) struct SpanEventLink<'a> {
     pub(crate) link: Option<&'a LinkRef>,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct RawAttributeSelection {
     pub(crate) all_events: bool,
     pub(crate) all_links: bool,

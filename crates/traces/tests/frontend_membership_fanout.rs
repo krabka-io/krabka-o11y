@@ -29,22 +29,15 @@ use axum::{
     body::Body,
     extract::State,
     http::{Response, StatusCode, Uri},
-    response::IntoResponse as _,
     routing::get,
 };
 use krabka_observability::RoleReadiness;
 use krabka_traces::frontend::{
     HttpQuerier, HttpReadinessProbe, MembershipView, QUERIER_MEMBERSHIP_GATE, QueryFrontend,
-    ReadinessProbe,
-    config::FrontendConfig,
-    job::{BlockMetaInfo, RowGroupInfo, TraceIndexCatalog},
-    refresh_membership, run_membership_refresh,
-    server::router_with_backend,
+    ReadinessProbe, config::FrontendConfig, job::TraceIndexCatalog, refresh_membership,
+    run_membership_refresh, server::router_with_backend,
 };
-use krabka_units::{
-    ByteSize,
-    convert::{ByteSizeExt as _, TimeExt as _},
-};
+use krabka_units::convert::TimeExt as _;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 

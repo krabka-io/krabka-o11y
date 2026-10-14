@@ -54,5 +54,5 @@ async fn absent_dynamic_index_is_an_empty_block_index(use_shards: bool) {
         "expected Ok for absent cold index, got: {:?}",
         result.err()
     );
-    assert!(result.unwrap().block_index.blocks().is_empty());
+    assert_eq!(result.unwrap().block_index.blocks().len(), 0);
 }

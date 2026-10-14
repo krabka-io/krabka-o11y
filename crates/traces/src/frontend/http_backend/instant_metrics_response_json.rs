@@ -141,11 +141,11 @@ mod tests {
     fn nonfinite_values_roundtrip(token: &str, expected: f64) {
         let reply: InstantMetricsResponseJson =
             serde_json::from_value(json!({"series":[{"value":token}]})).unwrap();
-        ::core::assert!(
+        ::core::assert_eq!(
             reply.into_partial(0).unwrap().response.series[0].samples[0]
                 .value
-                .to_bits()
-                == expected.to_bits()
+                .to_bits(),
+            expected.to_bits()
         );
     }
 }

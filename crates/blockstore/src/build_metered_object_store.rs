@@ -8,6 +8,11 @@ use crate::{
 };
 
 /// Opens, meters, and verifies an object store URL.
+///
+/// # Errors
+///
+/// Returns an error if the URL cannot be parsed, the object store cannot be
+/// opened, or the store fails its semantic verification.
 pub async fn build_metered_object_store(
     url: &str,
     metrics: ObjectStoreMetrics,

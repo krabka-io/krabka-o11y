@@ -70,15 +70,15 @@ pub(crate) async fn span_exemplars_from_scan(
     let label_pairs = types_label_pairs(labels.to_vec());
     let mut out: BTreeMap<i64, Vec<pb::types::v1::Exemplar>> = BTreeMap::new();
     for span_entry in per_span {
-        let span = span_entry.0;
+        let span_key = span_entry.0;
         let value = span_entry.1;
-        out.entry(step_bucket_ms(span.timestamp, step))
+        out.entry(step_bucket_ms(span_key.timestamp, step))
             .or_default()
             .push(pb::types::v1::Exemplar {
-                timestamp: span.timestamp,
+                timestamp: span_key.timestamp,
                 profile_id: String::new(),
-                span_id: span_id_hex_from_u64(span.span_id),
-                trace_id: span.trace_id.map(hex::encode).unwrap_or_default(),
+                span_id: span_id_hex_from_u64(span_key.span_id),
+                trace_id: span_key.trace_id.map_or_default(hex::encode),
                 value,
                 labels: label_pairs.clone(),
             });

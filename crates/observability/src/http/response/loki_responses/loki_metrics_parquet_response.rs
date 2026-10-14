@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, Float64Array, HttpQueryError, LokiMetricParquetKind, Response, Value,
+    loki_parquet_columns, loki_parquet_labels, loki_parquet_metric_sample,
+    loki_parquet_value_response,
+};
 
 fn append_metric_sample(
     sample: &Value,

@@ -15,8 +15,7 @@ pub(crate) fn for_each_spanned_histogram_count(
 ) {
     let mut index = 0_i32;
     let mut count_index = 0_usize;
-    for span_index in 0..spans.len() {
-        let span = &spans[span_index];
+    for (span_index, span) in spans.iter().enumerate() {
         if span_index == 0 {
             index = span.offset;
         } else {

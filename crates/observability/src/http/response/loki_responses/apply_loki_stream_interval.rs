@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, loki_stream_entry_timestamp, update_loki_stream_values};
 
 pub(crate) fn apply_loki_stream_interval(value: &mut Value, interval: Option<i64>) {
     let Some(interval) = interval else {

@@ -411,6 +411,7 @@ async fn an_otlp_log_reaches_a_query_answer_through_the_live_wal_and_a_block() {
 /// a property of the block builder's per-tenant block keys and of the
 /// querier's tenant filter, not of the storage layout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::items_after_statements)]
 async fn two_tenants_sharing_one_wal_topic_never_read_each_other_lines() {
     let live = LiveBroker::start("__krabka_observability_logs_wal_tenant_loop").await;
     let data_root = TempDir::new().expect("data root");

@@ -40,7 +40,7 @@ mod tests {
     /// its absence) is the scan's licence to skip that block.
     #[test]
     fn skip_reason_separates_the_blocks_fault_from_the_stores() {
-        let cases = vec![
+        let cases = [
             SkipReasonCase {
                 name: "the object is gone",
                 failure: BlockReadFailure::ObjectStore(not_found("b1.parquet")),

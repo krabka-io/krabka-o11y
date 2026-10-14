@@ -16,8 +16,7 @@ fn traceql_case_file(path: &Path) -> datatest_stable::Result<()> {
         .filter(|case| {
             !case.passed
                 && !KNOWN_UNSUPPORTED.iter().any(|unsupported| {
-                    let _reason = unsupported.reason;
-                    case.name.ends_with(unsupported.suffix)
+                    case.name.ends_with(unsupported.suffix) && !unsupported.reason.is_empty()
                 })
         })
         .collect::<Vec<_>>();

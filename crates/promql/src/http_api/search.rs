@@ -114,11 +114,11 @@ struct SearchRequest<'a> {
     kind: SearchKind,
 }
 
-fn search_request<'a>(
+fn search_request(
     caller: RequestCaller,
-    raw_query: Option<&'a str>,
+    raw_query: Option<&str>,
     kind: SearchKind,
-) -> SearchRequest<'a> {
+) -> SearchRequest<'_> {
     SearchRequest {
         caller,
         raw_query,

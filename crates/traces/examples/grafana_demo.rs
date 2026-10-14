@@ -49,17 +49,21 @@ fn base_ns() -> i64 {
     i64::try_from(now).unwrap_or(i64::MAX) - 180_000_000_000 // 3 minutes ago
 }
 
+#[derive(Clone, Copy)]
+#[allow(clippy::struct_field_names)]
 struct SpanIdentity {
     trace_id: u8,
     span_id: u8,
     parent_span_id: Option<u8>,
 }
 
+#[derive(Clone, Copy)]
 struct SpanTiming {
     start_offset_ms: i64,
     duration_ms: i64,
 }
 
+#[derive(Clone, Copy)]
 struct SpanStatus {
     code: i32,
     message: &'static str,
@@ -142,6 +146,7 @@ async fn log_req(req: Request, next: Next) -> AxumResponse {
     resp
 }
 
+#[allow(clippy::too_many_lines)]
 fn demo_store() -> InMemorySpanStore {
     let base = base_ns();
     let mut store = InMemorySpanStore::new();

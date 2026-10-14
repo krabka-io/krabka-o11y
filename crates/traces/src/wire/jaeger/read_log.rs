@@ -7,7 +7,7 @@ pub(crate) fn read_log(input: &mut CompactInput<'_>) -> Result<JaegerLog, WireEr
         match field.field_id {
             1 if field.field_type == T_I64 => out.timestamp_micros = input.read_i64()?,
             2 if field.field_type == T_LIST => {
-                out.fields = input.read_struct_list(read_key_value)?
+                out.fields = input.read_struct_list(read_key_value)?;
             }
             _ => input.skip(field.field_type)?,
         }

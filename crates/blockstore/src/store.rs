@@ -202,8 +202,6 @@ mod tests {
     struct TwoSeriesStore {
         block_store: BlockStore,
         schema: SchemaRef,
-        api: Labels,
-        web: Labels,
     }
 
     async fn two_series_store() -> TwoSeriesStore {
@@ -240,8 +238,6 @@ mod tests {
         TwoSeriesStore {
             block_store: bs,
             schema,
-            api,
-            web,
         }
     }
 
@@ -451,7 +447,7 @@ mod tests {
         let table = &registered.table;
         // Table name is the fixed logical name, not a stub string.
         assert2::assert!(table == "logs");
-        let total = table_line_count(&ctx, &table).await;
+        let total = table_line_count(ctx, table).await;
         assert2::assert!(total == 2);
     }
 
@@ -485,7 +481,7 @@ mod tests {
                 .unwrap();
             let ctx = &registered.context;
             let table = &registered.table;
-            assert2::assert!(table_lines(&ctx, &table).await == ["hello", "world"]);
+            assert2::assert!(table_lines(ctx, table).await == ["hello", "world"]);
         }
     }
 
@@ -501,7 +497,7 @@ mod tests {
         let ctx = &registered.context;
         let table = &registered.table;
         assert2::assert!(table == "logs");
-        let total = table_line_count(&ctx, &table).await;
+        let total = table_line_count(ctx, table).await;
         assert2::assert!(total == 2);
     }
 
@@ -992,7 +988,7 @@ mod tests {
         let registered = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
         let ctx = &registered.context;
         let table = &registered.table;
-        assert2::assert!(table_lines(&ctx, &table).await == ["a1", "a2"]);
+        assert2::assert!(table_lines(ctx, table).await == ["a1", "a2"]);
 
         let schema = log_line_schema();
         let batch = RecordBatch::try_new(
@@ -1012,7 +1008,7 @@ mod tests {
         let registered = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
         let ctx = &registered.context;
         let table = &registered.table;
-        assert2::assert!(table_lines(&ctx, &table).await == ["r1", "r2", "r3"]);
+        assert2::assert!(table_lines(ctx, table).await == ["r1", "r2", "r3"]);
     }
 
     /// The cache is bounded, and the bound is configuration rather than a
@@ -1057,7 +1053,7 @@ mod tests {
             .unwrap();
         let ctx = &registered.context;
         let table = &registered.table;
-        let total = table_line_count(&ctx, &table).await;
+        let total = table_line_count(ctx, table).await;
         assert2::assert!(total == 0);
     }
 }

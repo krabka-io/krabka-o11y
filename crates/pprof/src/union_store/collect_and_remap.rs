@@ -147,7 +147,11 @@ mod tests {
             let number = row_numbers[index];
             let row = &rows[index];
             types
-                .append(if number % 2 == 0 { "cpu" } else { "memory" })
+                .append(if number.is_multiple_of(2) {
+                    "cpu"
+                } else {
+                    "memory"
+                })
                 .unwrap();
             for identity in row {
                 identities.values().append_option(identity.as_deref());

@@ -1,6 +1,7 @@
 //! Tempo-compatible traces service for Krabka.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 use arrow::array::Array as _;
 

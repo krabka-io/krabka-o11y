@@ -19,10 +19,9 @@ pub(crate) fn dim_key(
         let label = prometheus_label_name(name);
         if !label.is_empty()
             && let Some(value) = span_attr(span, name)
+            && !labels.iter().any(|existing| existing.key == label)
         {
-            if !labels.iter().any(|existing| existing.key == label) {
-                labels.push(krabka_traceql::MetricLabel::new(label, value));
-            }
+            labels.push(krabka_traceql::MetricLabel::new(label, value));
         }
     }
     for mapping in &config.dimension_mappings {
@@ -32,13 +31,14 @@ pub(crate) fn dim_key(
             .filter_map(|name| span_attr(span, name))
             .collect::<Vec<_>>();
         let name = prometheus_label_name(&mapping.name);
-        if !name.is_empty() && !values.is_empty() {
-            if !labels.iter().any(|existing| existing.key == name) {
-                labels.push(krabka_traceql::MetricLabel::new(
-                    name,
-                    values.join(&mapping.join),
-                ));
-            }
+        if !name.is_empty()
+            && !values.is_empty()
+            && !labels.iter().any(|existing| existing.key == name)
+        {
+            labels.push(krabka_traceql::MetricLabel::new(
+                name,
+                values.join(&mapping.join),
+            ));
         }
     }
     labels.sort();

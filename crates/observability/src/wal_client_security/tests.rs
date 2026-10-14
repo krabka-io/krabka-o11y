@@ -313,7 +313,7 @@ fn every_flag_parses_from_the_command_line_and_from_the_environment() {
         .iter()
         .map(|name| {
             let setting = EnvironmentSetting {
-                name: *name,
+                name,
                 value: values[value_index],
             };
             value_index += 1;

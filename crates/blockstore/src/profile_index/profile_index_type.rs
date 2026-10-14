@@ -180,32 +180,28 @@ impl ProfileIndex {
     pub fn profile_types(&self, tenant: &str) -> Vec<String> {
         self.extras
             .get(tenant)
-            .map(|extras| extras.profile_types.keys().cloned().collect())
-            .unwrap_or_default()
+            .map_or_default(|extras| extras.profile_types.keys().cloned().collect())
     }
 
     #[must_use]
     pub fn profile_types_for_time(&self, tenant: &str, min_ts: i64, max_ts: i64) -> Vec<String> {
-        self.extras
-            .get(tenant)
-            .map(|extras| {
-                extras
-                    .profile_types
-                    .keys()
-                    .filter(|profile_type| {
-                        !self
-                            .candidate_blocks_for_series(
-                                tenant,
-                                &extras.profile_types[*profile_type],
-                                min_ts,
-                                max_ts,
-                            )
-                            .is_empty()
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.extras.get(tenant).map_or_default(|extras| {
+            extras
+                .profile_types
+                .keys()
+                .filter(|profile_type| {
+                    !self
+                        .candidate_blocks_for_series(
+                            tenant,
+                            &extras.profile_types[*profile_type],
+                            min_ts,
+                            max_ts,
+                        )
+                        .is_empty()
+                })
+                .cloned()
+                .collect()
+        })
     }
 
     /// # Errors
@@ -241,17 +237,14 @@ impl ProfileIndex {
         tenant: &str,
         fps: &BTreeSet<SeriesFingerprint>,
     ) -> Vec<String> {
-        self.extras
-            .get(tenant)
-            .map(|extras| {
-                extras
-                    .profile_types
-                    .keys()
-                    .filter(|profile_type| !extras.profile_types[*profile_type].is_disjoint(fps))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.extras.get(tenant).map_or_default(|extras| {
+            extras
+                .profile_types
+                .keys()
+                .filter(|profile_type| !extras.profile_types[*profile_type].is_disjoint(fps))
+                .cloned()
+                .collect()
+        })
     }
 
     /// # Errors

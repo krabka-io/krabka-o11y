@@ -1286,6 +1286,7 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn compactor_runtime_splits_mixed_tenant_wal_batch_into_tenant_blocks() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
@@ -2992,6 +2993,7 @@ async fn the_retention_period_flag_sweeps_without_an_overrides_file() {
 /// By default the store is in memory. See `docs/object_store_contract.md` to
 /// run it against a provider.
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     let mut lifecycle = LifecycleStore::open("logs", "block_lifecycle");
     let store = lifecycle.store();

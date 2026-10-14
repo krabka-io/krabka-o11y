@@ -7,10 +7,7 @@ pub(crate) fn otlp_span(trace_id: [u8; 16], span: &SpanRef) -> OtlpSpan {
     OtlpSpan {
         trace_id: trace_id.to_vec(),
         span_id: span.span_id.to_vec(),
-        parent_span_id: span
-            .parent_span_id
-            .map(|parent| parent.to_vec())
-            .unwrap_or_default(),
+        parent_span_id: span.parent_span_id.map_or_default(|parent| parent.to_vec()),
         name: span.name.clone(),
         kind: span.kind,
         start_time_unix_nano: span.start_time_unix_nano,

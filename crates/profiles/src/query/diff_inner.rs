@@ -1,7 +1,7 @@
 use super::{
-    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileError, ProfileStore, QuerierState,
-    SampleSelector, connect_error, merge_profile_id_selector, parse_span_selectors,
-    parse_trace_selectors, pb, stack_trace_call_sites,
+    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileError, ProfileStore, SampleSelector,
+    connect_error, merge_profile_id_selector, parse_span_selectors, parse_trace_selectors, pb,
+    stack_trace_call_sites,
 };
 
 pub(crate) async fn diff_inner<S>(

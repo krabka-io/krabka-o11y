@@ -56,8 +56,7 @@ pub(crate) fn assemble_range_fold_grid(
                 )
             })?;
         let fingerprints = row_fingerprints(batch, labels_from_rate_batch);
-        for row in 0..fingerprints.len() {
-            let fp = fingerprints[row];
+        for (row, fp) in fingerprints.iter().copied().enumerate() {
             if values.is_null(row) {
                 continue;
             }
@@ -71,8 +70,8 @@ pub(crate) fn assemble_range_fold_grid(
         }
     }
     let mut out: Vec<Vec<GridPoint>> = Vec::with_capacity(steps.len());
-    for index in 0..steps.len() {
-        let step = std::mem::take(&mut steps[index]);
+    for (index, step) in steps.iter_mut().enumerate() {
+        let step = std::mem::take(step);
         let offset = i64::try_from(index)
             .ok()
             .and_then(|index| index.checked_mul(report_grid.step))

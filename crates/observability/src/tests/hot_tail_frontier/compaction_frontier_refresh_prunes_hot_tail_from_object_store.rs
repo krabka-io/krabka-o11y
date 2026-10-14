@@ -453,7 +453,11 @@ fn indexes_match(
     labels: &LabelIndex,
     blocks: &BlockIndex,
 ) -> bool {
-    actual.labels == *labels && actual.blocks == *blocks
+    let krabka_blockstore::LogIndexes {
+        labels: actual_labels,
+        blocks: actual_blocks,
+    } = actual;
+    actual_labels == *labels && actual_blocks == *blocks
 }
 
 struct ShardAddition {

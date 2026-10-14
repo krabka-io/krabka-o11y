@@ -9,5 +9,5 @@ pub(crate) fn merge_named_stats(
     for stat in left.into_iter().chain(right) {
         *values.entry(stat.name).or_default() += stat.value;
     }
-    named_stats(values)
+    named_stats(&values)
 }

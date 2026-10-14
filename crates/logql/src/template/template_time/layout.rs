@@ -75,6 +75,7 @@ struct OffsetPattern {
 
 /// Go1.26.5 time.nextStdChunk tokens, including lowercase-word and mixed
 /// fractional-digit guards. The caller emits one literal character otherwise.
+#[allow(clippy::too_many_lines)]
 pub(super) fn token(rest: &str) -> Option<TokenMatch> {
     for entry in [
         TokenPattern {

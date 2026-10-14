@@ -1,5 +1,8 @@
 use super::{NanSamples, SeriesNormalizeSettings};
-use crate::extension::physical_exec_common::*;
+use crate::extension::physical_exec_common::{
+    Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, Float64Array,
+    PlanProperties, RecordBatch, RowSelection, TimeColumn, fmt, take_rows_with_timestamps,
+};
 
 struct NormalizedRow {
     row: usize,

@@ -361,7 +361,7 @@ use scope_name::scope_name;
 use scope_param::scope_param;
 use search::search;
 use search_query::search_query;
-use search_request::{SearchRequest, search_request};
+use search_request::search_request;
 use search_tag_values::search_tag_values;
 use search_tags::search_tags;
 use tags_to_traceql::tags_to_traceql;

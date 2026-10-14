@@ -1,6 +1,5 @@
 use super::{
-    Arc, ArrayRef, Float64Builder, FloatSampleRow, HistogramCodecError, Int64Builder, RecordBatch,
-    UInt64Builder, float_sample_schema,
+    Arc, FloatSampleRow, HistogramCodecError, Int64Builder, RecordBatch, float_sample_schema,
 };
 use crate::{append_optional_i64, numeric_sample_columns::encode_numeric_sample_columns};
 

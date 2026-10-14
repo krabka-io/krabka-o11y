@@ -292,11 +292,10 @@ impl InMemoryMetricStore {
                         return false;
                     }
                     let mut cached_labels = labels.iter();
-                    for index in 0..labels.len() {
+                    for incoming in record.labels.iter().take(labels.len()) {
                         let Some(cached) = cached_labels.next() else {
                             return false;
                         };
-                        let incoming = &record.labels[index];
                         if cached.name.as_str() != incoming.name.as_str()
                             || cached.value.as_bytes() != incoming.value.as_bytes()
                         {

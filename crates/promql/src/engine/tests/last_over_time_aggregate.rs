@@ -1029,7 +1029,7 @@ async fn last_over_time_aggregate_preserves_histogram_results_and_mixed_warnings
             actual
                 == AnnotatedQueryResult {
                     result: vector(10_000, &[]),
-                    annotations: annotations
+                    annotations
                 }
         );
     }

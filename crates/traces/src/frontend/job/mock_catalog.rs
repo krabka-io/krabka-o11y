@@ -7,6 +7,7 @@ pub struct MockCatalog {
     pub(crate) blocks: Vec<BlockMetaInfo>,
 }
 
+#[derive(Clone, Copy)]
 pub struct MockBlock<'a> {
     pub block_id: &'a str,
     pub time_range: TimeRange,

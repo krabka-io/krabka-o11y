@@ -74,8 +74,7 @@ where
     let mut report = RulerEvaluationReport::default();
     let mut group_errors = Vec::new();
 
-    for rule_index in 0..rules.len() {
-        let rule = &rules[rule_index];
+    for (rule_index, rule) in rules.iter().enumerate() {
         let rule_started = std::time::Instant::now();
         let result = if let Some(record_name) = yaml_optional_string(rule, "record") {
             match yaml_required_string(rule, "expr") {

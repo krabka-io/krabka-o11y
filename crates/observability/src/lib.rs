@@ -1,5 +1,8 @@
 //! Role-selectable service skeleton for Krabka observability.
 
+#![recursion_limit = "256"]
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
 pub mod ids;
 pub mod metrics;
 pub mod persisted_format;
@@ -218,6 +221,9 @@ pub use distributor::{
 pub use error::QueryError;
 pub use http::loki_router;
 /// Deserializes a human-readable time cap and rejects negative values.
+///
+/// # Errors
+/// Returns the deserializer's error when the input is invalid or negative.
 pub fn deserialize_non_negative_time<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<krabka_units::Time, D::Error> {

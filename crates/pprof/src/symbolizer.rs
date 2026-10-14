@@ -326,11 +326,7 @@ mod tests {
         let server_thread = std::thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
             let connection = accept_with_deadline(&listener);
-            let AcceptedConnection {
-                stream: mut stream,
-                address,
-            } = connection;
-            let _address = address;
+            let AcceptedConnection { mut stream, .. } = connection;
             let mut request = [0_u8; 1024];
             let read = std::io::Read::read(&mut stream, &mut request).unwrap();
             let request = String::from_utf8_lossy(&request[..read]);
@@ -610,11 +606,7 @@ mod tests {
                 .set_nonblocking(true)
                 .expect("set listener non-blocking");
             let connection = accept_with_deadline(&listener);
-            let AcceptedConnection {
-                stream: mut stream,
-                address,
-            } = connection;
-            let _address = address;
+            let AcceptedConnection { mut stream, .. } = connection;
             let mut request = [0_u8; 1024];
             let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
             let response = "HTTP/1.1 302 Found\r\nlocation: /elsewhere\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
@@ -678,7 +670,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     struct AcceptedConnection {
         stream: std::net::TcpStream,
-        address: std::net::SocketAddr,
     }
 
     fn accept_with_deadline(listener: &std::net::TcpListener) -> AcceptedConnection {
@@ -688,7 +679,6 @@ mod tests {
                 Ok(connection) => {
                     return AcceptedConnection {
                         stream: connection.0,
-                        address: connection.1,
                     };
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {

@@ -110,6 +110,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn label_selection_matches_requires_present_matching_value() {
         let bare = LabelSelection::name("level").unwrap();
         let exact = LabelSelection::equal("status", "500").unwrap();

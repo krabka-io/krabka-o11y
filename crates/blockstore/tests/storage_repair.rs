@@ -262,6 +262,7 @@ fn with_outcome(actions: &[RepairAction], outcome: RepairOutcome) -> Vec<RepairA
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn a_repair_without_an_explicit_scope_is_refused() {
     let store = store();
     let every_kind = BTreeSet::from(StorageFindingKind::ALL);

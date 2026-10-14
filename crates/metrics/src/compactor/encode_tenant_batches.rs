@@ -29,11 +29,7 @@ pub fn encode_tenant_batches(
     let native_histograms = if rows.histogram_rows.is_empty() {
         None
     } else {
-        let tuples = rows
-            .histogram_rows
-            .iter()
-            .map(|row| row.clone())
-            .collect::<Vec<_>>();
+        let tuples = rows.histogram_rows.clone();
         Some(encode_native_histograms(&tuples)?)
     };
 

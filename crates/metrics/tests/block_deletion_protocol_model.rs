@@ -34,7 +34,7 @@ struct DeletionState {
     seen: u8,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Start,
     Delete,

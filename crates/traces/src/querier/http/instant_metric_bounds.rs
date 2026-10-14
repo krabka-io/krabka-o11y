@@ -16,7 +16,13 @@ struct ParsedTimestampZone<'a> {
     offset_seconds: i64,
 }
 
+struct DurationUnit {
+    order: u8,
+    multiplier: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct InstantMetricBounds {
     pub(crate) start_ns: i64,
     pub(crate) end_ns: i64,
@@ -155,10 +161,6 @@ fn parse_since(value: &str) -> Result<i64, String> {
             .take_while(|byte| !byte.is_ascii_digit())
             .count();
         let unit = &rest[..unit_end];
-        struct DurationUnit {
-            order: u8,
-            multiplier: i64,
-        }
         let unit = match unit {
             "y" => DurationUnit {
                 order: 0,

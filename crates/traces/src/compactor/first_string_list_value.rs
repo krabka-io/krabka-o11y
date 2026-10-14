@@ -7,7 +7,7 @@ pub(crate) fn first_string_list_value<A: MetadataValueArray + 'static>(
     attr_idx: usize,
 ) -> Result<Option<String>, TracesError> {
     let values = list_column(batch, column)?;
-    let Some(attr_values) = crate::nested_list_value(&values, column, row, attr_idx)? else {
+    let Some(attr_values) = crate::nested_list_value(values, column, row, attr_idx)? else {
         return Ok(None);
     };
     let attr_values = attr_values

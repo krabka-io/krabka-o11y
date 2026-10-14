@@ -36,11 +36,11 @@ use std::{
 
 use assert2::assert;
 use serde_json::{Value, json};
-use testcontainers::{ContainerAsync, GenericImage, ImageExt, core::IntoContainerPort};
+use testcontainers::core::IntoContainerPort;
 
 use self::grafana_loki::{
     GRAFANA_PORT, HttpBase, QueryPair, TENANT, TestResult, query_string, serve_pushed,
-    start_grafana, start_image_with_timeout,
+    start_grafana,
 };
 
 /// How long a component gets to report itself ready.
@@ -484,6 +484,7 @@ fn range_cases(timeline: &Timeline, queries: &[QueryExample]) -> Vec<Case> {
 }
 
 /// The label and series endpoints Grafana's log browser drives.
+#[allow(clippy::items_after_statements)]
 fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
     let window = || {
         vec![
@@ -619,6 +620,7 @@ async fn probe(client: &reqwest::Client, base: &str, uid: &str, case: &Case) -> 
 /// `direction=forward`, and entry order is what a reader sees, so sorting them
 /// here would make a forward answer and a reverse answer compare equal. A side
 /// that ignored `direction` would then read as agreement.
+#[allow(clippy::items_after_statements)]
 fn normalize(body: &Value) -> Value {
     let data = &body["data"];
     let result_type = data["resultType"].as_str().unwrap_or_default();

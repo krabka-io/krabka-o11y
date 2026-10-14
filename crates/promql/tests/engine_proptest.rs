@@ -8,6 +8,7 @@
 //! queries over data, but it replays a fixed corpus of hand-written cases from
 //! upstream Prometheus, so it covers the shapes that corpus holds and no
 //! others.
+#![allow(clippy::cast_precision_loss)]
 //!
 //! These are the first properties in the repository that generate the data and
 //! then evaluate a query over it. Each one states an invariant from the
@@ -177,8 +178,8 @@ struct RateInput {
     scrapes: i64,
 }
 
-/// Generates the scrape interval, the per-scrape increment and the window
-/// length for the `rate` property.
+// Generates the scrape interval, the per-scrape increment and the window
+// length for the `rate` property.
 prop_compose! {
     fn rate_input()
         (interval_ms in prop::sample::select(vec![1_000_i64, 2_000, 5_000, 10_000, 15_000, 30_000]),

@@ -219,8 +219,7 @@ async fn profile_query(
 
     let names = json["flamegraph"]["names"]
         .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .map_or_default(Vec::as_slice)
         .iter()
         .filter_map(|name| name.as_str().map(str::to_string))
         .collect();
@@ -311,6 +310,7 @@ async fn a_span_id_stored_by_traces_selects_that_span_s_profile() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::items_after_statements)]
 async fn trace_and_span_ids_select_profiles_through_supported_stacktrace_rpc() {
     let mut traces = krabka_traces::LiveStore::new(i64::MAX);
     for span_id in [WANTED_SPAN_ID, OTHER_SPAN_ID] {

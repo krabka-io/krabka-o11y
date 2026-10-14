@@ -417,7 +417,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             let mut samples = entry.1;
             samples.sort_unstable_by_key(|sample| sample.ts_ms);
             let starts = starts_by_fp.entry(fp).or_insert_with(BTreeMap::new);
-            let by_timestamp = samples_by_fp.entry(fp).or_insert_with(BTreeMap::new);
+            let by_timestamp = samples_by_fp.entry(fp).or_default();
             for sample in samples {
                 if let Some(start) = sample.start_timestamp_ms {
                     starts.insert(sample.ts_ms, start);

@@ -547,11 +547,7 @@ fn streams_from_response(
         .expect("a streams result array");
     for result in results {
         let mut labels = BTreeMap::new();
-        for member in result["stream"]
-            .as_object()
-            .expect("a stream label map")
-            .iter()
-        {
+        for member in result["stream"].as_object().expect("a stream label map") {
             labels.insert(
                 member.0.clone(),
                 member.1.as_str().expect("a string label value").to_string(),

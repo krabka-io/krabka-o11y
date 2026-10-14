@@ -143,12 +143,12 @@ pub(crate) async fn all_user_stats(
         .tenants
         .keys()
         .map(|tenant| {
-            let tracked = tracker.tenants.get(tenant).expect("tenant key exists");
+            let tenant_state = tracker.tenants.get(tenant).expect("tenant key exists");
             UserIdStats {
                 user_id: tenant.as_str().to_owned(),
                 stats: UserStats {
                     ingestion_rate: 0.0,
-                    num_series: u64::try_from(tracked.series.len()).unwrap_or(u64::MAX),
+                    num_series: u64::try_from(tenant_state.series.len()).unwrap_or(u64::MAX),
                     api_rate: 0.0,
                     rule_rate: 0.0,
                 },

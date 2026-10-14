@@ -516,8 +516,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
         ];
-        for index in 0..inputs.len() {
-            let rows = &inputs[index];
+        for (index, rows) in inputs.iter().enumerate() {
             writer
                 .write_block(
                     "t",

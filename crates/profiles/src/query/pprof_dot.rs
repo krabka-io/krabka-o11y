@@ -81,10 +81,8 @@ pub(crate) fn pprof_dot(profile: &pb::google::v1::Profile) -> Result<String, Pro
     }
     let mut dot = String::from("digraph profile {\nnode [shape=box];\n");
     let mut ids = BTreeMap::new();
-    let mut next_id = 1;
-    for key in nodes.keys() {
+    for (next_id, key) in (1..).zip(nodes.keys()) {
         ids.insert(key.clone(), next_id);
-        next_id += 1;
     }
     for key in nodes.keys() {
         let values = &nodes[key];

@@ -65,6 +65,7 @@ fn vector_result(value: &str) -> Value {
     vector_result_with_labels(value, json!({}))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn vector_result_with_labels(value: &str, labels: Value) -> Value {
     json!([{
         "metric": labels,

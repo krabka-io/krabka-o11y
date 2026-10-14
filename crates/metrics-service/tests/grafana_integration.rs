@@ -1313,7 +1313,7 @@ fn parse_instant_series(resp: &Value) -> Vec<InstantSeries> {
         .filter_map(|number_field| {
             let labels = number_field.field["labels"]
                 .as_object()
-                .map(|map| {
+                .map_or_default(|map| {
                     let mut labels = BTreeMap::new();
                     for entry in map {
                         if let Some(value) = entry.1.as_str() {
@@ -1321,8 +1321,7 @@ fn parse_instant_series(resp: &Value) -> Vec<InstantSeries> {
                         }
                     }
                     labels
-                })
-                .unwrap_or_default();
+                });
             number_field
                 .column
                 .last()
@@ -1433,15 +1432,12 @@ async fn resource_json(client: &reqwest::Client, base: &str, path: &str) -> Test
 /// Extract a JSON string array: the Prometheus `data` payloads for labels and
 /// values.
 fn string_array(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
+    value.as_array().map_or_default(|items| {
+        items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -60,7 +60,7 @@ pub(crate) async fn merge_scan_to_pprof(
         }
     }
     Ok(resolved_to_pprof_with_max_nodes(
-        samples,
+        &samples,
         profile_type,
         max_nodes,
     ))

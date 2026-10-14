@@ -13,15 +13,15 @@ pub(crate) fn read_binary_span(input: &mut BinaryInput<'_>) -> Result<JaegerSpan
             4 if field.field_type == BT_I64 => out.parent_span_id = input.read_i64()?,
             5 if field.field_type == BT_BINARY => out.operation_name = input.read_string()?,
             6 if field.field_type == BT_LIST => {
-                out.references = input.read_struct_list(read_binary_ref)?
+                out.references = input.read_struct_list(read_binary_ref)?;
             }
             8 if field.field_type == BT_I64 => out.start_time_micros = input.read_i64()?,
             9 if field.field_type == BT_I64 => out.duration_micros = input.read_i64()?,
             10 if field.field_type == BT_LIST => {
-                out.tags = input.read_struct_list(read_binary_key_value)?
+                out.tags = input.read_struct_list(read_binary_key_value)?;
             }
             11 if field.field_type == BT_LIST => {
-                out.logs = input.read_struct_list(read_binary_log)?
+                out.logs = input.read_struct_list(read_binary_log)?;
             }
             _ => input.skip(field.field_type)?,
         }

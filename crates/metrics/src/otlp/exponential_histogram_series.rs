@@ -13,7 +13,7 @@ pub(crate) fn exponential_histogram_series(
     decode_histogram_points(scope, &histogram.data_points, |point, family| {
         let HistogramFamily { name, metadata } = family;
         let labels = labels(
-            &name,
+            name,
             scope.resource_attributes,
             &point.attributes,
             None,

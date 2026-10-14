@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 
 #[cfg(test)]
 mod tests {

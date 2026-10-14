@@ -146,6 +146,7 @@ pub struct MetricEvaluationRange {
 }
 
 impl MetricEvaluationRange {
+    #[must_use]
     pub const fn new(range: TimeRange, step_ns: i64) -> Self {
         Self { range, step_ns }
     }

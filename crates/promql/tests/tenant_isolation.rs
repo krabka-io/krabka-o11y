@@ -533,6 +533,7 @@ async fn cardinality_endpoints_are_tenant_isolated() {
 /// Mimir checks the tenant before its API handler runs, so no read surface
 /// answers with the JSON error envelope.
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn read_surfaces_reject_missing_tenant_header() {
     let addr = boot_isolated_api().await;
     let client = reqwest::Client::new();

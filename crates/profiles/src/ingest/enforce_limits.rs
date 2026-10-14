@@ -18,7 +18,7 @@ pub fn enforce_limits(labels: &Labels, limits: &Limits) -> Result<(), ProfilesEr
 
     let max_name = limits.max_label_name.bytes_usize();
     let max_value = limits.max_label_value.bytes_usize();
-    for pair in labels.iter() {
+    for pair in labels {
         let name = pair.name;
         let value = pair.value;
         if max_name > 0 && name.len() > max_name {

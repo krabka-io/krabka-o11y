@@ -3,10 +3,7 @@
 use std::sync::Arc;
 
 use arrow::{
-    array::{
-        ArrayRef, Float64Array, Float64Builder, Int64Array, Int64Builder, UInt64Array,
-        UInt64Builder,
-    },
+    array::{Float64Array, Int64Array, Int64Builder, UInt64Array},
     record_batch::RecordBatch,
 };
 

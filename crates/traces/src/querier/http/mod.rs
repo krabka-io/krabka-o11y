@@ -9,6 +9,8 @@ use axum::{
     routing::get,
 };
 use base64::Engine;
+#[cfg(test)]
+pub(crate) use instant_metric_bounds::InstantMetricBounds;
 use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy, TimeRange};
 use krabka_observability::{
     RoleReadiness,
@@ -931,6 +933,7 @@ mod tests {
         check!(body["traces"][0]["rootTraceName"] == root_name);
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn assert_ok_json_response(status: StatusCode, body: &Value, expected: Value) {
         check!(status == StatusCode::OK);
         check!(*body == expected);
@@ -4252,7 +4255,7 @@ use filter_tag_values::filter_tag_values;
 use group_attrs::group_attrs;
 use group_by_instrumentation::group_by_instrumentation;
 pub use http_config::HttpConfig;
-pub(crate) use instant_metric_bounds::{InstantMetricBounds, instant_metric_bounds};
+pub(crate) use instant_metric_bounds::instant_metric_bounds;
 pub(crate) use instant_metrics_response::{InstantMetricSample, instant_metrics_response};
 use instrumentation_attributes::instrumentation_attributes;
 use instrumentation_groups::{InstrumentationGroup, InstrumentationGroups};

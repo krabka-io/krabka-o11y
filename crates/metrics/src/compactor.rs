@@ -8,9 +8,8 @@ use std::{
 
 use arrow::{
     array::{
-        ArrayRef, BooleanArray, BooleanBuilder, Float64Builder, Int64Array, Int64Builder,
-        MapBuilder, StringBuilder, StringDictionaryBuilder, UInt32Builder, UInt64Array,
-        UInt64Builder,
+        ArrayRef, BooleanArray, BooleanBuilder, Int64Array, Int64Builder, MapBuilder,
+        StringBuilder, StringDictionaryBuilder, UInt32Builder, UInt64Array, UInt64Builder,
     },
     compute::filter_record_batch,
     datatypes::{DataType, Field, Int32Type},
@@ -31,7 +30,7 @@ use krabka_blockstore::{
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};
-use krabka_telemetry::propagation::{TRACEPARENT, set_remote_parent};
+use krabka_telemetry::propagation::TRACEPARENT;
 use krabka_units::prelude::*;
 use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};

@@ -2292,10 +2292,7 @@ fn flamebearer_summary(value: &Value) -> String {
         .cloned()
         .unwrap_or_default();
     let mut out = Vec::new();
-    let mut level_idx = 0;
-    for level in levels.iter().take(5) {
-        let current_level = level_idx;
-        level_idx += 1;
+    for (current_level, level) in levels.iter().take(5).enumerate() {
         let Some(values) = level.as_array() else {
             continue;
         };
@@ -2393,9 +2390,9 @@ fn canonical_diff(value: &Value) -> TestResult<Value> {
                 .iter()
                 .map(|value| json_i64(value).ok_or("Diff bar value is not an integer".into()))
                 .collect::<TestResult<Vec<_>>>()?;
-            let bars = values.chunks_exact(7);
-            if values.len() % 7 != 0
-                || bars.clone().any(|bar| {
+            let (bars, remainder) = values.as_chunks::<7>();
+            if !remainder.is_empty()
+                || bars.iter().any(|bar| {
                     usize::try_from(bar[6])
                         .ok()
                         .and_then(|index| names.get(index))
@@ -2443,10 +2440,9 @@ fn canonical_diff(value: &Value) -> TestResult<Value> {
 fn normalized_diff_bars(names: &[&str], levels: &[Vec<i64>]) -> TestResult<Vec<NormalizedDiffBar>> {
     let mut parents: Vec<DiffParent> = Vec::new();
     let mut records = Vec::new();
-    let mut depth = 0;
-    for values in levels {
-        let bars = values.chunks_exact(7);
-        if values.len() % 7 != 0 || (depth == 0 && bars.len() != 1) {
+    for (depth, values) in levels.iter().enumerate() {
+        let (bars, remainder) = values.as_chunks::<7>();
+        if !remainder.is_empty() || (depth == 0 && bars.len() != 1) {
             return Err("Diff has malformed bars or no unique root".into());
         }
         let mut current = Vec::new();
@@ -2517,7 +2513,6 @@ fn normalized_diff_bars(names: &[&str], levels: &[Vec<i64>]) -> TestResult<Vec<N
             previous_right_end = right_end;
         }
         parents = current;
-        depth += 1;
     }
     records.sort();
     Ok(records)
@@ -4985,6 +4980,7 @@ async fn compare_populated_span_profiles(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn compare_populated_query_analysis(
     evidence: &mut Value,
     client: &reqwest::Client,
@@ -5885,10 +5881,9 @@ fn normalized_flamegraph_stacks(
 
     let mut parents: Vec<FlamegraphParent> = Vec::new();
     let mut stacks = Vec::new();
-    let mut depth = 0;
-    for level in &graph.levels {
-        let bars = level.values.chunks_exact(4);
-        if level.values.len() % 4 != 0 {
+    for (depth, level) in graph.levels.iter().enumerate() {
+        let (bars, remainder) = level.values.as_chunks::<4>();
+        if !remainder.is_empty() {
             return Err("malformed flamegraph bar".into());
         }
         let mut current = Vec::new();
@@ -5927,7 +5922,6 @@ fn normalized_flamegraph_stacks(
             x = end;
         }
         parents = current;
-        depth += 1;
     }
     stacks.sort();
     Ok(stacks)
@@ -6582,6 +6576,7 @@ fn profile_fixture_dot_expected() -> Value {
     json!({"nodes":[hot,work],"edges":[{"caller":work,"callee":hot,"weight":72}]})
 }
 
+#[allow(clippy::too_many_lines)]
 async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> TestResult {
     use prost::Message;
     for config in [

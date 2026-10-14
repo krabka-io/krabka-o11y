@@ -97,6 +97,7 @@ fn block_stats(
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn trace_block_built_indexed_and_located_by_id() {
     // Two distinct traces in the same span block.
     let trace_a = [9u8; 16];

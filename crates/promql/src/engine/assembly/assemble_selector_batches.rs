@@ -1,6 +1,6 @@
 use super::{
-    Array, BTreeMap, Float64Array, FloatSample, InstantSample, Int64Array, Labels, PromqlError,
-    QueryResult, RecordBatch, Result, SampleValue, SeriesFingerprint, labels_from_batch, leaf,
+    Array, BTreeMap, FloatSample, InstantSample, Int64Array, Labels, PromqlError, QueryResult,
+    RecordBatch, Result, SampleValue, SeriesFingerprint, labels_from_batch, leaf,
 };
 
 /// Assembles instant-vector-selector output batches into a result.

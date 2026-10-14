@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use arrow::{
     array::{Array, ArrayRef, Float64Array, Int64Array},
-    datatypes::{DataType, Field},
+    datatypes::Field,
 };
 use datafusion::logical_expr::ColumnarValue;
 

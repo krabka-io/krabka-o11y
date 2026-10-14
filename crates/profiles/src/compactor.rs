@@ -7,7 +7,6 @@ use std::{
 
 use arrow::{
     array::{Array, ArrayRef, AsArray, BinaryArray, UInt64Array},
-    compute::concat_batches,
     datatypes::{Int32Type, Int64Type, SchemaRef, UInt64Type},
     record_batch::RecordBatch,
 };
@@ -32,6 +31,8 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    use arrow::compute::concat_batches;
+
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../blockstore/tests/support/compaction_levels.rs"
@@ -480,14 +481,12 @@ mod tests {
         let mut index = ProfileIndex::new();
 
         let mut metas = Vec::new();
-        let mut idx = 0;
-        for rec in [&rec_a, &rec_b, &rec_c, &rec_d] {
+        for (idx, rec) in [&rec_a, &rec_b, &rec_c, &rec_d].iter().enumerate() {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
             index
                 .add_series("t", labels.fingerprint(), &labels)
                 .unwrap();
             let offset = i64::try_from(idx).unwrap();
-            idx += 1;
             let bounds = krabka_blockstore::OffsetRange::new(offset, offset);
             let meta = build_block(
                 &store,

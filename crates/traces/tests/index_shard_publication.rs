@@ -120,6 +120,7 @@ impl StoreHooks for RecordingStore {
 
 /// A block record of the weight a real one has: a bloom over `TRACES_PER_BLOCK`
 /// trace ids, and the tag sets a Tempo-shaped span block carries.
+#[allow(clippy::items_after_statements)]
 fn block(index: i64) -> TraceBlockStats {
     let min_ts = index * HOUR_NS;
     let mut bloom = ShardedTraceBloom::with_tempo_defaults(TRACES_PER_BLOCK);

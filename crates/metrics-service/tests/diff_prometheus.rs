@@ -222,6 +222,7 @@ async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
 
 #[tokio::test]
 #[ignore = "requires Docker and the pinned Prometheus compliance executable"]
+#[allow(clippy::too_many_lines)]
 async fn upstream_promql_http_compliance_matches_krabka() -> TestResult {
     let executable = std::env::var_os("KRABKA_PROMQL_COMPLIANCE_BIN")
         .ok_or("KRABKA_PROMQL_COMPLIANCE_BIN is required")?;

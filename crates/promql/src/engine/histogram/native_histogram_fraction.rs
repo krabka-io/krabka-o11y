@@ -39,8 +39,7 @@ pub(crate) fn native_histogram_fraction(
     let mut upper_set = false;
     let mut walked = 0_usize;
 
-    for position in 0..buckets.len() {
-        let bucket = buckets[position];
+    for (position, bucket) in buckets.iter().copied().enumerate() {
         walked = position;
         count += bucket.count;
         let zero_bucket = bucket.lower <= 0.0 && bucket.upper >= 0.0;

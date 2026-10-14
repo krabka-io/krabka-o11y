@@ -130,7 +130,7 @@ use range_function_sample_from_series::range_function_sample_from_series;
 pub(super) use range_has_samples::range_has_samples;
 use range_histogram_sample::range_histogram_sample;
 use range_sample_count::range_sample_count;
-pub(super) use range_samples::{RangeSample, range_samples};
+pub(super) use range_samples::range_samples;
 use regression_slope::regression_slope;
 use regression_slope_and_intercept::regression_slope_and_intercept;
 #[cfg(feature = "experimental-functions")]

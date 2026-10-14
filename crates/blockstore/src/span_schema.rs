@@ -13,7 +13,6 @@ mod tests {
     use super::*;
 
     struct ColumnCase {
-        name: &'static str,
         column: &'static str,
     }
 
@@ -48,19 +47,15 @@ mod tests {
         let s = span_block_schema();
         for case in [
             ColumnCase {
-                name: "nested-set left",
                 column: SCOL_NESTED_SET_LEFT,
             },
             ColumnCase {
-                name: "nested-set right",
                 column: SCOL_NESTED_SET_RIGHT,
             },
             ColumnCase {
-                name: "parent id",
                 column: SCOL_PARENT_ID,
             },
             ColumnCase {
-                name: "child count",
                 column: SCOL_CHILD_COUNT,
             },
         ] {
@@ -88,13 +83,9 @@ mod tests {
         let s = span_block_schema();
         for case in [
             ColumnCase {
-                name: "events",
                 column: SCOL_EVENTS,
             },
-            ColumnCase {
-                name: "links",
-                column: SCOL_LINKS,
-            },
+            ColumnCase { column: SCOL_LINKS },
         ] {
             let f = s.column_with_name(case.column).unwrap().1;
             match f.data_type() {

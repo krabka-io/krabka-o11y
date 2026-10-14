@@ -228,7 +228,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         let result = self
             .plan_and_resolve(tenant, &call.args.args[index], time_ms)
             .await?;
-        scalar_query_result(result, &format!("{} {name}", call.func.name))
+        scalar_query_result(&result, &format!("{} {name}", call.func.name))
     }
 
     pub(super) async fn eval_scalar_expr(
@@ -238,13 +238,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         name: &str,
     ) -> Result<f64> {
-        scalar_query_result(self.plan_and_resolve(tenant, expr, time_ms).await?, name)
+        scalar_query_result(&self.plan_and_resolve(tenant, expr, time_ms).await?, name)
     }
 }
 
-fn scalar_query_result(result: QueryResult, name: &str) -> Result<f64> {
+fn scalar_query_result(result: &QueryResult, name: &str) -> Result<f64> {
     match result {
-        QueryResult::Scalar { value, .. } => Ok(value),
+        QueryResult::Scalar { value, .. } => Ok(*value),
         QueryResult::InstantVector(_) | QueryResult::RangeMatrix(_) | QueryResult::Str { .. } => {
             Err(PromqlError::Plan(format!(
                 "{name} argument must be a scalar"

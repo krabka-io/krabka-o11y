@@ -40,7 +40,7 @@ struct StorageState {
     saw_replay: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Start,
     Write,

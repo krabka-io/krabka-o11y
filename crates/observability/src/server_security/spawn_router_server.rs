@@ -64,6 +64,10 @@ where
 
 /// Binds and serves a router until shutdown, naming the supervised listener
 /// in any stop warning.
+///
+/// # Errors
+/// Returns an error when the address cannot be bound or the listener address
+/// cannot be read.
 pub async fn spawn_router_server_until_shutdown<Shutdown>(
     addr: SocketAddr,
     router: Router,

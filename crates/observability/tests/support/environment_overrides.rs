@@ -3,12 +3,6 @@ pub(crate) struct EnvironmentOverride<'a> {
     pub(crate) value: Option<&'a str>,
 }
 
-impl<'a> EnvironmentOverride<'a> {
-    pub(crate) fn new(name: &'a str, value: Option<&'a str>) -> Self {
-        Self { name, value }
-    }
-}
-
 pub(crate) fn with_environment<'a, T>(
     overrides: impl IntoIterator<Item = EnvironmentOverride<'a>>,
     run: impl FnOnce() -> T,

@@ -7,7 +7,7 @@ use num_traits::ToPrimitive as _;
 
 use crate::metricsgen::{
     config::{HostInfoConfig, MetricsGenConfig, SpanMetricsConfig},
-    contract::{SpanAttribute, SpanKind, SpanRecord, StatusCode},
+    contract::{SpanKind, SpanRecord, StatusCode},
     series::{Exemplar, HistogramBucket, HistogramSummary, Series, SeriesSample, sorted_labels},
     servicegraph::RecordOutcome,
 };
@@ -19,6 +19,7 @@ mod tests {
 
     use super::*;
     use crate::metricsgen::{
+        SpanAttribute,
         config::MetricsGenConfig,
         contract::{SpanKind, SpanRecord, StatusCode},
         series::{Series, SeriesSample},

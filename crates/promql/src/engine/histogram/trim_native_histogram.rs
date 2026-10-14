@@ -20,9 +20,9 @@ pub(crate) fn trim_native_histogram(
     let custom = histogram.is_nhcb();
     for positive in [true, false] {
         let mut buckets = if positive {
-            spanned_histogram_counts(&mut out.positive_spans, &mut out.positive_counts)
+            spanned_histogram_counts(&out.positive_spans, &out.positive_counts)
         } else {
-            spanned_histogram_counts(&mut out.negative_spans, &mut out.negative_counts)
+            spanned_histogram_counts(&out.negative_spans, &out.negative_counts)
         };
         let bucket_indexes = buckets.keys().copied().collect::<Vec<_>>();
         for index in bucket_indexes {

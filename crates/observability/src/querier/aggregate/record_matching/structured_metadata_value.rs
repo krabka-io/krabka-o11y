@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, MapArray, QueryError};
 
 pub(crate) fn structured_metadata_value(
     metadata: &MapArray,

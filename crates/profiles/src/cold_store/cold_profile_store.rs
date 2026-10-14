@@ -26,7 +26,7 @@ struct CachedSymbolDb {
 }
 
 #[derive(Default)]
-struct SymbolDbCache {
+pub(crate) struct SymbolDbCache {
     entries: HashMap<String, CachedSymbolDb>,
     recency: VecDeque<String>,
 }

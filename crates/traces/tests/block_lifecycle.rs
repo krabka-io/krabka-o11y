@@ -882,6 +882,7 @@ async fn typed_queries_survive_compaction_deletion_and_snapshot_reload() {
     check_lifecycle_queries(objects, &reloaded, &job_counts).await;
 }
 
+#[allow(clippy::items_after_statements)]
 async fn check_lifecycle_queries(
     objects: Arc<dyn ObjectStore>,
     index: &TraceIndex,

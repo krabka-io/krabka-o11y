@@ -317,11 +317,9 @@ mod tests {
                 spec: Spec::default(),
             },
         ];
-        for case_index in 0..cases.len() {
-            let case = &cases[case_index];
+        for case in &cases {
             let mut actual_parts = Vec::with_capacity(formats.len());
-            for format_index in 0..formats.len() {
-                let format = &formats[format_index];
+            for format in &formats {
                 actual_parts.push(render(case.value, format.verb, format.spec).unwrap());
             }
             let actual = actual_parts.join("|");

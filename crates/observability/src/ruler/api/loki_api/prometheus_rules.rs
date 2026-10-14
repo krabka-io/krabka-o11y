@@ -46,5 +46,5 @@ pub(crate) async fn prometheus_rules(
     if let Some(token) = page.next_token {
         data["groupNextToken"] = json!(token);
     }
-    prometheus_ruler_success(data)
+    prometheus_ruler_success(&data)
 }

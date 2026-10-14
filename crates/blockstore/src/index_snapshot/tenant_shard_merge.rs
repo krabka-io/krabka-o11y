@@ -62,9 +62,8 @@ impl TenantShardMerge<'_> {
 
     /// Names the shards a merge did not read by the keys the base already has.
     pub(crate) fn carry(&mut self, carried: BTreeMap<IndexShardRange, String>) {
-        for range in carried.keys() {
-            self.manifest
-                .insert(self.tenant, *range, carried[range].clone());
+        for (range, content) in carried {
+            self.manifest.insert(self.tenant, range, content);
         }
     }
 

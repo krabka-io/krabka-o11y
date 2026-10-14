@@ -113,6 +113,7 @@ use crate::{
     store::MetricStore,
 };
 
+#[derive(Clone, Copy)]
 pub(super) struct InnerVectorQuery<'a> {
     tenant: &'a str,
     value_arg: &'a Expr,

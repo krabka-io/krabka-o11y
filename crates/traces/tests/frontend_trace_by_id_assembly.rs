@@ -12,7 +12,7 @@ use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, TracePartial},
     config::FrontendConfig,
-    job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
+    job::{BlockMetaInfo, MockCatalog},
     merge::TraceStatus,
     wire::{Metrics, OtlpSpanJson, TraceByIdResponseJson, TraceEnvelopeJson},
 };

@@ -1,5 +1,5 @@
 use super::{
-    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileStore, QuerierState, connect_error,
+    ConnectError, ConnectQueryRequest, ConnectResponse, ProfileStore, connect_error,
     merge_profile_type_selector, parse_label_selector, parse_render_query,
     parse_render_query::ParsedRenderQuery, pb,
 };

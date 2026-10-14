@@ -93,7 +93,7 @@ mod tests {
             }
             self.attempts.fetch_add(1, Ordering::SeqCst);
             self.remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                     (left > 0).then(|| left - 1)
                 })
                 .is_ok()

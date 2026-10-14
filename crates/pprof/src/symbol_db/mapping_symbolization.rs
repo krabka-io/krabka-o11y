@@ -4,6 +4,7 @@ use super::{Deserialize, Serialize};
 pub struct MappingSymbolization(pub(crate) u8);
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct MappingSymbolizationParts {
     pub functions: bool,
     pub filenames: bool,

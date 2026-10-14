@@ -5,7 +5,7 @@ use krabka_units::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    MetricLabelPair, MetricLabels as Labels, MetricString, NativeHistogram,
+    MetricLabelPair, MetricLabels as Labels, NativeHistogram,
     wire::{DecodedClockReading, UnixNanos},
 };
 

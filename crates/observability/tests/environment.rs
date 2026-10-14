@@ -19,7 +19,10 @@ mod scoped_querier_config;
 use scoped_querier_config::scoped_querier_config;
 
 fn environment_override(name: &'static str, value: &'static str) -> EnvironmentOverride<'static> {
-    EnvironmentOverride::new(name, Some(value))
+    EnvironmentOverride {
+        name,
+        value: Some(value),
+    }
 }
 
 #[test]

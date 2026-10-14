@@ -1,6 +1,6 @@
 use super::{
     ConnectError, ConnectQueryRequest, ConnectResponse, MetadataRange, ProfileStore, ProfileType,
-    QuerierState, connect_error, pb,
+    connect_error, pb,
 };
 
 pub(crate) async fn profile_types_inner<S>(

@@ -104,7 +104,7 @@ mod tests {
         assert_eq!(trim_template_body_end("prefix body \n\t", 7, 14), 11);
         assert_eq!(trim_template_body_end("prefix \n\t", 7, 9), 7);
 
-        assert!(parse_template_parts("").unwrap().is_empty());
+        assert_eq!(parse_template_parts("").unwrap(), []);
         assert_eq!(
             parse_template_parts("literal").unwrap(),
             vec![TemplatePart::Literal("literal".to_string())]
@@ -290,6 +290,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn template_collection_helpers_index_and_slice_strings() {
         let plain = TemplateRuntimeValue::String("abc".to_string());
         let json_string = TemplateRuntimeValue::Json(serde_json::Value::String("xyz".to_string()));

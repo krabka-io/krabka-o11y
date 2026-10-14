@@ -63,7 +63,7 @@ pub(crate) fn instant_delta_sample_from_series(
             } else {
                 instant_delta(*previous, *last, interval_secs, kind)
             })),
-            _ => mixed_sample_warning(series),
+            SampleValue::Histogram(_) => mixed_sample_warning(series),
         },
         SampleValue::Histogram(previous) => match last {
             SampleValue::Histogram(last) => {
@@ -80,7 +80,7 @@ pub(crate) fn instant_delta_sample_from_series(
                 }
                 Some(SampleValue::Histogram(out))
             }
-            _ => mixed_sample_warning(series),
+            SampleValue::Float(_) => mixed_sample_warning(series),
         },
     }
 }

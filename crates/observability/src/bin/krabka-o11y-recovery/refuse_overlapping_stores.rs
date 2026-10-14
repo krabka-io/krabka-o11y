@@ -72,15 +72,12 @@ fn store_location(raw: &str) -> Result<StoreLocation, String> {
         },
         None => String::new(),
     };
-    let segments = url
-        .path_segments()
-        .map(|segments| {
-            segments
-                .filter(|segment| !segment.is_empty())
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
+    let segments = url.path_segments().map_or_default(|segments| {
+        segments
+            .filter(|segment| !segment.is_empty())
+            .map(String::from)
+            .collect()
+    });
     Ok(StoreLocation {
         scheme: url.scheme().to_string(),
         authority,

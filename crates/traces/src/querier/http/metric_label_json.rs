@@ -80,9 +80,9 @@ mod tests {
         kind: Option<TraceMetricLabelType>,
         expected: Value,
     ) {
-        ::core::assert!(
-            metric_label_json("span.mixed", text, kind)
-                == json!({"key":"span.mixed","value":expected})
+        ::core::assert_eq!(
+            metric_label_json("span.mixed", text, kind),
+            json!({"key":"span.mixed","value":expected})
         );
     }
 }

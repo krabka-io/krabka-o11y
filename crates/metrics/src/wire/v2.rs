@@ -1,6 +1,6 @@
 //! `remote_write` v2 (`io.prometheus.write.v2.Request`) request decoder.
 
-use krabka_blockstore::{LabelPair, Labels};
+use krabka_blockstore::Labels;
 use krabka_units::prelude::*;
 use prost::Message;
 
@@ -120,7 +120,7 @@ mod tests {
 
         let err = decode_v2(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap_err();
 
-        assert_duplicate_job_label(err);
+        assert_duplicate_job_label(&err);
     }
 
     #[test]

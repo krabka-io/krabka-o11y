@@ -172,8 +172,7 @@ impl Fixture {
         }
 
         let mut block_index = LogBlockIndex::default();
-        for at in 0..world.block_specs.len() {
-            let spec = &world.block_specs[at];
+        for (at, spec) in world.block_specs.iter().enumerate() {
             let range = time_range(spec.start_ms, spec.end_ms);
             let tenant = if spec.for_tenant {
                 TENANT

@@ -246,10 +246,10 @@ mod tests {
         response.traces[0].duration = Time::from_nanos(duration);
         response.traces[0].span_sets[0].spans[0].duration = Time::from_nanos(duration);
         let actual = serde_json::to_value(search_json(response)).unwrap();
-        ::core::assert!(actual["traces"][0]["durationMs"] == json!(expected_ms));
-        ::core::assert!(
-            actual["traces"][0]["spanSets"][0]["spans"][0]["durationNanos"]
-                == json!(duration.to_string())
+        ::core::assert_eq!(actual["traces"][0]["durationMs"], json!(expected_ms));
+        ::core::assert_eq!(
+            actual["traces"][0]["spanSets"][0]["spans"][0]["durationNanos"],
+            json!(duration.to_string())
         );
     }
 }

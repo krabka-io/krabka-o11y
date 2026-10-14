@@ -54,8 +54,8 @@ impl ScalarUDFImpl for ScalarMathUdf {
         // The leading scalar bound columns (round's `to_nearest`, clamp's
         // bounds) are constant per query; read each once.
         let mut bounds = Vec::with_capacity(params);
-        for index in 0..params {
-            bounds.push(scalar_f64(&args.args[index], "bound", name)?);
+        for argument in args.args.iter().take(params) {
+            bounds.push(scalar_f64(argument, "bound", name)?);
         }
 
         // The value column trails the scalar params.

@@ -1,7 +1,7 @@
 use krabka_metrics::{MetricLabelPair, MetricString, SamplePayload, WalRecord};
 
 pub(crate) fn float_wal_record(
-    tenant: impl ToString,
+    tenant: &(impl ToString + ?Sized),
     labels: impl IntoIterator<Item = (String, MetricString)>,
     timestamp_ms: i64,
     value: f64,

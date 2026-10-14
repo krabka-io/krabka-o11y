@@ -883,8 +883,7 @@ struct NamedFloatSample {
 fn first_streamed_payload(body: &[u8]) -> &[u8] {
     let mut length = 0_usize;
     let mut header = 0_usize;
-    for index in 0..body.len() {
-        let byte = body[index];
+    for (index, byte) in body.iter().copied().enumerate() {
         length |= usize::from(byte & 0x7f) << (index * 7);
         header = index + 1;
         if byte & 0x80 == 0 {
@@ -4090,8 +4089,7 @@ async fn http_alert_templates_reuse_byte_identity_and_replayed_start_times() {
     }
     let state = api_state(store);
     state.set_ruler_evaluation_time_ms(60_000);
-    for index in 0..values.len() {
-        let bytes = &values[index];
+    for (index, bytes) in values.iter().enumerate() {
         let mut labels = krabka_promql::PromqlLabels::from_pairs([MetricLabelPair::new(
             "alertname",
             "ByteAlert",

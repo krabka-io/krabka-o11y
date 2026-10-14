@@ -47,11 +47,7 @@ impl FlushAccumulator {
     /// time records enter an otherwise-empty buffer, so the age tracks the
     /// *oldest* buffered record.
     pub fn merge(&mut self, windows: BTreeMap<i32, PartitionWindow>, now: Instant) {
-        let mut windows = windows;
-        while let Some(partition) = windows.keys().next().copied() {
-            let incoming = windows
-                .remove(&partition)
-                .expect("the partition key came from this map");
+        for (partition, incoming) in windows {
             if incoming.records.is_empty() {
                 continue;
             }

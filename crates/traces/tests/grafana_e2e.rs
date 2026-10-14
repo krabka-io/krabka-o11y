@@ -528,6 +528,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
 ///
 /// The assertions check door-specific decode fidelity, not merely
 /// presence-by-name.
+#[allow(clippy::items_after_statements)]
 fn assert_all_doors_present(records: &[SpanRecord]) {
     let names: Vec<&str> = records.iter().map(|r| r.span.name.as_str()).collect();
     // D1 (OTLP HTTP, Trace A root), D2 (Tempo push, Trace B), D3 (Zipkin),
@@ -880,6 +881,7 @@ struct GrafanaStack {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires Docker (Grafana + Prometheus containers)"]
+#[allow(clippy::items_after_statements)]
 async fn grafana_e2e_full_surface() -> TestResult {
     let client = reqwest::Client::new();
 
@@ -1182,6 +1184,7 @@ async fn grafana_e2e_search(stack: GrafanaStack, window: QueryWindow) -> TestRes
     .await
 }
 
+#[allow(clippy::items_after_statements)]
 async fn grafana_e2e_tags(stack: GrafanaStack, window: QueryWindow) -> TestResult {
     let GrafanaStack {
         client,

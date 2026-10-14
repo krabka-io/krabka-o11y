@@ -54,8 +54,6 @@ impl<S: MetricStore> axum::extract::FromRequestParts<Arc<PrometheusApiState<S>>>
         parts: &mut axum::http::request::Parts,
         router_state: &Arc<PrometheusApiState<S>>,
     ) -> Result<Self, Self::Rejection> {
-        use axum::extract::FromRequestParts;
-
         let state = State::from_request_parts(parts, router_state)
             .await
             .map_err(IntoResponse::into_response)?;
@@ -83,6 +81,7 @@ impl<S: MetricStore> axum::extract::FromRequestParts<Arc<PrometheusApiState<S>>>
     }
 }
 
+#[allow(clippy::result_large_err)]
 pub(super) fn authorize_config_tenant(
     headers: &HeaderMap,
     principal: &Principal,
@@ -178,6 +177,7 @@ async fn persist_ruler_config_or_restore<S: MetricStore>(
     response
 }
 
+#[allow(clippy::result_large_err)]
 fn authorized_ruler_group_tenant(
     headers: &HeaderMap,
     principal: &Principal,

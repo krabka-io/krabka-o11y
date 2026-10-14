@@ -76,11 +76,12 @@ mod tests {
         negative_infinity = { f64::NEG_INFINITY, "-Infinity" },
     )]
     fn nonfinite_values_use_protojson_strings(value: f64, token: &str) {
-        ::core::assert!(
+        ::core::assert_eq!(
             instant_metrics_response([InstantMetricSample {
                 labels: json!([]),
                 value
-            }]) == json!({
+            }]),
+            json!({
                 "series": [{"value": token}], "metrics": {"completedJobs": 1, "totalJobs": 1}
             })
         );

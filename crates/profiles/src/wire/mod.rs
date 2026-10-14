@@ -318,7 +318,7 @@ mod tests {
         let bytes = dictionary.encode_to_vec();
         let decoded = pb::otlp_profiles::ProfilesDictionary::decode(bytes.as_slice()).unwrap();
 
-        assert!(decoded.string_table[0].is_empty());
+        assert_eq!(decoded.string_table[0], "");
         assert_eq!(decoded.stack_table[0].location_indices, vec![0, 1]);
 
         let sample = pb::otlp_profiles::Sample {
@@ -542,7 +542,7 @@ mod tests {
         let response_bytes = response.encode_to_vec();
 
         assert!(request_bytes.contains(&0x29)); // step, field 5, fixed64 wire type
-        assert!(!response_bytes.is_empty());
+        assert_ne!(response_bytes.len(), 0);
         assert_eq!(response.series[0].slots[0].counts, vec![1, 2]);
     }
 

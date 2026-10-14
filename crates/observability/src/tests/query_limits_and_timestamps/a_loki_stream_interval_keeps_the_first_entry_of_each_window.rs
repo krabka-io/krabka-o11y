@@ -26,14 +26,13 @@ pub(crate) fn a_loki_stream_interval_keeps_the_first_entry_of_each_window() {
         value
             .pointer("/data/result")
             .and_then(serde_json::Value::as_array)
-            .map(|streams| {
+            .map_or_default(|streams| {
                 streams
                     .iter()
                     .flat_map(|s| s["values"].as_array().cloned().unwrap_or_default())
                     .map(|entry| entry[0].as_str().expect("a timestamp").to_string())
                     .collect::<Vec<_>>()
             })
-            .unwrap_or_default()
     };
 
     // Ten apart: the first is kept, then everything until ten past it.

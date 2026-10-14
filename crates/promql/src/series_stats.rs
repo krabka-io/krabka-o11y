@@ -85,12 +85,12 @@ pub(crate) fn label_value_cardinality<'a>(
 }
 
 /// Orders named TSDB statistics by descending value, then by name.
-pub(crate) fn named_stats(values: BTreeMap<String, usize>) -> Vec<NamedTsdbStat> {
+pub(crate) fn named_stats(values: &BTreeMap<String, usize>) -> Vec<NamedTsdbStat> {
     let mut stats = Vec::with_capacity(values.len());
-    for name in values.keys() {
+    for (name, value) in values {
         stats.push(NamedTsdbStat {
             name: name.clone(),
-            value: values[name],
+            value: *value,
         });
     }
     stats.sort_by(|left, right| {
@@ -130,15 +130,15 @@ pub(crate) fn tsdb_stats<'a>(
 
     TsdbStats {
         head_stats,
-        series_count_by_metric_name: named_stats(by_metric),
+        series_count_by_metric_name: named_stats(&by_metric),
         label_value_count_by_label_name: {
             let mut values = BTreeMap::new();
             for name in label_values_by_name.keys() {
                 values.insert(name.clone(), label_values_by_name[name].len());
             }
-            named_stats(values)
+            named_stats(&values)
         },
-        memory_in_bytes_by_label_name: named_stats(memory_by_name),
-        series_count_by_label_value_pair: named_stats(by_label_pair),
+        memory_in_bytes_by_label_name: named_stats(&memory_by_name),
+        series_count_by_label_value_pair: named_stats(&by_label_pair),
     }
 }

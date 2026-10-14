@@ -609,14 +609,17 @@ pub struct OpenTail {
 
 pub async fn open_tail(app: Router, path_and_query: &str) -> OpenTail {
     let served = serve_for_websocket(app, path_and_query).await;
-    let server = served.server;
+    let server_task = served.server;
     let connection = tokio_tungstenite::connect_async(served.request)
         .await
         .unwrap();
     let socket = connection.0;
     let response = connection.1;
     assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
-    OpenTail { socket, server }
+    OpenTail {
+        socket,
+        server: server_task,
+    }
 }
 
 /// The next text frame on `socket`, parsed as JSON.

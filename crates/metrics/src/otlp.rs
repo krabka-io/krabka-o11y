@@ -25,10 +25,8 @@ use opentelemetry_proto::tonic::{
 use prost::Message as _;
 
 use crate::{
-    BucketSpan, Limits, NativeHistogram, ResetHint, SpannedHistogramCounts,
-    wire::{
-        DecodedExemplar, DecodedHistogramSample, DecodedMetadata, DecodedSample, DecodedSeries,
-    },
+    BucketSpan, Limits, NativeHistogram, ResetHint,
+    wire::{DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries},
 };
 
 #[cfg(test)]

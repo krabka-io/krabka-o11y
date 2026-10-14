@@ -8,7 +8,7 @@ pub(crate) fn read_binary_batch(input: &mut BinaryInput<'_>) -> Result<JaegerBat
         match field.field_id {
             1 if field.field_type == BT_STRUCT => out.process = read_binary_process(input)?,
             2 if field.field_type == BT_LIST => {
-                out.spans = input.read_struct_list(read_binary_span)?
+                out.spans = input.read_struct_list(read_binary_span)?;
             }
             _ => input.skip(field.field_type)?,
         }

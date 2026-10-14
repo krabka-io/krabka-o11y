@@ -211,13 +211,11 @@ fn render_template_function(name: &str, args: &[String]) -> String {
                 if args.len() < 3 {
                     return String::new();
                 }
-                let start = match args[0].parse::<i64>() {
-                    Ok(value) => value,
-                    Err(_) => return String::new(),
+                let Ok(start) = args[0].parse::<i64>() else {
+                    return String::new();
                 };
-                let end = match args[1].parse::<i64>() {
-                    Ok(value) => value,
-                    Err(_) => return String::new(),
+                let Ok(end) = args[1].parse::<i64>() else {
+                    return String::new();
                 };
                 substring_template_string(&args[2], start, end)
             }

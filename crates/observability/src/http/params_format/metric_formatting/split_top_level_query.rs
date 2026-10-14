@@ -1,6 +1,6 @@
 use crate::http::params_format::QuotedTextScanner;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TopLevelQuerySplit<'a> {
     pub(crate) left: &'a str,
     pub(crate) operator: &'static str,

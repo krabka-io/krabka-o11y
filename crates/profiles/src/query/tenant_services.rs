@@ -1,7 +1,6 @@
 #![allow(clippy::result_large_err)]
 
 use std::{
-    collections::BTreeSet,
     io::Read as _,
     sync::{
         Arc,

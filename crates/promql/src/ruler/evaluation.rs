@@ -4,8 +4,8 @@ use krabka_blockstore::TenantId;
 
 use super::{
     AlertmanagerSink, RecordingRuleWalSink, RulerAlertState, RulerEvaluationReport,
-    RulerEvaluationSchedule, RulerGroupEvaluation, RulerGroupEvaluationStatus, RulerGroupState,
-    RulerGroupStateRecord, RulerRuleEvaluationStatus, RulerShard, RulerSinks, RulerStateSink,
+    RulerEvaluationSchedule, RulerGroupEvaluation, RulerGroupEvaluationStatus,
+    RulerGroupStateRecord, RulerRuleEvaluationStatus, RulerSinks, RulerStateSink,
     config::{yaml_optional_string, yaml_required_string, yaml_string_map},
     evaluate_alerting_rule_with_state_and_sink, evaluate_and_append_recording_rule,
     evaluate_and_append_recording_rule_group, evaluate_and_dispatch_alerting_rule_group,

@@ -4,6 +4,7 @@ use super::{
     tenant_ruler_rules, tenant_ruler_rules::TenantRuleSnapshot,
 };
 
+#[allow(clippy::result_large_err)]
 pub(super) fn tenant_ruler_rules_for_request<S: MetricStore>(
     state: &PrometheusApiState<S>,
     headers: &HeaderMap,
@@ -36,6 +37,7 @@ macro_rules! tenant_rule_handler {
             let $snapshot = $crate::http_api::rules::alerts::tenant_rules_or_return!(
                 &state, &headers, &principal
             );
+            #[allow(unused_variables)]
             let $state = state;
             $body
         }

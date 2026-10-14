@@ -56,6 +56,7 @@ const fn float_sample(fingerprint: u64, timestamp_ms: i64, value: f64) -> FloatS
     }
 }
 
+#[derive(Clone, Copy)]
 struct ManifestRange {
     min_ts: i64,
     max_ts: i64,

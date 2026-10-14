@@ -6,7 +6,7 @@ use super::{
 /// The virtual root has value zero; it contributes to the node count, but does
 /// not accumulate samples. A marked root can therefore create an unused stub.
 pub(crate) fn resolved_to_pprof_with_max_nodes(
-    samples: BTreeMap<Vec<ResolvedLocation>, i64>,
+    samples: &BTreeMap<Vec<ResolvedLocation>, i64>,
     profile_type: &ProfileType,
     max_nodes: i64,
 ) -> PprofProfile {
@@ -109,7 +109,7 @@ mod tests {
         let mut samples = BTreeMap::new();
         samples.insert(vec![location("root")], 40);
         samples.insert(vec![location("hot"), location("root")], 100);
-        let profile = resolved_to_pprof_with_max_nodes(samples, &profile_type, 1);
+        let profile = resolved_to_pprof_with_max_nodes(&samples, &profile_type, 1);
         let inner = profile.inner();
         check!(
             inner
@@ -124,7 +124,7 @@ mod tests {
         let mut tied = BTreeMap::new();
         tied.insert(vec![location("left")], 7);
         tied.insert(vec![location("right")], 7);
-        let profile = resolved_to_pprof_with_max_nodes(tied, &profile_type, 1);
+        let profile = resolved_to_pprof_with_max_nodes(&tied, &profile_type, 1);
         check!(profile.inner().sample.len() == 2);
         check!(
             profile

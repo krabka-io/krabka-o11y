@@ -133,6 +133,7 @@ mod tests {
         value: &'static str,
     }
 
+    #[allow(clippy::struct_field_names)]
     struct EmptyTypedValues {
         int_values: arrow::array::ListArray,
         double_values: arrow::array::ListArray,
@@ -4097,6 +4098,7 @@ mod tests {
         .unwrap()
     }
 
+    #[allow(clippy::struct_field_names)]
     struct BlockAttrValueColumns<'a> {
         string_values: Option<&'a ListArray>,
         int_values: Option<&'a ListArray>,

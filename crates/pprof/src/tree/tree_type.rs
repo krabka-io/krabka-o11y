@@ -237,8 +237,7 @@ impl Tree {
 
     pub(crate) fn parents(&self) -> Vec<Option<usize>> {
         let mut parents = vec![None; self.nodes.len()];
-        for parent in 0..self.nodes.len() {
-            let node = &self.nodes[parent];
+        for (parent, node) in self.nodes.iter().enumerate() {
             for child in &node.children {
                 parents[*child] = Some(parent);
             }
@@ -319,7 +318,7 @@ impl Tree {
 
     #[cfg(test)]
     pub(crate) fn node_at(&self, path: &[&str]) -> &Node {
-        assert!(!path.is_empty());
+        assert_ne!(path.len(), 0);
         assert_eq!(path[0], ROOT_NAME);
         let mut idx = self.root;
         for name in &path[1..] {

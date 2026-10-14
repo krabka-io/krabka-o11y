@@ -2,8 +2,8 @@ use super::*;
 
 pub(crate) fn evaluate_common_string_function(name: &str, args: &[String]) -> Option<String> {
     let rendered = match name {
-        "alignLeft" => align_template_string(args, align_left_template_string)?,
-        "alignRight" => align_template_string(args, align_right_template_string)?,
+        "alignLeft" => align_template_string(args, align_left_template_string),
+        "alignRight" => align_template_string(args, align_right_template_string),
         "b64enc" => args
             .first()
             .map_or_else(String::new, |value| BASE64_STANDARD.encode(value)),
@@ -55,15 +55,12 @@ pub(crate) fn evaluate_common_string_function(name: &str, args: &[String]) -> Op
     Some(rendered)
 }
 
-fn align_template_string(
-    args: &[String],
-    align: impl FnOnce(usize, &str) -> String,
-) -> Option<String> {
+fn align_template_string(args: &[String], align: impl FnOnce(usize, &str) -> String) -> String {
     let [width, text, ..] = args else {
-        return Some(String::new());
+        return String::new();
     };
     let Ok(width) = width.parse::<usize>() else {
-        return Some(String::new());
+        return String::new();
     };
-    Some(align(width, text))
+    align(width, text)
 }

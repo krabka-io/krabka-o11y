@@ -73,6 +73,7 @@ impl Labels {
         self.0.get(name).map(String::as_str)
     }
 
+    #[must_use]
     pub fn iter(&self) -> LabelsIter<'_> {
         LabelsIter(self.0.iter())
     }

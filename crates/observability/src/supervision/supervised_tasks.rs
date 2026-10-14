@@ -98,6 +98,9 @@ impl SupervisedTasks {
     }
 
     /// Waits for shutdown or a critical task exit, then drains all tasks.
+    ///
+    /// # Errors
+    /// Returns the name of a critical task that exited unexpectedly.
     pub async fn run_until_shutdown(mut self) -> Result<(), CriticalTaskError> {
         let token = self.token.clone();
         let outcome = tokio::select! {

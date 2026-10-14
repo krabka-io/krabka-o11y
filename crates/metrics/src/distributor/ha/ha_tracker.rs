@@ -8,7 +8,7 @@ use super::{
 /// election for unseen pairs.
 #[derive(Debug, Default)]
 pub struct HaTracker {
-    pub(crate) elected: Mutex<HashMap<HaElectionIdentity, HaElectionRecord>>,
+    pub(super) elected: Mutex<HashMap<HaElectionIdentity, HaElectionRecord>>,
 }
 
 impl HaTracker {

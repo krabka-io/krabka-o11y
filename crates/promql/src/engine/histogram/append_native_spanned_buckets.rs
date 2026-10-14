@@ -8,8 +8,7 @@ pub(crate) fn append_native_spanned_buckets(
 ) {
     let mut index: i32 = 0;
     let mut count_index = 0;
-    for span_index in 0..spans.len() {
-        let span = &spans[span_index];
+    for (span_index, span) in spans.iter().enumerate() {
         // A malformed span whose offset overflows the running bucket index is
         // dropped (the rest of the spans with it) rather than overflow-panicking
         // on the `i32` accumulation.

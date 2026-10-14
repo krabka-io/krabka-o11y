@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 
 use super::{
     AllRoleContext, BlockStoreGates, CancellationToken, SocketAddr, build_query_frontend_app,
-    build_trace_index_catalog, frontend, frontend_config_from_cli,
+    build_trace_index_catalog, frontend_config_from_cli,
 };
 
 /// The query-frontend of `--target all`, fanning out to the querier beside it.

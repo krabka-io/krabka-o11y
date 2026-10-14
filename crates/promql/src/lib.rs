@@ -6,6 +6,23 @@
 // DataFusion plan/optimizer types; the test target's Send auto-trait evaluation
 // then overflows the default depth, so raise it.
 #![recursion_limit = "512"]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_possible_wrap,
+        clippy::explicit_auto_deref,
+        clippy::float_cmp,
+        clippy::items_after_statements,
+        clippy::iter_cloned_collect,
+        clippy::needless_borrow,
+        clippy::needless_pass_by_value,
+        clippy::needless_range_loop,
+        clippy::struct_field_names,
+        clippy::too_many_lines,
+        clippy::useless_conversion,
+        clippy::useless_vec,
+    )
+)]
 
 mod block_store;
 mod conformance;

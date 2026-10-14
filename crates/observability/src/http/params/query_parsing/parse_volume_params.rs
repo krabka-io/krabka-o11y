@@ -42,7 +42,7 @@ pub(crate) fn parse_volume_params(raw_query: Option<&str>) -> Result<VolumeParam
                 step = Some(parse_loki_duration_query_param("step", &pair.value)?);
             }
             "limit" if limit.is_none() => {
-                limit = Some(parse_usize_query_param("limit", &pair.value)?)
+                limit = Some(parse_usize_query_param("limit", &pair.value)?);
             }
             "targetLabels" if target_labels.is_none() => {
                 target_labels = Some(

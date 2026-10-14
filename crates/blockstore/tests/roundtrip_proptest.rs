@@ -134,6 +134,7 @@ proptest! {
     }
 
     #[test]
+    #[allow(clippy::items_after_statements)]
     fn equality_matcher_returns_only_matching_series(rows in arb_rows()) {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

@@ -89,7 +89,6 @@ mod tests {
     }
 
     struct StoredPartitionedSeed {
-        index: ProfileIndex,
         store: Arc<dyn ObjectStore>,
     }
 
@@ -103,7 +102,7 @@ mod tests {
             .save_latest_snapshot(&store, "index/profiles.json")
             .await
             .unwrap();
-        StoredPartitionedSeed { index, store }
+        StoredPartitionedSeed { store }
     }
 
     fn assert_partitioned_seed(index: &ProfileIndex) {
@@ -741,7 +740,7 @@ mod tests {
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let ProfileSeedWithBlocks {
-            index: mut index,
+            mut index,
             cpu_checkout: cpu_checkout_fp,
             heap_checkout: heap_checkout_fp,
             ..
@@ -1025,10 +1024,7 @@ mod tests {
     /// rewrote.
     #[tokio::test]
     async fn a_flush_publishes_only_the_shards_its_own_blocks_fall_in() {
-        let ThirtyDayProfileIndex {
-            store,
-            index: mut index,
-        } = thirty_days_saved_to_memory().await;
+        let ThirtyDayProfileIndex { store, mut index } = thirty_days_saved_to_memory().await;
         let before = payload_object_keys(&store).await;
         check!(before.len() == 30, "one shard a day");
 
@@ -1186,7 +1182,7 @@ mod tests {
     #[test]
     fn a_compacted_profile_block_records_its_level_on_its_own_record() {
         let ProfileSeedWithBlocks {
-            index: mut index,
+            mut index,
             cpu_checkout: cpu_checkout_fp,
             heap_checkout: heap_checkout_fp,
             ..
@@ -1294,7 +1290,7 @@ mod tests {
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let ProfileSeedWithBlocks {
-            index: mut index,
+            mut index,
             cpu_checkout: cpu_checkout_fp,
             heap_checkout: heap_checkout_fp,
             ..

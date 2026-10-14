@@ -95,7 +95,7 @@ mod tests {
 
         let err = decode_v1(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap_err();
 
-        assert_duplicate_job_label(err);
+        assert_duplicate_job_label(&err);
     }
 }
 

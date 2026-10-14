@@ -41,6 +41,7 @@ fn pinned_image_tag(variable: &str) -> String {
     })
 }
 
+#[allow(dead_code)]
 pub async fn start_loki(config: &str, port: u16) -> TestResult<ContainerAsync<GenericImage>> {
     let tag = pinned_image_tag("KRABKA_LOKI_IMAGE_TAG");
     start_image_with_timeout(

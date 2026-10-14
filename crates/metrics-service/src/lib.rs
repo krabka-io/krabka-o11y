@@ -13,6 +13,7 @@
 // `sqlparser` AST type graph (reached through `SessionContext` held across
 // awaits in the PromQL operator-path evaluation); the default limit is too low.
 #![recursion_limit = "256"]
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 use std::{
     collections::{BTreeMap, BTreeSet},

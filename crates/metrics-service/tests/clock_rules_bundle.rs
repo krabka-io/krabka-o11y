@@ -242,8 +242,7 @@ fn store_with_fleet(fleet: &[ClockFixture], declared_bound_steps: &[i64]) -> InM
                 );
             }
         }
-        let mut index = 0;
-        for steps in declared_bound_steps {
+        for (index, steps) in declared_bound_steps.iter().enumerate() {
             store.push_float(
                 TENANT,
                 labels(
@@ -256,7 +255,6 @@ fn store_with_fleet(fleet: &[ClockFixture], declared_bound_steps: &[i64]) -> InM
                 timestamp_ms,
                 ClockFixture::seconds(*steps),
             );
-            index += 1;
         }
         tick += 1;
         timestamp_ms += READING_INTERVAL_MS;
@@ -386,11 +384,7 @@ impl Ruler {
         self.state.set_ruler_evaluation_time_ms(eval_time_ms);
         let json = self.api_json("/prometheus/api/v1/alerts").await;
         let mut annotations_by_alert = BTreeMap::new();
-        for alert in json["data"]["alerts"]
-            .as_array()
-            .expect("alert array")
-            .iter()
-        {
+        for alert in json["data"]["alerts"].as_array().expect("alert array") {
             let name = alert["name"].as_str().unwrap_or_default().to_string();
             let mut annotations = BTreeMap::new();
             if let Some(object) = alert["annotations"].as_object() {

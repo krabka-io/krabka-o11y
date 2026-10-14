@@ -123,8 +123,7 @@ impl SortedMerge {
     /// The run holding the lowest key, ties going to the earliest run.
     fn lowest_head(&self) -> Option<usize> {
         let mut lowest: Option<RunHead<'_>> = None;
-        for index in 0..self.runs.len() {
-            let run = &self.runs[index];
+        for (index, run) in self.runs.iter().enumerate() {
             if let Some(key) = run.head()
                 && lowest.as_ref().is_none_or(|head| key < head.key)
             {
@@ -137,8 +136,7 @@ impl SortedMerge {
     /// The lowest key held by any run other than `winner`.
     fn next_lowest_head(&self, winner: usize) -> Option<RunHead<'_>> {
         let mut lowest: Option<RunHead<'_>> = None;
-        for index in 0..self.runs.len() {
-            let run = &self.runs[index];
+        for (index, run) in self.runs.iter().enumerate() {
             if index == winner {
                 continue;
             }

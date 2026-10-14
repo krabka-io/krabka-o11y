@@ -11,8 +11,8 @@ pub(crate) fn strip_extended_selector_modifiers(
     let QueryScan {
         chars,
         output: mut out,
-        index: mut index,
-        quoted: mut quoted,
+        mut index,
+        mut quoted,
     } = QueryScan::new(query);
     let mut modifier = None;
 

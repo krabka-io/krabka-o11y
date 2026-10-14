@@ -10,18 +10,16 @@ pub(crate) fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> krabka_traceql
         root_service_name: root
             .and_then(|span| attr_string(&span.resource_attrs, "service.name"))
             .unwrap_or_default(),
-        root_trace_name: root.map(|span| span.name.clone()).unwrap_or_default(),
-        resource_attributes: root
-            .map(|span| {
-                span.resource_attrs
-                    .iter()
-                    .filter_map(|attr| {
-                        traceql_attr(attr)
-                            .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        root_trace_name: root.map_or_default(|span| span.name.clone()),
+        resource_attributes: root.map_or_default(|span| {
+            span.resource_attrs
+                .iter()
+                .filter_map(|attr| {
+                    traceql_attr(attr)
+                        .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+                })
+                .collect()
+        }),
         spans: spans
             .iter()
             .zip(nested_set::assign_nested_set(spans))

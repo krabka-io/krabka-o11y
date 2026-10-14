@@ -770,8 +770,7 @@ mod pointer_tests {
                 expected: "0x1234      ",
             },
         ];
-        for case_index in 0..cases.len() {
-            let case = &cases[case_index];
+        for case in &cases {
             assert2::assert!(pointer(0x1234, case.spec) == case.expected);
         }
     }

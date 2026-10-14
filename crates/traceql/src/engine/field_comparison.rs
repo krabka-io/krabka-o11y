@@ -245,6 +245,6 @@ mod tests {
         rhs: Value,
         expected: bool,
     ) {
-        ::core::assert!(scalar_matches(&lhs, op, &rhs) == expected);
+        ::core::assert_eq!(scalar_matches(&lhs, op, &rhs), expected);
     }
 }

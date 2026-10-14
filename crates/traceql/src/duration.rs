@@ -14,6 +14,7 @@ pub struct DurationPart<'a> {
 /// Returns `None` when the input does not begin with a number. An empty unit
 /// is retained in the returned value so callers can report errors using their
 /// own parser's error type and wording.
+#[must_use]
 pub fn next_duration_part(input: &str) -> Option<DurationPart<'_>> {
     let number_len = input
         .char_indices()

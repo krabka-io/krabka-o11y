@@ -298,8 +298,7 @@ fn series_sort_key(value: &Value) -> String {
     let labels = value
         .get("metric")
         .filter(|metric| metric.is_object())
-        .map(Value::to_string)
-        .unwrap_or_default();
+        .map_or_default(Value::to_string);
     let sample = value
         .get("value")
         .or_else(|| value.get("values"))

@@ -39,7 +39,7 @@ mod ruler_status_page;
 mod validate_loki_rule;
 mod validate_loki_rule_group;
 
-fn prometheus_ruler_success(data: Value) -> Response {
+fn prometheus_ruler_success(data: &Value) -> Response {
     json_response(
         StatusCode::OK,
         &json!({
@@ -90,7 +90,7 @@ pub(crate) use validate_loki_rule_group::validate_loki_rule_group;
 
 fn deleted_rule_response(
     state: &QuerierState,
-    security: RequestSecurity,
+    #[allow(clippy::needless_pass_by_value)] security: RequestSecurity,
     operation: &'static str,
     resources: Vec<AuditResource>,
     tenant: &str,

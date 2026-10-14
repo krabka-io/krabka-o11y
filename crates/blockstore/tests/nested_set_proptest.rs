@@ -29,8 +29,7 @@ fn arb_forest() -> impl Strategy<Value = Vec<SpanNode>> {
                 span_id: sid(0),
                 parent_span_id: None,
             }];
-            for i in 0..seed.parents.len() {
-                let parent = seed.parents[i];
+            for (i, parent) in seed.parents.iter().copied().enumerate() {
                 let child = u32::try_from(i + 1).unwrap();
                 spans.push(SpanNode {
                     span_id: sid(child),

@@ -676,6 +676,7 @@ async fn explore_detected_fields_and_label_index_survive_storage() -> TestResult
     check_explore(&deployment, &cold).await
 }
 
+#[allow(clippy::items_after_statements)]
 async fn check_explore(
     deployment: &Deployment,
     container: &ContainerAsync<GenericImage>,

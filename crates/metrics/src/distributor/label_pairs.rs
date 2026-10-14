@@ -6,6 +6,6 @@ pub(crate) fn label_pairs(
     series
         .labels
         .iter()
-        .map(|pair| crate::MetricLabelPair::new(pair.name.clone(), pair.value.clone().into()))
+        .map(|pair| crate::MetricLabelPair::new(pair.name, pair.value.into()))
         .collect()
 }

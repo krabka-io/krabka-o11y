@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Labels, MetricQuery, MetricValue, PipelineStage, QueryError, UNWRAP_SAMPLE_VALUE_LABEL,
+    parse_metric_sample_value,
+};
 
 pub(crate) struct MatchingMetricSample {
     pub(crate) labels: Labels,

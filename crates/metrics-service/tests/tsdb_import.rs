@@ -496,41 +496,32 @@ fn matrix_series(response: &Value) -> Vec<Series> {
         .iter()
         .map(|entry| {
             let labels = serde_json::from_value(entry["metric"].clone()).expect("labels");
-            let floats = entry["values"]
-                .as_array()
-                .map(|values| {
-                    values
-                        .iter()
-                        .map(|point| FloatBitsSample {
+            let floats = entry["values"].as_array().map_or_default(|values| {
+                values
+                    .iter()
+                    .map(|point| FloatBitsSample {
+                        timestamp_ms: parse_ms(&point[0]),
+                        value_bits: parse_f64(&point[1]).to_bits(),
+                    })
+                    .collect()
+            });
+            let histograms = entry["histograms"].as_array().map_or_default(|values| {
+                values
+                    .iter()
+                    .map(|point| {
+                        let histogram = &point[1];
+                        let buckets = histogram["buckets"].as_array().map_or_default(|buckets| {
+                            buckets.iter().map(|bucket| parse_f64(&bucket[3])).collect()
+                        });
+                        HistogramBitsSample {
                             timestamp_ms: parse_ms(&point[0]),
-                            value_bits: parse_f64(&point[1]).to_bits(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let histograms = entry["histograms"]
-                .as_array()
-                .map(|values| {
-                    values
-                        .iter()
-                        .map(|point| {
-                            let histogram = &point[1];
-                            let buckets = histogram["buckets"]
-                                .as_array()
-                                .map(|buckets| {
-                                    buckets.iter().map(|bucket| parse_f64(&bucket[3])).collect()
-                                })
-                                .unwrap_or_default();
-                            HistogramBitsSample {
-                                timestamp_ms: parse_ms(&point[0]),
-                                count_bits: parse_f64(&histogram["count"]).to_bits(),
-                                sum_bits: parse_f64(&histogram["sum"]).to_bits(),
-                                bucket_count_bits: sorted_bits(buckets),
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+                            count_bits: parse_f64(&histogram["count"]).to_bits(),
+                            sum_bits: parse_f64(&histogram["sum"]).to_bits(),
+                            bucket_count_bits: sorted_bits(buckets),
+                        }
+                    })
+                    .collect()
+            });
             Series {
                 labels,
                 floats,
@@ -678,7 +669,7 @@ async fn an_invalid_prometheus_block_fails_and_leaves_no_index_entry() -> TestRe
                 block.declared.push(DeclaredUploadFile {
                     path: "chunks/000002".to_owned(),
                     size_bytes: 64,
-                })
+                });
             },
             error: "invalid Prometheus TSDB block: the file chunks/000002 was not uploaded",
         },

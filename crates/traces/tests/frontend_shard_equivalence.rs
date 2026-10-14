@@ -13,7 +13,7 @@ use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, SearchPartial},
     config::FrontendConfig,
-    job::{BlockMetaInfo, MockCatalog},
+    job::MockCatalog,
     wire::{Metrics, SpanJson, SpanSetJson, TraceJson},
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};

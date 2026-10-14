@@ -25,6 +25,7 @@ mod union_store;
 
 /// Prost-generated perftools.profiles wire types.
 pub mod proto {
+    #![allow(clippy::struct_excessive_bools)]
 
     include!(concat!(env!("OUT_DIR"), "/perftools.profiles.rs"));
 }

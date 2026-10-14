@@ -11,8 +11,8 @@ pub(crate) fn normalize_duration_expressions(
     let QueryScan {
         chars,
         output: mut out,
-        index: mut index,
-        quoted: mut quoted,
+        mut index,
+        mut quoted,
     } = QueryScan::new(query);
 
     while index < chars.len() {

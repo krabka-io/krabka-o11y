@@ -20,7 +20,7 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
         let Some(labels) = payload.series.get(fingerprint) else {
             continue;
         };
-        for pair in labels.iter() {
+        for pair in labels {
             let next = dictionary.len();
             dictionary.entry(pair.name.to_string()).or_insert(next);
             let next = dictionary.len();
@@ -50,7 +50,7 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
         let count = labels.map_or(0, Labels::len);
         push_len(&mut out, count);
         if let Some(labels) = labels {
-            for pair in labels.iter() {
+            for pair in labels {
                 push_dictionary_id(&mut out, &dictionary.ids, pair.name);
                 push_dictionary_id(&mut out, &dictionary.ids, pair.value);
             }

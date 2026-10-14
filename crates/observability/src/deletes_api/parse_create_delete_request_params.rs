@@ -17,7 +17,7 @@ pub(crate) fn parse_create_delete_request_params(
                 start_time = Some(parse_loki_delete_timestamp_query_param(
                     "start",
                     &pair.value,
-                )?)
+                )?);
             }
             "end" => end_time = Some(parse_loki_delete_timestamp_query_param("end", &pair.value)?),
             "max_interval" => {

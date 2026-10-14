@@ -20,6 +20,7 @@ use super::{
     success_response_with_stats, timestamp_ms, validate_timestamp_range,
 };
 
+#[allow(clippy::result_large_err)]
 fn authorized_query_tenant(
     headers: &HeaderMap,
     principal: &Principal,

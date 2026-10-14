@@ -9,13 +9,11 @@ mod support;
 use assert2::{assert, check};
 use axum::{Router, body::to_bytes, http::StatusCode};
 use krabka_observability::{
-    InMemoryWalSink, Role, ServiceConfig, ServiceDependencies, build_service_router,
-    distributor_router, loki_router,
+    InMemoryWalSink, Role, ServiceDependencies, build_service_router, distributor_router,
+    loki_router,
 };
 use serde_json::{Value, json};
-use support::{
-    Method, fixture, json_body, minimal_service_config, send_bare, test_service_config, text_body,
-};
+use support::{Method, fixture, json_body, send_bare, test_service_config, text_body};
 
 struct RingAliasCase {
     app: Router,

@@ -20,7 +20,7 @@ impl FromRequest<Arc<DistributorState>> for PushRequest {
         request: Request,
         state: &Arc<DistributorState>,
     ) -> Result<Self, Self::Rejection> {
-        let mut request_parts = request.into_parts();
+        let request_parts = request.into_parts();
         let mut parts = request_parts.0;
         let body = request_parts.1;
         let Extension(principal) = Extension::<Principal>::from_request_parts(&mut parts, state)

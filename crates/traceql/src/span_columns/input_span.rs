@@ -1,6 +1,4 @@
 use super::{EventRef, LinkRef, Time};
-#[cfg(test)]
-use crate::result::AttrValue;
 use crate::result::Attribute;
 
 #[derive(Clone, Debug, PartialEq)]

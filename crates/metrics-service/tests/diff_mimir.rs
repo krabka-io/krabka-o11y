@@ -18,7 +18,6 @@
 #![recursion_limit = "512"]
 
 use std::{
-    collections::BTreeMap,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };

@@ -83,8 +83,7 @@ impl PrometheusRulesFilters {
             return true;
         }
         let labels = loki_yaml_mapping(source_rule)
-            .map(|fields| yaml_string_labels_field(fields, "labels"))
-            .unwrap_or_default();
+            .map_or_default(|fields| yaml_string_labels_field(fields, "labels"));
         self.label_selectors.iter().any(|selector| {
             selector
                 .matchers

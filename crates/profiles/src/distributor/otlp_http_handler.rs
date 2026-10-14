@@ -5,6 +5,7 @@ struct EncodedOtlpBody {
     body: Vec<u8>,
 }
 
+#[cfg(test)]
 struct ErrorWireFormatCase {
     json: bool,
     content_type: &'static str,

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use krabka_units::{ByteSize, Time};
 
-/// Accumulates catalog keys by TraceQL tag scope while a store scans spans.
+/// Accumulates catalog keys by `TraceQL` tag scope while a store scans spans.
 #[derive(Debug, Default)]
 pub struct TagNameSets {
     pub resource: BTreeSet<String>,

@@ -1282,6 +1282,7 @@ async fn detected_field_values_endpoint_rejects_loki_query_ranges_over_limit() {
 /// answers for the matching entries from its ingesters, so the detected-field
 /// and volume endpoints read the querier's hot tail as well as its blocks.
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
     let hot_tail = InMemoryWalSink::default();
     struct HotTailEntry {

@@ -41,7 +41,7 @@ pub fn check_up_sample_with_trace_exemplar(decoded: &[DecodedSeries]) {
     check!(decoded[0].exemplars[0].labels.get("trace_id") == Some("abc"));
 }
 
-pub fn assert_duplicate_job_label(error: super::WireError) {
+pub fn assert_duplicate_job_label(error: &super::WireError) {
     assert!(matches!(error, super::WireError::Invalid(_)));
     assert!(format!("{error}").contains("duplicate label `job`"));
 }

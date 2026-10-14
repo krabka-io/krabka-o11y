@@ -182,8 +182,7 @@ fn valid_label_name(name: &str) -> bool {
         return false;
     }
     let bytes = name.as_bytes();
-    for index in 0..bytes.len() {
-        let byte = bytes[index];
+    for (index, byte) in bytes.iter().copied().enumerate() {
         if byte != b'_' && !byte.is_ascii_alphabetic() && !(index > 0 && byte.is_ascii_digit()) {
             return false;
         }

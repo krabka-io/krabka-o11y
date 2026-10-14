@@ -12,16 +12,15 @@ pub(crate) fn failure(error: &RecoveryError, report: Option<&Path>) -> String {
         operation,
         findings,
     } = error
+        && let Some(path) = report
     {
-        if let Some(path) = report {
-            let failure = json!({
-                "error": message,
-                "operation": operation,
-                "findings": findings,
-            });
-            if let Err(write_error) = write_report(&failure, path) {
-                return format!("{message}; the failure report was not written: {write_error}");
-            }
+        let failure = json!({
+            "error": message,
+            "operation": operation,
+            "findings": findings,
+        });
+        if let Err(write_error) = write_report(&failure, path) {
+            return format!("{message}; the failure report was not written: {write_error}");
         }
     }
     message

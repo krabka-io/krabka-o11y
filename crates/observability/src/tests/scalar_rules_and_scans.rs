@@ -48,6 +48,7 @@ impl ApiSeriesPlan {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn assert_stream_response_encodings(
     streams: BTreeMap<Labels, Vec<LokiStreamEntry>>,
     folded: crate::Value,

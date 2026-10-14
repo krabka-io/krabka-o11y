@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
 use std::{net::SocketAddr, process::ExitCode, sync::Arc};
 
 use arc_swap::ArcSwap;
@@ -78,12 +80,6 @@ mod tests {
     struct ListenerAddress<'a> {
         name: &'static str,
         address: &'a str,
-    }
-
-    #[derive(Debug)]
-    struct TargetSpellingMismatch {
-        cli_spelling: String,
-        role_name: &'static str,
     }
 
     struct CliEnvironment {
@@ -199,10 +195,10 @@ mod tests {
                 .get_name()
                 .to_string();
             if typed != target.kind().as_str() {
-                mismatched.push(TargetSpellingMismatch {
-                    cli_spelling: typed.clone(),
-                    role_name: target.kind().as_str(),
-                });
+                mismatched.push(format!(
+                    "--target {typed} does not match role {}",
+                    target.kind().as_str()
+                ));
                 continue;
             }
             // And the name round-trips: what clap prints is what clap parses.

@@ -70,7 +70,7 @@ crate::delegate_object_store! {
     ) -> object_store::Result<object_store::PutResult> {
         if self
             .failing_puts
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 (left > 0).then(|| left - 1)
             })
             .is_ok()

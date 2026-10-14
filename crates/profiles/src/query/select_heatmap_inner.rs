@@ -1,7 +1,7 @@
 use super::{
     BTreeMap, ConnectError, ConnectQueryRequest, ConnectResponse, EndMs, HeatmapExemplarRequest,
-    HeatmapSlotsMillis, ProfileStore, QuerierState, SpanHeatmapRequest, StartMs, TimeExt,
-    connect_error, heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs,
+    HeatmapSlotsMillis, ProfileStore, SpanHeatmapRequest, StartMs, TimeExt, connect_error,
+    heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs,
 };
 
 pub(crate) async fn select_heatmap_inner<S>(

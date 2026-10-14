@@ -19,8 +19,8 @@ use arrow::{
 };
 use datafusion::{catalog::MemTable, prelude::SessionContext};
 use krabka_blockstore::{
-    BlockIndex, BlockMeta, BlockStore, SCOL_EVENTS, SCOL_LINKS, TimeRange, TraceIndex,
-    span_block_schema, span_block_schema_with_promoted_attrs,
+    BlockIndex, BlockStore, SCOL_EVENTS, SCOL_LINKS, TimeRange, TraceIndex, span_block_schema,
+    span_block_schema_with_promoted_attrs,
 };
 use krabka_traceql::{
     ATTR_PREFIX, AttrValue, Attribute, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,
@@ -111,6 +111,8 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
+
+    use krabka_blockstore::BlockMeta;
 
     struct TagValueIndexEntry {
         tag: String,

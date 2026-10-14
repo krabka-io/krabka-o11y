@@ -34,7 +34,7 @@ pub(super) async fn fail_record<S: ProfileStore>(
         .map_err(|e| ConnectError::new(super::Code::Internal, e.to_string()))?;
     let record::LoadedRecord {
         record: mut current,
-        version: version,
+        version,
     } = record::load(state, &tenant, &record.id).await?;
     if current.owner != record.owner
         || current.heartbeat_ms != record.heartbeat_ms
@@ -158,7 +158,7 @@ pub(super) async fn adopt<S: ProfileStore + 'static>(
         let claimed = async {
             let record::LoadedRecord {
                 record: mut current,
-                version: version,
+                version,
             } = record::load(state, &tenant, &id).await?;
             if !expired(state, &current, record::now_ms()) {
                 return Ok(false);

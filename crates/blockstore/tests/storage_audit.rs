@@ -617,6 +617,7 @@ async fn an_audit_does_not_change_the_store() {
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn a_scoped_audit_reports_only_its_tenant_and_signal() {
     let store = store();
     inject(&store, StorageSignal::Traces, Fault::OrphanBlock).await;

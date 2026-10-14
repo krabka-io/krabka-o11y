@@ -371,7 +371,7 @@ fn build_profile(
             krabka_blockstore::LabelPair::new("__name__", spec.metric),
             krabka_blockstore::LabelPair::new("__period_type__", spec.period_type),
             krabka_blockstore::LabelPair::new("__period_unit__", spec.period_unit),
-            krabka_blockstore::LabelPair::new("jfr_event", event_mode.clone()),
+            krabka_blockstore::LabelPair::new("jfr_event", event_mode),
         ];
         let labels = metadata
             .into_iter()

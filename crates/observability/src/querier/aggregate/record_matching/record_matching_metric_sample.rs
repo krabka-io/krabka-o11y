@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Labels, MetricSamples, MetricValue, MetricWindow, RangeAggregation, is_unwrapped_metric_query,
+};
 
 /// An entry that matched a metric query.
 pub(crate) struct MatchedEntry {

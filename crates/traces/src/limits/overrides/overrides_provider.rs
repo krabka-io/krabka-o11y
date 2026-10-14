@@ -3,6 +3,11 @@ use super::{
     Time, TimeExt, Value, merge_limits,
 };
 
+type ApiWriteGuard<'a> = (
+    Option<std::fs::File>,
+    std::sync::RwLockWriteGuard<'a, HashMap<String, VersionedOverride>>,
+);
+
 #[derive(Clone, Debug)]
 pub struct OverridesProvider {
     pub(crate) defaults: Limits,
@@ -235,15 +240,7 @@ impl OverridesProvider {
         self.lock_and_reload_api().map(|_| ())
     }
 
-    fn lock_and_reload_api(
-        &self,
-    ) -> Result<
-        (
-            Option<std::fs::File>,
-            std::sync::RwLockWriteGuard<'_, HashMap<String, VersionedOverride>>,
-        ),
-        OverrideMutationError,
-    > {
+    fn lock_and_reload_api(&self) -> Result<ApiWriteGuard<'_>, OverrideMutationError> {
         let file_lock = self.lock_api_file()?;
         let mut api = self
             .api

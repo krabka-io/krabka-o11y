@@ -1,3 +1,4 @@
+#[cfg(feature = "experimental-functions")]
 use krabka_metrics::NativeHistogram;
 
 #[cfg(feature = "experimental-functions")]
@@ -9,6 +10,7 @@ use super::{
     record_metric_name,
 };
 
+#[cfg(feature = "experimental-functions")]
 struct NativeHistogramSample {
     labels: super::Labels,
     timestamp_ms: i64,

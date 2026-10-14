@@ -11,8 +11,9 @@ use krabka_observability::server_security::{Principal, authorize_admin};
 
 use super::{AuthorizedTenant, MetricStore, PrometheusApiState};
 
+#[allow(clippy::result_large_err)]
 fn require_ruler_admin(principal: &Principal) -> Result<(), Response> {
-    authorize_admin(principal).map_err(|error| error.into_response())
+    authorize_admin(principal).map_err(axum::response::IntoResponse::into_response)
 }
 
 macro_rules! ruler_admin_handler {
@@ -52,7 +53,7 @@ ruler_admin_handler!(all_rule_groups; []; state, principal; {
             let mut output = BTreeMap::new();
             for tenant_entry in rules.iter() {
                 let mut namespaces_output = BTreeMap::new();
-                for namespace_entry in tenant_entry.1.iter() {
+                for namespace_entry in tenant_entry.1 {
                     namespaces_output.insert(
                         namespace_entry.0.clone(),
                         namespace_entry.1.values().cloned().collect::<Vec<_>>(),

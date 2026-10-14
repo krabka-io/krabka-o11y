@@ -117,8 +117,7 @@ async fn check_limit_scan(case: LimitScanCase<'_>) {
     let tenant = "tenant-a";
     let mut labels = LabelIndex::default();
     let mut blocks = BlockIndex::default();
-    for offset in 0..cold.len() {
-        let row = &cold[offset];
+    for (offset, row) in cold.iter().enumerate() {
         let fingerprint = labels.insert_series(
             tenant,
             krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", row.app)]),

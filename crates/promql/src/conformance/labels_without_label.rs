@@ -2,7 +2,7 @@ use super::Labels;
 
 pub(crate) fn labels_without_label(labels: &Labels, drop: &str) -> Labels {
     let mut out = Labels::new();
-    for pair in labels.iter() {
+    for pair in labels {
         if pair.name != drop {
             out.insert(pair.name, pair.value);
         }

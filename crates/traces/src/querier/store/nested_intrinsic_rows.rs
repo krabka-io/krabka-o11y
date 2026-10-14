@@ -27,6 +27,11 @@ struct NestedAttributeBuilder<'a> {
     values: Vec<Vec<AttrValue>>,
 }
 
+struct NamedArray {
+    name: &'static str,
+    array: ArrayRef,
+}
+
 pub(crate) fn nested_intrinsic_rows(
     batch: &RecordBatch,
     matchers: &[SpanMatcher],
@@ -117,10 +122,6 @@ pub(crate) fn nested_intrinsic_rows(
             ints.append(true);
             floats.append(true);
             bools.append(true);
-        }
-        struct NamedArray {
-            name: &'static str,
-            array: ArrayRef,
         }
         let named_arrays = [
             NamedArray {

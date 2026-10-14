@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_statements)]
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},

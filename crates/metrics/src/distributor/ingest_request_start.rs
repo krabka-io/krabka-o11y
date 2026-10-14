@@ -4,7 +4,7 @@ use tracing::Instrument as _;
 
 use super::{
     BodyBytes, ByteSize, ByteSizeExt as _, DistributorState, HeaderMap, IntoResponse, Principal,
-    PushError, PushSuccess, Response, StdDurationExt as _, TenantAccessError, TenantId,
+    PushError, Response, StdDurationExt as _, TenantAccessError, TenantId,
     authorized_tenant_from_headers, ingest_span, record_ingest_outcome,
 };
 

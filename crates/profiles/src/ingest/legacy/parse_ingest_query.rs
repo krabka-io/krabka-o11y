@@ -24,6 +24,10 @@ fn query_parameter(pair: &str) -> QueryParameter<'_> {
 ///
 /// # Errors
 /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+///
+/// # Panics
+/// The parser's validated profile suffix must still be present when it truncates
+/// the suffix from the name.
 pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
     let mut name = String::new();
     let mut labels = Vec::new();

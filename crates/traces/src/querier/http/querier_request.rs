@@ -1,8 +1,8 @@
 use axum::{extract::FromRequestParts, http::request::Parts};
 
 use super::{
-    AppState, Extension, HeaderMap, IntoResponse, Principal, Response, SpanStore, TenantId,
-    TenantRequest, Uri, metrics_request,
+    AppState, Extension, HeaderMap, IntoResponse, Principal, Response, SpanStore, TenantRequest,
+    Uri, metrics_request,
 };
 
 /// What every querier read handler extracts from its request: the app state,

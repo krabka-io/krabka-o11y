@@ -1,10 +1,7 @@
-use krabka_observability::service_metrics::RequestOutcome;
-
 use super::{
-    Arc, EvaluatedQuery, HeaderMap, InstantQueryParams, IntoResponse, MetricStore,
-    PerStepSampleStats, Principal, PrometheusApiState, QueryDispatchRequest, QueryRequestTiming,
-    Response, StdDurationExt, StepGrid, authorized_query_tenant, collect_query_sample_stats,
-    enforce_query_range_limit, evaluated_query_response, optional_timestamp_ms, query_stats_step,
+    EvaluatedQuery, InstantQueryParams, IntoResponse, MetricStore, PerStepSampleStats,
+    QueryDispatchRequest, Response, StepGrid, authorized_query_tenant, collect_query_sample_stats,
+    enforce_query_range_limit, optional_timestamp_ms, query_stats_step,
 };
 
 pub(crate) async fn query_dispatch<S: MetricStore>(
@@ -38,7 +35,7 @@ pub(crate) async fn query_dispatch<S: MetricStore>(
     // permit wait, and response encoding — that whole-handler span is already
     // covered by `query_duration{route}`.
     let eval_started = std::time::Instant::now();
-    let mut evaluated = if stats_requested {
+    let evaluated = if stats_requested {
         let per_step = if per_step_stats {
             PerStepSampleStats::Include(StepGrid::instant(time_ms, 1))
         } else {

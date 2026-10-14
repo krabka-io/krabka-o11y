@@ -1,5 +1,5 @@
 use krabka_metrics::{
-    FloatRow, ObjectStoreCompactionIndexSink, TenantCompactionRows, list_compaction_manifests,
+    FloatRow, ObjectStoreCompactionIndexSink, list_compaction_manifests,
     write_compacted_tenant_blocks,
 };
 

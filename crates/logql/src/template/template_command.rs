@@ -233,6 +233,7 @@ impl TemplateCommand {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Result<(), String> {
     validate_template_arguments(name, values)?;
     let count = values.len();

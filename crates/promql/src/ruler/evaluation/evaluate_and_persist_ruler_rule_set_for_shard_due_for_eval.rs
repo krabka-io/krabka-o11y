@@ -1,8 +1,8 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerEvaluationReport, RulerEvaluationSchedule, RulerGroupState,
-    RulerGroupStateRecord, RulerShard, RulerSinks, RulerStateSink, TenantId,
-    evaluate_and_persist_ruler_rule_set_with_report, filter_ruler_rule_set_for_shard_due_for_eval,
+    RulerAlertState, RulerEvaluationReport, RulerEvaluationSchedule, RulerGroupStateRecord,
+    RulerSinks, RulerStateSink, TenantId, evaluate_and_persist_ruler_rule_set_with_report,
+    filter_ruler_rule_set_for_shard_due_for_eval,
 };
 
 /// Evaluates this shard's due ruler rule groups for one tenant, persists

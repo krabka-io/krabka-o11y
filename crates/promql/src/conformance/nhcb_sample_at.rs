@@ -20,7 +20,7 @@ fn float_sample_at(
         Some(SampleSpec::Stale) => Ok(FloatSampleAt::Stale),
         Some(SampleSpec::Histogram(_) | SampleSpec::String(_)) => Err(parse_error(
             line,
-            &format!("load_with_nhcb {role} samples must be float values"),
+            format!("load_with_nhcb {role} samples must be float values"),
         )),
     }
 }

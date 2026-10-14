@@ -70,9 +70,8 @@ mod tests {
         let mut ends = Vec::new();
         let mut start = 0;
         let mut rows = 0_usize;
-        for index in 0..row_counts.len() {
-            let row_count = row_counts[index];
-            rows = rows.saturating_add(row_count);
+        for (index, row_count) in row_counts.iter().enumerate() {
+            rows = rows.saturating_add(*row_count);
             if index + 1 - start >= max_blocks || rows >= target_rows {
                 ends.push(index + 1);
                 start = index + 1;

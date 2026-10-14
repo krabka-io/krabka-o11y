@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, MapArray, StructuredMetadata};
 
 pub(crate) fn structured_metadata_value(
     metadata: &MapArray,

@@ -2820,6 +2820,7 @@ fn metadata_error_cases() -> Vec<Case> {
 }
 
 /// `/index/stats`, `/index/volume` and `/index/volume_range` refusals.
+#[allow(clippy::items_after_statements)]
 fn index_error_cases(timeline: &Timeline) -> Vec<Case> {
     let api = r#"{app="api"}"#;
     let mut cases = Vec::new();
@@ -4099,8 +4100,7 @@ async fn probe_websocket(
             let body = response
                 .body()
                 .as_ref()
-                .map(|body| String::from_utf8_lossy(body).to_string())
-                .unwrap_or_default();
+                .map_or_default(|body| String::from_utf8_lossy(body).to_string());
             Ok(json!({
                 "status": response.status().as_u16(),
                 "contentType": media_type(response.headers().get("content-type")),
@@ -4275,8 +4275,7 @@ fn reduce_tail_frame(status: u16, text: &str) -> Value {
     };
     let keys = frame
         .as_object()
-        .map(|object| object.keys().cloned().collect::<Vec<_>>())
-        .unwrap_or_default();
+        .map_or_default(|object| object.keys().cloned().collect::<Vec<_>>());
     let mut body = sort_object_keys(&frame);
     if let Some(streams) = body.get_mut("streams") {
         *streams = tail_entries(streams);

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, HttpQueryError, Response, StringArray, Value, loki_parquet_columns, loki_parquet_labels,
+    loki_parquet_value_response,
+};
 
 pub(crate) fn loki_streams_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
     let results = value

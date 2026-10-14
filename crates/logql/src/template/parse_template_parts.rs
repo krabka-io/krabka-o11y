@@ -11,10 +11,10 @@ pub(crate) struct TemplateControlBody<'a> {
     pub(crate) next_position: usize,
 }
 
-pub(crate) fn parse_template_control_body<'a>(
-    template: &'a str,
+pub(crate) fn parse_template_control_body(
+    template: &str,
     body_start: usize,
-) -> Result<TemplateControlBody<'a>, ParseError> {
+) -> Result<TemplateControlBody<'_>, ParseError> {
     let Some(control) = super::find_template_control_action(template, body_start)? else {
         return Err(template_parse_error("expected template end action"));
     };

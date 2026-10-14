@@ -9,7 +9,7 @@ use arrow::{
 use krabka_blockstore::TENANT_HEADER;
 use krabka_observability::server_security::InternalClient;
 use krabka_traceql::{
-    AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
+    AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
     TraceqlError, TypedValue,
 };
 use krabka_units::{Time, convert::TimeExt as _};
@@ -404,7 +404,7 @@ mod tests {
         let span = |name: &str, id: u8, parent: Option<u8>| OtlpSpan {
             trace_id: vec![7; 16],
             span_id: vec![id; 8],
-            parent_span_id: parent.map(|p| vec![p; 8]).unwrap_or_default(),
+            parent_span_id: parent.map_or_default(|p| vec![p; 8]),
             name: name.to_string(),
             start_time_unix_nano: 1_000,
             end_time_unix_nano: 1_200,
@@ -605,7 +605,9 @@ mod tests {
 
     use arrow::record_batch::RecordBatch;
     use assert2::check;
-    use krabka_traceql::{AttrValue, ScopedTag, SpanRef, TagScope, TraceSpans, TypedValue};
+    use krabka_traceql::{
+        AttrValue, Attribute, ScopedTag, SpanRef, TagScope, TraceSpans, TypedValue,
+    };
     use krabka_units::nanos;
 
     use super::*;

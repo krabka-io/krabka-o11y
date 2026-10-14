@@ -33,6 +33,5 @@ fn attribute_label_value(attribute: &ProtoKeyValue) -> String {
     attribute
         .value
         .as_ref()
-        .map(proto_value_to_string)
-        .unwrap_or_default()
+        .map_or_default(proto_value_to_string)
 }

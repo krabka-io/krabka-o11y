@@ -17,7 +17,7 @@ pub(crate) fn alert_template_variables(
     }
     variables.insert("labels".to_owned(), TemplateData::ByteLabels(series));
     let mut external = BTreeMap::new();
-    for pair in external_labels.iter() {
+    for pair in external_labels {
         external.insert(pair.name.to_owned(), pair.value.as_bytes().to_vec());
     }
     variables.insert(
@@ -62,7 +62,7 @@ pub(crate) async fn expand_alert_label_map_async<S: crate::MetricStore>(
             }
         };
         expanded.insert(
-            name.to_string(),
+            (*name).clone(),
             result
                 .unwrap_or_else(|error| format!("<error expanding template: {error}>").into_bytes())
                 .into(),

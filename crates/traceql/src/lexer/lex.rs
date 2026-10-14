@@ -42,17 +42,15 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
                 .next()
                 .is_some_and(|next| next.is_ascii_digit());
 
-        if !leading_dot_number {
-            if let Some(scanned) = op_token(rest) {
-                let next = advance(input, i, scanned.consumed)?;
-                if next <= i {
-                    return Err(no_progress(i));
-                }
-                i = next;
-                after_dot = scanned.value == Token::Dot;
-                tokens.push(scanned.value);
-                continue;
+        if !leading_dot_number && let Some(scanned) = op_token(rest) {
+            let next = advance(input, i, scanned.consumed)?;
+            if next <= i {
+                return Err(no_progress(i));
             }
+            i = next;
+            after_dot = scanned.value == Token::Dot;
+            tokens.push(scanned.value);
+            continue;
         }
 
         if ch == '"' {

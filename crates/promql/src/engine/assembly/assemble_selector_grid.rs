@@ -1,6 +1,6 @@
 use super::{
-    Array, BTreeMap, Float64Array, GridPoint, Int64Array, PromqlError, RecordBatch, Result,
-    SeriesFingerprint, StepGrid, labels_from_batch, leaf, row_fingerprints,
+    Array, BTreeMap, GridPoint, Int64Array, PromqlError, RecordBatch, Result, SeriesFingerprint,
+    StepGrid, labels_from_batch, leaf, row_fingerprints,
 };
 
 /// Assembles a grid-driven instant-vector-selector plan's output into one point
@@ -33,8 +33,7 @@ pub(crate) fn assemble_selector_grid(
         let sample_timestamps = int64_column(batch, leaf::SAMPLE_TIME_COLUMN)?;
         let values = super::float64_value_column(batch)?;
         let fingerprints = row_fingerprints(batch, labels_from_batch);
-        for row in 0..fingerprints.len() {
-            let fp = fingerprints[row];
+        for (row, fp) in fingerprints.iter().copied().enumerate() {
             let Some(index) = grid.index_of(grid_timestamps.value(row)) else {
                 continue;
             };

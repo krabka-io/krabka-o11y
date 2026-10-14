@@ -103,6 +103,7 @@ mod tests {
         expected: Option<TempoMetricBounds>,
     }
 
+    #[allow(clippy::struct_field_names)]
     struct BoundsInput {
         start_ns: i64,
         end_ns: i64,

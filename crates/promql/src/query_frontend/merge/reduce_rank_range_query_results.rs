@@ -37,8 +37,7 @@ pub(crate) fn reduce_rank_range_query_results(
         let group = label_sort_key(&aggregate_labels(&series.labels, modifier));
         let labels_key = label_sort_key(&series.labels);
         let fingerprint = series.labels.fingerprint();
-        for sample_index in 0..series.samples.len() {
-            let sample = &series.samples[sample_index];
+        for (sample_index, sample) in series.samples.iter().enumerate() {
             if let SampleValue::Float(value) = &sample.value {
                 candidates_by_step_and_group
                     .entry(RankStepGroup {

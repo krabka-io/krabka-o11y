@@ -349,11 +349,6 @@ mod tests {
 
     use super::*;
 
-    struct BoundaryFeatureCase {
-        query: &'static str,
-        expected: &'static str,
-    }
-
     #[test]
     fn disabled_limit_metadata_uses_aggregate_nodes_with_grouping() {
         for query in [

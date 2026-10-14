@@ -164,7 +164,7 @@ async fn role_operations_routes_match_existing_behavior() {
         assert_content_type(
             &response,
             "text/plain; charset=utf-8",
-            &format!("{} /ready", name),
+            &format!("{name} /ready"),
         );
         assert!(
             text_body(response).await == "ready\n",
@@ -308,6 +308,7 @@ async fn role_operations_routes_match_existing_behavior() {
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn role_ring_alias_routes_remain_available() {
     let roles = role_routers().await;
     let distributor = roles[0].app.clone();

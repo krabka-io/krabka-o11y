@@ -1,8 +1,8 @@
 use super::{
-    Arc, Array, BTreeMap, Int64Array, RecordBatch, SCOL_DURATION_NANOS, SCOL_NAME,
-    SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_START_NANO,
-    SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, StringArray, TracesError,
-    fixed_column, int64_column, set_column, string_column,
+    Arc, Array, Int64Array, RecordBatch, SCOL_DURATION_NANOS, SCOL_NAME, SCOL_PARENT_SPAN_ID,
+    SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_START_NANO, SCOL_TRACE_DURATION_NANOS,
+    SCOL_TRACE_ID, SCOL_TRACE_START_NANO, StringArray, TracesError, fixed_column, int64_column,
+    set_column, string_column,
 };
 
 struct RootNames {
@@ -31,7 +31,7 @@ pub(crate) fn recompute_trace_level_columns(
     let name = string_column(batch, SCOL_NAME)?;
     let root_service = string_column(batch, SCOL_ROOT_SERVICE_NAME)?;
 
-    let by_trace = crate::group_rows_by_trace_id::group_rows_by_trace_id(&trace_ids);
+    let by_trace = crate::group_rows_by_trace_id::group_rows_by_trace_id(trace_ids);
 
     let rows_n = batch.num_rows();
     let mut trace_start = vec![0_i64; rows_n];

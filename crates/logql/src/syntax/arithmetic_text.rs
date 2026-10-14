@@ -1,5 +1,6 @@
 use super::MetricScalarArithmeticOp;
 
+#[must_use]
 pub fn arithmetic_text(op: MetricScalarArithmeticOp) -> &'static str {
     match op {
         MetricScalarArithmeticOp::Add => "+",

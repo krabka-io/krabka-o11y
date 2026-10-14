@@ -6,7 +6,7 @@ pub(crate) fn read_binary_log(input: &mut BinaryInput<'_>) -> Result<JaegerLog, 
         match field.field_id {
             1 if field.field_type == BT_I64 => out.timestamp_micros = input.read_i64()?,
             2 if field.field_type == BT_LIST => {
-                out.fields = input.read_struct_list(read_binary_key_value)?
+                out.fields = input.read_struct_list(read_binary_key_value)?;
             }
             _ => input.skip(field.field_type)?,
         }

@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub(crate) async fn body(response: axum::response::Response, context: &str) -> serde_json::Value {
     assert!(
         response.status().is_success(),

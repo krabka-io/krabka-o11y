@@ -38,7 +38,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::{
-        array::{Array, Float64Array, Int64Array, StringArray},
+        array::{Float64Array, Int64Array, StringArray},
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };

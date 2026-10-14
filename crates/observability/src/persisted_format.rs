@@ -70,6 +70,11 @@ pub fn validate_persisted_format<'a>(
     }
 }
 
+/// Validates the persisted format header on a consumed record.
+///
+/// # Errors
+/// Returns an error when the header is absent, duplicated, malformed, or
+/// unsupported.
 pub fn validate_consumer_record(record: &ConsumerRecord) -> Result<(), PersistedFormatError> {
     validate_persisted_format(record.headers.iter().map(|header| PersistedHeader {
         key: header.key.as_str(),

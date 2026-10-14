@@ -79,6 +79,7 @@ fn live_store() -> krabka_traces::LiveStore {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::items_after_statements)]
 async fn a_trace_id_on_a_log_line_fetches_the_trace() {
     let timestamp_ns = now_ns();
     let sink = InMemoryWalSink::default();
@@ -243,14 +244,12 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
 fn collect_lines(json: &Value) -> Vec<&str> {
     json["data"]["result"]
         .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .map_or_default(Vec::as_slice)
         .iter()
         .flat_map(|stream| {
             stream["values"]
                 .as_array()
-                .map(Vec::as_slice)
-                .unwrap_or_default()
+                .map_or_default(Vec::as_slice)
                 .iter()
         })
         .filter_map(|entry| entry.get(1).and_then(Value::as_str))

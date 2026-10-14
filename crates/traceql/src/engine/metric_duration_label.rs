@@ -65,8 +65,6 @@ fn decimal_duration(value: u64, divisor: u64, precision: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use assert2::assert;
-
     use super::*;
 
     #[yare::parameterized(
@@ -80,6 +78,6 @@ mod tests {
         min_i64 = { i64::MIN, "-2562047h47m16.854775808s" },
     )]
     fn duration_labels_preserve_units_fractional_parts_and_sign(nanos: i64, expected: &str) {
-        ::core::assert!(metric_duration_label(nanos) == expected);
+        ::core::assert_eq!(metric_duration_label(nanos), expected);
     }
 }

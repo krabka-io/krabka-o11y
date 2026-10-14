@@ -286,7 +286,7 @@ async fn an_expired_block_is_not_resurrected_by_the_snapshot_merge() {
     let (
         store,
         ExpirationFixture {
-            index,
+            index: _,
             expired,
             live,
         },

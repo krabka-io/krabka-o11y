@@ -1,7 +1,7 @@
 use super::{
     ConnectError, ConnectQueryRequest, ConnectResponse, Message, ProfileError, ProfileStore,
-    QuerierState, SampleSelector, apply_go_pgo, connect_error, merge_profile_id_selector,
-    parse_trace_selectors, pb, stack_trace_call_sites,
+    SampleSelector, apply_go_pgo, connect_error, merge_profile_id_selector, parse_trace_selectors,
+    pb, stack_trace_call_sites,
 };
 
 pub(crate) async fn select_merge_profile_inner<S>(

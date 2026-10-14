@@ -12,7 +12,7 @@ struct ScanCandidates {
     blocks: Vec<String>,
 }
 
-/// A registered DataFusion table and the session that owns it.
+/// A registered `DataFusion` table and the session that owns it.
 pub struct RegisteredTable {
     pub context: SessionContext,
     pub table: String,

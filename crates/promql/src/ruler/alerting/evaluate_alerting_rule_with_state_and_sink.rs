@@ -319,7 +319,7 @@ fn alerts_record(
     let mut labels = labels.clone();
     labels.insert("__name__", "ALERTS");
     labels.insert("alertstate", alert_state);
-    wal_record(tenant, labels, value, eval_time_ms)
+    wal_record(tenant, &labels, value, eval_time_ms)
 }
 
 fn alert_for_state_record(
@@ -331,12 +331,12 @@ fn alert_for_state_record(
     let mut labels = labels.clone();
     labels.insert("__name__", "ALERTS_FOR_STATE");
     labels.remove("alertstate");
-    wal_record(tenant, labels, value, eval_time_ms)
+    wal_record(tenant, &labels, value, eval_time_ms)
 }
 
 fn wal_record(
     tenant: &TenantId,
-    labels: crate::PromqlLabels,
+    labels: &crate::PromqlLabels,
     value: f64,
     eval_time_ms: i64,
 ) -> WalRecord {

@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
 use std::{
     net::SocketAddr,
     path::Path,

@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct RulerRuleStatusKey {
+pub(crate) struct RulerRuleStatusKey {
     tenant: String,
     namespace: String,
     group: String,
@@ -21,7 +21,7 @@ struct RulerRuleStatusKey {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct RulerGroupStatusKey {
+pub(crate) struct RulerGroupStatusKey {
     tenant: String,
     namespace: String,
     group: String,

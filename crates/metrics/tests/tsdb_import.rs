@@ -478,7 +478,7 @@ fn decode_synthetic(
 }
 
 fn float_rows(block: &DecodedTsdbBlock) -> Vec<krabka_metrics::FloatRow> {
-    block.rows.float_rows.iter().cloned().collect()
+    block.rows.float_rows.clone()
 }
 
 fn fingerprint(labels: &[LabelInput]) -> u64 {

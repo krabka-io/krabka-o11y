@@ -48,16 +48,13 @@ pub(crate) async fn execute_stacktrace_query<S: ProfileStore>(
     } else {
         SampleSelector::None
     };
-    let max_nodes = req
-        .max_nodes
-        .map(|count| {
-            if count > 0 {
-                count.saturating_add(1)
-            } else {
-                count
-            }
-        })
-        .unwrap_or_default();
+    let max_nodes = req.max_nodes.map_or_default(|count| {
+        if count > 0 {
+            count.saturating_add(1)
+        } else {
+            count
+        }
+    });
     let query_target = super::QueryTarget::new(tenant, &req.profile_type_id, &label_selector);
     let query_range = super::QueryRange::new(req.start, req.end);
     let response = match req.format {

@@ -245,6 +245,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn query_analysis_with_omitted_bounds_returns_empty_for_hot_and_cold_data() {
         use krabka_pprof::{InMemoryProfileStore, UnionProfileStore};
 

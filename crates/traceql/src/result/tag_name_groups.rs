@@ -15,6 +15,7 @@ pub struct TagNameGroups {
 impl TagNameGroups {
     /// Returns nonempty groups allowed by `scope`, with intrinsic names
     /// included when the store has matching spans.
+    #[must_use]
     pub fn into_scoped_tags(
         self,
         scope: Option<TagScope>,

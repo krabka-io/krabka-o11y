@@ -5,8 +5,6 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use krabka_units::Time;
 
-#[cfg(test)]
-use crate::result::AttrValue;
 use crate::result::{EventRef, LinkRef};
 
 #[cfg(test)]

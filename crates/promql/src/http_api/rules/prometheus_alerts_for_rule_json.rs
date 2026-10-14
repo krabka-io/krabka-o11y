@@ -126,11 +126,12 @@ pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
         } else {
             "pending"
         };
+        let annotations: crate::PromqlLabels = evaluated_alert.annotations.into();
         alerts.push(json!({
             "activeAt": rfc3339_time_string(active_at_ms),
-            "annotations": labels_map_json(evaluated_alert.annotations.into()),
+            "annotations": labels_map_json(&annotations),
             "duration": hold.secs_i64(),
-            "labels": labels_map_json(evaluated_alert.labels),
+            "labels": labels_map_json(&evaluated_alert.labels),
             "name": name,
             "query": query,
             "state": alert_state,

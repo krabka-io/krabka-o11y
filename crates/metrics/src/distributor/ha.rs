@@ -11,7 +11,7 @@ use krabka_units::prelude::*;
 use crate::wire::DecodedSeries;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct HaElectionIdentity {
+pub(super) struct HaElectionIdentity {
     tenant: String,
     cluster: String,
 }

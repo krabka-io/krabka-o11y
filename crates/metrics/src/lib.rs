@@ -5,6 +5,8 @@
 //! append, and compactor block and index writes. Query execution lives in
 //! `krabka-promql`.
 
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
 /// Adds the registry-backed constructors shared by metric service bundles.
 #[macro_export]
 macro_rules! impl_service_metrics_registry_constructors {

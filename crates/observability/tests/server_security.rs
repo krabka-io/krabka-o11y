@@ -549,10 +549,6 @@ async fn every_rejected_request_gets_the_same_401_and_one_failure_event() {
     let url = format!("http://{}/whoami", server.addr);
     let client = reqwest::Client::new();
 
-    struct RejectedRequestCase {
-        name: &'static str,
-        request: reqwest::RequestBuilder,
-    }
     let requests = [
         RejectedRequestCase {
             name: "wrong token",
@@ -701,9 +697,13 @@ impl LogsService for EchoPrincipal {
     }
 }
 
+struct RejectedRequestCase {
+    name: &'static str,
+    request: reqwest::RequestBuilder,
+}
+
 struct GrpcServer {
     addr: SocketAddr,
-    stop: CancellationToken,
 }
 
 async fn serve_grpc(security: &ServerSecurity) -> GrpcServer {
@@ -716,7 +716,7 @@ async fn serve_grpc(security: &ServerSecurity) -> GrpcServer {
         .add_service(LogsServiceServer::new(EchoPrincipal))
         .serve_with_incoming_shutdown(grpc_incoming(listener), stop.clone().cancelled_owned());
     tokio::spawn(server);
-    GrpcServer { addr, stop }
+    GrpcServer { addr }
 }
 
 async fn export(
@@ -738,8 +738,7 @@ async fn export(
     Ok(response
         .into_inner()
         .partial_success
-        .map(|success| success.error_message)
-        .unwrap_or_default())
+        .map_or_default(|success| success.error_message))
 }
 
 #[tokio::test]

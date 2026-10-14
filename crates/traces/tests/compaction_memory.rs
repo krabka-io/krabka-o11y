@@ -240,6 +240,7 @@ fn worker_growth_kib(directory: &Path, arm: &str) -> u64 {
 /// the read the compactor used to do, over the same blocks in the same
 /// process -- and its cost is expected to track the rows.
 #[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::items_after_statements)]
 async fn compacting_twice_as_many_rows_does_not_cost_twice_the_memory() {
     if status_kib("VmHWM").is_none() {
         // No /proc to read RSS out of. Nothing to measure rather than

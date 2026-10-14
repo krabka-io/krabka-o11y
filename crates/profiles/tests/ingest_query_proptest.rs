@@ -119,12 +119,12 @@ prop_compose! {
     }
 }
 
-/// A whole ingest query.
-///
-/// The time bounds stay above ten billion, where `parse_unix_time_ms` reads
-/// the number as milliseconds and hands it back unchanged. Below that it reads
-/// seconds and multiplies by a thousand, which is a conversion rather than a
-/// round trip, and `tests/pyroscope_differential.rs` covers it by example.
+// A whole ingest query.
+//
+// The time bounds stay above ten billion, where `parse_unix_time_ms` reads
+// the number as milliseconds and hands it back unchanged. Below that it reads
+// seconds and multiplies by a thousand, which is a conversion rather than a
+// round trip, and `tests/pyroscope_differential.rs` covers it by example.
 prop_compose! {
     fn arb_ingest_query()
         (

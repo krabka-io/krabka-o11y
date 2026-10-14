@@ -154,7 +154,7 @@ pub(crate) fn assemble_metrics_response(
             .expect("a collected metric label key exists");
         grouped_series.push(metric_series_for_group(
             labels,
-            group_buckets,
+            &group_buckets,
             metric,
             MetricGrid {
                 start_ns: output_start_ns.0,

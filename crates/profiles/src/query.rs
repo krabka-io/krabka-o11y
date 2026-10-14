@@ -24,9 +24,8 @@ use krabka_observability::server_security::{
 use krabka_pprof::{
     COL_FINGERPRINT, COL_TIMESTAMP, EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore,
     PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID,
-    PCOL_VALUE, ProfileError, ProfileIdentity, ProfileLabel, ProfileStats, ProfileStore,
-    ProfileType, SampleSelector, SampleValues, Series, SeriesAgg, StacktraceIdentity,
-    parse_label_selector, step_bucket_ms, step_from_secs,
+    PCOL_VALUE, ProfileError, ProfileStats, ProfileStore, ProfileType, SampleSelector, Series,
+    SeriesAgg, parse_label_selector, step_bucket_ms, step_from_secs,
 };
 use krabka_units::{
     Time,
@@ -37,7 +36,6 @@ use num_traits::ToPrimitive as _;
 use prost::Message;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
-use tokio::net::TcpListener;
 
 use crate::{
     ids::{DefaultMs, EndMs, MaxValue, MinValue, NowMs, StartMs},
@@ -106,7 +104,10 @@ mod tests {
 
     use assert2::{assert, check};
     use base64::Engine;
-    use krabka_pprof::{FunctionRec, LineRec, LocationRec};
+    use krabka_pprof::{
+        FunctionRec, LineRec, LocationRec, ProfileIdentity, ProfileLabel, SampleValues,
+        StacktraceIdentity,
+    };
     use krabka_units::secs;
     use object_store::ObjectStoreExt as _;
 

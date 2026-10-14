@@ -31,7 +31,7 @@ impl TenantIndex {
         }
         self.series.insert(fingerprint, labels.clone());
 
-        for pair in labels.iter() {
+        for pair in labels {
             self.postings
                 .entry(pair.name.to_string())
                 .or_default()
@@ -168,14 +168,11 @@ impl TenantIndex {
     }
 
     pub(crate) fn present_fingerprints(&self, name: &str) -> BTreeSet<SeriesFingerprint> {
-        self.postings
-            .get(name)
-            .map(|values| {
-                values
-                    .values()
-                    .flat_map(|fps| fps.iter().copied())
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.postings.get(name).map_or_default(|values| {
+            values
+                .values()
+                .flat_map(|fps| fps.iter().copied())
+                .collect()
+        })
     }
 }

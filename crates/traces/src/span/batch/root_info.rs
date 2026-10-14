@@ -23,7 +23,7 @@ pub(crate) fn root_info(spans: &[Span]) -> RootInfo {
     let service = root
         .and_then(|span| service_name(&span.resource_attrs))
         .unwrap_or_default();
-    let name = root.map(|span| span.name.clone()).unwrap_or_default();
+    let name = root.map_or_default(|span| span.name.clone());
     let bounds = crate::trace_time_bounds(spans.iter().map(|span| crate::SpanTiming {
         start_ns: span.start_ns,
         duration_ns: span.duration_ns,

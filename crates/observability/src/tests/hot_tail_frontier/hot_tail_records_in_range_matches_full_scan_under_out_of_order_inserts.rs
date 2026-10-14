@@ -88,7 +88,7 @@ pub(crate) async fn hot_tail_records_in_range_matches_full_scan_under_out_of_ord
         let end = probe.end;
         if start > end {
             // Mirror the guard: an inverted window yields nothing.
-            assert!(hot_tail.records_in_range(start, end).is_empty());
+            assert_eq!(hot_tail.records_in_range(start, end).len(), 0);
             continue;
         }
         let expected = brute_force_in_range(&records, start, end);

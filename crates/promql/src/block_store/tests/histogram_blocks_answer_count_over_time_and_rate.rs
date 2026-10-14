@@ -1,6 +1,6 @@
 use krabka_metrics::{
     NativeHistogram, NativeHistogramRow, ObjectStoreCompactionIndexSink, ResetHint,
-    TenantCompactionRows, list_compaction_manifests, write_compacted_tenant_blocks,
+    list_compaction_manifests, write_compacted_tenant_blocks,
 };
 
 use super::*;

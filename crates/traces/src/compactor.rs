@@ -11,7 +11,6 @@ use arrow::{
         Array, ArrayRef, BooleanArray, FixedSizeBinaryArray, Float64Array, Int32Array, Int64Array,
         ListArray, StringArray, StructArray,
     },
-    compute::concat_batches,
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };

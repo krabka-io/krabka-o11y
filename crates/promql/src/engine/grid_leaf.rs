@@ -16,7 +16,6 @@ use std::{
     sync::Arc,
 };
 
-use krabka_blockstore::SeriesFingerprint;
 use krabka_units::prelude::*;
 use promql_parser::parser::{MatrixSelector, Offset, VectorSelector};
 
@@ -32,7 +31,6 @@ use super::{
     store_scans::{LabeledSeriesScan, StaleMarkers},
 };
 use crate::{
-    PromqlLabels as Labels,
     error::Result,
     functions::OverTimeFamily,
     planner::{
@@ -352,7 +350,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `assemble_over_time_batches` decides for one step.
         let preserve_metric_name = matches!(over_time.family, OverTimeFamily::Last);
         let mut normalized_labels = BTreeMap::new();
-        for entry in labels_by_fp.iter() {
+        for entry in &labels_by_fp {
             let labels = if preserve_metric_name {
                 entry.1.clone()
             } else {

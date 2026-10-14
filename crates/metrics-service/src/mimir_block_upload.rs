@@ -614,6 +614,7 @@ async fn load_meta(
     read_optional_json(&state.store, &key).await
 }
 
+#[allow(clippy::result_large_err)]
 async fn load_required_meta(
     state: &MimirTenantAdminState,
     tenant: &str,

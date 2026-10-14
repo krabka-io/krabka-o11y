@@ -631,7 +631,7 @@ impl SideCursor {
                 } else {
                     false
                 },
-                upper_inclusive: if self.schema == -53 { true } else { true },
+                upper_inclusive: true,
             }
         } else {
             BucketBoundaries {
@@ -926,8 +926,7 @@ fn side_buckets(hist: &Dto, positive: bool) -> Vec<TemplateBucket> {
 }
 fn validate(hist: &Dto) -> Option<String> {
     fn spans(spans: &[TemplateHistogramSpan], counts: usize, custom: bool) -> Option<String> {
-        for index in 0..spans.len() {
-            let span = &spans[index];
+        for (index, span) in spans.iter().enumerate() {
             if span.offset < 0 && (custom || index > 0) {
                 return Some(format!(
                     "span number {} with offset {}: histogram has a span whose offset is negative",
@@ -940,8 +939,7 @@ fn validate(hist: &Dto) -> Option<String> {
         (total != counts as u64).then(|| format!("spans need {total} buckets, have {counts} buckets: histogram spans specify different number of buckets than provided"))
     }
     fn counts(counts: &[f64]) -> Option<String> {
-        for index in 0..counts.len() {
-            let count = counts[index];
+        for (index, count) in counts.iter().copied().enumerate() {
             if count < 0.0 {
                 return Some(format!(
                     "bucket number {} has observation count of {count}: histogram has a bucket whose observation count is negative",
@@ -954,8 +952,7 @@ fn validate(hist: &Dto) -> Option<String> {
     if hist.schema == -53 {
         let bounds = hist.custom_values.as_slice();
         let mut previous = f64::NEG_INFINITY;
-        for index in 0..bounds.len() {
-            let value = bounds[index];
+        for (index, value) in bounds.iter().copied().enumerate() {
             if value.is_nan() {
                 return Some("custom buckets: histogram custom bounds must not be NaN".into());
             }

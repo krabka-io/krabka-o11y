@@ -16,6 +16,12 @@ struct CapturedFrontier {
     frontier: CompactionFrontier,
 }
 
+struct HotTailFrontierCapture<'a> {
+    hot_tail: &'a HotTailState,
+    version: Option<u64>,
+    frontier: CompactionFrontier,
+}
+
 fn tighten_time_limit(value: &mut Time, candidate: Time) {
     if candidate > Time::ZERO && (*value == Time::ZERO || candidate < *value) {
         *value = candidate;
@@ -331,11 +337,6 @@ impl QuerierState {
         }
         loop {
             let mut request = self.clone();
-            struct HotTailFrontierCapture<'a> {
-                hot_tail: &'a HotTailState,
-                version: Option<u64>,
-                frontier: CompactionFrontier,
-            }
             let captured = self.hot_tail.as_ref().map(|hot_tail| {
                 let frontier = match &hot_tail.frontier {
                     CompactionFrontierSource::Shared(shared) => {
