@@ -25,15 +25,11 @@ macro_rules! rank_pipeline {
     };
 }
 
-pub(crate) use rank_pipeline;
-
 macro_rules! numeric_aggregate {
     ($aggregate:ident) => {
         $aggregate @ (Aggregate::Sum(_) | Aggregate::Avg(_) | Aggregate::Min(_) | Aggregate::Max(_))
     };
 }
-
-pub(crate) use numeric_aggregate;
 
 #[cfg(test)]
 mod tests {
