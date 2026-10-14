@@ -30,6 +30,7 @@ crate_library(
         ["src/**/*.rs"],
         exclude = ["src/bin/**"],
     ) + [
+        "//crates/blockstore:tests/support/failure_budget.rs",
         "//crates/blockstore:tests/support/flaky_put_store.rs",
         "//crates/blockstore:tests/support/hooked_store.rs",
     ],

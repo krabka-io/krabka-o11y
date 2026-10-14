@@ -16,6 +16,7 @@ exports_files([
     "tests/support/flaky_put_store.rs",
     "tests/support/hooked_store.rs",
     "tests/support/lifecycle_store.rs",
+    "tests/support/sorted_trace_block_keys.rs",
 ])
 
 crate_library(
@@ -29,6 +30,7 @@ crate_library(
         "tests/support/failure_budget.rs",
         "tests/support/flaky_put_store.rs",
         "tests/support/hooked_store.rs",
+        "tests/support/sorted_trace_block_keys.rs",
     ],
 )
 
