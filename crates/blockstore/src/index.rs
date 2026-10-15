@@ -1688,7 +1688,7 @@ mod tests {
 
             assert2::check!(
                 parse_index_shard_location(&shards_prefix, &shard)
-                    == Some(parse_index_shard_location::ParsedIndexShardLocation {
+                    == Some(ParsedIndexShardLocation {
                         tenant: case.tenant.to_string(),
                         object: IndexShardObject::Shard(range),
                     }),
@@ -1696,7 +1696,7 @@ mod tests {
             );
             assert2::check!(
                 parse_index_shard_location(&shards_prefix, &unbound)
-                    == Some(parse_index_shard_location::ParsedIndexShardLocation {
+                    == Some(ParsedIndexShardLocation {
                         tenant: case.tenant.to_string(),
                         object: IndexShardObject::UnboundSeries,
                     }),
@@ -1722,80 +1722,219 @@ mod tests {
         );
     }
 }
-
-mod anchored_regex;
-mod block_entry;
 mod block_list;
-mod block_list_repr;
 mod byte_reader;
 mod decode_index_shard;
-mod default_index_shard_width;
-mod encode_index_shard;
-mod fingerprint_set_digest;
-mod index_shard_format;
-mod index_shard_object;
-mod index_shard_object_key;
-mod index_shard_payload;
 mod index_shard_range;
-mod index_shard_tenant_prefix;
-mod index_shard_width_for_span;
-mod index_shards_prefix_for_key;
 mod index_type;
-mod index_unbound_series_object_key;
-mod load_index_shards;
-mod matcher_matches_empty;
-mod max_index_shards_per_tenant;
-mod max_index_snapshot_bytes;
-mod parse_index_shard_location;
-mod parse_shard_bound_key;
-mod plan_tenant_index_shards;
-mod push_dictionary_id;
-mod push_ivarint;
-mod push_len;
-mod push_shard_block_prefix;
-mod push_string;
-mod push_uvarint;
 mod read_index_shard;
 mod resolve_selective;
 mod save_index_shards;
-mod shard_bound_key;
+mod shard_config;
+mod shard_keys;
+mod shard_loading;
+mod shard_planning;
+mod shard_wire;
 mod tenant_index;
-
-use anchored_regex::anchored_regex;
-use block_entry::BlockEntry;
-use block_list::BlockList;
-use block_list_repr::BlockListRepr;
+use block_list::{BlockList, BlockListRepr};
 pub(crate) use byte_reader::{
     ByteReader, ShardBlockBounds, decode_shard_header, read_shard_block_prefix,
 };
 pub(crate) use decode_index_shard::{decode_index_shard, dictionary_entry};
-pub use default_index_shard_width::DEFAULT_INDEX_SHARD_WIDTH;
-pub(crate) use encode_index_shard::encode_index_shard;
-use fingerprint_set_digest::fingerprint_set_digest;
-use index_shard_format::{INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC};
-pub(crate) use index_shard_object::IndexShardObject;
-pub use index_shard_object_key::index_shard_object_key;
-pub(crate) use index_shard_payload::IndexShardPayload;
 pub use index_shard_range::IndexShardRange;
-pub use index_shard_tenant_prefix::index_shard_tenant_prefix;
-use index_shard_width_for_span::index_shard_width_for_span;
-pub use index_shards_prefix_for_key::index_shards_prefix_for_key;
 pub use index_type::Index;
-pub use index_unbound_series_object_key::index_unbound_series_object_key;
-use load_index_shards::load_index_shards;
-use matcher_matches_empty::matcher_matches_empty;
-pub use max_index_shards_per_tenant::MAX_INDEX_SHARDS_PER_TENANT;
-pub use max_index_snapshot_bytes::MAX_INDEX_SNAPSHOT_BYTES;
-pub(crate) use parse_index_shard_location::parse_index_shard_location;
-pub(crate) use parse_shard_bound_key::parse_shard_bound_key;
-use plan_tenant_index_shards::plan_tenant_index_shards;
-pub(crate) use push_dictionary_id::push_dictionary_id;
-pub(crate) use push_ivarint::push_ivarint;
-pub(crate) use push_len::push_len;
-pub(crate) use push_shard_block_prefix::push_shard_block_prefix;
-pub(crate) use push_string::push_string;
-pub(crate) use push_uvarint::push_uvarint;
 use read_index_shard::read_index_shard;
 pub(crate) use read_index_shard::{CappedObject, capped_read_error, oversized_object_error};
-pub(crate) use shard_bound_key::shard_bound_key;
+pub use shard_config::{
+    DEFAULT_INDEX_SHARD_WIDTH, MAX_INDEX_SHARDS_PER_TENANT, MAX_INDEX_SNAPSHOT_BYTES,
+};
+pub use shard_keys::{
+    index_shard_tenant_prefix, index_shards_prefix_for_key, index_unbound_series_object_key,
+};
+pub(crate) use shard_keys::{parse_shard_bound_key, shard_bound_key};
+#[cfg(test)]
+use shard_loading::ParsedIndexShardLocation;
+pub(crate) use shard_loading::{IndexShardObject, load_index_shards, parse_index_shard_location};
+use shard_planning::plan_tenant_index_shards;
+pub(crate) use shard_wire::{
+    INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, push_dictionary_id, push_len,
+    push_shard_block_prefix, push_string, push_uvarint,
+};
 use tenant_index::TenantIndex;
+
+pub(crate) fn anchored_regex(pattern: &str) -> String {
+    format!("^(?:{pattern})$")
+}
+
+/// Object key of one tenant's shard for `range`.
+#[must_use]
+pub fn index_shard_object_key(key: &str, tenant: &str, range: IndexShardRange) -> String {
+    format!(
+        "{}/time={}-{}/shard.kbi",
+        index_shard_tenant_prefix(key, tenant),
+        shard_bound_key(range.start),
+        shard_bound_key(range.end),
+    )
+}
+
+/// One block, as the index knows it.
+///
+/// The set of fingerprints the block holds is *not* here. It used to be, as a
+/// `BTreeSet` per block, which made the index grow as blocks × cardinality and
+/// made pruning a membership probe per block. The pairs now live once, inverted,
+/// in [`BlockList`]; what stays behind is their count and an
+/// order-independent digest, which is enough to tell a restatement of the same
+/// block from a real change without materialising the set again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BlockEntry {
+    pub(crate) object_key: String,
+    pub(crate) min_ts: i64,
+    pub(crate) max_ts: i64,
+    pub(crate) row_count: usize,
+    pub(crate) fingerprint_count: usize,
+    pub(crate) fingerprint_digest: u64,
+    pub(crate) level: BlockLevel,
+}
+
+impl BlockEntry {
+    /// Whether the block's time span meets `[min_ts, max_ts]`. Inclusive at
+    /// both ends, as every other overlap test in the crate is.
+    pub(crate) const fn overlaps(&self, min_ts: i64, max_ts: i64) -> bool {
+        self.min_ts <= max_ts && self.max_ts >= min_ts
+    }
+}
+
+/// An order-independent digest of a block's fingerprint set.
+///
+/// A caller re-registers a block object key often. A manifest is re-applied,
+/// or a writer restates the block it just wrote, and the series set is almost
+/// always the same one. To recognise that costs one comparison here, and it
+/// saves a rewrite of the inverted posting list, which is the only structure
+/// that still holds the block-to-series pairs.
+///
+/// Each fingerprint goes through the `SplitMix64` finaliser before the sum, so
+/// the digest does not collapse the way a bare XOR does. Two sets with
+/// `a ^ b == c ^ d` are easy to build by accident. A collision here needs two
+/// sets whose mixed sums agree in all 64 bits. The caller compares the element
+/// count alongside the digest.
+pub(crate) fn fingerprint_set_digest(
+    fingerprints: impl IntoIterator<Item = SeriesFingerprint>,
+) -> u64 {
+    let mut digest = 0_u64;
+    for fingerprint in fingerprints {
+        let mut mixed = fingerprint;
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        digest = digest.wrapping_add(mixed ^ (mixed >> 31));
+    }
+    digest
+}
+
+/// Whether `matcher` matches a series for which the label is absent, that is
+/// whether the matcher matches the empty string. This follows Prometheus
+/// `Matcher.Matches("")` semantics. A selector built entirely from such
+/// matchers restricts nothing.
+pub(crate) fn matcher_matches_empty(matcher: &LabelMatcher) -> Result<bool> {
+    match matcher.op {
+        MatchOp::Eq => Ok(matcher.value.is_empty()),
+        MatchOp::Neq => Ok(!matcher.value.is_empty()),
+        MatchOp::Re | MatchOp::Nre => {
+            let regex = regex::Regex::new(&anchored_regex(&matcher.value)).map_err(|error| {
+                BlockStoreError::InvalidBlock(format!("invalid label matcher regex: {error}"))
+            })?;
+            let regex_matches_empty = regex.is_match("");
+            Ok(match matcher.op {
+                MatchOp::Re => regex_matches_empty,
+                // `name!~"re"` selects series whose value does not match `re`;
+                // the empty/absent value is selected exactly when `re` itself
+                // does not match the empty string.
+                _ => !regex_matches_empty,
+            })
+        }
+    }
+}
+
+/// Encodes one shard.
+///
+/// Three things do the work that a `serde_json` document could not. Label
+/// names and values go into a per-shard dictionary and each series references
+/// them by id, which is what collapses the cost of a hundred thousand series
+/// that share five label names and a handful of values. Block timestamps are
+/// stored as deltas along the shard's own time order, and posting ordinals as
+/// deltas along their ascending run, so both are a byte each in the ordinary
+/// case. And the label postings and the label-value sets are not stored at
+/// all: both are functions of the series, and replaying the series on load
+/// rebuilds them exactly.
+pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
+    let mut dictionary = BTreeMap::new();
+    for fingerprint in &payload.selected {
+        let Some(labels) = payload.series.get(fingerprint) else {
+            continue;
+        };
+        for pair in labels {
+            let next = dictionary.len();
+            dictionary.entry(pair.name.to_string()).or_insert(next);
+            let next = dictionary.len();
+            dictionary.entry(pair.value.to_string()).or_insert(next);
+        }
+    }
+    // Ids are assigned on the sorted order rather than on first sight, so the
+    // same index encodes to the same bytes whichever order its series were
+    // registered in.
+    let dictionary = assign_sorted_string_ids(dictionary);
+    let strings = dictionary.strings;
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&INDEX_SHARD_MAGIC);
+    out.push(INDEX_SHARD_FORMAT_VERSION);
+    push_string(&mut out, payload.tenant);
+
+    push_len(&mut out, strings.len());
+    for text in &strings {
+        push_string(&mut out, text);
+    }
+
+    push_len(&mut out, payload.selected.len());
+    for fingerprint in &payload.selected {
+        out.extend_from_slice(&fingerprint.to_le_bytes());
+        let labels = payload.series.get(fingerprint);
+        let count = labels.map_or(0, Labels::len);
+        push_len(&mut out, count);
+        if let Some(labels) = labels {
+            for pair in labels {
+                push_dictionary_id(&mut out, &dictionary.ids, pair.name);
+                push_dictionary_id(&mut out, &dictionary.ids, pair.value);
+            }
+        }
+    }
+
+    push_len(&mut out, payload.blocks.len());
+    let mut previous_min = 0_i64;
+    for block in &payload.blocks {
+        push_shard_block_prefix(
+            &mut out,
+            &block.object_key,
+            block.min_ts,
+            block.max_ts,
+            block.row_count,
+            block.level,
+            &mut previous_min,
+        );
+        push_len(&mut out, block.fingerprint_count);
+        out.extend_from_slice(&block.fingerprint_digest.to_le_bytes());
+    }
+
+    push_len(&mut out, payload.postings.len());
+    for fingerprint in payload.postings.keys() {
+        let ordinals = &payload.postings[fingerprint];
+        out.extend_from_slice(&fingerprint.to_le_bytes());
+        push_len(&mut out, ordinals.len());
+        let mut previous = 0_u32;
+        for ordinal in ordinals {
+            push_uvarint(&mut out, u64::from(ordinal.wrapping_sub(previous)));
+            previous = *ordinal;
+        }
+    }
+
+    out
+}

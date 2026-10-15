@@ -61,11 +61,10 @@ mod metered_object_store;
 mod metered_stream;
 mod object_store_metrics;
 mod object_store_operation;
-mod object_store_operation_label;
 
 use self::metered_stream::MeteredStream;
 pub use self::{
-    metered_object_store::MeteredObjectStore, object_store_metrics::ObjectStoreMetrics,
-    object_store_operation::ObjectStoreOperation,
-    object_store_operation_label::ObjectStoreOperationLabel,
+    metered_object_store::MeteredObjectStore,
+    object_store_metrics::ObjectStoreMetrics,
+    object_store_operation::{ObjectStoreOperation, ObjectStoreOperationLabel},
 };

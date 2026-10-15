@@ -9,7 +9,7 @@ use arrow::{
 use krabka_blockstore::TENANT_HEADER;
 use krabka_observability::server_security::InternalClient;
 use krabka_traceql::{
-    AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
+    AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
     TraceqlError, TypedValue,
 };
 use krabka_units::{Time, convert::TimeExt as _};
@@ -21,6 +21,292 @@ use prost::Message as _;
 use reqwest::Url;
 
 use super::store::SharedTraceIndex;
+
+pub(crate) fn attr_value_from_otlp(value: &AnyValue) -> Option<AttrValue> {
+    if let Some(OtlpValue::ArrayValue(array)) = value.value.as_ref()
+        && array.values.iter().any(|element| {
+            !matches!(
+                element.value,
+                Some(
+                    OtlpValue::StringValue(_)
+                        | OtlpValue::IntValue(_)
+                        | OtlpValue::DoubleValue(_)
+                        | OtlpValue::BoolValue(_)
+                )
+            ) || array.values.first().is_some_and(|first| {
+                first.value.as_ref().map(std::mem::discriminant)
+                    != element.value.as_ref().map(std::mem::discriminant)
+            })
+        })
+    {
+        return Some(AttrValue::Unsupported(
+            crate::span::AttrValue::encode_otlp_json(value).to_string(),
+        ));
+    }
+    match value.value.as_ref()? {
+        OtlpValue::StringValue(value) => Some(AttrValue::Str(value.clone())),
+        OtlpValue::IntValue(value) => Some(AttrValue::Int(*value)),
+        OtlpValue::DoubleValue(value) => Some(AttrValue::Float(*value)),
+        OtlpValue::BoolValue(value) => Some(AttrValue::Bool(*value)),
+        OtlpValue::BytesValue(_) | OtlpValue::KvlistValue(_) => Some(AttrValue::Unsupported(
+            crate::span::AttrValue::encode_otlp_json(value).to_string(),
+        )),
+        OtlpValue::ArrayValue(array) => Some(AttrValue::Array(
+            array
+                .values
+                .iter()
+                .map(attr_value_from_otlp)
+                .collect::<Option<Vec<_>>>()?,
+        )),
+        OtlpValue::StringValueStrindex(_) => None,
+    }
+}
+
+pub(crate) fn attrs_from_otlp(
+    attrs: &[opentelemetry_proto::tonic::common::v1::KeyValue],
+) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter_map(|attr| {
+            attr.value
+                .as_ref()
+                .and_then(attr_value_from_otlp)
+                .map(|value| Attribute::new(attr.key.clone(), value))
+        })
+        .collect()
+}
+
+#[async_trait::async_trait]
+pub trait LiveSource: TagCatalog {
+    async fn span_batches(
+        &self,
+        tenant: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<RecordBatch>>;
+
+    async fn trace_spans(&self, tenant: &str, trace_id: &[u8; 16]) -> Result<Option<TraceSpans>>;
+
+    /// The exclusive upper bound of what the block builder has flushed for
+    /// `tenant`: one nanosecond past the newest `max_ts` across its blocks.
+    ///
+    /// This is a *planning hint*, not a tier boundary. It says where the
+    /// flushed data ends, not where the unflushed data begins: a span can reach
+    /// the hot tier with a `start_ns` well below this bound (a lagging client
+    /// clock, a batching exporter, a long span that outlives its siblings), and
+    /// no block holds it yet. Splitting a query window here and reading the hot
+    /// tier only above it drops exactly those spans, and drops them silently.
+    /// [`crate::querier::store::KrabkaSpanStore`] therefore scans both tiers
+    /// over the whole window and deduplicates the overlap.
+    fn block_builder_frontier_ns(&self, tenant: &str) -> i64;
+}
+
+pub struct LiveTier {
+    pub(crate) source: Arc<dyn LiveSource>,
+}
+
+impl LiveTier {
+    #[must_use]
+    pub fn new(source: Arc<dyn LiveSource>) -> Self {
+        Self { source }
+    }
+
+    ///
+    /// # Errors
+    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    pub async fn span_batches(
+        &self,
+        tenant: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<RecordBatch>> {
+        self.source.span_batches(tenant, start_ns, end_ns).await
+    }
+
+    ///
+    /// # Errors
+    /// Returns an error when the live source query fails.
+    pub async fn trace_spans(
+        &self,
+        tenant: &str,
+        trace_id: &[u8; 16],
+    ) -> Result<Option<TraceSpans>> {
+        self.source.trace_spans(tenant, trace_id).await
+    }
+
+    ///
+    /// # Errors
+    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    pub async fn tag_names(
+        &self,
+        tenant: &str,
+        scope: Option<TagScope>,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<ScopedTag>> {
+        self.source.tag_names(tenant, scope, start_ns, end_ns).await
+    }
+
+    ///
+    /// # Errors
+    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    pub async fn tag_values(
+        &self,
+        tenant: &str,
+        tag: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<TypedValue>> {
+        self.source.tag_values(tenant, tag, start_ns, end_ns).await
+    }
+
+    /// The exclusive upper bound of what the block builder has flushed for
+    /// `tenant`: one nanosecond past the newest `max_ts` across its blocks.
+    ///
+    /// This is a *planning hint*, not a tier boundary. It says where the
+    /// flushed data ends, not where the unflushed data begins: a span can reach
+    /// the hot tier with a `start_ns` well below this bound (a lagging client
+    /// clock, a batching exporter, a long span that outlives its siblings), and
+    /// no block holds it yet. Splitting a query window here and reading the hot
+    /// tier only above it drops exactly those spans, and drops them silently.
+    /// [`crate::querier::store::KrabkaSpanStore`] therefore scans both tiers
+    /// over the whole window and deduplicates the overlap.
+    #[must_use]
+    pub fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+        self.source.block_builder_frontier_ns(tenant)
+    }
+}
+
+pub type Result<T> = std::result::Result<T, TraceqlError>;
+
+pub(crate) fn scoped_tags_from_json(json: &serde_json::Value) -> Result<Vec<ScopedTag>> {
+    let scopes = json
+        .get("scopes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            TraceqlError::Plan("remote live-store tags response missing scopes".into())
+        })?;
+    let mut out = Vec::new();
+    for scope in scopes {
+        let Some(name) = scope.get("name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(scope_name) = tag_scope_from_name(name) else {
+            continue;
+        };
+        let tags = scope
+            .get("tags")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|tag| tag.as_str().map(ToString::to_string))
+            .collect();
+        out.push(ScopedTag {
+            scope: scope_name,
+            tags,
+        });
+    }
+    Ok(out)
+}
+
+pub(crate) fn trace_spans_from_otlp(trace_id: &[u8; 16], data: TracesData) -> Result<TraceSpans> {
+    let mut trace = TraceSpans {
+        trace_id: *trace_id,
+        root_service_name: String::new(),
+        root_trace_name: String::new(),
+        resource_attributes: Vec::new(),
+        spans: Vec::new(),
+    };
+    for resource_spans in data.resource_spans {
+        let resource_attrs = resource_spans
+            .resource
+            .as_ref()
+            .map_or_else(Vec::new, |resource| attrs_from_otlp(&resource.attributes));
+        if trace.resource_attributes.is_empty() {
+            trace.resource_attributes.clone_from(&resource_attrs);
+        }
+        if trace.root_service_name.is_empty() {
+            trace.root_service_name = resource_attrs
+                .iter()
+                .find_map(|attribute| {
+                    (attribute.key == "service.name").then(|| match &attribute.value {
+                        AttrValue::Str(value) => Some(value.clone()),
+                        _ => None,
+                    })?
+                })
+                .unwrap_or_default();
+        }
+        for scope_spans in resource_spans.scope_spans {
+            let instrumentation_scope = scope_spans.scope.unwrap_or_default();
+            let instrumentation_name = instrumentation_scope.name;
+            let instrumentation_version = instrumentation_scope.version;
+            for span in scope_spans.spans {
+                let span_id = fixed_8(&span.span_id)?;
+                let parent_span_id = if span.parent_span_id.is_empty() {
+                    None
+                } else {
+                    Some(fixed_8(&span.parent_span_id)?)
+                };
+                let duration = time_from_nanos_u64(
+                    span.end_time_unix_nano
+                        .saturating_sub(span.start_time_unix_nano),
+                );
+                if trace.root_trace_name.is_empty() && parent_span_id.is_none() {
+                    trace.root_trace_name.clone_from(&span.name);
+                }
+                let status = span.status.unwrap_or_default();
+                trace.spans.push(SpanRef {
+                    span_id,
+                    parent_span_id,
+                    name: span.name,
+                    kind: span.kind,
+                    nested_set_left: 0,
+                    nested_set_right: 0,
+                    nested_set_parent: 0,
+                    start_time_unix_nano: span.start_time_unix_nano,
+                    duration,
+                    status_code: status.code,
+                    status_message: status.message,
+                    instrumentation_name: instrumentation_name.clone(),
+                    instrumentation_version: instrumentation_version.clone(),
+                    resource_attributes: resource_attrs.clone(),
+                    attributes: attrs_from_otlp(&span.attributes),
+                    events: span
+                        .events
+                        .into_iter()
+                        .map(|event| EventRef {
+                            time_since_start: time_from_nanos_u64(
+                                event
+                                    .time_unix_nano
+                                    .saturating_sub(span.start_time_unix_nano),
+                            ),
+                            name: event.name,
+                            attributes: attrs_from_otlp(&event.attributes),
+                        })
+                        .collect(),
+                    links: span
+                        .links
+                        .into_iter()
+                        .map(|link| {
+                            Ok(LinkRef {
+                                trace_id: fixed_16(&link.trace_id)?,
+                                span_id: fixed_8(&link.span_id)?,
+                                attributes: attrs_from_otlp(&link.attributes),
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                });
+            }
+        }
+    }
+    if trace.root_trace_name.is_empty() {
+        trace.root_trace_name = trace
+            .spans
+            .first()
+            .map_or_else(Default::default, |span| span.name.clone());
+    }
+    Ok(trace)
+}
 
 #[cfg(test)]
 mod tests {
@@ -743,41 +1029,89 @@ mod tests {
     }
 }
 
-mod attr_value_from_otlp;
-mod attrs_from_otlp;
-mod decode_span_batches;
-mod encode_span_batches;
-mod fixed_16;
-mod fixed_8;
-mod live_source;
-mod live_span_batches_path;
-mod live_tier;
-mod ns_ceil_seconds;
-mod ns_floor_seconds;
 mod remote_live_source;
-mod result;
-mod scoped_tags_from_json;
-mod time_from_nanos_u64;
-mod trace_spans_from_otlp;
-mod typed_values_from_json;
 
-use attr_value_from_otlp::attr_value_from_otlp;
-use attrs_from_otlp::attrs_from_otlp;
-use decode_span_batches::decode_span_batches;
-pub use encode_span_batches::encode_span_batches;
-use fixed_8::fixed_8;
-use fixed_16::fixed_16;
-pub use live_source::LiveSource;
-use live_span_batches_path::LIVE_SPAN_BATCHES_PATH;
-pub use live_tier::LiveTier;
-use ns_ceil_seconds::ns_ceil_seconds;
-use ns_floor_seconds::ns_floor_seconds;
 pub use remote_live_source::RemoteLiveSource;
-pub use result::Result;
-use scoped_tags_from_json::scoped_tags_from_json;
-use time_from_nanos_u64::time_from_nanos_u64;
-use trace_spans_from_otlp::trace_spans_from_otlp;
-use typed_values_from_json::typed_values_from_json;
 
 use super::tag_scope_from_name;
 use crate::querier::http::tag_scope_name;
+
+pub(crate) const LIVE_SPAN_BATCHES_PATH: &str = "/api/krabka/live/span-batches";
+
+pub(crate) fn decode_span_batches(bytes: &[u8]) -> Result<Vec<RecordBatch>> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let reader =
+        StreamReader::try_new(bytes, None).map_err(|err| TraceqlError::Plan(err.to_string()))?;
+    reader
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|err| TraceqlError::Plan(err.to_string()))
+}
+
+pub(crate) fn fixed_16(bytes: &[u8]) -> Result<[u8; 16]> {
+    bytes
+        .try_into()
+        .map_err(|_| TraceqlError::Plan("expected 16-byte trace id".into()))
+}
+
+pub(crate) fn fixed_8(bytes: &[u8]) -> Result<[u8; 8]> {
+    bytes
+        .try_into()
+        .map_err(|_| TraceqlError::Plan("expected 8-byte span id".into()))
+}
+
+pub(crate) fn ns_ceil_seconds(ns: i64) -> i64 {
+    ns.div_euclid(1_000_000_000) + i64::from(ns.rem_euclid(1_000_000_000) != 0)
+}
+
+pub(crate) fn ns_floor_seconds(ns: i64) -> i64 {
+    ns.div_euclid(1_000_000_000)
+}
+
+/// OTLP carries nanosecond fields as `uint64`. Saturate rather than wrap when
+/// one exceeds what a `Time` extent can be built from.
+pub(crate) fn time_from_nanos_u64(nanos: u64) -> Time {
+    Time::from_nanos(i64::try_from(nanos).unwrap_or(i64::MAX))
+}
+
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn encode_span_batches(batches: &[RecordBatch]) -> Result<Vec<u8>> {
+    let Some(first) = batches.first() else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut out, &first.schema())
+            .map_err(|err| TraceqlError::Plan(err.to_string()))?;
+        for batch in batches {
+            writer
+                .write(batch)
+                .map_err(|err| TraceqlError::Plan(err.to_string()))?;
+        }
+        writer
+            .finish()
+            .map_err(|err| TraceqlError::Plan(err.to_string()))?;
+    }
+    Ok(out)
+}
+
+pub(crate) fn typed_values_from_json(json: &serde_json::Value) -> Result<Vec<TypedValue>> {
+    let values = json
+        .get("tagValues")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            TraceqlError::Plan("remote live-store tag values response missing tagValues".into())
+        })?;
+    Ok(values
+        .iter()
+        .filter_map(|value| {
+            Some(TypedValue {
+                type_: value.get("type")?.as_str()?.to_string(),
+                value: value.get("value")?.as_str()?.to_string(),
+            })
+        })
+        .collect())
+}

@@ -126,25 +126,18 @@ mod tests {
         );
     }
 }
-
-mod is_json_path_field_name_char;
 mod json_extraction;
 mod json_object_fields;
-mod json_parser_config;
 mod json_path;
-mod json_path_parser;
-mod json_path_part;
 mod logfmt_extraction;
 mod logfmt_parser;
-mod logfmt_parser_config;
-
-use is_json_path_field_name_char::is_json_path_field_name_char;
-pub use json_extraction::JsonExtraction;
+pub use json_extraction::{JsonExtraction, JsonParserConfig};
 pub use json_object_fields::{JsonObjectEntry, parse_json_object_entries};
-pub use json_parser_config::JsonParserConfig;
 use json_path::JsonPath;
-use json_path_parser::JsonPathParser;
-pub(crate) use json_path_part::JsonPathPart;
-pub use logfmt_extraction::LogfmtExtraction;
+pub(crate) use json_path::JsonPathPart;
+pub use logfmt_extraction::{LogfmtExtraction, LogfmtParserConfig};
 pub use logfmt_parser::{LogfmtField, LogfmtParser};
-pub use logfmt_parser_config::LogfmtParserConfig;
+
+pub(crate) fn is_json_path_field_name_char(ch: char) -> bool {
+    matches!(ch, '_' | ':' | '-') || ch.is_ascii_alphanumeric()
+}

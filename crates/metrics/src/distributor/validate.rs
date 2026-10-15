@@ -1,4 +1,10 @@
-use super::{DecodedSeries, Limits, WireError, is_valid_label_name, validate_exemplar_labels};
+use super::{DecodedExemplar, DecodedSeries, HeaderMap, Limits, WireError};
+
+pub(super) const MAX_EXEMPLAR_LABEL_CODEPOINTS: usize = 128;
+
+pub(crate) fn is_valid_label_name(name: &str) -> bool {
+    !name.is_empty()
+}
 
 /// Validates the shape of the decoded series against the tenant's limits.
 ///
@@ -39,5 +45,55 @@ pub fn validate(series: &[DecodedSeries], limits: &Limits) -> Result<(), WireErr
         }
     }
 
+    Ok(())
+}
+
+pub(crate) fn validate_exemplar_labels(exemplar: &DecodedExemplar) -> Result<(), WireError> {
+    let codepoints = exemplar
+        .labels
+        .iter()
+        .try_fold(0usize, |codepoints, label| {
+            if !is_valid_label_name(label.name) {
+                return Err(WireError::Invalid(format!(
+                    "invalid exemplar label name `{}`",
+                    label.name
+                )));
+            }
+            Ok(codepoints + label.name.chars().count() + label.value.chars().count())
+        })?;
+    if codepoints > MAX_EXEMPLAR_LABEL_CODEPOINTS {
+        return Err(WireError::Invalid(format!(
+            "exemplar label set has {codepoints} codepoints, exceeding limit {MAX_EXEMPLAR_LABEL_CODEPOINTS}"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn header_list_includes(value: &str, expected: &str) -> bool {
+    value
+        .split(',')
+        .any(|item| item.trim().eq_ignore_ascii_case(expected))
+}
+
+pub(crate) fn require_snappy_encoding(headers: &HeaderMap) -> Result<(), WireError> {
+    let encoding = headers
+        .get(axum::http::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if !header_list_includes(encoding, "snappy") {
+        return Err(WireError::UnsupportedContentEncoding(encoding.to_string()));
+    }
+    Ok(())
+}
+
+pub(crate) fn require_otlp_protobuf_content_type(headers: &HeaderMap) -> Result<(), WireError> {
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let base = content_type.split(';').next().unwrap_or_default().trim();
+    if !base.eq_ignore_ascii_case("application/x-protobuf") {
+        return Err(WireError::UnsupportedContentType(base.to_string()));
+    }
     Ok(())
 }

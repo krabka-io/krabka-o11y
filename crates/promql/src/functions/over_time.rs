@@ -583,32 +583,116 @@ mod tests {
 }
 
 mod extremum;
-mod fold_extremum;
-mod last_value_by_timestamp;
 mod over_time_family;
-mod over_time_family_udfs;
-mod over_time_mean;
-mod over_time_sum;
 mod over_time_udf;
 mod over_time_variance;
 mod quantile_value;
-mod register_over_time_udfs;
 
 use extremum::Extremum;
-use fold_extremum::fold_extremum;
-use last_value_by_timestamp::last_value_by_timestamp;
 pub use over_time_family::OverTimeFamily;
-pub use over_time_family_udfs::over_time_family_udfs;
-use over_time_mean::over_time_mean;
-use over_time_sum::over_time_sum;
 #[cfg(test)]
 use over_time_udf::OverTimeUdf;
 pub use over_time_udf::over_time_udf;
 pub(crate) use over_time_variance::over_time_variance;
 use quantile_value::quantile_value;
-pub use register_over_time_udfs::register_over_time_udfs;
 
 use super::{
     impl_window_udf_identity,
     udf_args::{WindowColumns, append_window_values, scalar_f64},
 };
+
+/// Returns the arithmetic mean of a non-empty `values` window.
+///
+/// This is the engine's `avg_over_time` fold, so the UDF and the engine agree
+/// bit-for-bit. An empty window returns NaN.
+pub(crate) fn over_time_mean(values: &[f64]) -> f64 {
+    crate::engine::over_time_mean(values.iter().copied())
+}
+
+/// Registers every `*_over_time` UDF on `ctx`, so a planner can lower onto them.
+pub fn register_over_time_udfs(ctx: &SessionContext) {
+    for udf in over_time_family_udfs() {
+        ctx.register_udf(udf);
+    }
+}
+
+/// Folds a non-empty window to its `min` or `max` and ignores NaN.
+///
+/// The fold seeds with the first sample, NaN included, then replaces the
+/// running value under [`Extremum::should_replace`]. The result is NaN only
+/// when every sample is NaN. This matches Prometheus, the engine's
+/// `over_time_sample_from_series`, and the `prom_min`/`prom_max` aggregate UDAF.
+pub(crate) fn fold_extremum(values: &[f64], extremum: Extremum) -> f64 {
+    let mut running = values[0];
+    for &candidate in &values[1..] {
+        if extremum.should_replace(running, candidate) {
+            running = candidate;
+        }
+    }
+    running
+}
+
+/// Returns the value of the sample with the greatest timestamp.
+///
+/// A tie selects the later element, the same as `max_by_key(timestamp)` over a
+/// time-sorted window. This function returns `None` only for an empty window.
+pub(crate) fn last_value_by_timestamp(timestamps: &[i64], values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    // The window is time-sorted ascending (SeriesNormalize), so the engine's
+    // `max_by_key(timestamp)` is the last element. Fall back to a scan if the
+    // timestamps and values disagree in length (defensive; should not happen).
+    if timestamps.len() == values.len() {
+        let mut best_idx = 0;
+        for entry in timestamps.iter().enumerate() {
+            let idx = entry.0;
+            let ts = entry.1;
+            // `max_by_key` keeps the *last* maximum on ties.
+            if *ts >= timestamps[best_idx] {
+                best_idx = idx;
+            }
+        }
+        return Some(values[best_idx]);
+    }
+    values.last().copied()
+}
+
+/// Returns every non-experimental `*_over_time` UDF, ready to register on a
+/// [`SessionContext`].
+#[must_use]
+pub fn over_time_family_udfs() -> Vec<ScalarUDF> {
+    [
+        OverTimeFamily::Sum,
+        OverTimeFamily::Avg,
+        OverTimeFamily::Count,
+        OverTimeFamily::Min,
+        OverTimeFamily::Max,
+        OverTimeFamily::Stddev,
+        OverTimeFamily::Stdvar,
+        OverTimeFamily::Last,
+        OverTimeFamily::Present,
+        OverTimeFamily::Quantile,
+    ]
+    .into_iter()
+    .map(over_time_udf)
+    .collect()
+}
+
+/// Returns the Kahan-compensated sum of a float window.
+///
+/// Prometheus' `sum_over_time` compensates the running sum and adds the
+/// compensation back at the end, so a window whose terms differ by many orders
+/// of magnitude does not lose the small ones. A sum that saturates to an
+/// infinity drops the compensation, which would otherwise be a NaN.
+pub(crate) fn over_time_sum(values: &[f64]) -> f64 {
+    let mut sum = 0.0_f64;
+    let mut comp = 0.0_f64;
+    for &value in values {
+        kahan_sum_inc(value, &mut sum, &mut comp);
+    }
+    if sum.is_infinite() {
+        return sum;
+    }
+    sum + comp
+}

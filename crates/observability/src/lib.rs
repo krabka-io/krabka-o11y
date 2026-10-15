@@ -25,7 +25,7 @@ use std::{
 };
 
 #[cfg(test)]
-use krabka_logql::{MetricLabelJoin, MetricScalarArithmetic, MetricScalarComparison};
+use krabka_logql::{MetricScalarArithmetic, MetricScalarComparison};
 
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -41,8 +41,7 @@ use self::querier::metric_eval::{
         parse_metric_vector_arithmetic_expression, parse_metric_vector_comparison_expression,
         parse_metric_vector_set_expression, parse_sort_vector_expression,
     },
-    result_transforms::execute_http_scalar_vector_expression_result,
-    validation::{apply_label_join_to_loki_result, scalar_vector_query_is_vector},
+    validation::{VectorScalarExpressionParser, scalar_vector_query_is_vector},
 };
 
 pub mod audit;
@@ -447,7 +446,7 @@ pub(crate) use self::{
                 checked_eval_times, eval_times, format_metric_value, rate_metric_value,
             },
             record_matching::{
-                QueryRow, append_matching_hot_log_record, append_matching_hot_metric_record,
+                append_matching_hot_log_record, append_matching_hot_metric_record,
                 append_matching_metric_row, apply_distinct_to_streams, for_each_query_row,
                 is_deleted_log_entry, matching_loki_stream_entry, parse_decimal_sample_literal,
                 parse_metric_sample_value, sort_loki_stream_values,
@@ -517,9 +516,8 @@ pub(crate) use self::{
                 validate_query_string_bytes_limit,
             },
             validation::{
-                LabelReplaceArguments, VectorScalarExpressionParser, apply_label_join_fields,
-                apply_label_replace_to_loki_result, reject_signed_vector_function_literal,
-                scalar_vector_plain_parse_error,
+                LabelReplaceArguments, apply_label_join_fields, apply_label_replace_to_loki_result,
+                reject_signed_vector_function_literal, scalar_vector_plain_parse_error,
             },
         },
         scan::{

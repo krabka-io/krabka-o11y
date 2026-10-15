@@ -209,19 +209,52 @@ mod tests {
 }
 
 mod extremum;
-mod extremum_udaf;
 mod prom_extremum_accumulator;
-mod prom_max_udaf;
-mod prom_max_udaf_name;
-mod prom_min_udaf;
-mod prom_min_udaf_name;
-mod register_aggregate_udafs;
 
 use extremum::Extremum;
-use extremum_udaf::extremum_udaf;
 use prom_extremum_accumulator::PromExtremumAccumulator;
-pub use prom_max_udaf::prom_max_udaf;
-pub use prom_max_udaf_name::PROM_MAX_UDAF_NAME;
-pub use prom_min_udaf::prom_min_udaf;
-pub use prom_min_udaf_name::PROM_MIN_UDAF_NAME;
-pub use register_aggregate_udafs::register_aggregate_udafs;
+
+/// Registered name of the NaN-ignoring `max` aggregate UDAF.
+pub const PROM_MAX_UDAF_NAME: &str = "prom_max";
+
+/// Registered name of the NaN-ignoring `min` aggregate UDAF.
+pub const PROM_MIN_UDAF_NAME: &str = "prom_min";
+
+/// The NaN-ignoring `max` aggregate UDAF.
+#[must_use]
+pub fn prom_max_udaf() -> AggregateUDF {
+    extremum_udaf(Extremum::Max)
+}
+
+/// The NaN-ignoring `min` aggregate UDAF.
+#[must_use]
+pub fn prom_min_udaf() -> AggregateUDF {
+    extremum_udaf(Extremum::Min)
+}
+
+/// Registers `prom_min`/`prom_max` on `ctx` so the aggregation planner can lower
+/// `min`/`max` onto NaN-ignoring UDAFs that match the interpreter.
+pub fn register_aggregate_udafs(ctx: &SessionContext) {
+    ctx.register_udaf(prom_min_udaf());
+    ctx.register_udaf(prom_max_udaf());
+}
+
+/// Builds the NaN-ignoring `prom_min` or `prom_max` aggregate UDAF.
+#[must_use]
+pub(crate) fn extremum_udaf(extremum: Extremum) -> AggregateUDF {
+    let name = match extremum {
+        Extremum::Min => PROM_MIN_UDAF_NAME,
+        Extremum::Max => PROM_MAX_UDAF_NAME,
+    };
+    create_udaf(
+        name,
+        vec![DataType::Float64],
+        Arc::new(DataType::Float64),
+        Volatility::Immutable,
+        Arc::new(move |_args: AccumulatorArgs| {
+            Ok(Box::new(PromExtremumAccumulator::new(extremum)) as Box<dyn Accumulator>)
+        }),
+        // (running extremum, seen flag) intermediate state.
+        Arc::new(vec![DataType::Float64, DataType::Boolean]),
+    )
+}

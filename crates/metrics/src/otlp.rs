@@ -2553,139 +2553,140 @@ mod tests {
     }
 }
 
-mod accumulate_delta_float_series;
-mod add_compatible_native_histogram;
-mod add_spanned_histogram_counts;
-mod attribute_value;
-mod bytes_to_hex;
-mod classic_histogram_series;
-mod decode_otlp;
-mod decode_otlp_bytes;
+mod attribute_translation;
 mod decode_otlp_inner;
-mod decode_otlp_stateful;
-mod decode_otlp_stateful_bytes;
-mod delta_accumulator;
-mod delta_histogram_state;
-mod delta_key;
-mod delta_prune_interval;
+mod decoders;
 mod delta_state;
-mod delta_sum_series;
-mod downscaled_spans;
-mod exemplar;
-mod exemplar_belongs_to_bucket;
-mod exemplar_policy;
-mod exemplars_for_bucket;
-mod exemplars_from_exponential_histogram_point;
-mod exemplars_from_histogram_point;
-mod exemplars_from_number_point;
-mod exemplars_from_otlp;
-mod exponential_histogram_series;
-mod exponential_histogram_to_native;
-mod gauge_series;
+mod exemplars;
 mod histogram_family;
 mod histogram_points;
 mod histogram_scope;
-mod histogram_series;
-mod insert_attributes;
-mod instrumentation_scope_attributes;
-mod labels;
-mod max_native_histogram_schema;
+mod histogram_translators;
 mod max_sample_timestamp_ms;
-mod metric_attributes;
 mod metric_metadata;
+mod metric_names;
 mod metric_series;
-mod min_native_histogram_schema;
-mod nanos_to_millis;
-mod normalize_name;
-mod number_value;
+mod native_histogram_translation;
 mod otlp_error;
-mod prometheus_base_unit_suffix;
-mod prometheus_unit_suffix;
-mod promoted_resource_attributes;
-mod reject_far_future_points;
-mod resource_metrics_timestamp_ms;
-mod scalar_point_series;
-mod scalar_series;
-mod scope_attributes;
-mod spanned_histogram_counts;
-mod string_attribute;
-mod strip_ucum_annotations;
-mod sum_metadata_type;
-mod sum_series;
-mod summary_point_series;
-mod summary_series;
-mod tenant_delta_accumulator;
-mod tenant_delta_accumulators;
-mod translated_metric_name;
+mod resource_metrics;
+mod scalar_translators;
 mod translation_strategy;
 
-use accumulate_delta_float_series::accumulate_delta_float_series;
-use add_compatible_native_histogram::add_compatible_native_histogram;
-use add_spanned_histogram_counts::add_spanned_histogram_counts;
-use attribute_value::attribute_value;
-use bytes_to_hex::bytes_to_hex;
-use classic_histogram_series::classic_histogram_series;
-pub use decode_otlp::decode_otlp;
-pub use decode_otlp_bytes::decode_otlp_bytes;
+use attribute_translation::{
+    insert_attributes, labels, promoted_resource_attributes, scope_attributes,
+};
 use decode_otlp_inner::decode_otlp_inner_partial;
 pub(crate) use decode_otlp_inner::{OtlpDecodeOptions, PartialOtlpDecode, decode_otlp_inner};
-pub use decode_otlp_stateful::decode_otlp_stateful;
-pub use decode_otlp_stateful_bytes::decode_otlp_stateful_bytes;
-pub(crate) use decode_otlp_stateful_bytes::decode_otlp_stateful_bytes_partial;
-pub use delta_accumulator::DeltaAccumulator;
-use delta_histogram_state::DeltaHistogramState;
-use delta_key::{DeltaKey, delta_key};
-use delta_prune_interval::DELTA_PRUNE_INTERVAL;
-use delta_state::DeltaState;
-use delta_sum_series::delta_sum_series;
-use downscaled_spans::downscaled_spans;
-use exemplar::exemplar;
-use exemplar_belongs_to_bucket::exemplar_belongs_to_bucket;
-use exemplar_policy::ExemplarPolicy;
-use exemplars_for_bucket::exemplars_for_bucket;
-use exemplars_from_exponential_histogram_point::exemplars_from_exponential_histogram_point;
-use exemplars_from_histogram_point::exemplars_from_histogram_point;
-use exemplars_from_number_point::exemplars_from_number_point;
-use exemplars_from_otlp::exemplars_from_otlp;
-use exponential_histogram_series::exponential_histogram_series;
-pub use exponential_histogram_to_native::exponential_histogram_to_native;
-use gauge_series::gauge_series;
+pub(crate) use decoders::decode_otlp_stateful_bytes_partial;
+pub use decoders::{decode_otlp, decode_otlp_stateful, decode_otlp_stateful_bytes};
+use delta_state::accumulate_delta_float_series;
+#[cfg(test)]
+use delta_state::delta_key;
+pub use delta_state::{DeltaAccumulator, TenantDeltaAccumulators};
+#[cfg(test)]
+use exemplars::exemplar_belongs_to_bucket;
+use exemplars::{ExemplarPolicy, exemplar, exemplars_for_bucket};
 use histogram_family::HistogramFamily;
 use histogram_scope::HistogramScope;
-use histogram_series::histogram_series;
-use insert_attributes::insert_attributes;
-use instrumentation_scope_attributes::instrumentation_scope_attributes;
-use labels::labels;
-use max_native_histogram_schema::MAX_NATIVE_HISTOGRAM_SCHEMA;
+use histogram_translators::{exponential_histogram_series, histogram_series};
 pub(crate) use max_sample_timestamp_ms::MAX_SAMPLE_TIMESTAMP_MS;
-use metric_attributes::metric_attributes;
 use metric_metadata::metric_metadata;
+pub use metric_names::normalize_name;
+use metric_names::translated_metric_name;
+#[cfg(test)]
+use metric_names::{prometheus_base_unit_suffix, prometheus_unit_suffix, strip_ucum_annotations};
 use metric_series::metric_series;
-use min_native_histogram_schema::MIN_NATIVE_HISTOGRAM_SCHEMA;
-use nanos_to_millis::nanos_to_millis;
-pub use normalize_name::normalize_name;
-use number_value::number_value;
+use native_histogram_translation::add_compatible_native_histogram;
+pub use native_histogram_translation::exponential_histogram_to_native;
+#[cfg(test)]
+use native_histogram_translation::{downscaled_spans, spanned_histogram_counts};
 pub use otlp_error::OtlpError;
-use prometheus_base_unit_suffix::prometheus_base_unit_suffix;
-use prometheus_unit_suffix::prometheus_unit_suffix;
-use promoted_resource_attributes::promoted_resource_attributes;
-use reject_far_future_points::reject_far_future_points;
-use resource_metrics_timestamp_ms::resource_metrics_timestamp_ms;
-use scalar_point_series::{
-    ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries, append_count_and_sum,
+use resource_metrics::{reject_far_future_points, resource_metrics_timestamp_ms};
+use scalar_translators::{
+    ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries, append_count_and_sum, gauge_series,
+    sum_series, summary_series,
 };
-use scalar_series::scalar_series;
-use scope_attributes::scope_attributes;
-use spanned_histogram_counts::spanned_histogram_counts;
-use string_attribute::string_attribute;
-use strip_ucum_annotations::strip_ucum_annotations;
-use sum_metadata_type::sum_metadata_type;
-use sum_series::sum_series;
-use summary_point_series::summary_point_series;
-use summary_series::summary_series;
-use tenant_delta_accumulator::TenantDeltaAccumulator;
-pub use tenant_delta_accumulators::TenantDeltaAccumulators;
-use translated_metric_name::translated_metric_name;
 pub use translation_strategy::TranslationStrategy;
 
 use crate::histogram::compact_spanned_histogram_counts;
+
+pub(crate) const MAX_NATIVE_HISTOGRAM_SCHEMA: i32 = 8;
+
+pub(crate) const MIN_NATIVE_HISTOGRAM_SCHEMA: i32 = -4;
+
+/// Decodes a protobuf-encoded `MetricsData` body.
+/// # Errors
+/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+pub fn decode_otlp_bytes(
+    body: &[u8],
+    strategy: TranslationStrategy,
+) -> Result<Vec<DecodedSeries>, OtlpError> {
+    decode_otlp(&MetricsData::decode(body)?, strategy)
+}
+
+pub(crate) fn exemplars_from_exponential_histogram_point(
+    point: &ExponentialHistogramDataPoint,
+    strategy: TranslationStrategy,
+) -> Vec<DecodedExemplar> {
+    exemplars_from_otlp(&point.exemplars, strategy)
+}
+
+pub(crate) fn exemplars_from_histogram_point(
+    point: &HistogramDataPoint,
+    strategy: TranslationStrategy,
+) -> Vec<DecodedExemplar> {
+    exemplars_from_otlp(&point.exemplars, strategy)
+}
+
+pub(crate) fn exemplars_from_number_point(
+    point: &NumberDataPoint,
+    strategy: TranslationStrategy,
+) -> Vec<DecodedExemplar> {
+    exemplars_from_otlp(&point.exemplars, strategy)
+}
+
+pub(crate) fn exemplars_from_otlp(
+    exemplars: &[OtlpExemplar],
+    strategy: TranslationStrategy,
+) -> Vec<DecodedExemplar> {
+    exemplars
+        .iter()
+        .filter_map(|item| exemplar(item, strategy))
+        .collect()
+}
+
+pub(crate) fn metric_attributes(
+    resource_attributes: &[KeyValue],
+    scope_metrics: &ScopeMetrics,
+    strategy: TranslationStrategy,
+) -> Vec<KeyValue> {
+    let mut attributes = resource_attributes.to_vec();
+    attributes.extend(scope_attributes(scope_metrics, strategy));
+    attributes
+}
+
+pub(crate) fn nanos_to_millis(nanos: u64) -> i64 {
+    i64::try_from(nanos / 1_000_000).unwrap_or(i64::MAX)
+}
+
+pub(crate) fn number_value(point: &NumberDataPoint) -> Option<f64> {
+    match point.value {
+        Some(number_data_point::Value::AsDouble(value)) => Some(value),
+        Some(number_data_point::Value::AsInt(value)) => value.to_f64(),
+        None => None,
+    }
+}
+
+pub(crate) fn string_attribute(key: &str, value: &str) -> KeyValue {
+    KeyValue {
+        key: key.to_string(),
+        value: Some(AnyValue {
+            value: Some(any_value::Value::StringValue(value.to_string())),
+        }),
+        key_strindex: 0,
+    }
+}
+
+pub(crate) fn sum_metadata_type(sum: &Sum) -> &'static str {
+    if sum.is_monotonic { "counter" } else { "gauge" }
+}

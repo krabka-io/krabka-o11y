@@ -406,32 +406,117 @@ mod comparison_op;
 mod field_filter;
 mod field_filter_chain;
 mod field_filter_expression;
-mod field_filter_expression_to_pipeline_stage;
 mod field_filter_logic_op;
 mod field_value;
-mod ip_candidate_tokens;
 mod ip_family;
 mod ip_matcher;
 mod ip_range;
-mod ip_to_value;
 mod line_filter;
 mod line_filter_op;
-mod line_matches_pattern;
-mod parse_ip_addr;
 
 pub use comparison_op::ComparisonOp;
 pub use field_filter::FieldFilter;
 pub use field_filter_chain::{FieldFilterChain, FieldFilterStep};
 pub use field_filter_expression::FieldFilterExpression;
-pub(crate) use field_filter_expression_to_pipeline_stage::field_filter_expression_to_pipeline_stage;
 pub use field_filter_logic_op::FieldFilterLogicOp;
 pub use field_value::FieldValue;
-use ip_candidate_tokens::ip_candidate_tokens;
 use ip_family::IpFamily;
 pub use ip_matcher::IpMatcher;
 use ip_range::IpRange;
-use ip_to_value::ip_to_value;
 pub use line_filter::LineFilter;
 pub use line_filter_op::LineFilterOp;
-use line_matches_pattern::line_matches_pattern;
-use parse_ip_addr::parse_ip_addr;
+
+pub(crate) fn ip_candidate_tokens(line: &str) -> impl Iterator<Item = &str> {
+    line.split(|ch: char| !(ch.is_ascii_hexdigit() || ch == '.' || ch == ':'))
+        .filter(|candidate| !candidate.is_empty())
+}
+
+pub(crate) fn line_matches_pattern(line: &str, pattern: &str) -> bool {
+    let mut remaining = line;
+    let mut matched_any_literal = false;
+    for literal in pattern.split("<_>").filter(|literal| !literal.is_empty()) {
+        let Some(offset) = remaining.find(literal) else {
+            return false;
+        };
+        matched_any_literal = true;
+        remaining = &remaining[offset + literal.len()..];
+    }
+    matched_any_literal || pattern.contains("<_>")
+}
+
+pub(crate) fn parse_ip_addr(value: &str) -> Result<IpAddr, ParseError> {
+    value.parse().map_err(|_| ParseError::Syntax {
+        message: "invalid ip pattern".to_string(),
+        position: 0,
+    })
+}
+
+// Field Filter Expression To Pipeline Stage
+pub(crate) fn field_filter_expression_to_pipeline_stage(
+    expression: FieldFilterExpression,
+) -> PipelineStage {
+    match expression {
+        FieldFilterExpression::Filter(filter) => PipelineStage::FieldFilter(filter),
+        FieldFilterExpression::Chain { first, rest } => {
+            let first = match *first {
+                FieldFilterExpression::Filter(filter) => filter,
+                first => {
+                    return PipelineStage::FieldFilterExpression(FieldFilterExpression::Chain {
+                        first: Box::new(first),
+                        rest,
+                    });
+                }
+            };
+
+            let mut flat_rest: Vec<FieldFilterStep<FieldFilter>> = Vec::new();
+            for step in rest {
+                let operation = step.operation;
+                let filter = match step.filter {
+                    FieldFilterExpression::Filter(filter) => filter,
+                    expression => {
+                        let first = Box::new(FieldFilterExpression::Filter(first));
+                        let rest = flat_rest
+                            .into_iter()
+                            .map(|step| FieldFilterStep {
+                                operation: step.operation,
+                                filter: FieldFilterExpression::Filter(step.filter),
+                            })
+                            .chain(std::iter::once(FieldFilterStep {
+                                operation,
+                                filter: expression,
+                            }))
+                            .collect();
+                        return PipelineStage::FieldFilterExpression(
+                            FieldFilterExpression::Chain { first, rest },
+                        );
+                    }
+                };
+                flat_rest.push(FieldFilterStep { operation, filter });
+            }
+
+            PipelineStage::FieldFilterChain(FieldFilterChain::new(first, flat_rest))
+        }
+        expression @ FieldFilterExpression::Group(_) => {
+            PipelineStage::FieldFilterExpression(expression)
+        }
+    }
+}
+
+// Ip To Value
+pub(crate) struct IpValue {
+    pub(crate) family: IpFamily,
+    pub(crate) value: u128,
+}
+
+pub(crate) fn ip_to_value(addr: IpAddr) -> IpValue {
+    match addr {
+        IpAddr::V4(addr) => IpValue {
+            family: IpFamily::V4,
+            value: u128::from(u32::from(addr)),
+        },
+        IpAddr::V6(addr) => IpValue {
+            family: IpFamily::V6,
+            value: u128::from(addr),
+        },
+    }
+}

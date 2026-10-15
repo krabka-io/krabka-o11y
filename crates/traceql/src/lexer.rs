@@ -192,26 +192,420 @@ mod tests {
     }
 }
 
-mod advance;
-mod is_ident_continue;
-mod is_ident_start;
-mod keyword_or_ident;
-mod lex;
-mod no_progress;
-mod op_token;
-mod scan_ident;
-mod scan_number_or_duration;
-mod scan_string;
-mod token;
+pub(crate) fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch == '-' || ch.is_alphanumeric()
+}
 
-use advance::advance;
-use is_ident_continue::is_ident_continue;
-use is_ident_start::is_ident_start;
-use keyword_or_ident::keyword_or_ident;
-pub use lex::lex;
-use no_progress::no_progress;
-use op_token::op_token;
-use scan_ident::scan_ident;
-use scan_number_or_duration::scan_number_or_duration;
-use scan_string::scan_string;
-pub use token::Token;
+pub(crate) fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch.is_alphabetic()
+}
+
+pub(crate) fn keyword_or_ident(s: String) -> Token {
+    match s.as_str() {
+        "nil" => Token::Nil,
+        "true" => Token::Bool(true),
+        "false" => Token::Bool(false),
+        _ => Token::Ident(s),
+    }
+}
+
+pub(crate) fn no_progress(pos: usize) -> TraceqlError {
+    TraceqlError::Parse(format!("lexer made no progress at byte {pos}"))
+}
+
+pub(crate) fn advance(input: &str, pos: usize, len: usize) -> Result<usize> {
+    if len == 0 {
+        return Err(no_progress(pos));
+    }
+    let next = pos
+        .checked_add(len)
+        .ok_or_else(|| TraceqlError::Parse(format!("lexer position overflow at byte {pos}")))?;
+    if next > input.len() {
+        return Err(TraceqlError::Parse(format!(
+            "lexer advanced past end of input at byte {pos}"
+        )));
+    }
+    Ok(next)
+}
+
+pub(crate) fn scan_ident(s: &str, allow_dots: bool) -> ScanResult<String> {
+    let mut end = 0;
+    for entry in s.char_indices() {
+        let idx = entry.0;
+        let ch = entry.1;
+        if is_ident_continue(ch) || (allow_dots && ch == '.') {
+            end = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    ScanResult {
+        value: s[..end].to_string(),
+        consumed: end,
+    }
+}
+
+// Lex
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+/// # Panics
+/// Panics if a parsed expression or span set violates an invariant established during `TraceQL` validation.
+pub fn lex(input: &str) -> Result<Vec<Token>> {
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    // Only one thing about the previous token matters: whether it was a
+    // dot, which is what lets an identifier carry dots of its own.
+    let mut after_dot = false;
+
+    while i < input.len() {
+        let rest = &input[i..];
+        let ch = rest.chars().next().unwrap();
+        if ch.is_whitespace() {
+            let next = advance(input, i, ch.len_utf8())?;
+            if next <= i {
+                return Err(no_progress(i));
+            }
+            i = next;
+            continue;
+        }
+
+        if rest.starts_with("==") {
+            return Err(TraceqlError::Parse(format!(
+                "use single = for equality; == is not TraceQL at byte {i}"
+            )));
+        }
+
+        // A `.` immediately followed by a digit (e.g. `.05`, `.99`) is a
+        // leading-dot fractional number, lexed as a single `Token::Float` so
+        // leading zeros survive. A `.` followed by an identifier (e.g.
+        // `.service`) remains a `Dot` for attribute-scope syntax.
+        let leading_dot_number = ch == '.'
+            && rest[1..]
+                .chars()
+                .next()
+                .is_some_and(|next| next.is_ascii_digit());
+
+        if !leading_dot_number && let Some(scanned) = op_token(rest) {
+            let next = advance(input, i, scanned.consumed)?;
+            if next <= i {
+                return Err(no_progress(i));
+            }
+            i = next;
+            after_dot = scanned.value == Token::Dot;
+            tokens.push(scanned.value);
+            continue;
+        }
+
+        if ch == '"' {
+            let scanned = scan_string(rest)?;
+            tokens.push(Token::Str(scanned.value));
+            let next = advance(input, i, scanned.consumed)?;
+            if next <= i {
+                return Err(no_progress(i));
+            }
+            i = next;
+            after_dot = false;
+            continue;
+        }
+
+        if ch.is_ascii_digit() || leading_dot_number {
+            let scanned = scan_number_or_duration(rest)?;
+            tokens.push(scanned.value);
+            let next = advance(input, i, scanned.consumed)?;
+            if next <= i {
+                return Err(no_progress(i));
+            }
+            i = next;
+            after_dot = false;
+            continue;
+        }
+
+        if is_ident_start(ch) {
+            let allow_dots = after_dot;
+            let scanned = scan_ident(rest, allow_dots);
+            tokens.push(keyword_or_ident(scanned.value));
+            let next = advance(input, i, scanned.consumed)?;
+            if next <= i {
+                return Err(no_progress(i));
+            }
+            i = next;
+            after_dot = false;
+            continue;
+        }
+
+        return Err(TraceqlError::Parse(format!(
+            "unexpected character {ch:?} at byte {i}"
+        )));
+    }
+
+    tokens.push(Token::Eof);
+    Ok(tokens)
+}
+
+// Op Token
+struct OperatorToken {
+    raw: &'static str,
+    token: Token,
+}
+
+pub(crate) fn op_token(s: &str) -> Option<ScanResult<Token>> {
+    for operator in [
+        OperatorToken {
+            raw: "!>>",
+            token: Token::NegDesc,
+        },
+        OperatorToken {
+            raw: "&>>",
+            token: Token::UnionDesc,
+        },
+        OperatorToken {
+            raw: "!<<",
+            token: Token::NegAnc,
+        },
+        OperatorToken {
+            raw: "&<<",
+            token: Token::UnionAnc,
+        },
+        OperatorToken {
+            raw: ">>",
+            token: Token::Desc,
+        },
+        OperatorToken {
+            raw: "<<",
+            token: Token::Anc,
+        },
+        OperatorToken {
+            raw: "!>",
+            token: Token::NegChild,
+        },
+        OperatorToken {
+            raw: "!<",
+            token: Token::NegParent,
+        },
+        OperatorToken {
+            raw: "&>",
+            token: Token::UnionChild,
+        },
+        OperatorToken {
+            raw: "&<",
+            token: Token::UnionParent,
+        },
+        OperatorToken {
+            raw: "&~",
+            token: Token::UnionSibling,
+        },
+        OperatorToken {
+            raw: "&&",
+            token: Token::And,
+        },
+        OperatorToken {
+            raw: "||",
+            token: Token::Or,
+        },
+        OperatorToken {
+            raw: ">=",
+            token: Token::Gte,
+        },
+        OperatorToken {
+            raw: "<=",
+            token: Token::Lte,
+        },
+        OperatorToken {
+            raw: "=~",
+            token: Token::Re,
+        },
+        OperatorToken {
+            raw: "!~",
+            token: Token::NegSibling,
+        },
+        OperatorToken {
+            raw: "!=",
+            token: Token::Neq,
+        },
+    ] {
+        if s.starts_with(operator.raw) {
+            return Some(ScanResult {
+                value: operator.token,
+                consumed: operator.raw.len(),
+            });
+        }
+    }
+
+    let ch = s.chars().next()?;
+    let tok = match ch {
+        '=' => Token::Eq,
+        '<' => Token::Parent,
+        '>' => Token::Child,
+        '~' => Token::Sibling,
+        '!' => Token::Not,
+        '+' => Token::Plus,
+        '-' => Token::Minus,
+        '*' => Token::Star,
+        '/' => Token::Slash,
+        '%' => Token::Mod,
+        '^' => Token::Caret,
+        '.' => Token::Dot,
+        ':' => Token::Colon,
+        ',' => Token::Comma,
+        '(' => Token::LParen,
+        ')' => Token::RParen,
+        '{' => Token::LBrace,
+        '}' => Token::RBrace,
+        '|' => Token::Pipe,
+        '&' => {
+            return Some(ScanResult {
+                value: Token::Ident("&".into()),
+                consumed: ch.len_utf8(),
+            });
+        }
+        _ => return None,
+    };
+    Some(ScanResult {
+        value: tok,
+        consumed: ch.len_utf8(),
+    })
+}
+
+// Scan Number Or Duration
+pub(crate) fn scan_number_or_duration(s: &str) -> Result<ScanResult<Token>> {
+    let mut end = 0;
+    let mut has_dot = false;
+    let mut chars = s.char_indices().peekable();
+    while let Some(entry) = chars.peek().copied() {
+        let idx = entry.0;
+        let ch = entry.1;
+        if ch.is_ascii_digit() {
+            end = idx + ch.len_utf8();
+            chars.next();
+        } else if ch == '.'
+            && !has_dot
+            && chars
+                .clone()
+                .nth(1)
+                .is_some_and(|entry| entry.1.is_ascii_digit())
+        {
+            has_dot = true;
+            chars.next();
+        } else {
+            break;
+        }
+    }
+
+    let mut ident_end = end;
+    for entry in s[end..].char_indices() {
+        let idx = entry.0;
+        let ch = entry.1;
+        if is_ident_continue(ch) || ch == 'µ' {
+            ident_end = end + idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if ident_end > end {
+        return Ok(ScanResult {
+            value: Token::Ident(s[..ident_end].to_string()),
+            consumed: ident_end,
+        });
+    }
+
+    if has_dot {
+        let v = s[..end]
+            .parse::<f64>()
+            .map_err(|e| TraceqlError::Parse(e.to_string()))?;
+        Ok(ScanResult {
+            value: Token::Float(v),
+            consumed: end,
+        })
+    } else {
+        let v = s[..end]
+            .parse::<i64>()
+            .map_err(|e| TraceqlError::Parse(e.to_string()))?;
+        Ok(ScanResult {
+            value: Token::Int(v),
+            consumed: end,
+        })
+    }
+}
+
+// Scan String
+pub(crate) fn scan_string(s: &str) -> Result<ScanResult<String>> {
+    let mut out = String::new();
+    let mut escaped = false;
+    for entry in s.char_indices().skip(1) {
+        let idx = entry.0;
+        let ch = entry.1;
+        if escaped {
+            out.push(match ch {
+                '"' => '"',
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                other => other,
+            });
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            return Ok(ScanResult {
+                value: out,
+                consumed: idx + ch.len_utf8(),
+            });
+        } else {
+            out.push(ch);
+        }
+    }
+    Err(TraceqlError::Parse("unterminated string literal".into()))
+}
+
+// Token
+#[derive(Clone, Debug, PartialEq)]
+pub enum Token {
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    Pipe,
+    And,
+    Or,
+    Not,
+    Eq,
+    Neq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+    Re,
+    Nre,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Mod,
+    Caret,
+    Desc,
+    Anc,
+    Child,
+    Parent,
+    Sibling,
+    NegDesc,
+    NegAnc,
+    NegChild,
+    NegParent,
+    NegSibling,
+    UnionDesc,
+    UnionAnc,
+    UnionChild,
+    UnionParent,
+    UnionSibling,
+    Dot,
+    Colon,
+    Comma,
+    Ident(String),
+    Str(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Nil,
+    Eof,
+}

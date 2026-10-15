@@ -1,8 +1,8 @@
 use super::{
     Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, Principal, ProfileStore,
     QuerierState, QueryParameter, RawQuery, Response, authorized_http_tenant,
-    flamebearer_diff_json, parse_render_query, parse_render_query::ParsedRenderQuery,
-    profile_error_response, query_param_i64, query_param_render_time, unix_now_ms,
+    flamebearer_diff_json, parse_render_query, profile_error_response, query_param_i64,
+    query_param_render_time, render_params::ParsedRenderQuery, unix_now_ms,
 };
 
 pub(crate) async fn render_diff_inner<S>(

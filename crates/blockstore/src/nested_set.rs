@@ -188,12 +188,112 @@ mod tests {
     }
 }
 
-mod assign_nested_set;
-mod cycle_spans;
-mod nested_set_type;
-mod span_node;
+/// What [`assign_nested_set`] does with spans their parent links leave
+/// unreachable because of a cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CycleSpans {
+    /// Seed each unreached span as an extra root and assign valid intervals.
+    AssignIntervals,
+    /// Leave unreached spans with zeroed nested-set columns.
+    LeaveUnassigned,
+}
 
-pub use assign_nested_set::assign_nested_set;
-pub use cycle_spans::CycleSpans;
-pub use nested_set_type::NestedSet;
-pub use span_node::SpanNode;
+/// The three nested-set columns for one span.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NestedSet {
+    pub nested_set_left: i32,
+    pub nested_set_right: i32,
+    pub parent_id: i32,
+}
+
+/// One span's tree linkage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpanNode {
+    pub span_id: [u8; 8],
+    pub parent_span_id: Option<[u8; 8]>,
+}
+
+/// Assigns nested-set intervals by DFS preorder over the trace forest.
+///
+/// Roots are numbered in span order. `cycle_spans` decides what happens to
+/// spans that no root reaches because their parent links form a cycle.
+#[must_use]
+pub fn assign_nested_set(spans: &[SpanNode], cycle_spans: CycleSpans) -> Vec<NestedSet> {
+    enum Frame {
+        Enter { idx: usize, parent_left: i32 },
+        Exit { idx: usize },
+    }
+
+    let mut pos: HashMap<[u8; 8], usize> = HashMap::new();
+    for (i, span) in spans.iter().enumerate() {
+        pos.insert(span.span_id, i);
+    }
+
+    let mut children = vec![Vec::new(); spans.len()];
+    let mut roots = Vec::new();
+    for (i, span) in spans.iter().enumerate() {
+        match span.parent_span_id.and_then(|p| pos.get(&p).copied()) {
+            Some(parent_idx) if parent_idx != i => children[parent_idx].push(i),
+            _ => roots.push(i),
+        }
+    }
+
+    let mut out = vec![
+        NestedSet {
+            nested_set_left: 0,
+            nested_set_right: 0,
+            parent_id: 0,
+        };
+        spans.len()
+    ];
+    let mut counter = 1_i32;
+    let mut visited = vec![false; spans.len()];
+
+    // DFS from the discovered roots. Under cyclic/garbage parentage (e.g.
+    // A.parent=B, B.parent=A) a node can be neither a root nor a descendant of
+    // one, so it would keep `{0, 0, 0}` and collide with real roots. With
+    // `AssignIntervals`, sweep every span afterwards and seed each unreached
+    // one as an additional root so every node gets a valid `left < right`
+    // interval.
+    let cycle_sweep = match cycle_spans {
+        CycleSpans::AssignIntervals => 0..spans.len(),
+        CycleSpans::LeaveUnassigned => 0..0,
+    };
+    let mut stack = Vec::new();
+    for root in roots.iter().copied().chain(cycle_sweep) {
+        stack.push(Frame::Enter {
+            idx: root,
+            // Root span, or cycle-orphaned span re-seeded as a root:
+            // nestedSetParent = -1 (Tempo's no-parent sentinel; left values
+            // start at 1 so it never collides with a real parent's left).
+            parent_left: -1,
+        });
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Enter { idx, parent_left } => {
+                    if visited[idx] {
+                        continue;
+                    }
+                    visited[idx] = true;
+                    let left = counter;
+                    counter += 1;
+                    out[idx].nested_set_left = left;
+                    out[idx].parent_id = parent_left;
+                    stack.push(Frame::Exit { idx });
+                    for &child in children[idx].iter().rev() {
+                        stack.push(Frame::Enter {
+                            idx: child,
+                            parent_left: left,
+                        });
+                    }
+                }
+                Frame::Exit { idx } => {
+                    out[idx].nested_set_right = counter;
+                    counter += 1;
+                }
+            }
+        }
+    }
+
+    out
+}

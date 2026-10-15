@@ -1,13 +1,67 @@
 use crate::{
-    BTreeMap, Regex, ScalarSample, ScalarVectorExpressionResult, VectorScalarExpressionParser,
-    parse_scalar_sample,
+    BTreeMap, Regex, ScalarSample, ScalarVectorExpressionResult, parse_scalar_sample,
+    querier::metric_eval::validation::VectorScalarExpressionParser,
 };
 
-mod scalar_comparison_op;
-mod scalar_literal_len;
-mod scalar_set_op;
 mod vector_scalar_expression_parser;
 
-pub(crate) use scalar_comparison_op::ScalarComparisonOp;
-pub(crate) use scalar_literal_len::scalar_literal_len;
-pub(crate) use scalar_set_op::ScalarSetOp;
+#[derive(Clone, Copy)]
+pub(crate) enum ScalarComparisonOp {
+    Equal,
+    NotEqual,
+    Greater,
+    GreaterOrEqual,
+    Less,
+    LessOrEqual,
+}
+
+pub(crate) fn scalar_literal_len(input: &str) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut position = 0;
+    if matches!(bytes.get(position), Some(b'+' | b'-')) {
+        position += 1;
+    }
+
+    let whole_start = position;
+    while matches!(bytes.get(position), Some(byte) if byte.is_ascii_digit()) {
+        position += 1;
+    }
+    let whole_digits = position > whole_start;
+
+    let mut fractional_digits = false;
+    if matches!(bytes.get(position), Some(b'.')) {
+        position += 1;
+        let fractional_start = position;
+        while matches!(bytes.get(position), Some(byte) if byte.is_ascii_digit()) {
+            position += 1;
+        }
+        fractional_digits = position > fractional_start;
+    }
+
+    if !whole_digits && !fractional_digits {
+        return None;
+    }
+
+    if matches!(bytes.get(position), Some(b'e' | b'E')) {
+        position += 1;
+        if matches!(bytes.get(position), Some(b'+' | b'-')) {
+            position += 1;
+        }
+        let exponent_start = position;
+        while matches!(bytes.get(position), Some(byte) if byte.is_ascii_digit()) {
+            position += 1;
+        }
+        if position == exponent_start {
+            return None;
+        }
+    }
+
+    Some(position)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ScalarSetOp {
+    And,
+    Or,
+    Unless,
+}

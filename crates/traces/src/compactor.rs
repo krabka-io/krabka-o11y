@@ -757,87 +757,379 @@ mod tests {
         );
     }
 }
-
-mod attr_value;
-mod boolean_array;
-mod collect_attr_metadata;
-mod collect_event_metadata;
-mod collect_link_metadata;
-mod collect_nested_attrs;
-mod collect_nested_column_metadata;
-mod collect_nested_metadata;
-mod collect_string_column_metadata;
-mod compact_block_keys;
-mod compact_block_keys_with_max_bytes;
-mod compact_once;
-mod compact_once_with_policy;
-mod compacted_block_stats;
-mod compaction_pass_outcome;
-mod delete_trace_blocks;
-mod expire_trace_blocks;
-mod first_string_list_value;
-mod fixed_column;
-mod float64_array;
-mod int64_array;
-mod int64_column;
-mod list_column;
-mod metadata_value_array;
-mod optional_list_column;
-mod plan_compactions;
-mod planned_compacted_object_key;
-mod push_tag_metadata;
-mod push_trace_ids;
-mod recompute_nested_sets;
-mod recompute_trace_level_columns;
-mod replace_int32_columns;
-mod set_column;
-mod string_array;
-mod string_column;
-mod string_list_value;
-mod struct_fixed_field;
-mod struct_i64_field;
-mod struct_list_field;
-mod struct_string_field;
-mod sweep_orphaned_trace_blocks;
+mod block_stats;
+mod cleanup;
+mod execution;
+mod metadata;
+mod nested_sets;
 mod trace_group_buffer;
-
-use attr_value::attr_value;
-use collect_attr_metadata::collect_attr_metadata;
-use collect_event_metadata::collect_event_metadata;
-use collect_link_metadata::collect_link_metadata;
-use collect_nested_attrs::collect_nested_attrs;
-use collect_nested_column_metadata::collect_nested_column_metadata;
-use collect_nested_metadata::collect_nested_metadata;
-use collect_string_column_metadata::collect_string_column_metadata;
-pub use compact_block_keys::compact_block_keys;
-pub use compact_block_keys_with_max_bytes::compact_block_keys_with_max_bytes;
-pub use compact_once::compact_once;
-pub use compact_once_with_policy::compact_once_with_policy;
-use compacted_block_stats::CompactedBlockStats;
-pub use compaction_pass_outcome::CompactionPassOutcome;
-pub use delete_trace_blocks::delete_trace_blocks;
-pub use expire_trace_blocks::expire_trace_blocks;
-use first_string_list_value::first_string_list_value;
-use fixed_column::fixed_column;
-use int64_column::int64_column;
-use list_column::list_column;
-use metadata_value_array::MetadataValueArray;
-use optional_list_column::optional_list_column;
-pub use plan_compactions::plan_compactions;
-pub use planned_compacted_object_key::planned_compacted_object_key;
-use push_tag_metadata::push_tag_metadata;
-use push_trace_ids::push_trace_ids;
-use recompute_nested_sets::recompute_nested_sets;
-use recompute_trace_level_columns::recompute_trace_level_columns;
-use replace_int32_columns::replace_int32_columns;
-use set_column::set_column;
-use string_column::string_column;
-use string_list_value::string_list_value;
-use struct_fixed_field::struct_fixed_field;
-use struct_i64_field::struct_i64_field;
-use struct_list_field::struct_list_field;
-use struct_string_field::struct_string_field;
-pub use sweep_orphaned_trace_blocks::sweep_orphaned_trace_blocks;
+use block_stats::CompactedBlockStats;
+pub use cleanup::{expire_trace_blocks, sweep_orphaned_trace_blocks};
+pub use execution::{
+    CompactionPassOutcome, compact_block_keys_with_max_bytes, compact_once_with_policy,
+};
+use metadata::{MetadataValueArray, collect_nested_attrs, push_tag_metadata};
+use nested_sets::{recompute_nested_sets, recompute_trace_level_columns};
 use trace_group_buffer::TraceGroupBuffer;
 
 use crate::blockbuilder::TagCatalog;
+
+pub(crate) fn int64_column<'a>(
+    batch: &'a RecordBatch,
+    column: &str,
+) -> Result<&'a Int64Array, TracesError> {
+    batch
+        .column_by_name(column)
+        .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
+        .ok_or_else(|| TracesError::Block(format!("{column} is not Int64")))
+}
+
+pub(crate) fn list_column<'a>(
+    batch: &'a RecordBatch,
+    column: &str,
+) -> Result<&'a ListArray, TracesError> {
+    batch
+        .column_by_name(column)
+        .and_then(|col| col.as_any().downcast_ref::<ListArray>())
+        .ok_or_else(|| TracesError::Block(format!("{column} is not a list")))
+}
+
+/// Plans the merges the trace index is due, under `policy`.
+///
+/// The planner itself is signal-agnostic: the index only has to say what
+/// blocks it holds, at what level, over what time range, and how large they
+/// are. See [`plan_level_compactions`] for why the plan terminates.
+#[must_use]
+pub fn plan_compactions(index: &TraceIndex, policy: CompactionPolicy) -> Vec<CompactionJob> {
+    plan_level_compactions(&index.compaction_candidates(), policy)
+}
+
+pub(crate) fn string_column<'a>(
+    batch: &'a RecordBatch,
+    column: &str,
+) -> Result<&'a StringArray, TracesError> {
+    batch
+        .column_by_name(column)
+        .and_then(|col| col.as_any().downcast_ref::<StringArray>())
+        .ok_or_else(|| TracesError::Block(format!("{column} is not Utf8")))
+}
+
+pub(crate) fn string_list_value(values: &ListArray, idx: usize) -> Option<String> {
+    if idx >= values.len() || values.is_null(idx) {
+        return None;
+    }
+    let values = values.value(idx);
+    let values = values.as_any().downcast_ref::<StringArray>()?;
+    (0..values.len())
+        .find(|value_idx| !values.is_null(*value_idx))
+        .map(|value_idx| values.value(value_idx).to_string())
+}
+
+pub(crate) fn struct_fixed_field(
+    array: &StructArray,
+    idx: usize,
+) -> Result<&FixedSizeBinaryArray, TracesError> {
+    array
+        .column(idx)
+        .as_any()
+        .downcast_ref::<FixedSizeBinaryArray>()
+        .ok_or_else(|| TracesError::Block(format!("struct field {idx} is not FixedSizeBinary")))
+}
+
+pub(crate) fn struct_i64_field(
+    array: &StructArray,
+    idx: usize,
+) -> Result<&Int64Array, TracesError> {
+    array
+        .column(idx)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .ok_or_else(|| TracesError::Block(format!("struct field {idx} is not Int64")))
+}
+
+pub(crate) fn struct_list_field(
+    array: &StructArray,
+    idx: usize,
+) -> Result<&ListArray, TracesError> {
+    array
+        .column(idx)
+        .as_any()
+        .downcast_ref::<ListArray>()
+        .ok_or_else(|| TracesError::Block(format!("struct field {idx} is not a list")))
+}
+
+pub(crate) fn struct_string_field(
+    array: &StructArray,
+    idx: usize,
+) -> Result<&StringArray, TracesError> {
+    array
+        .column(idx)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| TracesError::Block(format!("struct field {idx} is not Utf8")))
+}
+
+pub(crate) fn attr_value(
+    batch: &RecordBatch,
+    row: usize,
+    attr_idx: usize,
+) -> Result<Option<String>, TracesError> {
+    if let Some(value) =
+        first_string_list_value::<StringArray>(batch, SCOL_ATTR_VALUE, row, attr_idx)?
+    {
+        return Ok(Some(value));
+    }
+    if let Some(value) =
+        first_string_list_value::<Int64Array>(batch, SCOL_ATTR_VALUE_INT, row, attr_idx)?
+    {
+        return Ok(Some(value));
+    }
+    if let Some(value) =
+        first_string_list_value::<Float64Array>(batch, SCOL_ATTR_VALUE_DOUBLE, row, attr_idx)?
+    {
+        return Ok(Some(value));
+    }
+    first_string_list_value::<BooleanArray>(batch, SCOL_ATTR_VALUE_BOOL, row, attr_idx)
+}
+
+pub(crate) fn collect_link_metadata(
+    batch: &RecordBatch,
+    tag_names: &mut BTreeSet<String>,
+    tag_values: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), TracesError> {
+    collect_nested_column_metadata(batch, SCOL_LINKS, tag_names, tag_values, |link, catalog| {
+        let trace_ids = struct_fixed_field(link, 0)?;
+        let span_ids = struct_fixed_field(link, 1)?;
+        let keys = struct_list_field(link, 2)?;
+        let values = struct_list_field(link, 3)?;
+        for idx in 0..link.len() {
+            if link.is_null(idx) {
+                continue;
+            }
+            if !trace_ids.is_null(idx) {
+                catalog.insert("link:traceID", hex::encode(trace_ids.value(idx)));
+            }
+            if !span_ids.is_null(idx) {
+                catalog.insert("link:spanID", hex::encode(span_ids.value(idx)));
+            }
+            collect_nested_attrs(keys, values, idx, catalog.names, catalog.values)?;
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn collect_nested_column_metadata(
+    batch: &RecordBatch,
+    column: &str,
+    tag_names: &mut BTreeSet<String>,
+    tag_values: &mut BTreeMap<String, BTreeSet<String>>,
+    mut collect: impl FnMut(&StructArray, &mut TagCatalog<'_>) -> Result<(), TracesError>,
+) -> Result<(), TracesError> {
+    let mut catalog = TagCatalog {
+        names: tag_names,
+        values: tag_values,
+    };
+    let Some(values) = optional_list_column(batch, column)? else {
+        return Ok(());
+    };
+    collect_nested_metadata(values, |nested| collect(nested, &mut catalog))
+}
+
+pub(crate) fn collect_nested_metadata(
+    values: &ListArray,
+    mut collect: impl FnMut(&StructArray) -> Result<(), TracesError>,
+) -> Result<(), TracesError> {
+    for row in 0..values.len() {
+        if values.is_null(row) {
+            continue;
+        }
+        let nested = values.value(row);
+        let nested = nested
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .ok_or_else(|| TracesError::Block("nested metadata row is not a struct".into()))?;
+        collect(nested)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn collect_string_column_metadata(
+    batch: &RecordBatch,
+    column: &str,
+    tag: &str,
+    tag_names: &mut BTreeSet<String>,
+    tag_values: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), TracesError> {
+    let mut catalog = TagCatalog {
+        names: tag_names,
+        values: tag_values,
+    };
+    let Some(col) = batch.column_by_name(column) else {
+        return Ok(());
+    };
+    let strings = col
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| TracesError::Block(format!("{column} is not Utf8")))?;
+    for row in 0..strings.len() {
+        if strings.is_null(row) || strings.value(row).is_empty() {
+            continue;
+        }
+        catalog.insert(tag, strings.value(row).to_string());
+    }
+    Ok(())
+}
+
+/// Merge existing span block object keys into one replacement block and one
+/// index entry.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub async fn compact_block_keys(
+    store: Arc<dyn ObjectStore>,
+    writer: &BlockWriter,
+    index: &mut TraceIndex,
+    tenant: &str,
+    input_keys: &[String],
+    output_key: &str,
+) -> Result<BlockMeta, TracesError> {
+    compact_block_keys_with_max_bytes(
+        store,
+        writer,
+        index,
+        tenant,
+        input_keys,
+        output_key,
+        DEFAULT_BLOCK_READ_MAX,
+    )
+    .await
+}
+
+/// Runs one compaction pass with the default on-disk block-read limit.
+///
+/// # Errors
+/// Returns an error when an input exceeds the default cap, an input block is
+/// malformed, or the backing span store fails.
+pub async fn compact_once(
+    store: Arc<dyn ObjectStore>,
+    writer: &BlockWriter,
+    index: &mut TraceIndex,
+    object_key_prefix: &str,
+    policy: CompactionPolicy,
+) -> Result<CompactionPassOutcome, TracesError> {
+    compact_once_with_policy(
+        store,
+        writer,
+        index,
+        object_key_prefix,
+        policy,
+        DEFAULT_BLOCK_READ_MAX,
+    )
+    .await
+}
+
+/// Deletes span block objects that the index no longer names.
+///
+/// A traces block is one object. The profiles path writes a `.symdb` beside
+/// each block and the metrics path writes a `.index`, and each of those has to
+/// be deleted with its block. Traces writes neither, so every deletion here
+/// carries an empty [`BlockDeletion::sidecars`].
+///
+/// Call this only after the index that dropped the blocks is durable. One
+/// object that will not delete does not stop the rest; the report names it.
+pub async fn delete_trace_blocks(
+    store: &Arc<dyn ObjectStore>,
+    object_keys: &[String],
+) -> BlockDeletionReport {
+    let deletions: Vec<BlockDeletion> = object_keys
+        .iter()
+        .map(|object_key| BlockDeletion {
+            object_key: object_key.clone(),
+            sidecars: Vec::new(),
+        })
+        .collect();
+    delete_blocks(store, &deletions).await
+}
+
+pub(crate) fn first_string_list_value<A: MetadataValueArray + 'static>(
+    batch: &RecordBatch,
+    column: &str,
+    row: usize,
+    attr_idx: usize,
+) -> Result<Option<String>, TracesError> {
+    let values = list_column(batch, column)?;
+    let Some(attr_values) = crate::nested_list_value(values, column, row, attr_idx)? else {
+        return Ok(None);
+    };
+    let attr_values = attr_values
+        .as_any()
+        .downcast_ref::<A>()
+        .ok_or_else(|| TracesError::Block(format!("{column} values have wrong type")))?;
+    Ok(crate::first_non_null_array_index(attr_values)
+        .map(|value_idx| attr_values.string_value(value_idx)))
+}
+
+pub(crate) fn fixed_column<'a>(
+    batch: &'a RecordBatch,
+    column: &str,
+    width: i32,
+) -> Result<&'a FixedSizeBinaryArray, TracesError> {
+    let array = batch
+        .column_by_name(column)
+        .ok_or_else(|| TracesError::Block(format!("missing column {column}")))?
+        .as_any()
+        .downcast_ref::<FixedSizeBinaryArray>()
+        .ok_or_else(|| TracesError::Block(format!("{column} is not FixedSizeBinary")))?;
+    if array.value_length() != width {
+        return Err(TracesError::Block(format!(
+            "{column} is FixedSizeBinary({}), expected {width}",
+            array.value_length()
+        )));
+    }
+    Ok(array)
+}
+
+pub(crate) fn optional_list_column<'a>(
+    batch: &'a RecordBatch,
+    column: &str,
+) -> Result<Option<&'a ListArray>, TracesError> {
+    let Some(col) = batch.column_by_name(column) else {
+        return Ok(None);
+    };
+    col.as_any()
+        .downcast_ref::<ListArray>()
+        .map(Some)
+        .ok_or_else(|| TracesError::Block(format!("{column} is not a list")))
+}
+
+/// Names the span block a planned job writes.
+///
+/// The level is in the name because it is the first thing anyone reading a
+/// bucket listing wants to know, and the fingerprint of the input keys is what
+/// keeps two jobs over the same time range from colliding. The tenant is one
+/// path segment, escaped as [`crate::blockbuilder::object_key`] escapes it.
+#[must_use]
+pub fn planned_compacted_object_key(job: &CompactionJob) -> String {
+    let tenant = escape_object_path_segment(&job.tenant);
+    format!(
+        "{TRACE_BLOCK_OBJECT_PREFIX}/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
+        input_key_fingerprint(&job.input_keys),
+        level = job.output_level,
+        min_ts = job.min_ts,
+        max_ts = job.max_ts,
+    )
+}
+
+pub(crate) fn set_column(
+    schema: &arrow::datatypes::SchemaRef,
+    columns: &mut [ArrayRef],
+    name: &str,
+    array: ArrayRef,
+) -> Result<(), TracesError> {
+    let idx = schema
+        .column_with_name(name)
+        .ok_or_else(|| TracesError::Block(format!("missing column {name}")))?
+        .0;
+    columns[idx] = array;
+    Ok(())
+}

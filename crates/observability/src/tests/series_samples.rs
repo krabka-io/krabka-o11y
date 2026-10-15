@@ -1,6 +1,6 @@
 //! JSON range and instant series for the vector binary-operation tests.
 
-use super::prelude::{Value, json};
+use crate::tests::prelude::{Value, json};
 
 /// One sample of a JSON series: its timestamp and its value as text.
 #[derive(Clone, Copy)]

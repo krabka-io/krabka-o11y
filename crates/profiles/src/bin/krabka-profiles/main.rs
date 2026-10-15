@@ -1199,7 +1199,6 @@ mod index_snapshot_flags;
 mod all_stage;
 mod alloc;
 mod bind_all_stage_server;
-mod block_builder_config;
 mod block_builder_stage;
 mod build_all_stages;
 mod build_distributor_state;
@@ -1209,20 +1208,14 @@ mod build_ready_object_store;
 mod cli;
 mod client_resource_policy;
 mod compaction_loop;
-mod compaction_policy_from_cli;
 mod compactor_stage;
 mod configured_object_store;
-mod debuginfod_config;
-mod load_profiles_limits_overrides_config;
-mod parse_min_two_usize;
-mod parse_non_empty_string;
-mod parse_positive_time_or_legacy;
-mod parse_positive_time_or_legacy_millis;
-mod parse_positive_time_or_legacy_nanos;
+mod parse_cli;
 mod process_security;
 mod profile_read_path;
 mod read_path_stage;
 mod require_role_topics;
+mod role_config;
 mod role_shutdown_token;
 mod run;
 mod run_all;
@@ -1230,8 +1223,6 @@ mod run_block_builder;
 mod run_compaction_pass;
 mod run_compactor;
 mod run_distributor;
-mod run_querier;
-mod run_query_frontend;
 mod run_read_role;
 mod run_symbolizer;
 mod spawn_profile_index_refresh;
@@ -1246,7 +1237,6 @@ mod target;
 
 use all_stage::AllStage;
 use bind_all_stage_server::bind_all_stage_server;
-use block_builder_config::block_builder_config;
 use block_builder_stage::block_builder_stage;
 use build_all_stages::build_all_stages;
 use build_distributor_state::build_distributor_state;
@@ -1255,24 +1245,24 @@ use build_profile_read_path::build_profile_read_path;
 use cli::Cli;
 use client_resource_policy::client_resource_policy;
 use compaction_loop::compaction_loop;
-use compaction_policy_from_cli::compaction_policy_from_cli;
 use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
-use debuginfod_config::debuginfod_config;
 use krabka_observability::cli_value_parsers::{
     parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
     parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
 };
-use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
-use parse_min_two_usize::parse_min_two_usize;
-use parse_non_empty_string::parse_non_empty_string;
-use parse_positive_time_or_legacy::parse_positive_time_or_legacy;
-use parse_positive_time_or_legacy_millis::parse_positive_time_or_legacy_millis;
-use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
+use parse_cli::{
+    parse_min_two_usize, parse_non_empty_string, parse_positive_time_or_legacy_millis,
+    parse_positive_time_or_legacy_nanos,
+};
 use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
 use read_path_stage::read_path_stage;
 use require_role_topics::require_role_topics;
+use role_config::{
+    block_builder_config, compaction_policy_from_cli, debuginfod_config,
+    load_profiles_limits_overrides_config,
+};
 use role_shutdown_token::role_shutdown_token;
 use run::run;
 use run_all::run_all;
@@ -1280,9 +1270,7 @@ use run_block_builder::run_block_builder;
 use run_compaction_pass::run_compaction_pass;
 use run_compactor::run_compactor;
 use run_distributor::run_distributor;
-use run_querier::run_querier;
-use run_query_frontend::run_query_frontend;
-use run_read_role::{ReadRole, ReadRoleInputs, run_read_role};
+use run_read_role::{ReadRoleInputs, run_querier, run_query_frontend};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;

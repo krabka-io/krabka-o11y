@@ -46,7 +46,7 @@ crate_library(
     srcs = glob(
         ["src/**/*.rs"],
         exclude = ["src/bin/**"],
-    ) + ["//crates/promql:src/http_api/tests/first_vector_sample.rs"],
+    ) + ["//crates/promql:src/http_api/tests/support.rs"],
 )
 
 # `bazel run //crates/metrics-service:krabka-metrics-service -- --help`.

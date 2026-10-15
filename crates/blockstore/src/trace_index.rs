@@ -958,19 +958,148 @@ mod tests {
 }
 
 mod decode_trace_shard;
-mod encode_trace_shard;
-mod tenant_trace_index;
-mod trace_block_fingerprint;
-mod trace_block_stats;
-mod trace_index_shard_width;
 mod trace_index_type;
 mod trace_shard_format;
 
 use decode_trace_shard::decode_trace_shard;
-use encode_trace_shard::encode_trace_shard;
-use tenant_trace_index::TenantTraceIndex;
-use trace_block_fingerprint::trace_block_fingerprint;
-pub use trace_block_stats::TraceBlockStats;
-use trace_index_shard_width::TRACE_INDEX_SHARD_WIDTH;
 pub use trace_index_type::TraceIndex;
 use trace_shard_format::{TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC};
+
+/// The per-block trace footprint registered by a block builder.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TraceBlockStats {
+    pub object_key: String,
+    pub min_ts: i64,
+    pub max_ts: i64,
+    pub bloom: ShardedTraceBloom,
+    pub tag_names: BTreeSet<String>,
+    pub tag_values: BTreeMap<String, BTreeSet<String>>,
+    /// Rows in the block, as the writer counted them while encoding it.
+    ///
+    /// The compaction planner reads this to tell a block that has reached its
+    /// size target, and so needs no further merging, from one that has not.
+    pub row_count: usize,
+    /// How many rounds of compaction produced the block. See
+    /// [`BlockMeta::level`](crate::BlockMeta::level) for who sets it.
+    pub level: BlockLevel,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub(crate) struct TenantTraceIndex {
+    pub(crate) blocks: Vec<TraceBlockStats>,
+}
+
+/// Width of one trace-index shard, in nanoseconds.
+pub(crate) const TRACE_INDEX_SHARD_WIDTH: i64 = 24 * 60 * 60 * 1_000_000_000;
+
+/// Fingerprint of the trace-block record a writer holds.
+///
+/// A pending removal pins itself to this, so replaying the removal against a
+/// merge base cannot drop a *different* block that has since been written under
+/// the same object key. Records are only ever compared inside one process, so
+/// the hasher does not have to be stable across builds or hosts; it only has to
+/// be a function of everything the record says. The fields are named one by one
+/// rather than hashing [`TraceBlockStats`] wholesale, so a field added there is
+/// a deliberate choice here rather than a silent change of identity.
+pub(crate) fn trace_block_fingerprint(stats: &TraceBlockStats) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    stats.object_key.hash(&mut hasher);
+    stats.min_ts.hash(&mut hasher);
+    stats.max_ts.hash(&mut hasher);
+    stats.tag_names.hash(&mut hasher);
+    stats.tag_values.hash(&mut hasher);
+    stats.row_count.hash(&mut hasher);
+    stats.level.hash(&mut hasher);
+    // `ShardedTraceBloom` is not `Hash`, and its shards are what say which
+    // traces the block holds, so they are folded in by hand.
+    for shard in &stats.bloom.shards {
+        shard.bits.hash(&mut hasher);
+        shard.num_bits.hash(&mut hasher);
+        shard.k.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Encodes one tenant's trace-block records as a shard payload.
+///
+/// Tag names and tag values go into a per-shard dictionary and each block
+/// references them by id. A shard holds a slice of one tenant's blocks, and
+/// those blocks repeat the same handful of service names and operation names,
+/// so the dictionary is where most of the saving is. Timestamps are deltas
+/// along the shard's own order, and the bloom bit words go out raw, which is
+/// what they cost: a bloom is incompressible by construction, and it is the
+/// reason a trace index is large.
+///
+/// `blocks` must be sorted, so that the same set of records encodes to the same
+/// bytes and therefore to the same content-addressed object key whichever order
+/// a merge assembled them in.
+pub(crate) fn encode_trace_shard(tenant: &str, blocks: &[TraceBlockStats]) -> Vec<u8> {
+    let mut dictionary = BTreeMap::new();
+    for block in blocks {
+        for tag in &block.tag_names {
+            dictionary.insert(tag.clone(), 0_usize);
+        }
+        for tag in block.tag_values.keys() {
+            let values = &block.tag_values[tag];
+            dictionary.insert(tag.clone(), 0);
+            for value in values {
+                dictionary.insert(value.clone(), 0);
+            }
+        }
+    }
+    // Ids are assigned on the sorted order rather than on first sight, so the
+    // same records encode to the same bytes whichever order they arrived in.
+    let dictionary = assign_sorted_string_ids(dictionary);
+    let strings = dictionary.strings;
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&TRACE_SHARD_MAGIC);
+    out.push(TRACE_SHARD_FORMAT_VERSION);
+    push_string(&mut out, tenant);
+
+    push_len(&mut out, strings.len());
+    for text in &strings {
+        push_string(&mut out, text);
+    }
+
+    push_len(&mut out, blocks.len());
+    let mut previous_min = 0_i64;
+    for block in blocks {
+        push_shard_block_prefix(
+            &mut out,
+            &block.object_key,
+            block.min_ts,
+            block.max_ts,
+            block.row_count,
+            block.level,
+            &mut previous_min,
+        );
+
+        push_len(&mut out, block.tag_names.len());
+        for tag in &block.tag_names {
+            push_dictionary_id(&mut out, &dictionary.ids, tag);
+        }
+
+        push_len(&mut out, block.tag_values.len());
+        for tag in block.tag_values.keys() {
+            let values = &block.tag_values[tag];
+            push_dictionary_id(&mut out, &dictionary.ids, tag);
+            push_len(&mut out, values.len());
+            for value in values {
+                push_dictionary_id(&mut out, &dictionary.ids, value);
+            }
+        }
+
+        push_len(&mut out, block.bloom.shards.len());
+        for shard in &block.bloom.shards {
+            push_uvarint(&mut out, shard.num_bits);
+            push_uvarint(&mut out, u64::from(shard.k));
+            push_len(&mut out, shard.bits.len());
+            for word in &shard.bits {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+    }
+
+    out
+}

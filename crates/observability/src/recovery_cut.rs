@@ -13,11 +13,19 @@
 //! the end of its topic, because a restored block builder would write those
 //! records again under other block keys.
 
-mod deployment_drained_groups;
 mod deployment_kafka_names;
 mod kafka_broker_state;
 
 pub use self::{
-    deployment_drained_groups::deployment_drained_groups,
     deployment_kafka_names::DeploymentKafkaNames, kafka_broker_state::KafkaBrokerState,
 };
+
+/// The default block-builder consumer group of each signal, with the WAL
+/// topic it reads.
+///
+/// A deployment that sets another group id or WAL topic names its own groups
+/// with [`DeploymentKafkaNames::drained_groups`].
+#[must_use]
+pub fn deployment_drained_groups() -> Vec<krabka_blockstore::DrainedGroup> {
+    DeploymentKafkaNames::default().drained_groups()
+}

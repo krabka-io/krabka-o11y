@@ -111,13 +111,18 @@ pub mod range_manipulate;
 pub mod series_divide;
 
 mod batch_rows;
-mod is_stale_nan;
 mod only_child;
-mod stale_nan_bits;
 #[cfg(test)]
 mod test_support;
 
 pub(crate) use batch_rows::{RowSelection, TimeColumn, map_batches, take_rows_with_timestamps};
-pub(crate) use is_stale_nan::is_stale_nan;
 pub(crate) use only_child::{only_child, only_logical_input};
-pub(crate) use stale_nan_bits::STALE_NAN_BITS;
+
+/// Prometheus' bit-exact stale-NaN marker.
+pub(crate) const STALE_NAN_BITS: u64 = 0x7ff0_0000_0000_0002;
+
+/// True when `value` is exactly Prometheus' stale-NaN marker.
+#[must_use]
+pub(crate) fn is_stale_nan(value: f64) -> bool {
+    value.to_bits() == STALE_NAN_BITS
+}

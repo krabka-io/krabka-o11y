@@ -223,33 +223,110 @@ mod tests {
 }
 
 mod append_children;
-mod bar;
-mod flame_graph;
-mod flame_graph_diff;
-mod level;
-pub(crate) mod name_slot;
-mod node;
-mod other_name;
-mod root_name;
-mod sorted_child_position;
-mod subtree_self;
-mod tree_snapshot_node;
 mod tree_type;
-mod write_pyroscope_tree_node;
-mod write_uvarint;
 
 use append_children::append_children;
-use bar::Bar;
-pub use flame_graph::FlameGraph;
-pub use flame_graph_diff::FlameGraphDiff;
-pub use level::Level;
-use name_slot::name_slot;
-use node::Node;
-use other_name::OTHER_NAME;
-use root_name::ROOT_NAME;
-use sorted_child_position::sorted_child_position;
-use subtree_self::subtree_self;
-pub(crate) use tree_snapshot_node::TreeSnapshotNode;
 pub use tree_type::Tree;
-use write_pyroscope_tree_node::write_pyroscope_tree_node;
-use write_uvarint::write_uvarint;
+
+#[derive(Clone, Debug)]
+pub(crate) struct Bar {
+    pub(crate) node: Option<usize>,
+    pub(crate) name: String,
+    pub(crate) total: i64,
+    pub(crate) self_: i64,
+    pub(crate) x_start: i64,
+    pub(crate) level: usize,
+}
+
+/// Pyroscope-compatible single flamegraph projection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlameGraph {
+    pub names: Vec<String>,
+    pub levels: Vec<Level>,
+    pub total: i64,
+    pub max_self: i64,
+}
+
+/// Diff flamegraph projection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlameGraphDiff {
+    pub names: Vec<String>,
+    pub levels: Vec<Level>,
+    pub left_ticks: i64,
+    pub right_ticks: i64,
+}
+
+/// One flamegraph level, encoded as `[xOffsetDelta, total, self, nameIndex]` groups.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Level {
+    pub values: Vec<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Node {
+    pub(crate) name: String,
+    pub(crate) total: i64,
+    pub(crate) self_: i64,
+    pub(crate) children: Vec<usize>,
+    pub(crate) child_by_name: HashMap<String, usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TreeSnapshotNode {
+    pub name: String,
+    pub total: i64,
+    pub self_: i64,
+    pub children: Vec<usize>,
+}
+
+pub(crate) const OTHER_NAME: &str = "other";
+
+pub(crate) const ROOT_NAME: &str = "total";
+
+pub(crate) fn sorted_child_position(children: &[usize], nodes: &[Node], name: &str) -> usize {
+    children
+        .binary_search_by(|candidate| nodes[*candidate].name.as_str().cmp(name))
+        .unwrap_or_else(|pos| pos)
+}
+
+pub(crate) fn subtree_self(tree: &Tree, node: usize) -> i64 {
+    tree.nodes[node].self_
+        + tree.nodes[node]
+            .children
+            .iter()
+            .map(|child| subtree_self(tree, *child))
+            .sum::<i64>()
+}
+
+pub(crate) fn write_pyroscope_tree_node(out: &mut Vec<u8>, name: &str, self_: i64) {
+    write_uvarint(out, name.len() as u64);
+    out.extend_from_slice(name.as_bytes());
+    write_uvarint(out, self_.cast_unsigned());
+}
+
+pub(crate) fn write_uvarint(out: &mut Vec<u8>, mut value: u64) {
+    for _ in 0..10 {
+        if value < 0x80 {
+            out.push(u8::try_from(value).expect("terminal uvarint byte fits in u8"));
+            return;
+        }
+        let low_bits = u8::try_from(value & 0x7f).expect("masked uvarint byte fits in u8");
+        out.push(low_bits + 0x80);
+        value >>= 7;
+    }
+    unreachable!("u64 uvarint uses at most 10 bytes");
+}
+
+pub(crate) fn name_slot(
+    names: &mut Vec<String>,
+    index: &mut HashMap<String, i64>,
+    name: &str,
+) -> i64 {
+    if let Some(slot) = index.get(name) {
+        return *slot;
+    }
+    let slot = i64::try_from(names.len()).expect("name index fits i64");
+    names.push(name.to_string());
+    index.insert(name.to_string(), slot);
+    slot
+}

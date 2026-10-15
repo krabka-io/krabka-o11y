@@ -74,6 +74,44 @@ mod rate_bucket {
     }
 }
 
+pub struct QueryEnforcer;
+
+impl QueryEnforcer {
+    ///
+    /// # Errors
+    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    pub fn check_search_limit(limits: &Limits, requested: u64) -> Result<(), LimitError> {
+        let limit = limits.max_traces_per_search;
+        if limit != 0 && requested > limit {
+            return Err(LimitError::TracesPerSearchExceeded { limit, requested });
+        }
+        Ok(())
+    }
+
+    ///
+    /// # Errors
+    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    pub fn check_search_duration(
+        limits: &Limits,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<(), LimitError> {
+        let limit_secs = u64::try_from(limits.max_search_duration.secs_i64()).unwrap_or(0);
+        if limit_secs == 0 {
+            return Ok(());
+        }
+        let observed = Time::from_nanos(end_ns.saturating_sub(start_ns));
+        let observed_secs = observed.secs_f64().ceil().to_u64().unwrap_or(0);
+        if observed_secs > limit_secs {
+            return Err(LimitError::SearchDurationExceeded {
+                limit_secs,
+                observed_secs,
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -273,13 +311,16 @@ mod tests {
         );
     }
 }
-
-mod f64_from_u64;
 mod ingest_enforcer;
-mod query_enforcer;
-mod rounded_positive_rate;
-
-use f64_from_u64::f64_from_u64;
 pub use ingest_enforcer::{IngestEnforcer, MeasuredAttribute};
-pub use query_enforcer::QueryEnforcer;
-use rounded_positive_rate::rounded_positive_rate;
+
+pub(crate) fn f64_from_u64(value: u64) -> f64 {
+    value.to_string().parse().unwrap_or(f64::INFINITY)
+}
+
+pub(crate) fn rounded_positive_rate(rate: f64) -> u64 {
+    if !rate.is_finite() || rate <= 0.0 {
+        return 0;
+    }
+    rate.round().to_string().parse().unwrap_or(u64::MAX)
+}

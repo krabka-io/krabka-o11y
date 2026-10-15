@@ -1433,7 +1433,7 @@ fn spans_from_buckets(mut buckets: BTreeMap<i32, f64>) -> BucketSpansAndCounts {
     BucketSpansAndCounts { spans, counts }
 }
 fn template_bound(index: i32, schema: i32) -> f64 {
-    super::standard_histogram_bound::bound(index, schema)
+    super::bucket_helpers::bound(index, schema)
 }
 fn refresh_display(hist: &mut Dto) {
     let mut buckets = Vec::new();

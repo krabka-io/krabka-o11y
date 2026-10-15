@@ -606,21 +606,6 @@ mod tests {
     }
 }
 
-mod check_side;
-mod counts;
-mod is_v1_float;
-mod is_v2_float;
-mod schema_i8;
-mod span_bucket_total;
-mod v1_histogram_to_native;
-mod v1_reset_hint;
-mod v1_spans;
-mod v2_histogram_to_native;
-mod v2_reset_hint;
-mod v2_spans;
-mod validate_spans_and_counts;
-mod validated_native_histogram;
-
 macro_rules! define_histogram_count {
     ($function:ident, $version:ident, $field:ident, $kind:ident, $integer:ident, $float:ident) => {
         pub(crate) fn $function(histogram: &pb::$version::Histogram) -> f64 {
@@ -654,17 +639,249 @@ define_histogram_count!(
     ZeroCountFloat
 );
 
-use check_side::check_side;
-use counts::counts;
-use is_v1_float::is_v1_float;
-use is_v2_float::is_v2_float;
-use schema_i8::schema_i8;
-use span_bucket_total::span_bucket_total;
-pub use v1_histogram_to_native::v1_histogram_to_native;
-use v1_reset_hint::v1_reset_hint;
-use v1_spans::v1_spans;
-pub use v2_histogram_to_native::v2_histogram_to_native;
-use v2_reset_hint::v2_reset_hint;
-use v2_spans::v2_spans;
-pub(crate) use validate_spans_and_counts::validate_spans_and_counts;
-use validated_native_histogram::validated_native_histogram;
+pub(crate) fn check_side(side: &str, spans: &[BucketSpan], counts: usize) -> Result<(), WireError> {
+    let expected = span_bucket_total(spans);
+    if expected != counts {
+        return Err(WireError::Invalid(format!(
+            "{side} spans declare {expected} buckets but {counts} counts were decoded"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn is_v1_float(histogram: &pb::v1::Histogram) -> bool {
+    matches!(
+        histogram.count,
+        Some(pb::v1::histogram::Count::CountFloat(_))
+    ) || matches!(
+        histogram.zero_count,
+        Some(pb::v1::histogram::ZeroCount::ZeroCountFloat(_))
+    ) || !histogram.positive_counts.is_empty()
+        || !histogram.negative_counts.is_empty()
+}
+
+pub(crate) fn is_v2_float(histogram: &pb::v2::Histogram) -> bool {
+    matches!(
+        histogram.count,
+        Some(pb::v2::histogram::Count::CountFloat(_))
+    ) || matches!(
+        histogram.zero_count,
+        Some(pb::v2::histogram::ZeroCount::ZeroCountFloat(_))
+    ) || !histogram.positive_counts.is_empty()
+        || !histogram.negative_counts.is_empty()
+}
+
+pub(crate) fn schema_i8(schema: i32) -> Result<i8, WireError> {
+    if schema == -53 || (-4..=8).contains(&schema) {
+        i8::try_from(schema)
+            .map_err(|_| WireError::Invalid(format!("histogram schema {schema} out of range")))
+    } else {
+        Err(WireError::Invalid(format!(
+            "histogram schema {schema} is not supported"
+        )))
+    }
+}
+
+/// The number of buckets a run of spans declares.
+///
+/// The lengths come off the wire unchecked, so the sum saturates rather than
+/// wrapping: a total that large disagrees with any decoded count vector, and
+/// `check_side` turns the disagreement into a decode error.
+pub(crate) fn span_bucket_total(spans: &[BucketSpan]) -> usize {
+    spans.iter().fold(0_usize, |total, span| {
+        total.saturating_add(span.length as usize)
+    })
+}
+
+pub(crate) fn v1_reset_hint(value: i32) -> ResetHint {
+    match pb::v1::histogram::ResetHint::try_from(value) {
+        Ok(pb::v1::histogram::ResetHint::Yes) => ResetHint::Yes,
+        Ok(pb::v1::histogram::ResetHint::No) => ResetHint::No,
+        Ok(pb::v1::histogram::ResetHint::Gauge) => ResetHint::Gauge,
+        Ok(pb::v1::histogram::ResetHint::Unknown) | Err(_) => ResetHint::Unknown,
+    }
+}
+
+pub(crate) fn v1_spans(spans: &[pb::v1::BucketSpan]) -> Vec<BucketSpan> {
+    spans
+        .iter()
+        .map(|span| BucketSpan {
+            offset: span.offset,
+            length: span.length,
+        })
+        .collect()
+}
+
+pub(crate) fn v2_reset_hint(value: i32) -> ResetHint {
+    match pb::v2::histogram::ResetHint::try_from(value) {
+        Ok(pb::v2::histogram::ResetHint::Yes) => ResetHint::Yes,
+        Ok(pb::v2::histogram::ResetHint::No) => ResetHint::No,
+        Ok(pb::v2::histogram::ResetHint::Gauge) => ResetHint::Gauge,
+        Ok(pb::v2::histogram::ResetHint::Unspecified) | Err(_) => ResetHint::Unknown,
+    }
+}
+
+pub(crate) fn v2_spans(spans: &[pb::v2::BucketSpan]) -> Vec<BucketSpan> {
+    spans
+        .iter()
+        .map(|span| BucketSpan {
+            offset: span.offset,
+            length: span.length,
+        })
+        .collect()
+}
+
+/// # Errors
+/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+pub fn v1_histogram_to_native(histogram: &pb::v1::Histogram) -> Result<NativeHistogram, WireError> {
+    validated_native_histogram(NativeHistogram {
+        schema: schema_i8(histogram.schema)?,
+        is_float: is_v1_float(histogram),
+        reset_hint: v1_reset_hint(histogram.reset_hint),
+        zero_threshold: histogram.zero_threshold,
+        zero_count: v1_zero_count(histogram),
+        count: v1_count(histogram),
+        sum: histogram.sum,
+        positive_spans: v1_spans(&histogram.positive_spans),
+        positive_counts: counts(&histogram.positive_counts, &histogram.positive_deltas)?,
+        negative_spans: v1_spans(&histogram.negative_spans),
+        negative_counts: counts(&histogram.negative_counts, &histogram.negative_deltas)?,
+        custom_values: (!histogram.custom_values.is_empty())
+            .then(|| histogram.custom_values.clone()),
+        start_timestamp_ms: None,
+    })
+}
+
+/// # Errors
+/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+pub fn v2_histogram_to_native(histogram: &pb::v2::Histogram) -> Result<NativeHistogram, WireError> {
+    validated_native_histogram(NativeHistogram {
+        schema: schema_i8(histogram.schema)?,
+        is_float: is_v2_float(histogram),
+        reset_hint: v2_reset_hint(histogram.reset_hint),
+        zero_threshold: histogram.zero_threshold,
+        zero_count: v2_zero_count(histogram),
+        count: v2_count(histogram),
+        sum: histogram.sum,
+        positive_spans: v2_spans(&histogram.positive_spans),
+        positive_counts: counts(&histogram.positive_counts, &histogram.positive_deltas)?,
+        negative_spans: v2_spans(&histogram.negative_spans),
+        negative_counts: counts(&histogram.negative_counts, &histogram.negative_deltas)?,
+        custom_values: (!histogram.custom_values.is_empty())
+            .then(|| histogram.custom_values.clone()),
+        start_timestamp_ms: (histogram.start_timestamp != 0).then_some(histogram.start_timestamp),
+    })
+}
+
+/// Admits a histogram decoded from either `remote_write` version once its
+/// spans and counts pass [`validate_spans_and_counts`].
+pub(crate) fn validated_native_histogram(
+    histogram: NativeHistogram,
+) -> Result<NativeHistogram, WireError> {
+    validate_spans_and_counts(
+        histogram.schema,
+        &histogram.positive_spans,
+        &histogram.positive_counts,
+        &histogram.negative_spans,
+        &histogram.negative_counts,
+        histogram.custom_values.as_deref(),
+    )?;
+    Ok(histogram)
+}
+
+/// The absolute bucket counts for one side of a histogram.
+///
+/// A float histogram states them outright. An integer histogram states them as
+/// a run of deltas whose running total is an `i64`, and a run that leaves that
+/// range is malformed input rather than a count: the sample is refused.
+///
+/// Prometheus arrives at the same verdict from the other side. It adds the
+/// deltas in a wrapping `int64` and then refuses any bucket whose absolute
+/// count came out negative, in `checkHistogramBuckets`, so an overflowing run
+/// of positive deltas is rejected there too. Saturating instead would hand the
+/// query path a bucket count that nothing downstream could tell from a real
+/// one, which is the worse answer for input that arrives unauthenticated.
+pub(crate) fn counts(float_counts: &[f64], deltas: &[i64]) -> Result<Vec<f64>, WireError> {
+    if !float_counts.is_empty() {
+        return Ok(float_counts.to_vec());
+    }
+
+    let mut total = 0_i64;
+    deltas
+        .iter()
+        .enumerate()
+        .map(|entry| {
+            let next = total.checked_add(*entry.1).ok_or_else(|| {
+                WireError::Invalid(format!(
+                    "histogram bucket delta run overflows i64 at bucket {}: \
+                     count {total} plus delta {}",
+                    entry.0, entry.1
+                ))
+            })?;
+            total = next;
+            Ok(total.to_f64().unwrap_or(f64::MAX))
+        })
+        .collect()
+}
+
+/// Strict span and count validation that matches the Prometheus appender. It
+/// runs at the wire edge before the module admits a histogram.
+///
+/// For both the positive and the negative buckets, the sum of the span lengths
+/// must equal the number of decoded counts. Prometheus does the same in
+/// `Histogram.Validate` and `FloatHistogram.Validate`. For NHCB, which is
+/// schema `-53` with custom buckets, the histogram must carry no negative
+/// buckets, and `custom_values` must define an upper bound for every populated
+/// positive bucket bar the last.
+///
+/// That last bucket is the reason the bound count is one short of the bucket
+/// count rather than equal to it: a custom-bucket histogram's final bucket is
+/// the implicit `+Inf` one, which needs no bound. Prometheus refuses only
+/// `totalSpanLength > len(bounds) + 1`, and a classic histogram converted to
+/// NHCB -- every `load_with_nhcb` block of the vendored corpus -- lands exactly
+/// on that boundary. A classic histogram whose only bucket is `+Inf` converts
+/// to one bucket and no bounds at all, and the pinned Prometheus image accepts
+/// that too, so no bound count is a floor of its own.
+pub(crate) fn validate_spans_and_counts(
+    schema: i8,
+    positive_spans: &[BucketSpan],
+    positive_counts: &[f64],
+    negative_spans: &[BucketSpan],
+    negative_counts: &[f64],
+    custom_values: Option<&[f64]>,
+) -> Result<(), WireError> {
+    check_side("positive", positive_spans, positive_counts.len())?;
+    check_side("negative", negative_spans, negative_counts.len())?;
+
+    if schema == -53 {
+        // NHCB: custom buckets are exclusively positive; the boundaries in
+        // `custom_values` must cover every populated positive bucket but the
+        // implicit `+Inf` one.
+        if !negative_spans.is_empty() || !negative_counts.is_empty() {
+            return Err(WireError::Invalid(
+                "custom-bucket histogram must not carry negative buckets".to_string(),
+            ));
+        }
+        let buckets = span_bucket_total(positive_spans);
+        let bounds = custom_values.map_or(0, <[f64]>::len);
+        // Prometheus counts the span offsets too: a gap between spans is a run
+        // of empty buckets that still needs bounds behind it.
+        let spanned = buckets.saturating_add(span_offset_total(positive_spans));
+        if spanned > bounds + 1 {
+            return Err(WireError::Invalid(format!(
+                "custom-bucket histogram spans {spanned} buckets but only {bounds} custom values \
+                 define bounds for them"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// The buckets the span offsets skip over, which Prometheus counts towards the
+/// span length a histogram's bounds have to cover.
+fn span_offset_total(spans: &[BucketSpan]) -> usize {
+    spans.iter().fold(0_usize, |total, span| {
+        total.saturating_add(usize::try_from(span.offset).unwrap_or(0))
+    })
+}

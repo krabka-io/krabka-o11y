@@ -1,4 +1,11 @@
-use super::{Bytes, ProduceError, WalBatchError, WalRecord};
+use super::{Bytes, WalBatchError, WalRecord};
+
+/// Errors raised while appending to the metrics WAL.
+#[derive(Debug, thiserror::Error)]
+pub enum ProduceError {
+    #[error("wal append failed: {0}")]
+    Append(String),
+}
 
 /// A WAL record and the partitioning key that selects its partition.
 #[derive(Clone, Debug, PartialEq)]

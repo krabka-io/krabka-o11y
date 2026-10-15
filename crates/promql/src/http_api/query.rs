@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use axum::{
     body::Bytes,
@@ -61,23 +65,11 @@ use crate::{
 };
 
 mod evaluated_query_response;
-mod exemplars_query_params;
-mod exemplars_query_params_from_form;
-mod instant_query_params;
 mod instant_query_params_from_form;
 mod query_dispatch;
-mod query_exemplars;
 mod query_exemplars_inner;
-mod query_exemplars_post;
-mod query_fn;
-mod query_inner;
-mod query_post;
-mod query_range;
+mod query_params;
 mod query_range_dispatch;
-mod query_range_inner;
-mod query_range_post;
-mod query_request_timing;
-mod range_query_params;
 mod range_query_params_from_form;
 mod run_timed_query;
 
@@ -112,22 +104,200 @@ pub(super) fn query_range_form_fields(
 }
 
 use evaluated_query_response::{EvaluatedQuery, evaluated_query_response};
-use exemplars_query_params::ExemplarsQueryParams;
-use exemplars_query_params_from_form::exemplars_query_params_from_form;
-use instant_query_params::InstantQueryParams;
 use instant_query_params_from_form::instant_query_params_from_form;
 use query_dispatch::query_dispatch;
-pub(super) use query_exemplars::query_exemplars;
 use query_exemplars_inner::query_exemplars_inner;
-pub(super) use query_exemplars_post::query_exemplars_post;
-pub(super) use query_fn::query;
-use query_inner::query_inner;
-pub(super) use query_post::query_post;
-pub(super) use query_range::query_range;
 use query_range_dispatch::query_range_dispatch;
-use query_range_inner::query_range_inner;
-pub(super) use query_range_post::query_range_post;
-use query_request_timing::QueryRequestTiming;
-use range_query_params::RangeQueryParams;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExemplarsQueryParams {
+    pub(crate) query: String,
+    pub(crate) start: String,
+    pub(crate) end: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct QueryRequestTiming {
+    pub(crate) started: Instant,
+    pub(crate) queue: Duration,
+}
+use query_params::{InstantQueryParams, RangeQueryParams};
 use range_query_params_from_form::range_query_params_from_form;
 use run_timed_query::{TimedQuery, run_timed_query};
+
+pub(crate) fn exemplars_query_params_from_form(
+    body: &[u8],
+) -> Result<ExemplarsQueryParams, ApiError> {
+    let fields = query_range_form_fields(body, |_, _| Ok(()))?;
+    Ok(ExemplarsQueryParams {
+        query: fields.query,
+        start: fields.start,
+        end: fields.end,
+    })
+}
+
+pub(crate) async fn query_exemplars<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    RawQuery(raw_query): RawQuery,
+) -> Response {
+    let params =
+        match exemplars_query_params_from_form(raw_query.as_deref().unwrap_or_default().as_bytes())
+        {
+            Ok(params) => params,
+            Err(error) => return error.into_response(),
+        };
+    query_exemplars_inner(state, headers, principal, params).await
+}
+
+pub(crate) async fn query_exemplars_post<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let params = match exemplars_query_params_from_form(&body) {
+        Ok(params) => params,
+        Err(error) => return error.into_response(),
+    };
+    query_exemplars_inner(state, headers, principal, params).await
+}
+
+pub(crate) async fn query<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    RawQuery(raw_query): RawQuery,
+) -> Response {
+    let params =
+        match instant_query_params_from_form(raw_query.as_deref().unwrap_or_default().as_bytes()) {
+            Ok(params) => params,
+            Err(error) => return error.into_response(),
+        };
+    query_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
+}
+
+pub(crate) async fn query_inner<S: MetricStore>(
+    state: &Arc<PrometheusApiState<S>>,
+    auth: RequestAuth<'_>,
+    params: InstantQueryParams,
+) -> Response {
+    let timeout = params.timeout.clone();
+    run_timed_query(
+        state,
+        TimedQuery {
+            route: "query",
+            timeout: timeout.as_deref(),
+        },
+        async |timing| {
+            query_dispatch(QueryDispatchRequest {
+                state,
+                headers: auth.headers,
+                principal: auth.principal,
+                params,
+                timing,
+            })
+            .await
+        },
+    )
+    .await
+}
+
+pub(crate) async fn query_post<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let params = match instant_query_params_from_form(&body) {
+        Ok(params) => params,
+        Err(error) => return error.into_response(),
+    };
+    query_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
+}
+
+pub(crate) async fn query_range<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    RawQuery(raw_query): RawQuery,
+) -> Response {
+    let params =
+        match range_query_params_from_form(raw_query.as_deref().unwrap_or_default().as_bytes()) {
+            Ok(params) => params,
+            Err(error) => return error.into_response(),
+        };
+    query_range_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
+}
+
+pub(crate) async fn query_range_inner<S: MetricStore>(
+    state: &Arc<PrometheusApiState<S>>,
+    auth: RequestAuth<'_>,
+    params: RangeQueryParams,
+) -> Response {
+    let timeout = params.timeout.clone();
+    run_timed_query(
+        state,
+        TimedQuery {
+            route: "query_range",
+            timeout: timeout.as_deref(),
+        },
+        async |timing| {
+            query_range_dispatch(QueryDispatchRequest {
+                state,
+                headers: auth.headers,
+                principal: auth.principal,
+                params,
+                timing,
+            })
+            .await
+        },
+    )
+    .await
+}
+
+pub(crate) async fn query_range_post<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let params = match range_query_params_from_form(&body) {
+        Ok(params) => params,
+        Err(error) => return error.into_response(),
+    };
+    query_range_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
+}

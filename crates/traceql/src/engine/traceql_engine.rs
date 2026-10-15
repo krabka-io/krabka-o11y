@@ -1,10 +1,10 @@
 use super::{
-    Arc, CompareSpec, DurationNanos, EngineOpts, MetricsRange, PlannerContext, Query, QueryHints,
-    Result, ScanOptions, ScopedTag, SearchOptions, SearchResponse, SpanStore, TagScope,
-    TraceMetricsResponse, TraceSpans, TypedValue, UnixNano, assemble_compare_response,
-    assemble_metrics_response, assemble_search_response, collect_planned_batches,
-    compare_span_identities, extend_metric_projection_matchers, hinted_max_exemplars, metric_plan,
-    metric_timing::MetricExemplarPolicy, parse, plan_query, validate_compare_selection,
+    Arc, CompareSpec, DurationNanos, EngineOpts, MetricExemplarPolicy, MetricsRange,
+    PlannerContext, Query, QueryHints, Result, ScanOptions, ScopedTag, SearchOptions,
+    SearchResponse, SpanStore, TagScope, TraceMetricsResponse, TraceSpans, TypedValue, UnixNano,
+    assemble_compare_response, assemble_metrics_response, assemble_search_response,
+    collect_planned_batches, compare_span_identities, extend_metric_projection_matchers,
+    hinted_max_exemplars, metric_plan, parse, plan_query, validate_compare_selection,
 };
 
 pub struct TraceqlEngine<S: SpanStore> {

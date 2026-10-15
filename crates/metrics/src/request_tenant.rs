@@ -255,21 +255,135 @@ mod tests {
         assert!(tenant_from_metadata(&metadata) == Ok(tenant("tenant-a")));
     }
 }
-
-mod authorized_tenant_from_headers;
-mod max_request_tenants;
-mod request_tenant_error;
 mod resolve_request_tenant;
-mod tenant_access_error;
-mod tenant_from_headers;
-mod tenant_from_metadata;
-mod tenant_separator;
-
-pub use authorized_tenant_from_headers::authorized_tenant_from_headers;
-pub use max_request_tenants::MAX_REQUEST_TENANTS;
-pub use request_tenant_error::RequestTenantError;
 pub use resolve_request_tenant::resolve_request_tenant;
-pub use tenant_access_error::TenantAccessError;
-pub use tenant_from_headers::tenant_from_headers;
-pub use tenant_from_metadata::tenant_from_metadata;
-use tenant_separator::TENANT_SEPARATOR;
+
+/// The byte that separates tenant ids in one `X-Scope-OrgID` value.
+pub(super) const TENANT_SEPARATOR: u8 = b'|';
+
+/// Resolves the tenant of a gRPC request from its `x-scope-orgid` metadata.
+///
+/// # Errors
+///
+/// Returns the errors of [`resolve_request_tenant`].
+pub fn tenant_from_metadata(metadata: &MetadataMap) -> Result<TenantId, RequestTenantError> {
+    resolve_request_tenant(metadata.get(TENANT_HEADER).map(MetadataValue::as_bytes))
+}
+
+/// Resolves the tenant of an HTTP request, and checks that `principal` may use it.
+///
+/// The authentication layer puts `principal` into the request. A server with
+/// no credentials file gives `Principal::Unauthenticated`, which may use every
+/// tenant, as Grafana Mimir allows by default.
+///
+/// # Errors
+///
+/// Returns [`TenantAccessError::Unresolved`] with the errors of
+/// [`tenant_from_headers`]. Returns [`TenantAccessError::Denied`] when the
+/// principal's grant does not include the tenant. `authorize_tenant` also
+/// reports that denial to the server's security events.
+pub fn authorized_tenant_from_headers(
+    headers: &HeaderMap,
+    principal: &Principal,
+) -> Result<TenantId, TenantAccessError> {
+    let tenant = tenant_from_headers(headers)?;
+    authorize_tenant(principal, &tenant)?;
+    Ok(tenant)
+}
+
+/// Resolves the tenant of an HTTP request from its `X-Scope-OrgID` header.
+///
+/// When the request repeats the header, the first value names the tenant, as
+/// Go's `Header.Get` reads it in Mimir.
+///
+/// # Errors
+///
+/// Returns the errors of [`resolve_request_tenant`].
+pub fn tenant_from_headers(headers: &HeaderMap) -> Result<TenantId, RequestTenantError> {
+    resolve_request_tenant(headers.get(TENANT_HEADER).map(HeaderValue::as_bytes))
+}
+
+/// Most distinct tenants one metrics request can name.
+///
+/// Grafana Mimir reads a `|` in `X-Scope-OrgID` as a list of tenants for a
+/// federated query. With tenant federation off, which is its default, it
+/// accepts one tenant and reports this number in its rejection.
+pub const MAX_REQUEST_TENANTS: usize = 1;
+
+/// Why a metrics request does not resolve to one tenant.
+///
+/// Each message is the text the pinned Grafana Mimir 2.16.1 image sends. A
+/// Grafana datasource shows that text to its user, so Krabka uses the same
+/// words.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum RequestTenantError {
+    /// The request names no tenant, or a tenant that is not a valid tenant id.
+    #[error(transparent)]
+    Resolve(#[from] TenantResolveError),
+
+    /// The request names more than [`MAX_REQUEST_TENANTS`] distinct tenants.
+    #[error(
+        "too many tenant IDs present in the request. max: {MAX_REQUEST_TENANTS} actual: {actual}"
+    )]
+    TooManyTenants {
+        /// The number of distinct tenants the request names.
+        actual: usize,
+    },
+}
+
+impl RequestTenantError {
+    /// The HTTP status Mimir answers this error with.
+    ///
+    /// A missing or invalid tenant is `401 Unauthorized`. Too many tenants is
+    /// `422 Unprocessable Entity`.
+    #[must_use]
+    pub const fn http_status(&self) -> StatusCode {
+        match self {
+            Self::Resolve(_) => StatusCode::UNAUTHORIZED,
+            Self::TooManyTenants { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        }
+    }
+}
+
+impl IntoResponse for RequestTenantError {
+    // Mimir rejects the tenant before any API handler runs, through Go's
+    // `http.Error`. That writes plain text with a trailing line break, so the
+    // body is never the JSON error envelope of the Prometheus API.
+    fn into_response(self) -> Response {
+        let mut response = format!("{self}\n").into_response();
+        *response.status_mut() = self.http_status();
+        response.headers_mut().insert(
+            X_CONTENT_TYPE_OPTIONS,
+            "nosniff".parse().expect("static header"),
+        );
+        response
+    }
+}
+
+/// Why a metrics request may not use the tenant it names.
+///
+/// [`authorized_tenant_from_headers`]
+/// returns it. Each variant keeps the response of its source error, so an
+/// unusable tenant is still Mimir's plain-text rejection, and a refused
+/// principal is a 403.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum TenantAccessError {
+    /// The request names no usable tenant.
+    #[error(transparent)]
+    Unresolved(#[from] RequestTenantError),
+
+    /// The request's principal is not granted the tenant.
+    #[error(transparent)]
+    Denied(#[from] TenantDenied),
+}
+
+impl IntoResponse for TenantAccessError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Unresolved(error) => error.into_response(),
+            Self::Denied(error) => error.into_response(),
+        }
+    }
+}

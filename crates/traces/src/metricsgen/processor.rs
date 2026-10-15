@@ -15,6 +15,24 @@ use crate::metricsgen::{
     spanmetrics::SpanMetricsRegistry,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EdgeCheckpointEntry {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TenantEdgeCheckpoints {
+    pub tenant: String,
+    pub entries: Vec<EdgeCheckpointEntry>,
+}
+
+#[derive(Debug)]
+pub(crate) struct TenantState {
+    pub(crate) span_metrics: SpanMetricsRegistry,
+    pub(crate) edges: EdgeStore,
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -165,12 +183,6 @@ mod tests {
     }
 }
 
-mod edge_checkpoint_entry;
 mod metrics_generator;
-mod tenant_edge_checkpoints;
-mod tenant_state;
 
-pub use edge_checkpoint_entry::EdgeCheckpointEntry;
 pub use metrics_generator::MetricsGenerator;
-pub use tenant_edge_checkpoints::TenantEdgeCheckpoints;
-use tenant_state::TenantState;

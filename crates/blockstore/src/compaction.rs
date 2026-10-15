@@ -486,22 +486,205 @@ mod tests {
 }
 
 mod block_level;
-mod compaction_candidate;
-mod compaction_job;
 mod compaction_policy;
-mod input_key_fingerprint;
-mod job_from_run;
-mod level_above;
-mod plan_compactions;
 
 pub use block_level::BlockLevel;
-pub use compaction_candidate::CompactionCandidate;
-pub use compaction_job::CompactionJob;
 pub use compaction_policy::{
     CompactionPolicy, DEFAULT_LEVEL_WINDOW, DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL,
     DEFAULT_TARGET_ROWS_PER_BLOCK,
 };
-pub use input_key_fingerprint::input_key_fingerprint;
-use job_from_run::job_from_run;
-pub use level_above::level_above;
-pub use plan_compactions::plan_compactions;
+
+/// One block offered to [`plan_compactions`]. Every signal reduces its own
+/// block record to this, so the planner is shared by spans, profiles and
+/// series.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompactionCandidate {
+    pub tenant: String,
+    pub object_key: String,
+    pub min_ts: i64,
+    pub max_ts: i64,
+    /// Rows in the block, or `0` when the index does not record one.
+    pub row_count: usize,
+    pub level: BlockLevel,
+}
+
+/// One merge the planner asks for: these blocks become one block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompactionJob {
+    pub tenant: String,
+    /// Always at least two blocks, all at the same level. Merging one block
+    /// would rewrite it for nothing.
+    pub input_keys: Vec<String>,
+    /// The level of the block this job writes: one above its inputs'.
+    pub output_level: BlockLevel,
+    pub min_ts: i64,
+    pub max_ts: i64,
+    /// The inputs' rows summed, as far as the index knows them.
+    pub row_count: usize,
+}
+
+/// Hashes a compaction's input keys into the value that names its output.
+///
+/// A separator is folded in after each key, so where one key ends and the next
+/// begins is part of the input: two different input sets must not agree on an
+/// output name.
+#[must_use]
+pub fn input_key_fingerprint(input_keys: &[String]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    for key in input_keys {
+        for byte in key.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+/// The level of a block that replaces blocks sitting at `sources`.
+///
+/// One rung above the highest of them, so a compaction of level-`L` blocks
+/// produces a level-`L + 1` block and a [`CompactionPolicy`] can cap
+/// how many times the same rows are rewritten.
+///
+/// A replacement with no sources replaced no compacted block either, so it
+/// sits at [`BlockLevel::INGESTED`] rather than one rung above nothing.
+#[must_use]
+pub fn level_above(sources: impl IntoIterator<Item = BlockLevel>) -> BlockLevel {
+    sources
+        .into_iter()
+        .max()
+        .map_or(BlockLevel::INGESTED, BlockLevel::next)
+}
+
+/// Turns an accumulated run of blocks into a job, or into nothing.
+///
+/// A run of one is not a job: merging a block with itself rewrites it at a
+/// cost and leaves the same rows behind, which is exactly the loop a planner
+/// must not enter.
+pub(crate) fn job_from_run(
+    tenant: &str,
+    level: BlockLevel,
+    run: &[&CompactionCandidate],
+    row_count: usize,
+) -> Option<CompactionJob> {
+    if run.len() < 2 {
+        return None;
+    }
+    Some(CompactionJob {
+        tenant: tenant.to_string(),
+        input_keys: run
+            .iter()
+            .map(|candidate| candidate.object_key.clone())
+            .collect(),
+        output_level: level.next(),
+        min_ts: run
+            .iter()
+            .map(|candidate| candidate.min_ts)
+            .min()
+            .unwrap_or_default(),
+        max_ts: run
+            .iter()
+            .map(|candidate| candidate.max_ts)
+            .max()
+            .unwrap_or_default(),
+        row_count,
+    })
+}
+
+use krabka_o11y_verified::compaction_run_ends;
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct CompactionGroupKey {
+    tenant: String,
+    level: BlockLevel,
+    bucket: i64,
+}
+
+/// Groups compactable blocks into merge jobs.
+///
+/// Blocks meet only their own kind: same tenant, same level, same time bucket
+/// at that level's window. Within a group the blocks are taken in time order
+/// and accumulated until the run either reaches the fan-in cap or covers the
+/// row target, and each closed run of two or more blocks becomes one job.
+///
+/// # Termination
+///
+/// Left alone with no new ingest, repeated plan-and-apply reaches an empty
+/// plan. Give each live block the weight `max_level - level`, and the index
+/// the sum of those weights. A job replaces `n >= 2` blocks of weight `w` with
+/// one of weight `w - 1`, so the sum falls by at least `w + 1` -- strictly,
+/// every time. The sum is a non-negative integer, so only finitely many jobs
+/// can run. Two rules do the work: an input must sit below `max_level`, and a
+/// job must have at least two inputs.
+///
+/// The row target is the second half of the answer to "what stops it
+/// rewriting the same data forever". A block that already holds
+/// `target_rows_per_block` rows is skipped outright, so a large block is
+/// written once and then never read again by the planner, whatever its level.
+#[must_use]
+pub fn plan_compactions(
+    candidates: &[CompactionCandidate],
+    policy: CompactionPolicy,
+) -> Vec<CompactionJob> {
+    let mut groups: BTreeMap<CompactionGroupKey, Vec<&CompactionCandidate>> = BTreeMap::new();
+    for candidate in candidates {
+        if candidate.level >= policy.max_level()
+            || candidate.row_count >= policy.target_rows_per_block()
+        {
+            continue;
+        }
+        let bucket = candidate
+            .min_ts
+            .div_euclid(policy.window_ticks_for(candidate.level));
+        groups
+            .entry(CompactionGroupKey {
+                tenant: candidate.tenant.clone(),
+                level: candidate.level,
+                bucket,
+            })
+            .or_default()
+            .push(candidate);
+    }
+
+    let mut jobs = Vec::new();
+    for entry in groups {
+        let group = entry.0;
+        let mut blocks = entry.1;
+        blocks.sort_by(|left, right| {
+            crate::compare_block_span(
+                left.min_ts,
+                left.max_ts,
+                &left.object_key,
+                right.min_ts,
+                right.max_ts,
+                &right.object_key,
+            )
+        });
+        let row_counts = blocks
+            .iter()
+            .map(|candidate| candidate.row_count)
+            .collect::<Vec<_>>();
+        let mut start = 0;
+        for end in compaction_run_ends(
+            &row_counts,
+            policy.max_blocks_per_job(),
+            policy.target_rows_per_block(),
+        ) {
+            let rows = row_counts[start..end]
+                .iter()
+                .fold(0_usize, |sum, rows| sum.saturating_add(*rows));
+            jobs.extend(job_from_run(
+                &group.tenant,
+                group.level,
+                &blocks[start..end],
+                rows,
+            ));
+            start = end;
+        }
+    }
+    jobs
+}

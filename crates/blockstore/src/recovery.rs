@@ -1355,36 +1355,351 @@ mod tests {
     }
 }
 
-mod audit_deployment_backup;
-mod backup_deployment;
 mod broker_finding;
 mod broker_snapshot;
 mod broker_state;
-mod cut_part;
-mod deployment_audit_report;
-mod deployment_backup_plan;
-mod deployment_backup_report;
-mod deployment_cut;
-mod deployment_part;
-mod deployment_restore_report;
-mod drained_group;
-mod group_offset;
 #[cfg(test)]
 mod payload_recording_store;
-mod restore_deployment_backup;
 
-pub use audit_deployment_backup::audit_deployment_backup;
-pub use backup_deployment::backup_deployment;
 pub use broker_finding::BrokerFinding;
 pub use broker_snapshot::BrokerSnapshot;
 pub use broker_state::BrokerState;
-pub use cut_part::CutPart;
-pub use deployment_audit_report::DeploymentAuditReport;
-pub use deployment_backup_plan::DeploymentBackupPlan;
-pub use deployment_backup_report::DeploymentBackupReport;
-pub use deployment_cut::DeploymentCut;
-pub use deployment_part::DeploymentPart;
-pub use deployment_restore_report::DeploymentRestoreReport;
-pub use drained_group::DrainedGroup;
-pub use group_offset::GroupOffset;
-pub use restore_deployment_backup::restore_deployment_backup;
+
+/// The identity of one part inside a [`DeploymentCut`].
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct CutPart {
+    pub name: String,
+    pub manifest_sha256: String,
+    pub object_count: usize,
+    pub byte_count: u64,
+}
+
+/// Read-only verification of a complete deployment backup set.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DeploymentAuditReport {
+    pub cut: DeploymentCut,
+    pub cut_sha256: String,
+    pub parts: BTreeMap<String, AuditReport>,
+}
+
+/// What one deployment backup copies and what it requires of the broker.
+#[derive(Clone, Debug)]
+pub struct DeploymentBackupPlan {
+    pub cut_id: String,
+    pub broker_capture: String,
+    pub drained_groups: Vec<DrainedGroup>,
+    pub parts: Vec<DeploymentPart>,
+    pub omitted_parts: Vec<String>,
+}
+
+/// Result of a deployment backup: the sealed cut and the pass over each part.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DeploymentBackupReport {
+    pub cut: DeploymentCut,
+    pub cut_sha256: String,
+    pub parts: BTreeMap<String, RestoreReport>,
+}
+
+/// The completion record of a deployment backup set.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DeploymentCut {
+    pub schema_version: u32,
+    pub cut_id: String,
+    pub broker_capture: String,
+    pub broker: BrokerSnapshot,
+    pub parts: Vec<CutPart>,
+    pub omitted_parts: Vec<String>,
+}
+
+/// One named store of a deployment: a signal bucket or a local state
+/// directory.
+#[derive(Clone, Debug)]
+pub struct DeploymentPart {
+    pub name: String,
+    pub store: Arc<dyn ObjectStore>,
+}
+
+/// Result of a deployment restore.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DeploymentRestoreReport {
+    pub cut: DeploymentCut,
+    pub cut_sha256: String,
+    pub broker: BrokerSnapshot,
+    pub parts: BTreeMap<String, RestoreReport>,
+}
+
+/// A consumer group that must have committed every record of its topic at the
+/// cut.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct DrainedGroup {
+    pub group: String,
+    pub topic: String,
+}
+
+/// The committed offset of one consumer group in one partition.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct GroupOffset {
+    pub group: String,
+    pub topic: String,
+    pub partition: i32,
+    pub next_offset: i64,
+}
+
+/// Verifies a deployment backup set without changing it.
+///
+/// The set must hold a sealed [`DeploymentCut`](DeploymentCut), one
+/// part for each part the cut names, and nothing else. Each part manifest
+/// must have the digest that the cut recorded, the cut id of the cut, and the
+/// WAL offsets of the cut. The report holds the object audit of every part;
+/// a part with a finding is damaged.
+///
+/// # Errors
+///
+/// Returns [`RecoveryError::MixedSet`] when the cut is absent, a part is
+/// absent or belongs to another cut, or an object belongs to no part. Returns
+/// [`RecoveryError::InvalidManifest`] for a malformed or unsupported cut or
+/// part manifest.
+pub async fn audit_deployment_backup(
+    backup: &Arc<dyn ObjectStore>,
+) -> Result<DeploymentAuditReport, RecoveryError> {
+    let loaded_cut = load_cut(backup.as_ref()).await?;
+    let cut = loaded_cut.cut;
+    let cut_sha256 = loaded_cut.digest;
+    let names = cut
+        .parts
+        .iter()
+        .map(|part| part.name.clone())
+        .collect::<Vec<_>>();
+    refuse_unplanned_objects(backup.as_ref(), &names).await?;
+
+    let mut parts = BTreeMap::new();
+    for expected in &cut.parts {
+        let store = part_store(backup, &expected.name);
+        let Some(loaded_manifest) = load_backup_manifest_with_digest(&store).await? else {
+            return Err(RecoveryError::MixedSet(format!(
+                "part `{}` has no manifest",
+                expected.name
+            )));
+        };
+        let manifest = loaded_manifest.manifest;
+        let manifest_sha256 = loaded_manifest.digest;
+        if manifest_sha256 != expected.manifest_sha256 {
+            return Err(RecoveryError::MixedSet(format!(
+                "part `{}` manifest digest {manifest_sha256} differs from the cut",
+                expected.name
+            )));
+        }
+        if manifest.cut_id != cut.cut_id
+            || manifest.part.as_deref() != Some(expected.name.as_str())
+            || manifest.wal_offsets != cut.broker.wal_offsets
+        {
+            return Err(RecoveryError::MixedSet(format!(
+                "part `{}` belongs to another cut",
+                expected.name
+            )));
+        }
+        parts.insert(
+            expected.name.clone(),
+            audit_backup(&store, &manifest).await?,
+        );
+    }
+    Ok(DeploymentAuditReport {
+        cut,
+        cut_sha256,
+        parts,
+    })
+}
+
+struct BackupPartSource {
+    store: object_store::prefix::PrefixStore<Arc<dyn ObjectStore>>,
+    manifest: BackupManifest,
+}
+
+/// Restores every part of a deployment backup set into empty targets.
+///
+/// Restore the broker snapshot first and start no writer. This function then
+/// refuses, before it writes one object:
+///
+/// - a set that [`audit_deployment_backup`] refuses, or a part with damage;
+/// - targets that do not name exactly the parts of the cut;
+/// - a broker whose partition offsets or committed group offsets differ from
+///   the cut, which is a broker snapshot of another time;
+/// - a target that holds an object the part does not hold.
+///
+/// No object is overwritten or deleted, so a retry resumes.
+///
+/// # Errors
+///
+/// Returns [`RecoveryError::MixedSet`], [`RecoveryError::BrokerMismatch`], or
+/// [`RecoveryError::UnsafeTarget`] for the conditions above, and an
+/// object-store error when a copy fails.
+pub async fn restore_deployment_backup(
+    backup: &Arc<dyn ObjectStore>,
+    broker: &dyn BrokerState,
+    targets: &[DeploymentPart],
+) -> Result<DeploymentRestoreReport, RecoveryError> {
+    let audit = audit_deployment_backup(backup).await?;
+    for report in audit.parts.values() {
+        refuse_unsafe("restore source", report, false)?;
+    }
+    let expected = audit
+        .cut
+        .parts
+        .iter()
+        .map(|part| part.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let actual = targets
+        .iter()
+        .map(|part| part.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if expected != actual || actual.len() != targets.len() {
+        return Err(RecoveryError::MixedSet(format!(
+            "the restore names parts {actual:?}, and the cut holds parts {expected:?}"
+        )));
+    }
+
+    let restored_broker = broker
+        .capture()
+        .await
+        .map_err(RecoveryError::Broker)?
+        .sorted();
+    refuse_broker_findings(
+        "restore",
+        compare_snapshots(&audit.cut.broker, &restored_broker),
+    )?;
+
+    let mut manifests = Vec::with_capacity(targets.len());
+    for target in targets {
+        let source = part_store(backup, &target.name);
+        let manifest = load_backup_manifest(&source).await?;
+        let before = audit_recovery_target(target.store.as_ref(), &manifest).await?;
+        refuse_unsafe("restore target", &before, true)?;
+        manifests.push(BackupPartSource {
+            store: source,
+            manifest,
+        });
+    }
+
+    let mut parts = BTreeMap::new();
+    for index in 0..targets.len() {
+        let target = &targets[index];
+        let source = &manifests[index].store;
+        let manifest = &manifests[index].manifest;
+        let report =
+            copy_restored_part(source, target.store.as_ref(), manifest, COPY_CHUNK_BYTES).await?;
+        parts.insert(target.name.clone(), report);
+    }
+    Ok(DeploymentRestoreReport {
+        cut: audit.cut,
+        cut_sha256: audit.cut_sha256,
+        broker: restored_broker,
+        parts,
+    })
+}
+
+/// Copies every part of a quiesced deployment and seals the set with one
+/// [`DeploymentCut`].
+///
+/// The broker is read before and after the copy. The cut is written only
+/// when the two reads are equal and every group in
+/// [`DeploymentBackupPlan::drained_groups`] has no record after its committed
+/// offset. A writer that moves during the copy therefore leaves an unsealed
+/// set, which a restore refuses. A retry against the same backup root resumes
+/// matching objects; a retry after the broker moved needs a new backup root.
+///
+/// # Errors
+///
+/// Returns [`RecoveryError::BrokerMismatch`] when a drained group lags its
+/// topic or the broker moved during the copy, [`RecoveryError::MixedSet`]
+/// when the backup root holds objects outside the planned parts or a
+/// different sealed cut, and the errors of a part backup.
+pub async fn backup_deployment(
+    broker: &dyn BrokerState,
+    backup: &Arc<dyn ObjectStore>,
+    plan: &DeploymentBackupPlan,
+) -> Result<DeploymentBackupReport, RecoveryError> {
+    validate_plan(plan)?;
+    if get_optional(backup.as_ref(), CUT_MANIFEST_PATH)
+        .await?
+        .is_some()
+    {
+        return Err(RecoveryError::MixedSet(
+            "the backup root already holds a sealed cut".into(),
+        ));
+    }
+    let names = plan
+        .parts
+        .iter()
+        .map(|part| part.name.clone())
+        .collect::<Vec<_>>();
+    refuse_unplanned_objects(backup.as_ref(), &names).await?;
+
+    let before = broker
+        .capture()
+        .await
+        .map_err(RecoveryError::Broker)?
+        .sorted();
+    refuse_broker_findings(
+        "backup",
+        check_drained_groups(broker, &before, &plan.drained_groups).await?,
+    )?;
+
+    let mut reports = BTreeMap::new();
+    let mut parts = Vec::with_capacity(plan.parts.len());
+    for part in &plan.parts {
+        let target = part_store(backup, &part.name);
+        let report = create_part_backup(
+            part.store.as_ref(),
+            &target,
+            None,
+            Some(part.name.clone()),
+            plan.cut_id.clone(),
+            before.wal_offsets.clone(),
+            COPY_CHUNK_BYTES,
+        )
+        .await?;
+        let loaded_manifest = load_backup_manifest_with_digest(&target)
+            .await?
+            .ok_or_else(|| {
+                RecoveryError::InvalidManifest(format!("part `{}` has no manifest", part.name))
+            })?;
+        let manifest = loaded_manifest.manifest;
+        let manifest_sha256 = loaded_manifest.digest;
+        parts.push(CutPart {
+            name: part.name.clone(),
+            manifest_sha256,
+            object_count: manifest.objects.len(),
+            byte_count: manifest.objects.iter().map(|object| object.size).sum(),
+        });
+        reports.insert(part.name.clone(), report);
+    }
+
+    let after = broker
+        .capture()
+        .await
+        .map_err(RecoveryError::Broker)?
+        .sorted();
+    refuse_broker_findings("backup", compare_snapshots(&before, &after))?;
+
+    parts.sort();
+    let mut omitted_parts = plan.omitted_parts.clone();
+    omitted_parts.sort();
+    let cut = DeploymentCut {
+        schema_version: CUT_SCHEMA_VERSION,
+        cut_id: plan.cut_id.clone(),
+        broker_capture: plan.broker_capture.clone(),
+        broker: before,
+        parts,
+        omitted_parts,
+    };
+    validate_cut(&cut)?;
+    let bytes = json_bytes(&cut)?;
+    let cut_sha256 = digest(&bytes);
+    let _ =
+        put_create_or_equal(backup.as_ref(), &ObjectPath::from(CUT_MANIFEST_PATH), bytes).await?;
+    Ok(DeploymentBackupReport {
+        cut,
+        cut_sha256,
+        parts: reports,
+    })
+}

@@ -1,7 +1,7 @@
 //! Prometheus/Mimir-compatible HTTP query API adapter.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, RwLock},
     time::SystemTime,
 };
@@ -53,6 +53,18 @@ mod response;
 mod rules;
 mod search;
 mod status;
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct RulesParams {
+    #[serde(rename = "type")]
+    pub(crate) rule_type: Option<String>,
+    pub(crate) exclude_alerts: Option<bool>,
+    pub(crate) rule_names: BTreeSet<String>,
+    pub(crate) rule_groups: BTreeSet<String>,
+    pub(crate) files: BTreeSet<String>,
+    pub(crate) group_limit: Option<usize>,
+    pub(crate) group_next_token: Option<String>,
+}
 
 pub(crate) fn parse_query_pairs(
     raw_query: Option<&str>,
@@ -133,31 +145,38 @@ mod tests;
 
 mod acquire_query_permit;
 mod active_query_guard;
-mod alert_state_key;
 mod api_error;
 mod prometheus_api_state;
 mod prometheus_router;
-mod query_frontend_state;
 mod record_query_response;
 mod request_auth;
 mod request_caller;
-mod ruler_alert_state_store;
-mod ruler_rule_store;
-mod rules_params;
 
 use acquire_query_permit::acquire_query_permit;
 use active_query_guard::ActiveQueryGuard;
 use admin::{clean_tombstones, delete_series};
-use alert_state_key::AlertStateKey;
 use api_error::ApiError;
 pub use mimir_alertmanager_router::mimir_alertmanager_router;
 pub use mimir_ruler_router::mimir_ruler_router;
 pub use prometheus_api_state::PrometheusApiState;
 pub use prometheus_router::{mimir_ruler_prometheus_router, prometheus_router};
-use query_frontend_state::QueryFrontendState;
 use record_query_response::record_query_response;
 use request_auth::{Rejection, RequestAuth};
 use request_caller::{AuthorizedTenant, ParsedForm, ParsedQuery, RequestCaller};
-use ruler_alert_state_store::RulerAlertStateStore;
-use ruler_rule_store::RulerRuleStore;
-use rules_params::RulesParams;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct AlertStateKey {
+    pub(crate) tenant: String,
+    pub(crate) rule_id: String,
+    pub(crate) labels: crate::PromqlLabels,
+}
+
+pub(crate) struct QueryFrontendState {
+    pub(crate) opts: QueryFrontendOptions,
+    pub(crate) cache: Arc<dyn RangeQueryCache>,
+}
+
+pub(crate) type RulerAlertStateStore = BTreeMap<AlertStateKey, i64>;
+
+pub(crate) type RulerRuleStore =
+    BTreeMap<TenantId, BTreeMap<String, BTreeMap<String, serde_yaml::Value>>>;

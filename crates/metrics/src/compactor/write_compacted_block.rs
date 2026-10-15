@@ -1,15 +1,9 @@
-use krabka_blockstore::{BlockSchema, BlockWriter, SummaryColumns};
+use krabka_blockstore::{BlockWriter, SummaryColumns};
 
 use super::{
     CompactedBlockRequest, CompactedBlockWrite, CompactionIndexManifest, CompactionIndexSink,
-    CompactionWriteError, MetricBlockKind, compaction_object_plan,
-    compaction_partition_object_plan,
+    CompactionWriteError, block_decl, compaction_object_plan, compaction_partition_object_plan,
 };
-use crate::clock_reading_decl;
-
-fn block_decl(kind: MetricBlockKind) -> Option<BlockSchema> {
-    (kind == MetricBlockKind::ClockReadings).then(clock_reading_decl)
-}
 
 pub(crate) async fn write_compacted_block<S>(
     block_writer: &BlockWriter,
@@ -65,24 +59,4 @@ where
         block_meta,
         manifest,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use assert2::check;
-
-    use super::{MetricBlockKind, block_decl};
-
-    #[test]
-    fn only_clock_blocks_have_a_signal_specific_declaration() {
-        check!(block_decl(MetricBlockKind::ClockReadings).is_some());
-        for kind in [
-            MetricBlockKind::Float,
-            MetricBlockKind::NativeHistograms,
-            MetricBlockKind::Exemplars,
-            MetricBlockKind::Metadata,
-        ] {
-            check!(block_decl(kind).is_none(), "kind: {kind:?}");
-        }
-    }
 }

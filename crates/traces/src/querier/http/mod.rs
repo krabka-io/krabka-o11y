@@ -67,6 +67,11 @@ pub(crate) fn status_bytes_response(
         .expect("the HTTP response builds")
 }
 
+mod http_helpers;
+mod http_json;
+mod http_params;
+mod http_routes;
+mod http_search;
 #[cfg(test)]
 mod tests {
 
@@ -4074,115 +4079,18 @@ overrides:
     }
 }
 
-mod add_intrinsic_tags;
-mod app_state;
-mod attr_value_json;
-mod attr_values_json;
-mod attrs_json;
-mod base64_fn;
-mod buildinfo;
-mod collect_span_intrinsic_values;
-mod collect_trace_intrinsic_values;
-mod decode_trace_id;
-mod dedup_attrs;
-mod default_query_range_step_ns;
-mod duration_param;
-mod echo;
-mod event_tags;
-mod event_unix_nano;
-mod events_json;
-mod exact_tag_value_filter;
+mod attribute_values;
 mod exemplar_selection;
-mod field_matches_tag;
-mod filter_metrics_exemplars;
-mod filter_search_duration;
-mod filter_tag_values;
 mod group_attrs;
-mod group_by_instrumentation;
-mod http_config;
 mod instant_metric_bounds;
 mod instant_metrics_response;
-mod instrumentation_attributes;
 mod instrumentation_groups;
-mod instrumentation_key;
-mod instrumentation_scope_json;
-mod instrumentation_tags;
-mod is_match_all_query;
-mod limit_error_response;
-mod link_tags;
-mod links_json;
-mod matching_traces;
-mod merge_static_scope;
-mod metric_label_json;
-mod metric_prom_labels;
-mod metrics_query_param;
+mod logfmt;
+mod metrics_json;
 mod metrics_request;
-mod optional_seconds_param;
-mod optional_time_bounds;
-mod optional_usize_param;
-mod otlp_attrs;
-mod otlp_event;
-mod otlp_link;
-mod otlp_scope_spans;
-mod otlp_span;
-mod otlp_status;
-mod otlp_traces_data;
-mod otlp_value;
-mod otlp_values;
-mod overrides;
-mod parse_duration_component_ns;
-mod parse_go_duration_ns;
-mod parse_logfmt_tags;
-mod parse_logfmt_value;
-mod parse_seconds_to_ns;
-mod parse_step_to_ns;
-mod q_filter_limit;
-mod querier_request;
-mod query_instant;
-mod query_instant_inner;
-mod query_param;
-mod query_range;
-mod query_range_inner;
-mod request_tenant;
-mod required_seconds_param;
-mod required_time_range;
-mod resource_attrs;
-mod resource_span_group;
-mod resource_span_groups;
-mod router;
-mod router_with_config;
-mod router_with_config_and_metrics;
-mod router_with_state;
-mod scan_options_param;
-mod scope_param;
-mod scope_spans_json;
-mod scoped_tags_from_traces;
-mod search;
-mod search_inner;
 mod search_json;
-mod search_query;
 mod search_span_json;
-mod search_stream;
-mod search_tag_values;
-mod search_tag_values_inner;
-mod search_tag_values_json;
-mod search_tag_values_v2;
-mod search_tag_values_v2_json;
-mod search_tags;
-mod search_tags_inner;
-mod search_tags_json;
-mod search_tags_v2;
-mod search_tags_v2_json;
-mod span_attributes;
-mod span_end_unix_nano;
-mod span_kind_json;
-mod span_resource_attributes;
-mod span_status_json;
-mod step_param;
-mod tag_scope_name;
-mod tag_values_from_traces;
-mod tags_to_traceql;
-mod tempo_tag_alias;
+mod tag_endpoints;
 mod tenant_and_bounds;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4207,164 +4115,63 @@ pub(crate) fn tag_filter<'a>(
         },
     }
 }
-mod accepts_media_type;
-pub(super) use accepts_media_type::accepts_media_type;
-mod timed_tag_values;
 mod trace_by_id;
-mod trace_by_id_inner;
-mod trace_by_id_response;
-mod trace_by_id_response_protobuf;
-mod trace_by_id_v1;
-mod trace_duration;
-mod trace_json;
-mod trace_metrics_json;
-mod trace_protobuf;
-mod trace_resource_attributes;
-mod trace_span_json;
-mod trace_traces_data;
-mod traceql_query_error_response;
-mod traceql_tag_field;
-mod traces_matching_filter;
-mod typed_traceql_value;
-mod wants_json;
-mod wants_protobuf;
 
-use add_intrinsic_tags::add_intrinsic_tags;
-use app_state::AppState;
-use attr_value_json::attr_value_json;
-use attr_values_json::attr_values_json;
-use attrs_json::attrs_json;
-use base64_fn::base64;
-use buildinfo::buildinfo;
-use collect_span_intrinsic_values::collect_span_intrinsic_values;
-use collect_trace_intrinsic_values::collect_trace_intrinsic_values;
-use decode_trace_id::decode_trace_id;
-use dedup_attrs::dedup_attrs;
-use default_query_range_step_ns::default_query_range_step_ns;
-use duration_param::duration_param;
-use echo::echo;
-use event_tags::EVENT_TAGS;
-use event_unix_nano::event_unix_nano;
-use events_json::events_json;
-use exact_tag_value_filter::exact_tag_value_filter;
+use attribute_values::{attr_value_json, otlp_value};
 use exemplar_selection::{ExemplarSelection, exemplar_selection};
-use field_matches_tag::field_matches_tag;
-use filter_metrics_exemplars::filter_metrics_exemplars;
-use filter_search_duration::filter_search_duration;
-use filter_tag_values::filter_tag_values;
 use group_attrs::group_attrs;
-use group_by_instrumentation::group_by_instrumentation;
-pub use http_config::HttpConfig;
+use http_helpers::{overrides, trace_by_id_v1};
+use http_json::{
+    EVENT_TAGS, INSTRUMENTATION_TAGS, InstrumentationKey, LINK_TAGS, instrumentation_attributes,
+    trace_by_id_response_protobuf, trace_duration, trace_json, trace_protobuf,
+    trace_resource_attributes, traceql_query_error_response, traceql_tag_field,
+    typed_traceql_value,
+};
+#[cfg(test)]
+use http_json::{
+    TraceByIdResponse, attrs_json, otlp_scope_spans, otlp_span, otlp_status, span_kind_json,
+    span_status_json,
+};
+#[cfg(test)]
+pub(crate) use http_params::parse_duration_component_ns;
+use http_params::{
+    base64, decode_trace_id, duration_param, exact_tag_value_filter, filter_metrics_exemplars,
+    filter_search_duration, filter_tag_values, is_match_all_query, optional_usize_param,
+    q_filter_limit, required_time_range, scan_options_param, scope_param, step_param,
+    tempo_tag_alias, wants_protobuf,
+};
+#[cfg(test)]
+use http_params::{default_query_range_step_ns, field_matches_tag};
+pub(crate) use http_params::{
+    optional_time_bounds, parse_go_duration_ns, parse_seconds_to_ns, query_param, request_tenant,
+    required_seconds_param, tag_scope_name, wants_json,
+};
+use http_routes::{AppState, QuerierRequest, limit_error_response, metrics_query_param};
+pub use http_routes::{HttpConfig, router, router_with_config, router_with_config_and_metrics};
+#[cfg(test)]
+use http_search::{collect_span_intrinsic_values, collect_trace_intrinsic_values, tags_to_traceql};
+use http_search::{
+    dedup_attrs, group_by_instrumentation, matching_traces, scoped_tags_from_traces, search,
+    search_stream, search_tag_values, search_tag_values_v2, search_tags, search_tags_v2,
+    tag_values_from_traces,
+};
 pub(crate) use instant_metric_bounds::instant_metric_bounds;
 pub(crate) use instant_metrics_response::{InstantMetricSample, instant_metrics_response};
-use instrumentation_attributes::instrumentation_attributes;
 use instrumentation_groups::{InstrumentationGroup, InstrumentationGroups};
-use instrumentation_key::InstrumentationKey;
-use instrumentation_scope_json::instrumentation_scope_json;
-use instrumentation_tags::INSTRUMENTATION_TAGS;
-use is_match_all_query::is_match_all_query;
 use krabka_traceql::{key_is_safe_attribute, typed_value_parts};
-use limit_error_response::limit_error_response;
-use link_tags::LINK_TAGS;
-use links_json::links_json;
-use matching_traces::matching_traces;
-use merge_static_scope::merge_static_scope;
-use metric_label_json::metric_label_json;
-use metric_prom_labels::metric_prom_labels;
-use metrics_query_param::metrics_query_param;
+pub(crate) use logfmt::parse_logfmt_tags;
+#[cfg(test)]
+pub(crate) use logfmt::parse_logfmt_value;
+use metrics_json::{metric_value_json, trace_metrics_instant_json, trace_metrics_json};
 pub(crate) use metrics_request::{MetricsRequest, TenantRequest, metrics_request};
-use optional_seconds_param::optional_seconds_param;
-pub(crate) use optional_time_bounds::optional_time_bounds;
-use optional_usize_param::optional_usize_param;
-use otlp_attrs::otlp_attrs;
-use otlp_event::otlp_event;
-use otlp_link::otlp_link;
-use otlp_scope_spans::otlp_scope_spans;
-use otlp_span::otlp_span;
-use otlp_status::otlp_status;
-use otlp_traces_data::OtlpTracesData;
-use otlp_value::otlp_value;
-use otlp_values::otlp_values;
-use overrides::overrides;
-pub(crate) use parse_duration_component_ns::parse_duration_component_ns;
-pub(crate) use parse_go_duration_ns::parse_go_duration_ns;
-pub(crate) use parse_logfmt_tags::parse_logfmt_tags;
-pub(crate) use parse_logfmt_value::parse_logfmt_value;
-pub(crate) use parse_seconds_to_ns::parse_seconds_to_ns;
-use parse_step_to_ns::parse_step_to_ns;
-use q_filter_limit::q_filter_limit;
-use querier_request::QuerierRequest;
-use query_instant::query_instant;
-use query_instant_inner::query_instant_inner;
-pub(crate) use query_param::query_param;
-use query_range::query_range;
-use query_range_inner::query_range_inner;
-pub(crate) use request_tenant::request_tenant;
-pub(crate) use required_seconds_param::required_seconds_param;
-use required_time_range::required_time_range;
-use resource_attrs::ResourceAttrs;
-use resource_span_group::ResourceSpanGroup;
-use resource_span_groups::resource_span_groups;
-pub use router::router;
-pub use router_with_config::router_with_config;
-pub use router_with_config_and_metrics::router_with_config_and_metrics;
-use router_with_state::router_with_state;
-use scan_options_param::scan_options_param;
-use scope_param::scope_param;
-use scope_spans_json::scope_spans_json;
-use scoped_tags_from_traces::scoped_tags_from_traces;
-use search::search;
-use search_inner::search_inner;
 use search_json::search_json;
-use search_query::search_query;
 use search_span_json::search_span_json;
-use search_stream::search_stream;
-use search_tag_values::search_tag_values;
-use search_tag_values_inner::{TagValuesRequest, search_tag_values_inner};
-use search_tag_values_json::search_tag_values_json;
-use search_tag_values_v2::search_tag_values_v2;
-use search_tag_values_v2_json::search_tag_values_v2_json;
-use search_tags::search_tags;
-use search_tags_inner::search_tags_inner;
-use search_tags_json::search_tags_json;
-use search_tags_v2::search_tags_v2;
-use search_tags_v2_json::search_tags_v2_json;
-use span_attributes::span_attributes;
-use span_end_unix_nano::span_end_unix_nano;
-use span_kind_json::span_kind_json;
-use span_resource_attributes::span_resource_attributes;
-use span_status_json::span_status_json;
-use step_param::step_param;
-pub(crate) use tag_scope_name::tag_scope_name;
-use tag_values_from_traces::tag_values_from_traces;
-use tags_to_traceql::tags_to_traceql;
-use tempo_tag_alias::tempo_tag_alias;
+use tag_endpoints::{TagFilter, TagValuesRequest, search_tag_values_inner, search_tags_inner};
 pub(crate) use tenant_and_bounds::{TenantTimeBounds, tenant_and_bounds};
-use timed_tag_values::timed_tag_values;
-use trace_by_id::trace_by_id;
-use trace_by_id_inner::{TraceByIdRequest, TraceEncoding, trace_by_id_inner};
-use trace_by_id_response::TraceByIdResponse;
-use trace_by_id_response_protobuf::trace_by_id_response_protobuf;
-use trace_by_id_v1::trace_by_id_v1;
-use trace_duration::trace_duration;
-use trace_json::trace_json;
-use trace_metrics_json::{trace_metrics_instant_json, trace_metrics_json};
-use trace_protobuf::trace_protobuf;
-use trace_resource_attributes::trace_resource_attributes;
-use trace_span_json::trace_span_json;
-use trace_traces_data::trace_traces_data;
-use traceql_query_error_response::traceql_query_error_response;
-use traceql_tag_field::traceql_tag_field;
-use traces_matching_filter::{TagFilter, traces_matching_filter};
-use typed_traceql_value::typed_traceql_value;
-pub(crate) use wants_json::wants_json;
-use wants_protobuf::wants_protobuf;
+use trace_by_id::{TraceEncoding, trace_by_id};
 
 use super::{INTRINSIC_TAGS, tag_scope_from_name};
 
 mod tempo_metric_bounds;
+use http_routes::metrics_operation_name;
 use tempo_metric_bounds::tempo_metric_bounds;
-mod metrics_operation_name;
-use metrics_operation_name::metrics_operation_name;
-mod metric_value_json;
-use metric_value_json::metric_value_json;

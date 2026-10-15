@@ -32,13 +32,11 @@ mod range_functions;
 mod range_query;
 mod result_utils;
 mod row_cache;
-mod samples_per_query_exceeded;
 mod scalar;
 mod scalar_eval;
 mod selector;
 mod selector_eval;
 mod selector_plan;
-mod series_per_query_exceeded;
 mod step_vectors;
 mod store_scans;
 #[cfg(test)]
@@ -95,10 +93,8 @@ use range_functions::validate_smoothing_factor;
 #[cfg(test)]
 use range_functions::{IrateFn, OverTimeFn, RangeFn};
 use range_functions::{OuterRangeFn, apply_outer_range_fn};
-use samples_per_query_exceeded::samples_per_query_exceeded;
 pub(crate) use selector::label_matcher_sets;
 use selector::{AtModifierBounds, apply_selector_time_modifier, selector_duration};
-use series_per_query_exceeded::series_per_query_exceeded;
 
 #[cfg(test)]
 use crate::extension::is_stale_nan;
@@ -177,24 +173,16 @@ tokio::task_local! {
 #[cfg(test)]
 mod tests;
 
-mod check_resolution_points;
-mod current_at_modifier_bounds;
-mod engine_opts;
-mod max_resolution_points;
 mod promql_engine;
-mod query_range_context;
-mod range_eval;
+mod query_limits;
 
-pub use check_resolution_points::check_resolution_points;
-use current_at_modifier_bounds::current_at_modifier_bounds;
-pub use engine_opts::EngineOpts;
 pub(crate) use histogram::{
     compact_spanned_histogram_counts, for_each_spanned_histogram_count, spanned_histogram_counts,
     standard_histogram_bound, template_histogram_value,
 };
 pub(crate) use labels::aggregate_labels;
-pub use max_resolution_points::MAX_RESOLUTION_POINTS;
 pub use promql_engine::PromqlEngine;
+use query_limits::{samples_per_query_exceeded, series_per_query_exceeded};
 
 pub(crate) fn range_resolution_exceeds_limit(start_ms: i64, end_ms: i64, step_ms: i64) -> bool {
     step_ms > 0
@@ -202,7 +190,88 @@ pub(crate) fn range_resolution_exceeds_limit(start_ms: i64, end_ms: i64, step_ms
             > i64::try_from(MAX_RESOLUTION_POINTS).unwrap_or(i64::MAX)
 }
 
-#[cfg(feature = "experimental-functions")]
-pub(super) use query_range_context::QueryRangeContext;
-use range_eval::{RangeEval, RangeWindow};
 pub(crate) use range_functions::over_time_mean;
+
+/// Maximum number of resolution points in one range or subquery series.
+pub const MAX_RESOLUTION_POINTS: u64 = 11_000;
+
+/// Static options for `PromQL` evaluation.
+///
+/// This type is not `Eq`, because the two windows are [`Time`] quantities
+/// that store `f64`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EngineOpts {
+    /// Maximum age of a sample considered by an instant-vector selector.
+    pub lookback_delta: Time,
+    /// Global evaluation interval used when a subquery omits its resolution.
+    pub eval_interval: Time,
+    /// Check counter metadata instead of conventional metric-name suffixes.
+    pub enable_type_and_unit_labels: bool,
+    /// Maximum float samples returned by one query.
+    pub max_samples: usize,
+    /// Maximum series one query may select. `0` turns the cap off.
+    pub max_fetched_series: usize,
+}
+
+impl Default for EngineOpts {
+    fn default() -> Self {
+        Self {
+            lookback_delta: minutes(5),
+            eval_interval: minutes(1),
+            enable_type_and_unit_labels: true,
+            max_samples: 50_000_000,
+            max_fetched_series: 0,
+        }
+    }
+}
+
+/// Returns the active query bounds for `@ start()` and `@ end()` resolution.
+pub(crate) fn current_at_modifier_bounds() -> Option<AtModifierBounds> {
+    AT_MODIFIER_BOUNDS.try_with(|bounds| *bounds).ok()
+}
+
+/// Returns the resolution-point count `(end_ms - start_ms) / step + 1`.
+///
+/// # Errors
+/// Returns [`PromqlError::Plan`] when `step` is not positive or the interval
+/// count is greater than [`MAX_RESOLUTION_POINTS`].
+pub fn check_resolution_points(start_ms: i64, end_ms: i64, step: Time) -> Result<u64> {
+    let step_ms = step.millis_i64();
+    if step_ms <= 0 {
+        return Err(PromqlError::Plan(format!(
+            "zero or negative query resolution step widths are not accepted. Try a positive integer (step={step_ms}ms)"
+        )));
+    }
+    let span = u64::try_from(end_ms.saturating_sub(start_ms).max(0)).unwrap_or(u64::MAX);
+    let step = u64::try_from(step_ms).unwrap_or(u64::MAX);
+    let intervals = span / step;
+    if intervals > MAX_RESOLUTION_POINTS {
+        return Err(PromqlError::Plan(
+            "exceeded maximum resolution of 11,000 points per timeseries. \
+             Try decreasing the query resolution (?step=XX)"
+                .to_string(),
+        ));
+    }
+    Ok(intervals.saturating_add(1))
+}
+
+#[cfg(feature = "experimental-functions")]
+#[derive(Clone, Copy)]
+pub(crate) struct QueryRangeContext {
+    pub(crate) start_ms: i64,
+    pub(crate) end_ms: i64,
+    pub(crate) step: Time,
+}
+
+pub(crate) struct RangeEval {
+    pub(crate) series: Vec<RangeSeries>,
+    pub(crate) window: RangeWindow,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RangeWindow {
+    pub(crate) end_ms: i64,
+    pub(crate) range: Time,
+    pub(crate) modifier: Option<ExtendedSelectorModifier>,
+    pub(crate) type_and_unit_labels: annotations::TypeAndUnitLabels,
+}

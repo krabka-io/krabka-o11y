@@ -62,8 +62,6 @@ pub use conformance::{
 };
 pub use engine::{EngineOpts, PromqlEngine};
 pub use error::PromqlError;
-mod promql_labels;
-mod promql_string;
 pub use extension::{
     instant_manipulate::{InstantManipulate, InstantManipulateExec, InstantManipulateSettings},
     normalize::{NanSamples, SeriesNormalize, SeriesNormalizeExec, SeriesNormalizeSettings},
@@ -83,13 +81,12 @@ pub use ids::{Offset, PartitionIndex};
 pub use in_memory::{
     DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead, WalRecordAt,
 };
+pub use krabka_metrics::{MetricLabels as PromqlLabels, MetricString as PromqlString};
 pub use merged_store::MergedMetricStore;
 pub use planner::{
     DurationExprContext, format_promql_expr, format_promql_query, parse_promql,
     parse_promql_with_duration_context, serialize_promql_expr, serialize_promql_query,
 };
-pub use promql_labels::PromqlLabels;
-pub use promql_string::PromqlString;
 pub use query_frontend::{
     FrontendRangeQuery, FrontendRangeRequest, ObjectStoreQueryFrontendCache, QueryFrontendCache,
     QueryFrontendOptions, QueryShard, RangeQueryCache, RangeQueryExecutor,

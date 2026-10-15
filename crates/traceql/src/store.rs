@@ -74,8 +74,6 @@ mod tests {
         assert!(s.trace_by_id("t", &[0; 16]).await.unwrap().is_none());
     }
 }
-
-mod filter_trace_spans_by_time;
 mod match_cmp;
 mod match_scope;
 mod match_value;
@@ -86,7 +84,6 @@ mod span_matcher;
 mod span_store;
 mod tag_catalog;
 
-pub use filter_trace_spans_by_time::filter_trace_spans_by_time;
 pub use match_cmp::MatchCmp;
 pub use match_scope::MatchScope;
 pub use match_value::MatchValue;
@@ -96,3 +93,14 @@ pub use scan_result::ScanResult;
 pub use span_matcher::SpanMatcher;
 pub use span_store::SpanStore;
 pub use tag_catalog::TagCatalog;
+
+#[must_use]
+pub fn filter_trace_spans_by_time(mut trace: TraceSpans, start_ns: i64, end_ns: i64) -> TraceSpans {
+    trace.spans.retain(|span| {
+        let Ok(start) = i64::try_from(span.start_time_unix_nano) else {
+            return false;
+        };
+        start >= start_ns && start <= end_ns
+    });
+    trace
+}

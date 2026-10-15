@@ -42,8 +42,6 @@ mod pipeline_instruments;
 mod query_instruments;
 mod registry_scope;
 mod request_outcome;
-mod route_label;
-mod route_status_label;
 mod shared_registry;
 mod status_label;
 mod tenant_label;
@@ -56,8 +54,6 @@ pub use self::{
     query_instruments::{QueryHelpText, QueryInstruments, QueryRequest},
     registry_scope::{RoleRegistry, register_for_role, register_in_new_registry},
     request_outcome::RequestOutcome,
-    route_label::RouteLabel,
-    route_status_label::RouteStatusLabel,
     shared_registry::SharedRegistry,
     status_label::StatusLabel,
     tenant_label::TenantLabel,
@@ -324,4 +320,18 @@ mod tests {
             "{text}"
         );
     }
+}
+
+/// Query route label, such as `route="query"`. It pairs with the per-route
+/// latency histogram family.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct RouteLabel {
+    pub route: String,
+}
+
+/// Query route and outcome label, such as `route="query", status="ok"`.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct RouteStatusLabel {
+    pub route: String,
+    pub status: String,
 }

@@ -1,5 +1,7 @@
 //! Span source and `remote_write` sink traits.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -7,14 +9,257 @@ use std::{
 
 use async_trait::async_trait;
 use krabka_client_consumer::{Consumer, ConsumerRecord};
+use krabka_observability::{
+    ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
+    wal_group_assignment::WalAssignmentWatch,
+};
 use krabka_units::{ByteSize, Time, convert::ByteSizeExt as _, millis};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
-    metricsgen::{contract::SpanRecord, series::SeriesPayload},
+    metricsgen::{SpanAttribute, contract::SpanRecord, series::SeriesPayload},
     span::{AttrValue, KeyValue},
     wal,
 };
+
+/// Kafka-backed source for the traces WAL consumer group.
+pub struct KafkaSpanSource {
+    pub(crate) consumer: AsyncMutex<Consumer>,
+    pub(crate) poll_timeout: Time,
+    metrics: WalConsumerMetrics,
+    assignment: AsyncMutex<WalAssignmentWatch>,
+}
+
+impl KafkaSpanSource {
+    #[must_use]
+    pub fn new(consumer: Consumer, metrics: WalConsumerMetrics, catch_up: ReadinessGate) -> Self {
+        Self {
+            consumer: AsyncMutex::new(consumer),
+            poll_timeout: millis(500),
+            assignment: AsyncMutex::new(WalAssignmentWatch::with_catch_up(
+                metrics.clone(),
+                catch_up,
+            )),
+            metrics,
+        }
+    }
+
+    #[must_use]
+    pub fn with_poll_timeout(mut self, poll_timeout: Time) -> Self {
+        self.poll_timeout = poll_timeout;
+        self
+    }
+}
+
+#[async_trait]
+impl SpanSource for KafkaSpanSource {
+    async fn poll(&self, _max: usize) -> Result<Vec<SpanRecord>, SinkError> {
+        let mut consumer = self.consumer.lock().await;
+        let records = consumer
+            .poll(self.poll_timeout)
+            .await
+            .inspect_err(|_| self.metrics.record_poll_failure())
+            .map_err(|err| SinkError::Source(err.to_string()))?;
+        self.metrics.record_poll(&records);
+        self.assignment
+            .lock()
+            .await
+            .observe_consumer(&consumer, !records.is_empty())
+            .await;
+        decode_consumer_records(records)
+    }
+
+    async fn commit(&self) -> Result<(), SinkError> {
+        let consumer = self.consumer.lock().await;
+        consumer
+            .commit_sync()
+            .await
+            .map_err(|err| SinkError::Source(err.to_string()))?;
+        self.metrics.record_commit();
+        self.assignment
+            .lock()
+            .await
+            .observe_applied(&consumer)
+            .await;
+        Ok(())
+    }
+}
+
+/// Deterministic sink mock that records successful writes.
+#[derive(Clone, Default)]
+pub struct MockRemoteWriteSink {
+    pub(crate) writes: Arc<Mutex<Vec<SeriesPayload>>>,
+    pub(crate) fail_next: Arc<Mutex<bool>>,
+    pub(crate) fail_after_successes: Arc<Mutex<Option<usize>>>,
+}
+
+impl MockRemoteWriteSink {
+    /// Configure the next write to fail.
+    ///
+    /// # Panics
+    /// Panics if the mock sink mutex is poisoned.
+    pub fn fail_next(&self) {
+        *self.fail_next.lock().expect("mock sink mutex poisoned") = true;
+    }
+
+    /// Configure the sink to fail after the requested successful writes.
+    ///
+    /// # Panics
+    /// Panics if the mock sink mutex is poisoned.
+    pub fn fail_after_successes(&self, successes: usize) {
+        *self
+            .fail_after_successes
+            .lock()
+            .expect("mock sink mutex poisoned") = Some(successes);
+    }
+
+    /// Return all recorded writes.
+    ///
+    /// # Panics
+    /// Panics if the mock sink mutex is poisoned.
+    #[must_use]
+    pub fn writes(&self) -> Vec<SeriesPayload> {
+        self.writes
+            .lock()
+            .expect("mock sink mutex poisoned")
+            .clone()
+    }
+}
+
+#[async_trait]
+impl RemoteWriteSink for MockRemoteWriteSink {
+    async fn write(&self, payload: &SeriesPayload) -> Result<(), SinkError> {
+        {
+            let mut fail_next = self.fail_next.lock().expect("mock sink mutex poisoned");
+            if *fail_next {
+                *fail_next = false;
+                return Err(SinkError::Transport("forced mock failure".into()));
+            }
+        }
+        {
+            let successful_writes = self.writes.lock().expect("mock sink mutex poisoned").len();
+            let mut fail_after = self
+                .fail_after_successes
+                .lock()
+                .expect("mock sink mutex poisoned");
+            if fail_after.is_some_and(|limit| successful_writes >= limit) {
+                *fail_after = None;
+                return Err(SinkError::Transport("forced mock failure".into()));
+            }
+        }
+
+        self.writes
+            .lock()
+            .expect("mock sink mutex poisoned")
+            .push(payload.clone());
+        Ok(())
+    }
+}
+
+/// Deterministic source mock that returns scripted batches.
+#[derive(Clone, Default)]
+pub struct MockSpanSource {
+    pub(crate) batches: Arc<Mutex<VecDeque<Vec<SpanRecord>>>>,
+    pub(crate) commits: Arc<Mutex<usize>>,
+}
+
+impl MockSpanSource {
+    /// Queue a batch for the next poll.
+    ///
+    /// # Panics
+    /// Panics if the mock source mutex is poisoned.
+    pub fn push_batch(&self, batch: Vec<SpanRecord>) {
+        self.batches
+            .lock()
+            .expect("mock source mutex poisoned")
+            .push_back(batch);
+    }
+
+    /// Return the number of committed batches.
+    ///
+    /// # Panics
+    /// Panics if the mock source mutex is poisoned.
+    #[must_use]
+    pub fn commits(&self) -> usize {
+        *self.commits.lock().expect("mock source mutex poisoned")
+    }
+}
+
+#[async_trait]
+impl SpanSource for MockSpanSource {
+    async fn poll(&self, _max: usize) -> Result<Vec<SpanRecord>, SinkError> {
+        Ok(self
+            .batches
+            .lock()
+            .expect("mock source mutex poisoned")
+            .pop_front()
+            .unwrap_or_default())
+    }
+
+    async fn commit(&self) -> Result<(), SinkError> {
+        *self.commits.lock().expect("mock source mutex poisoned") += 1;
+        Ok(())
+    }
+}
+
+#[must_use]
+pub fn project_wal_record(record: wal::SpanRecord, size: ByteSize) -> SpanRecord {
+    let service_name = service_name(&record.span.resource_attrs);
+    let attributes = record
+        .span
+        .span_attrs
+        .iter()
+        .map(|kv| SpanAttribute::new(kv.key.clone(), attr_value_string(&kv.value)))
+        .collect();
+    let resource_attributes = record
+        .span
+        .resource_attrs
+        .iter()
+        .filter(|kv| kv.key != "service.name")
+        .map(|kv| SpanAttribute::new(kv.key.clone(), attr_value_string(&kv.value)))
+        .collect();
+
+    SpanRecord {
+        tenant: record.tenant,
+        trace_id: record.span.trace_id,
+        span_id: record.span.span_id,
+        parent_span_id: record.span.parent_span_id.unwrap_or([0; 8]),
+        name: record.span.name,
+        kind: record.span.kind,
+        start_ns: record.span.start_ns,
+        duration_ns: record.span.duration_ns,
+        status: record.span.status,
+        status_message: record.span.status_message,
+        service_name,
+        attributes,
+        resource_attributes,
+        size,
+    }
+}
+
+/// Output edge for Prometheus `remote_write` payloads.
+#[async_trait]
+pub trait RemoteWriteSink: Send + Sync {
+    async fn write(&self, payload: &SeriesPayload) -> Result<(), SinkError>;
+}
+
+/// Errors that cross the metrics-generator source and sink boundaries.
+#[derive(Debug, thiserror::Error)]
+pub enum SinkError {
+    #[error("transport error: {0}")]
+    Transport(String),
+    #[error("decode error: {0}")]
+    Decode(String),
+    #[error("source error: {0}")]
+    Source(String),
+}
+
+/// Input edge for decoded traces WAL records.
+#[async_trait]
+pub trait SpanSource: Send + Sync {
+    async fn poll(&self, max: usize) -> Result<Vec<SpanRecord>, SinkError>;
+    async fn commit(&self) -> Result<(), SinkError>;
+}
 
 #[cfg(test)]
 mod tests {
@@ -193,24 +438,40 @@ mod tests {
     }
 }
 
-mod decode_consumer_records;
-mod kafka_span_source;
-mod mock_remote_write_sink;
-mod mock_span_source;
-mod project_wal_record;
-mod remote_write_sink;
-mod service_name;
-mod sink_error;
-mod span_source;
-
-pub use decode_consumer_records::decode_consumer_records;
-pub use kafka_span_source::KafkaSpanSource;
-pub use mock_remote_write_sink::MockRemoteWriteSink;
-pub use mock_span_source::MockSpanSource;
-pub use project_wal_record::project_wal_record;
-pub use remote_write_sink::RemoteWriteSink;
-use service_name::service_name;
-pub use sink_error::SinkError;
-pub use span_source::SpanSource;
-
 use crate::blockbuilder::attr_value_string;
+
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn decode_consumer_records(records: Vec<ConsumerRecord>) -> Result<Vec<SpanRecord>, SinkError> {
+    for record in &records {
+        krabka_observability::persisted_format::validate_consumer_record(record)
+            .map_err(|error| SinkError::Decode(error.to_string()))?;
+    }
+    records
+        .into_iter()
+        .filter_map(|record| {
+            record.value.map(|value| {
+                let size = ByteSize::from_bytes(u64::try_from(value.len()).unwrap_or(u64::MAX));
+                wal::SpanRecord::decode(&value)
+                    .map(|wal| project_wal_record(wal, size))
+                    .map_err(|err| SinkError::Decode(err.to_string()))
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn service_name(attrs: &[KeyValue]) -> String {
+    attrs
+        .iter()
+        .find_map(|kv| {
+            if kv.key == "service.name"
+                && let AttrValue::Str(value) = &kv.value
+                && !value.is_empty()
+            {
+                return Some(value.clone());
+            }
+            None
+        })
+        .unwrap_or_else(|| "unknown_service".to_string())
+}

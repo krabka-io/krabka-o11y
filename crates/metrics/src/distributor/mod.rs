@@ -2,7 +2,7 @@
 //! and appends to the WAL.
 
 pub mod ha;
-
+mod ha_election_types;
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -23,6 +23,7 @@ pub use ha::{
     DEFAULT_HA_FAILOVER_TIMEOUT, HA_TRACKER_TOPIC, HaDecision, HaElection, HaElectionRecord,
     HaTracker, ha_decision, ha_election, strip_replica_label,
 };
+pub use ha_election_types::*;
 use krabka_blockstore::{SeriesFingerprint, TenantId};
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
@@ -4108,179 +4109,76 @@ overrides:
     }
 }
 
-mod append_clock_readings;
-mod append_decoded_series;
-mod append_wal_records;
-mod clock_identity_labels;
-mod clock_projection;
-mod clock_reading_metric;
 mod clock_series;
-mod clock_state_series;
-mod clock_wal_records;
-mod clocks_push;
-mod clocks_push_inner;
 mod consumer;
 mod decode_influx;
-mod decode_otlp_http_body;
-mod decode_tenant_otlp;
-mod decoded_sample_count;
 mod decoded_series;
-mod default_distributor_max_decompressed;
-mod default_max_tracked_tenants;
 mod distributor_state;
-mod enforce_and_record_active_series;
-mod enforce_creation_grace_period;
-mod enforce_ingest_limits;
-mod enforce_ingestion_rate;
-mod enforce_label_limits;
-mod enforce_out_of_order_window;
 mod ha_election_compaction_key;
-mod ha_election_consumer_commit;
-mod ha_election_consumer_error;
-mod ha_election_consumer_loop_summary;
-mod ha_election_consumer_poll;
-mod ha_election_consumer_record;
-mod ha_election_partition_offset;
-mod ha_election_replay_error;
-mod ha_election_replay_result;
-mod ha_election_sink;
-mod header_list_includes;
-mod indicator;
-mod influx_push;
-mod influx_push_inner;
+mod ha_election_consumer;
+mod http_push;
 mod ingest_clock;
+mod ingest_gates;
 mod ingest_request_start;
-mod ingest_span;
-mod ingest_stamp;
-mod insert_written_header;
-mod is_valid_label_name;
 mod kafka_ha_election_sink;
 mod kafka_sink;
-mod keyed_producer_record;
-mod label_pairs;
-mod max_exemplar_label_codepoints;
 mod mimir_tenant_status;
-mod otlp_grpc_export_inner;
+mod otlp_ingest;
 mod otlp_metrics_service;
-mod otlp_metrics_service_server;
-mod otlp_push;
-mod otlp_push_inner;
-mod otlp_translation_strategy;
-mod poll_ha_election_consumer_once;
-mod produce_error;
-mod projected_labels;
-mod push;
+mod producer_records;
 mod push_error;
-mod push_inner;
 mod push_success;
-mod record_ingest_outcome;
-mod replay_ha_election_records;
-mod require_otlp_protobuf_content_type;
-mod require_snappy_encoding;
 mod router;
-mod run_ha_election_consumer_loop;
 mod sample_timestamp_bounds;
-mod series_activity;
-mod series_sweep_interval;
 mod series_tracker;
-mod series_tracker_state;
 mod serve;
-mod status_from_http_status;
 mod status_from_push_error;
-mod system_ingest_clock;
-mod tenant_series;
 mod validate;
-mod validate_exemplar_labels;
-mod wal_producer_record;
-mod wal_records_from_series;
+mod wal_ingest;
 mod wal_sink;
-mod widen;
 mod written_counts_response;
 
-use append_clock_readings::append_clock_readings;
-use append_decoded_series::append_decoded_series;
-use append_wal_records::append_wal_records;
-use clock_identity_labels::clock_identity_labels;
-use clock_projection::clock_projection;
-pub use clock_reading_metric::CLOCK_READING_METRIC;
-pub use clock_series::clock_series;
-use clock_state_series::clock_state_series;
-pub use clock_wal_records::clock_wal_records;
-use clocks_push::clocks_push;
-use clocks_push_inner::clocks_push_inner;
+use clock_series::clock_identity_labels;
+pub use clock_series::{CLOCK_READING_METRIC, clock_series};
 use decode_influx::decode_influx;
-use decode_otlp_http_body::decode_otlp_http_body;
-use decode_tenant_otlp::decode_tenant_otlp;
-use decoded_sample_count::decoded_sample_count;
-use decoded_series::decoded_series;
-pub use default_distributor_max_decompressed::DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED;
-pub use default_max_tracked_tenants::DEFAULT_MAX_TRACKED_TENANTS;
-pub use distributor_state::DistributorState;
-use enforce_and_record_active_series::enforce_and_record_active_series;
-use enforce_creation_grace_period::enforce_creation_grace_period;
-use enforce_ingest_limits::enforce_ingest_limits;
-use enforce_ingestion_rate::enforce_ingestion_rate;
-use enforce_label_limits::enforce_label_limits;
-use enforce_out_of_order_window::enforce_out_of_order_window;
+use decoded_series::{decoded_sample_count, decoded_series};
+pub use distributor_state::{
+    DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED, DEFAULT_MAX_TRACKED_TENANTS, DistributorState,
+};
 pub use ha_election_compaction_key::ha_election_compaction_key;
-pub use ha_election_consumer_commit::HaElectionConsumerCommit;
-pub use ha_election_consumer_error::HaElectionConsumerError;
-pub use ha_election_consumer_loop_summary::HaElectionConsumerLoopSummary;
-pub use ha_election_consumer_poll::HaElectionConsumerPoll;
-pub use ha_election_consumer_record::HaElectionConsumerRecord;
-pub use ha_election_partition_offset::HaElectionPartitionOffset;
-pub use ha_election_replay_error::HaElectionReplayError;
-pub use ha_election_replay_result::HaElectionReplayResult;
-pub use ha_election_sink::HaElectionSink;
-use header_list_includes::header_list_includes;
-use indicator::indicator;
-use influx_push::influx_push;
-use influx_push_inner::influx_push_inner;
-pub use ingest_clock::IngestClock;
+pub use ha_election_consumer::{
+    poll_ha_election_consumer_once, replay_ha_election_records, run_ha_election_consumer_loop,
+};
+#[cfg(test)]
+use http_push::decode_otlp_http_body;
+use http_push::{clocks_push, influx_push, otlp_push, push};
+use ingest_clock::ingest_stamp;
+pub use ingest_clock::{IngestClock, SystemIngestClock};
+use ingest_gates::enforce_ingest_limits;
+#[cfg(test)]
+use ingest_gates::{enforce_label_limits, enforce_out_of_order_window};
 use ingest_request_start::IngestRequestStart;
-use ingest_span::ingest_span;
-use ingest_stamp::ingest_stamp;
-use insert_written_header::insert_written_header;
-use is_valid_label_name::is_valid_label_name;
 pub use kafka_ha_election_sink::KafkaHaElectionSink;
 pub use kafka_sink::KafkaSink;
-use keyed_producer_record::keyed_producer_record;
-use label_pairs::label_pairs;
-use max_exemplar_label_codepoints::MAX_EXEMPLAR_LABEL_CODEPOINTS;
 use mimir_tenant_status::{all_user_stats, runtime_config, user_limits, user_stats};
-use otlp_grpc_export_inner::otlp_grpc_export_inner;
+pub use otlp_ingest::otlp_metrics_service_server;
+use otlp_ingest::{decode_tenant_otlp, otlp_grpc_export_inner, otlp_translation_strategy};
 pub use otlp_metrics_service::{OtlpMetricsService, otlp_metrics_service};
-pub use otlp_metrics_service_server::otlp_metrics_service_server;
-use otlp_push::otlp_push;
-use otlp_push_inner::{OtlpPushOutcome, otlp_push_inner};
-use otlp_translation_strategy::otlp_translation_strategy;
-pub use poll_ha_election_consumer_once::poll_ha_election_consumer_once;
-pub use produce_error::ProduceError;
-use projected_labels::projected_labels;
-use push::push;
+use producer_records::{TraceHeader, keyed_producer_record, wal_producer_record};
 use push_error::PushError;
-use push_inner::push_inner;
 use push_success::{PushOutcome, PushSuccess, series_push_result};
-use record_ingest_outcome::record_ingest_outcome;
-pub use replay_ha_election_records::replay_ha_election_records;
-use require_otlp_protobuf_content_type::require_otlp_protobuf_content_type;
-use require_snappy_encoding::require_snappy_encoding;
 pub use router::router;
-pub use run_ha_election_consumer_loop::run_ha_election_consumer_loop;
 use sample_timestamp_bounds::sample_timestamp_bounds;
-use series_activity::SeriesActivity;
-use series_sweep_interval::SERIES_SWEEP_INTERVAL;
 use series_tracker::SeriesTracker;
-use series_tracker_state::SeriesTrackerState;
 pub use serve::serve;
-use status_from_http_status::status_from_http_status;
+#[cfg(test)]
+use status_from_push_error::status_from_http_status;
 use status_from_push_error::status_from_push_error;
-pub use system_ingest_clock::SystemIngestClock;
-use tenant_series::TenantSeries;
 pub use validate::validate;
-use validate_exemplar_labels::validate_exemplar_labels;
-use wal_producer_record::{TraceHeader, wal_producer_record};
-pub use wal_records_from_series::wal_records_from_series;
-pub use wal_sink::{WalBatchRecord, WalSink};
-use widen::widen;
+#[cfg(test)]
+use validate::{MAX_EXEMPLAR_LABEL_CODEPOINTS, validate_exemplar_labels};
+use validate::{require_otlp_protobuf_content_type, require_snappy_encoding};
+use wal_ingest::{append_clock_readings, append_decoded_series};
+pub use wal_ingest::{clock_wal_records, wal_records_from_series};
+pub use wal_sink::{ProduceError, WalBatchRecord, WalSink};
 use written_counts_response::written_counts_response;

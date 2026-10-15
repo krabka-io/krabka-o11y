@@ -9,7 +9,7 @@ use krabka_units::convert::TimeExt as _;
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-use super::prelude::{
+use crate::tests::prelude::{
     BTreeMap, BlockIndex, BufferedLogHotTail, LabelIndex, Labels, Limits, LokiTypedPushRequest,
     OverridesProvider, QuerierState, ServiceConfig, TenantId, Time, WalLogRecord,
     limits_for_config, loki_router, normalize_loki_push,

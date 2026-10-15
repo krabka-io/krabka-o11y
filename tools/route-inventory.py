@@ -140,7 +140,9 @@ def rust_routes(signal, crate):
                 cursor = start + len(marker)
                 path_match = re.fullmatch(r'"([^"\\]+)"', path_expr)
                 if not path_match:
-                    if relative.endswith("with_role_ops_routes.rs") and path_expr == "path":
+                    if path_expr == "path" and re.search(
+                        r"\bget\s*\(\s*role_ring\s*\)", handler
+                    ):
                         continue
                     raise ValueError(f"{relative}: route path is not a string literal: {path_expr}")
                 methods = ("POST",) if service else tuple(

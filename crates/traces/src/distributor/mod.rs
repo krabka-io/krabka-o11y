@@ -1,6 +1,6 @@
 //! Distributor role: push-door HTTP routes into the traces WAL.
 
-use std::{collections::BTreeMap, io::Read, net::SocketAddr, sync::Arc};
+use std::{io::Read, net::SocketAddr, sync::Arc};
 
 use axum::{
     Router,
@@ -917,74 +917,48 @@ overrides:
     }
 }
 
-mod append_decoded;
-mod append_decoded_response;
-mod check_shared_attrs;
-mod content_encoding;
-mod decode_body;
 mod distributor_state;
-mod error_response;
-mod grpc_status_from_error;
-mod handle_jaeger_compact_datagram;
-mod is_jaeger_binary_thrift;
+mod grpc_helpers;
+mod http_push;
 mod jaeger_grpc_service;
-mod jaeger_push;
 mod kafka_sink;
-mod limit_error_to_traces_error;
+mod listener;
 mod otlp_grpc_service;
-mod otlp_push;
-mod otlp_success_response;
-mod produce_spans;
 mod push_request;
 mod push_spans;
-mod receiver_endpoint;
-mod record_ingest_response;
-mod request_principal;
-mod require_content_type;
+mod request_body;
+mod response_helpers;
 mod router;
 mod serve;
 mod serve_grpc_receiver;
 mod serve_jaeger_compact_udp;
-mod serve_jaeger_grpc;
-mod serve_otlp_grpc;
-mod shared_attr_measured;
-mod spawn_server;
-mod validate_shared;
+mod shared_attr_validation;
 mod wal_sink;
-mod zipkin_push;
 
-use append_decoded::append_decoded;
-use append_decoded_response::append_decoded_response;
-use check_shared_attrs::check_shared_attrs;
-use content_encoding::CONTENT_ENCODING;
-use decode_body::decode_body;
 pub use distributor_state::DistributorState;
-use error_response::error_response;
-use grpc_status_from_error::grpc_status_from_error;
-use handle_jaeger_compact_datagram::handle_jaeger_compact_datagram;
-use is_jaeger_binary_thrift::is_jaeger_binary_thrift;
-pub use jaeger_grpc_service::JaegerGrpcService;
-use jaeger_push::jaeger_push;
+use grpc_helpers::{grpc_status_from_error, request_principal};
+use http_push::{jaeger_push, otlp_push, zipkin_push};
+pub use jaeger_grpc_service::{JaegerGrpcService, serve_jaeger_grpc};
 pub use kafka_sink::KafkaSink;
-use limit_error_to_traces_error::limit_error_to_traces_error;
-pub use otlp_grpc_service::OtlpGrpcService;
-use otlp_push::otlp_push;
-use otlp_success_response::otlp_success_response;
-pub use produce_spans::produce_spans;
+pub use listener::ReceiverEndpoint;
+use listener::bind_and_spawn_server;
+pub use otlp_grpc_service::{OtlpGrpcService, serve_otlp_grpc};
 use push_request::PushRequest;
 use push_spans::{SpanPush, push_spans};
-pub use receiver_endpoint::ReceiverEndpoint;
-use record_ingest_response::record_ingest_response;
-use request_principal::request_principal;
-use require_content_type::require_content_type;
+#[cfg(test)]
+use request_body::CONTENT_ENCODING;
+use request_body::{decode_body, require_content_type};
+use response_helpers::{
+    append_decoded_response, error_response, limit_error_to_traces_error, otlp_success_response,
+    record_ingest_response,
+};
 pub use router::router;
 pub use serve::serve;
 use serve_grpc_receiver::{GrpcReceiver, serve_grpc_receiver};
+#[cfg(test)]
+use serve_jaeger_compact_udp::handle_jaeger_compact_datagram;
 pub use serve_jaeger_compact_udp::serve_jaeger_compact_udp;
-pub use serve_jaeger_grpc::serve_jaeger_grpc;
-pub use serve_otlp_grpc::serve_otlp_grpc;
-use shared_attr_measured::shared_attr_measured;
-use spawn_server::bind_and_spawn_server;
-use validate_shared::validate_shared;
-pub use wal_sink::WalSink;
-use zipkin_push::zipkin_push;
+#[cfg(test)]
+use shared_attr_validation::check_shared_attrs;
+use shared_attr_validation::validate_shared;
+pub use wal_sink::{WalSink, produce_spans};

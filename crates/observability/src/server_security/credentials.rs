@@ -5,12 +5,11 @@ use std::{
 };
 
 use krabka_blockstore::TenantId;
+use serde::Deserialize;
 use subtle::ConditionallySelectable;
 
 use super::{
-    AuthFailureReason, ClientIdentity, CredentialsError, TenantGrant,
-    configured_principal::ConfiguredPrincipal, credentials_file::CredentialsFile,
-    token_digest::TokenDigest,
+    AuthFailureReason, ClientIdentity, CredentialsError, TenantGrant, token_digest::TokenDigest,
 };
 
 struct TokenOwner {
@@ -207,4 +206,33 @@ impl Credentials {
             .collect::<Result<BTreeSet<_>, _>>()
             .map(|tenants| TenantGrant::Only(Arc::new(tenants)))
     }
+}
+
+/// One principal from the credentials file, after validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfiguredPrincipal {
+    pub name: Arc<str>,
+    pub tenants: TenantGrant,
+    pub admin: bool,
+}
+
+/// The YAML structure of the credentials file.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialsFile {
+    pub principals: Vec<PrincipalEntry>,
+}
+
+/// One entry of `principals`, before validation.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalEntry {
+    pub name: String,
+    #[serde(default)]
+    pub token_sha256: Vec<String>,
+    #[serde(default)]
+    pub client_certificates: Vec<String>,
+    pub tenants: Vec<String>,
+    #[serde(default)]
+    pub admin: bool,
 }

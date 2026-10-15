@@ -42,7 +42,6 @@ crate_binary(
         "//crates/observability:tests/support/index_snapshot_flags.rs",
         "//crates/observability:tests/support/sigterm_child.rs",
         "//crates/observability:tests/support/wal_fetch_limit_flags.rs",
-        "//crates/traces:src/bin/krabka-traces/started_during_shutdown.rs",
     ],
     lib = ":profiles",
 )

@@ -1033,35 +1033,130 @@ mod tests {
 }
 
 mod abort_on_part_failure_store;
-mod block_row_group_rows;
+mod block_format;
 mod block_stream_writer;
 mod block_summary;
 mod block_writer;
 mod block_writer_properties;
-mod block_zstd_level;
-mod is_sorted_by_key;
-mod key_columns;
-mod sort_batches_by_key;
 mod sort_key_check;
-mod sort_key_options;
 mod summary_columns;
-mod validate_batch_schema;
-mod validate_batch_schemas;
 
 use abort_on_part_failure_store::AbortOnPartFailureStore;
-pub use block_row_group_rows::BLOCK_ROW_GROUP_ROWS;
+pub(crate) use block_format::SORT_KEY_OPTIONS;
+pub use block_format::{BLOCK_ROW_GROUP_ROWS, BLOCK_ZSTD_LEVEL};
 pub use block_stream_writer::BlockStreamWriter;
 use block_summary::BlockSummary;
 #[cfg(test)]
 use block_summary::BlockSummaryResult;
 pub use block_writer::BlockWriter;
 pub use block_writer_properties::block_writer_properties;
-pub use block_zstd_level::BLOCK_ZSTD_LEVEL;
-use is_sorted_by_key::is_sorted_by_key;
-use key_columns::key_columns;
-use sort_batches_by_key::sort_batches_by_key;
 use sort_key_check::SortKeyCheck;
-pub(crate) use sort_key_options::SORT_KEY_OPTIONS;
 pub use summary_columns::SummaryColumns;
-use validate_batch_schema::validate_batch_schema;
-use validate_batch_schemas::validate_batch_schemas;
+
+/// Whether `batches`, read end to end, are already ordered by `sort_key`.
+///
+/// One comparison pass and no allocation per row, so the cost on the path a
+/// correct caller takes is a scan of the key columns rather than a sort. The
+/// relation itself lives in [`SortKeyCheck`], which is also what the streaming
+/// writer enforces, so the buffered and streaming paths cannot disagree about
+/// what "in order" means.
+///
+/// # Errors
+/// Returns [`BlockStoreError::InvalidBlock`](crate::BlockStoreError::InvalidBlock)
+/// when a batch lacks a declared sort-key column.
+pub(crate) fn is_sorted_by_key(batches: &[RecordBatch], sort_key: &[String]) -> Result<bool> {
+    let mut check = SortKeyCheck::new(sort_key);
+    for batch in batches {
+        if !check.accept(batch)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The sort-key columns of `batch`, in declaration order.
+pub(crate) fn key_columns(batch: &RecordBatch, sort_key: &[String]) -> Result<Vec<ArrayRef>> {
+    sort_key
+        .iter()
+        .map(|name| {
+            batch.column_by_name(name).cloned().ok_or_else(|| {
+                BlockStoreError::InvalidBlock(format!("missing sort-key column `{name}`"))
+            })
+        })
+        .collect()
+}
+
+/// Rejects a batch whose schema is not the one the block is being written
+/// with.
+///
+/// `position` names the batch in the error, counting from the first batch the
+/// block received: the buffered writer's index into its slice, and the
+/// streaming writer's count of the batches already handed over.
+///
+/// # Errors
+/// Returns [`BlockStoreError::InvalidBlock`] when the schemas differ.
+pub(crate) fn validate_batch_schema(
+    schema: &SchemaRef,
+    batch: &RecordBatch,
+    position: usize,
+) -> Result<()> {
+    if batch.schema().as_ref() == schema.as_ref() {
+        return Ok(());
+    }
+    Err(BlockStoreError::InvalidBlock(format!(
+        "batch {position} schema does not match writer schema"
+    )))
+}
+
+/// Rejects a batch set that does not all carry the block's schema.
+///
+/// # Errors
+/// Returns [`BlockStoreError::InvalidBlock`](crate::BlockStoreError::InvalidBlock)
+/// naming the first batch that differs.
+pub(crate) fn validate_batch_schemas(schema: &SchemaRef, batches: &[RecordBatch]) -> Result<()> {
+    for (index, batch) in batches.iter().enumerate() {
+        validate_batch_schema(schema, batch, index)?;
+    }
+    Ok(())
+}
+
+/// `batches` merged into one batch ordered by `sort_key`.
+///
+/// Arrow's lexicographic sort is unstable, so the row's own position is
+/// appended as a last key. That makes the order total and so makes the result
+/// the stable one: rows equal on the whole declared key keep the order the
+/// caller wrote them in, and a signal that relies on a secondary order the
+/// declaration does not name -- spans within one trace, say -- does not have
+/// it shuffled.
+pub(crate) fn sort_batches_by_key(
+    schema: &SchemaRef,
+    batches: &[RecordBatch],
+    sort_key: &[String],
+) -> Result<RecordBatch> {
+    let combined = match batches {
+        [only] => only.clone(),
+        many => concat_batches(schema, many)
+            .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))?,
+    };
+
+    let positions = u32::try_from(combined.num_rows()).map_err(|_| {
+        BlockStoreError::InvalidBlock("block has more rows than a u32 row index".to_string())
+    })?;
+    let mut columns = key_columns(&combined, sort_key)?
+        .into_iter()
+        .map(|values| SortColumn {
+            values,
+            options: Some(SORT_KEY_OPTIONS),
+        })
+        .collect::<Vec<_>>();
+    columns.push(SortColumn {
+        values: Arc::new(UInt32Array::from_iter_values(0..positions)),
+        options: Some(SORT_KEY_OPTIONS),
+    });
+
+    let indices = lexsort_to_indices(&columns, None)
+        .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))?;
+
+    take_record_batch(&combined, &indices)
+        .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
+}

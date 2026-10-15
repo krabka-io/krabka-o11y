@@ -143,7 +143,8 @@ mod tests {
 }
 
 mod labels_type;
-mod series_fingerprint;
 
 pub use labels_type::{LabelPair, LabelPairRef, Labels, LabelsIntoIter, LabelsIter, SeriesLabels};
-pub use series_fingerprint::SeriesFingerprint;
+
+/// 64-bit fingerprint of a label set. Stable across process runs.
+pub type SeriesFingerprint = u64;

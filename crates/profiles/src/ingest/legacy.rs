@@ -1,9 +1,6 @@
 //! Legacy `POST /ingest` door.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    io::Cursor,
-};
+use std::{collections::BTreeMap, io::Cursor};
 
 use krabka_blockstore::Labels;
 use krabka_pprof::PprofProfile;
@@ -949,7 +946,7 @@ mod tests {
 
         let snapshot = super::LabelsSnapshot {
             contexts: maplit::hashmap! {
-                7 => super::jfr_labels::LabelContext {
+                7 => super::types::LabelContext {
                     labels: maplit::hashmap! { 1 => 2 },
                 },
             },
@@ -1421,83 +1418,276 @@ mod tests {
 }
 
 mod apply_legacy_profile_suffix;
-#[cfg(test)]
-mod apply_query_sample_rate;
-mod apply_query_time;
 mod apply_sample_type_config;
 mod binary_jfr_to_pprof;
-mod decode_ingest_body;
 mod decode_ingest_body_with_limits;
-mod decode_ingest_multipart;
 mod decode_ingest_multipart_with_limits;
-mod default_spy_name;
-mod folded_to_pprof;
-mod ingest_format;
-mod ingest_query;
-mod intern_string;
-mod jfr_labels;
 mod jfr_method_name;
-mod jfr_to_pprof;
 mod legacy_cpu_mapping;
-mod legacy_cpu_profile;
-mod legacy_decode_limits;
-mod lines_to_pprof;
 mod maybe_gunzip;
 mod parse_ingest_query;
 mod parse_labels_part;
-mod parse_sample_type_config;
 mod parse_text_stacks;
-mod parse_unix_time_ms;
-mod pprof_metric_name;
-mod query_labels;
-mod read_tree_varint;
-mod sample_type_config;
 mod speedscope_to_pprof;
 mod split_app_labels;
 mod stacks_to_pprof;
 mod tree_to_pprof;
-mod trie_frame;
 mod trie_to_pprof;
+mod types;
 mod urldecode;
 
 use apply_legacy_profile_suffix::{LegacyCpuProfile, apply_legacy_profile_suffix};
-#[cfg(test)]
-use apply_query_sample_rate::apply_query_sample_rate;
-use apply_query_time::apply_query_time;
 use apply_sample_type_config::apply_sample_type_config;
 use binary_jfr_to_pprof::binary_jfr_to_pprof;
-pub use decode_ingest_body::decode_ingest_body;
 pub use decode_ingest_body_with_limits::decode_ingest_body_with_limits;
-pub use decode_ingest_multipart::decode_ingest_multipart;
 pub use decode_ingest_multipart_with_limits::decode_ingest_multipart_with_limits;
-use default_spy_name::DEFAULT_SPY_NAME;
-use folded_to_pprof::folded_to_pprof;
-pub use ingest_format::IngestFormat;
-pub use ingest_query::IngestQuery;
-use intern_string::intern_string;
-use jfr_labels::{JfrLabels, LabelsSnapshot};
 use jfr_method_name::jfr_method_name;
-use jfr_to_pprof::jfr_to_pprof;
 use legacy_cpu_mapping::{LEGACY_CPU_METRIC_NAME, apply_legacy_cpu_mapping};
-use legacy_cpu_profile::legacy_cpu_profile;
-pub use legacy_decode_limits::LegacyDecodeLimits;
-use lines_to_pprof::lines_to_pprof;
 use maybe_gunzip::maybe_gunzip;
 pub use parse_ingest_query::parse_ingest_query;
 use parse_labels_part::parse_labels_part;
-use parse_sample_type_config::parse_sample_type_config;
 use parse_text_stacks::{TextStackFormat, parse_text_stacks};
-use parse_unix_time_ms::parse_unix_time_ms;
-use pprof_metric_name::pprof_metric_name;
-use query_labels::query_labels;
-use read_tree_varint::read_tree_varint;
-use sample_type_config::SampleTypeConfig;
 use speedscope_to_pprof::speedscope_to_pprof;
 use split_app_labels::split_app_labels;
 use stacks_to_pprof::stacks_to_pprof;
 use tree_to_pprof::tree_to_pprof;
-use trie_frame::TrieFrame;
 use trie_to_pprof::trie_to_pprof;
+pub use types::{IngestFormat, IngestQuery, LegacyDecodeLimits};
+use types::{JfrLabels, LabelsSnapshot, SampleTypeConfig, TrieFrame};
 use urldecode::urldecode;
 
 use super::intern_profile_string;
+
+/// The `pyroscope_spy` label value for an upload that names no profiler.
+///
+/// Pyroscope writes the label unconditionally, so a `/ingest` request with no
+/// `?spyName=` still produces a series carrying `pyroscope_spy="unknown"`.
+pub(crate) const DEFAULT_SPY_NAME: &str = "unknown";
+
+#[cfg(test)]
+pub(crate) fn apply_query_sample_rate(profile: PprofProfile, sample_rate: u32) -> PprofProfile {
+    let mut profile = profile.into_inner();
+    profile.period = (1_000_000_000_i64 / i64::from(sample_rate)).max(1);
+    PprofProfile::from(profile)
+}
+
+pub(crate) fn folded_to_pprof(
+    name: &str,
+    sample_unit: &str,
+    body: &str,
+) -> Result<PprofProfile, ProfilesError> {
+    let stacks = parse_text_stacks(body, TextStackFormat::Folded)?;
+    Ok(stacks_to_pprof(name, "samples", sample_unit, stacks))
+}
+
+pub(crate) fn lines_to_pprof(
+    name: &str,
+    sample_unit: &str,
+    body: &str,
+) -> Result<PprofProfile, ProfilesError> {
+    let stacks = parse_text_stacks(body, TextStackFormat::Lines)?;
+    Ok(stacks_to_pprof(name, "samples", sample_unit, stacks))
+}
+
+pub(crate) fn apply_query_time(
+    profile: PprofProfile,
+    query: &IngestQuery,
+) -> Result<PprofProfile, ProfilesError> {
+    if profile.inner().time_nanos != 0 {
+        return Ok(profile);
+    }
+    let Some(timestamp_ms) = query.until_ms.or(query.from_ms) else {
+        return Ok(profile);
+    };
+    let time_nanos = timestamp_ms.checked_mul(1_000_000).ok_or_else(|| {
+        ProfilesError::Invalid(format!(
+            "ingest timestamp overflows nanoseconds: {timestamp_ms}"
+        ))
+    })?;
+    let mut profile = profile.into_inner();
+    profile.time_nanos = time_nanos;
+    Ok(PprofProfile::from(profile))
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn decode_ingest_body(
+    query: &IngestQuery,
+    content_type: Option<&str>,
+    body: bytes::Bytes,
+    max: ByteSize,
+) -> Result<RawProfile, ProfilesError> {
+    decode_ingest_body_with_limits(
+        query,
+        content_type,
+        body,
+        max,
+        LegacyDecodeLimits::default(),
+    )
+    .await
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn decode_ingest_multipart(
+    query: &IngestQuery,
+    content_type: &str,
+    body: bytes::Bytes,
+    max: ByteSize,
+) -> Result<RawProfile, ProfilesError> {
+    decode_ingest_multipart_with_limits(
+        query,
+        content_type,
+        body,
+        max,
+        LegacyDecodeLimits::default(),
+    )
+    .await
+}
+
+pub(crate) fn intern_string(
+    strings: &mut Vec<String>,
+    ids: &mut BTreeMap<String, i64>,
+    value: &str,
+) -> i64 {
+    if let Some(id) = ids.get(value) {
+        return *id;
+    }
+    let id = i64::try_from(strings.len()).expect("string table index fits i64");
+    strings.push(value.to_string());
+    ids.insert(value.to_string(), id);
+    id
+}
+
+pub(crate) fn jfr_to_pprof(
+    name: &str,
+    raw: &[u8],
+    query: &IngestQuery,
+    labels: &JfrLabels,
+) -> Result<PprofProfile, ProfilesError> {
+    if raw.starts_with(b"FLR\0") {
+        return binary_jfr_to_pprof(name, raw, query, labels);
+    }
+    let body = std::str::from_utf8(raw).map_err(|err| {
+        ProfilesError::Decode(format!("jfr payload is not UTF-8 collapsed stacks: {err}"))
+    })?;
+    folded_to_pprof(name, "count", body)
+}
+
+/// A stack-shaped legacy profile re-typed as Pyroscope's default CPU profile,
+/// paired with the metric name that goes with it.
+pub(crate) fn legacy_cpu_profile(profile: PprofProfile, query: &IngestQuery) -> LegacyCpuProfile {
+    if let Some(suffix) = &query.profile_type_suffix {
+        return apply_legacy_profile_suffix(profile, suffix);
+    }
+    LegacyCpuProfile {
+        profile: apply_legacy_cpu_mapping(profile, query.sample_rate),
+        metric_name: LEGACY_CPU_METRIC_NAME.to_string(),
+    }
+}
+
+pub(crate) fn parse_sample_type_config(raw: &[u8]) -> Result<SampleTypeConfig, ProfilesError> {
+    let config: SampleTypeConfig = serde_json::from_slice(raw)
+        .map_err(|err| ProfilesError::Decode(format!("sample_type_config is not JSON: {err}")))?;
+    if config
+        .aggregation
+        .as_deref()
+        .is_some_and(|aggregation| !aggregation.eq_ignore_ascii_case("sum"))
+    {
+        return Err(ProfilesError::Invalid(
+            "sample_type_config aggregation must be `sum`".to_string(),
+        ));
+    }
+    if config.sampled == Some(false) {
+        return Err(ProfilesError::Invalid(
+            "sample_type_config sampled=false is not supported".to_string(),
+        ));
+    }
+    Ok(config)
+}
+
+pub(crate) fn parse_unix_time_ms(value: &str) -> Result<i64, ProfilesError> {
+    let value = value.trim();
+    let numeric = value
+        .parse::<i64>()
+        .map_err(|err| ProfilesError::Invalid(format!("invalid ingest time {value:?}: {err}")))?;
+    Ok(if numeric.unsigned_abs() < 10_000_000_000 {
+        numeric.saturating_mul(1000)
+    } else {
+        numeric
+    })
+}
+
+/// The metric name Pyroscope gives a pprof uploaded through `/ingest`.
+///
+/// A pprof carries its own sample types but no metric name. Pyroscope does not
+/// use the `?name=` application for one, because that becomes `service_name`.
+/// It derives the name from the first sample type instead. Observed against
+/// `grafana/pyroscope:2.2.1` by uploading its own `/debug/pprof/*` profiles:
+/// `goroutine` becomes `goroutines`, every heap sample type becomes `memory`,
+/// and both `contentions` and `delay` become `mutex`. A Go block profile
+/// becomes `mutex` too, because its sample types are the same as a mutex
+/// profile's.
+pub(crate) fn pprof_metric_name(profile: &PprofProfile) -> Option<String> {
+    let sample_type = profile.sample_types().into_iter().next()?;
+    let name = match sample_type.name.as_str() {
+        "goroutine" => "goroutines",
+        "alloc_objects" | "alloc_space" | "inuse_objects" | "inuse_space" => "memory",
+        "contentions" | "delay" => "mutex",
+        "cpu" | "samples" => "process_cpu",
+        other => other,
+    };
+    Some(name.to_string())
+}
+
+/// The series labels a legacy upload gets, before the sample-type split.
+///
+/// `metric_name` is the `__name__` the profile's own shape decides, which is
+/// never the `?name=` application: Pyroscope keeps that as `service_name` and
+/// names the series after the profile type. The `?spyName=` profiler travels
+/// as `pyroscope_spy`. Labels written in the `name=app{k=v}` set, and the
+/// `extra_labels` a multipart `labels` part carries, override both.
+pub(crate) fn query_labels(
+    query: &IngestQuery,
+    metric_name: &str,
+    extra_labels: Vec<krabka_blockstore::LabelPair>,
+) -> Labels {
+    let mut labels = Labels::new();
+    labels.insert("__name__", metric_name.to_string());
+    labels.insert("service_name", query.name.clone());
+    labels.insert("pyroscope_spy", query.spy_name.clone());
+    for label in &query.labels {
+        labels.insert(label.name.clone(), label.value.clone());
+    }
+    for label in extra_labels {
+        labels.insert(label.name, label.value);
+    }
+    labels
+}
+
+pub(crate) fn read_tree_varint(
+    body: &[u8],
+    pos: &mut usize,
+    field: &str,
+) -> Result<u64, ProfilesError> {
+    let mut value = 0_u64;
+    let mut shift = 0_u32;
+    loop {
+        let byte = *body
+            .get(*pos)
+            .ok_or_else(|| ProfilesError::Decode(format!("tree payload ended before {field}")))?;
+        *pos += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err(ProfilesError::Decode(format!(
+                "tree {field} varint overflows u64"
+            )));
+        }
+    }
+}

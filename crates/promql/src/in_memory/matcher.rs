@@ -3,15 +3,44 @@ use krabka_blockstore::{
 };
 
 use crate::{PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, error::Result};
-
-mod all_match;
-mod prepare_matchers;
 mod prepared_matcher;
-mod regex_anchored;
-mod row_matches;
-
-pub(crate) use all_match::all_match;
-pub(crate) use prepare_matchers::prepare_matchers;
 pub(crate) use prepared_matcher::PreparedMatcher;
-use regex_anchored::regex_anchored;
-pub(crate) use row_matches::row_matches;
+
+pub(crate) fn prepare_matchers(matchers: &[LabelMatcher]) -> Result<Vec<PreparedMatcher>> {
+    matchers.iter().map(PreparedMatcher::new).collect()
+}
+
+pub(crate) fn regex_anchored(pattern: &str) -> Result<regex::Regex> {
+    regex::Regex::new(&format!("^(?s:{pattern})$"))
+        .map_err(|error| PromqlError::Plan(format!("bad regex `{pattern}`: {error}")))
+}
+
+pub(crate) fn all_match(
+    fp: SeriesFingerprint,
+    labels: &Labels,
+    matchers: &[PreparedMatcher],
+) -> bool {
+    for matcher in matchers {
+        if !matcher.matches(fp, labels) {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn row_matches(
+    fp: SeriesFingerprint,
+    labels: &Labels,
+    ts_ms: i64,
+    matchers: &[PreparedMatcher],
+    start_ms: i64,
+    end_ms: i64,
+) -> bool {
+    if ts_ms.cmp(&start_ms).is_lt() {
+        return false;
+    }
+    if ts_ms.cmp(&end_ms).is_gt() {
+        return false;
+    }
+    all_match(fp, labels, matchers)
+}

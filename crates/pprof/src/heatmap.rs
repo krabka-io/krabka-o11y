@@ -1,5 +1,29 @@
 //! Profile heatmap binning.
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Heatmap {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub time_buckets: usize,
+    pub value_buckets: usize,
+    pub min_value: i64,
+    pub max_value: i64,
+    pub counts: Vec<Vec<u64>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabeledHeatmap {
+    pub labels: Vec<crate::ProfileLabel>,
+    pub heatmap: Heatmap,
+}
+
+/// Label group and unbinned profile totals `(timestamp_ms, value)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabeledHeatmapPoints {
+    pub labels: Vec<crate::ProfileLabel>,
+    pub points: Vec<crate::TimestampTotalPoint>,
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -119,13 +143,16 @@ mod tests {
 }
 
 mod bin_heatmap;
-mod bucket_index;
-mod heatmap_type;
-mod labeled_heatmap;
 mod value_bounds;
 
 pub use bin_heatmap::bin_heatmap;
-use bucket_index::bucket_index;
-pub use heatmap_type::Heatmap;
-pub use labeled_heatmap::{LabeledHeatmap, LabeledHeatmapPoints};
 use value_bounds::value_bounds;
+
+pub(crate) fn bucket_index(offset: i128, span: i128, buckets: usize) -> usize {
+    let raw = offset * i128::try_from(buckets).expect("bucket count fits i128") / span;
+    let clamped = raw.clamp(
+        0,
+        i128::try_from(buckets - 1).expect("bucket count fits i128"),
+    );
+    usize::try_from(clamped).expect("bucket index fits usize")
+}

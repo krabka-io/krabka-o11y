@@ -117,11 +117,14 @@ mod tests {
         assert2::assert!(TRACES_WAL_TOPIC == "__krabka_traces_wal");
     }
 }
-
-mod partition_key;
 mod span_record;
 mod traces_wal_topic;
 
-pub use partition_key::partition_key;
 pub use span_record::SpanRecord;
 pub use traces_wal_topic::TRACES_WAL_TOPIC;
+
+/// The Kafka produce key for traces: `hash(trace_id)`.
+#[must_use]
+pub fn partition_key(trace_id: &[u8; 16]) -> Bytes {
+    Bytes::copy_from_slice(&fnv1_32(trace_id).to_be_bytes())
+}

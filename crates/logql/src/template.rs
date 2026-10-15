@@ -6,6 +6,387 @@ use time::OffsetDateTime;
 
 use crate::{Labels, ParseError};
 
+// Parse Template Action
+pub(crate) fn parse_template_action(
+    template: &str,
+    open: usize,
+) -> Result<ParsedTemplateAction<'_>, ParseError> {
+    let mut expression_start = open + 2;
+    let trim_left = template_action_trim_left(template, open)?;
+    if trim_left {
+        expression_start += 1;
+    }
+    let close_offset = action_end(&template[expression_start..])
+        .ok_or_else(|| template_parse_error("expected closing template action"))?;
+    let close = expression_start + close_offset;
+    let trim_right = template_action_trim_right(template, expression_start, close);
+    let expression_end = if trim_right { close - 1 } else { close };
+    let untrimmed_next_pos = close + 2;
+    let mut next_pos = untrimmed_next_pos;
+    if trim_right {
+        next_pos = skip_leading_template_whitespace(template, next_pos);
+        if next_pos < untrimmed_next_pos {
+            return Err(template_parse_error(
+                "template action parser did not advance",
+            ));
+        }
+    }
+    Ok(ParsedTemplateAction {
+        expression: template[expression_start..expression_end].trim(),
+        next_pos,
+        trim_left,
+    })
+}
+
+fn action_end(value: &str) -> Option<usize> {
+    if value.trim_start().starts_with("/*") {
+        let end = value.find("*/")? + 2;
+        return value[end..].find("}}").map(|offset| end + offset);
+    }
+    let mut quote = None;
+    let mut escaped = false;
+    let mut offset = 0;
+    while offset < value.len() {
+        let ch = value[offset..]
+            .chars()
+            .next()
+            .expect("index is within value");
+        if escaped {
+            escaped = false;
+            offset += ch.len_utf8();
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if delimiter != '`' && ch == '\\' {
+                escaped = true;
+            } else if ch == delimiter {
+                quote = None;
+            }
+        } else if matches!(ch, '\"' | '\'' | '`') {
+            quote = Some(ch);
+        } else if value[offset..].starts_with("}}") {
+            return Some(offset);
+        }
+        offset += ch.len_utf8();
+    }
+    None
+}
+
+// Parse Template Assignment
+pub(crate) fn parse_template_assignment(
+    expression: &str,
+) -> Result<Option<TemplateAssignment>, ParseError> {
+    if !expression.trim_start().starts_with('$') {
+        return Ok(None);
+    }
+    let expression_declaration = expression.contains(":=");
+    let parts = if let Some(parts) = expression.split_once(":=") {
+        parts
+    } else if let Some(parts) = expression.split_once('=') {
+        if parts
+            .0
+            .trim()
+            .contains(is_template_control_assignment_variable_char)
+        {
+            return Ok(None);
+        }
+        parts
+    } else {
+        return Ok(None);
+    };
+    let variable = parts.0;
+    let expression = parts.1;
+    let variable = parse_template_variable_name(variable.trim(), "expected template variable")?;
+    Ok(Some(TemplateAssignment {
+        variable,
+        declare: expression_declaration,
+        expression: TemplateExpression::parse(expression.trim())?,
+    }))
+}
+
+// Parse Template Conditional
+pub(crate) fn parse_template_conditional(
+    template: &str,
+    mut branch_start: usize,
+    first_condition: &str,
+) -> Result<ParsedTemplateValue<TemplateConditional>, ParseError> {
+    let mut branches = Vec::new();
+    let mut condition = TemplateControlExpression::parse(first_condition)?;
+    loop {
+        let Some(control) = find_template_control_action(template, branch_start)? else {
+            return Err(template_parse_error("expected template end action"));
+        };
+        let branch_parts = parse_template_parts(&template[branch_start..control.body_end])?;
+        if let Some(next_condition) = control.expression.strip_prefix("else if ") {
+            branches.push(TemplateConditionalBranch {
+                condition,
+                parts: branch_parts,
+            });
+            condition = TemplateControlExpression::parse(next_condition.trim())?;
+            branch_start = control.next_position;
+            continue;
+        }
+        if control.expression == "else" {
+            branches.push(TemplateConditionalBranch {
+                condition,
+                parts: branch_parts,
+            });
+            let Some(else_control) = find_template_control_action(template, control.next_position)?
+            else {
+                return Err(template_parse_error("expected template end action"));
+            };
+            if else_control.expression != "end" {
+                return Err(template_parse_error("unexpected template control action"));
+            }
+            let else_parts =
+                parse_template_parts(&template[control.next_position..else_control.body_end])?;
+            return Ok(ParsedTemplateValue {
+                value: TemplateConditional {
+                    branches,
+                    else_parts,
+                },
+                next_position: else_control.next_position,
+            });
+        }
+        branches.push(TemplateConditionalBranch {
+            condition,
+            parts: branch_parts,
+        });
+        return Ok(ParsedTemplateValue {
+            value: TemplateConditional {
+                branches,
+                else_parts: Vec::new(),
+            },
+            next_position: control.next_position,
+        });
+    }
+}
+
+// Parse Template Control Assignment
+pub(crate) struct TemplateControlAssignment<'a> {
+    pub(crate) variable: String,
+    pub(crate) expression: &'a str,
+}
+
+pub(crate) fn parse_template_control_assignment(
+    expression: &str,
+) -> Result<Option<TemplateControlAssignment<'_>>, ParseError> {
+    if !expression.trim_start().starts_with('$') {
+        return Ok(None);
+    }
+    let Some(parts) = expression.split_once(":=") else {
+        return Ok(None);
+    };
+    let variable = parts.0;
+    let expression = parts.1;
+    if variable
+        .trim()
+        .contains(is_template_control_assignment_variable_char)
+    {
+        return Ok(None);
+    }
+    Ok(Some(TemplateControlAssignment {
+        variable: parse_template_variable_name(variable.trim(), "expected template variable")?,
+        expression: expression.trim(),
+    }))
+}
+
+// Parse Template Float
+pub(crate) fn parse_template_float(value: &str) -> String {
+    template_value::number::parse_float(value)
+        .map_or_else(|| "0".to_string(), format_template_float)
+}
+
+// Parse Template Parenthesized Token
+pub(crate) fn parse_template_parenthesized_token(
+    command: &str,
+    start: usize,
+) -> Result<ParsedTemplateToken, ParseError> {
+    let mut depth = 0usize;
+    let mut quotes = TemplateQuoteScanner::default();
+    let mut index = start;
+    while index < command.len() {
+        let ch = command[index..]
+            .chars()
+            .next()
+            .expect("index is within command");
+        if quotes.consume_quoted(ch) {
+            index += ch.len_utf8();
+            continue;
+        }
+        match ch {
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| template_parse_error("unexpected template parenthesis"))?;
+                if depth == 0 {
+                    return Ok(ParsedTemplateToken {
+                        token: command[start..=index].to_string(),
+                        next_position: index.saturating_add(ch.len_utf8()),
+                    });
+                }
+            }
+            _ => {}
+        }
+        index += ch.len_utf8();
+    }
+    Err(template_parse_error("unterminated template parenthesis"))
+}
+
+// Parse Template Quoted Token
+pub(crate) fn parse_template_quoted_token(
+    command: &str,
+    start: usize,
+    quote: char,
+) -> Result<ParsedTemplateToken, ParseError> {
+    let mut escaped = false;
+    let value_start = start.saturating_add(quote.len_utf8());
+    let mut index = value_start;
+    while index < command.len() {
+        let ch = command[index..]
+            .chars()
+            .next()
+            .expect("index is within command");
+        if escaped {
+            escaped = false;
+            index += ch.len_utf8();
+            continue;
+        }
+        if matches!(quote, '"' | '\'') && ch == '\\' {
+            escaped = true;
+            index += ch.len_utf8();
+            continue;
+        }
+        if ch == quote {
+            return Ok(ParsedTemplateToken {
+                token: command[start..=index].to_string(),
+                next_position: index.saturating_add(quote.len_utf8()),
+            });
+        }
+        index += ch.len_utf8();
+    }
+    Err(template_parse_error("unterminated template string"))
+}
+
+// Parse Template Range
+pub(crate) fn parse_template_range(
+    template: &str,
+    body_start: usize,
+    range_expression: &str,
+) -> Result<ParsedTemplateValue<TemplateRange>, ParseError> {
+    let parsed_expression = parse_template_range_expression(range_expression)?;
+    let control = parse_template_control_body(template, body_start)?;
+    if control.expression == "end" {
+        return Ok(ParsedTemplateValue {
+            value: TemplateRange {
+                binding: parsed_expression.binding,
+                expression: parsed_expression.expression,
+                parts: control.parts,
+                else_parts: Vec::new(),
+            },
+            next_position: control.next_position,
+        });
+    }
+    if control.expression != "else" {
+        return Err(template_parse_error("unexpected template control action"));
+    }
+
+    let parsed_else = parse_template_else_body(template, control.next_position)?;
+    Ok(ParsedTemplateValue {
+        value: TemplateRange {
+            binding: parsed_expression.binding,
+            expression: parsed_expression.expression,
+            parts: control.parts,
+            else_parts: parsed_else.value,
+        },
+        next_position: parsed_else.next_position,
+    })
+}
+
+// Parsed Template Action
+pub(crate) struct ParsedTemplateAction<'a> {
+    pub(crate) expression: &'a str,
+    pub(crate) next_pos: usize,
+    pub(crate) trim_left: bool,
+}
+
+// Parsed Template Date
+#[derive(Clone, Copy, Debug)]
+#[cfg(test)]
+pub(crate) struct ParsedTemplateDate {
+    pub(crate) year: i32,
+    pub(crate) month: u32,
+    pub(crate) day: u32,
+    pub(crate) hour: u32,
+    pub(crate) minute: u32,
+    pub(crate) second: u32,
+    pub(crate) nanosecond: u32,
+    pub(crate) offset_seconds: Option<i32>,
+}
+
+// Template Assignment
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TemplateAssignment {
+    pub(crate) variable: String,
+    pub(crate) declare: bool,
+    pub(crate) expression: TemplateExpression,
+}
+
+// Template Conditional
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TemplateConditional {
+    pub(crate) branches: Vec<TemplateConditionalBranch>,
+    pub(crate) else_parts: Vec<TemplatePart>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TemplateConditionalBranch {
+    pub(crate) condition: TemplateControlExpression,
+    pub(crate) parts: Vec<TemplatePart>,
+}
+
+// Template Part
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TemplatePart {
+    Literal(String),
+    Comment,
+    Definition {
+        name: String,
+        parts: Vec<TemplatePart>,
+        block: bool,
+    },
+    Invocation {
+        name: String,
+        argument: Option<TemplateExpression>,
+    },
+    Break,
+    Continue,
+    Expression(TemplateExpression),
+    Conditional(TemplateConditional),
+    Range(TemplateRange),
+    With(TemplateWith),
+    Assignment(TemplateAssignment),
+}
+
+// Template Range Binding
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TemplateRangeBinding {
+    Dot,
+    Value(String),
+    AssignValue(String),
+    IndexValue { index: String, value: String },
+    AssignIndexValue { index: String, value: String },
+}
+
+// Template With
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TemplateWith {
+    pub(crate) expression: TemplateControlExpression,
+    pub(crate) parts: Vec<TemplatePart>,
+    pub(crate) else_parts: Vec<TemplatePart>,
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -94,9 +475,9 @@ mod tests {
         parse_template_parts, parse_template_quoted_token, parse_template_timezone_offset,
         parse_variable_template_digits, push_template_unicode_escape, quoted_template_token_value,
         skip_leading_template_whitespace, substring_template_string, template_compare_values,
-        template_index_value, template_slice_bounds, template_slice_bounds::TemplateSliceBounds,
-        template_value_is_collection, tokenize_template_command, trim_template_body_end,
-        urldecode_template_string,
+        template_index_value, template_slice_bounds, template_value_is_collection,
+        tokenize_template_command, trim_template_body_end, urldecode_template_string,
+        value_access::TemplateSliceBounds,
     };
 
     #[test]
@@ -556,14 +937,17 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod advance_template_pos;
-mod align_left_template_string;
-mod align_right_template_string;
-mod current_template_timestamp;
+mod control;
+use control::{
+    TemplateControlAction, find_template_control_action, parse_template_with,
+    split_template_pipeline, template_control_action, tokenize_template_command,
+};
+mod value_access;
+use value_access::{
+    template_index_value, template_json_value_to_string, template_slice_bounds,
+    template_variable_path_value,
+};
 mod decode_quoted_fragment;
-mod ensure_template_parenthesized_token;
-mod ensure_template_quoted_token;
 
 fn ensure_template_token(
     command: &str,
@@ -584,44 +968,16 @@ fn ensure_template_token(
     }
     validate(token)
 }
-mod epoch_template_timestamp;
 mod evaluate_common_string_function;
 mod evaluate_template_byte_function;
 pub use evaluate_template_byte_function::go_string_equal_fold;
 mod evaluate_template_function;
-mod evaluate_template_index;
-mod evaluate_template_slice;
 mod evaluate_template_value_function;
-mod find_template_control_action;
-mod format_go_time_layout;
+mod float_format;
 mod format_template_bytes;
-mod format_template_date;
 mod format_template_duration_seconds;
-mod format_template_float;
-mod format_template_float_fold;
-mod format_template_float_min_max;
-mod format_template_float_round;
-mod format_template_float_unary;
-mod format_template_integer_binary;
-mod format_template_integer_min_max;
-mod format_template_integer_product;
-mod format_template_integer_sum;
-mod format_template_ordering;
 mod format_template_print;
 mod format_template_printf;
-mod format_template_printf_string;
-mod format_template_to_date;
-mod format_template_to_date_in_zone;
-mod hex_digit;
-mod html_escape_template_string;
-mod indent_template_string;
-mod is_template_comment_action;
-mod is_template_control_assignment_variable_char;
-mod is_template_function_name;
-mod is_template_variable_name_char_invalid;
-mod is_unexpected_template_control_action;
-mod is_wrapped_template_token;
-mod js_escape_template_string;
 mod line_format;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -636,163 +992,40 @@ pub(crate) struct ParsedTemplateValue<T> {
     pub(crate) next_position: usize,
 }
 
-#[cfg(test)]
-mod match_template_literal;
-#[cfg(test)]
-mod parse_fixed_template_digits;
-mod parse_go_time_layout_to_unix_nanos;
-#[cfg(test)]
-mod parse_go_time_layout_value;
-mod parse_template_action;
-mod parse_template_assignment;
-mod parse_template_bound;
-mod parse_template_conditional;
-mod parse_template_control_assignment;
-mod parse_template_else_body;
-mod parse_template_float;
-#[cfg(test)]
-mod parse_template_fractional_nanoseconds;
 mod parse_template_integer;
-mod parse_template_parenthesized_token;
 mod parse_template_parts;
-mod parse_template_quoted_token;
-mod parse_template_range;
 mod parse_template_range_expression;
-#[cfg(test)]
-mod parse_template_timezone_offset;
-mod parse_template_variable_name;
-mod parse_template_with;
-#[cfg(test)]
-mod parse_variable_template_digits;
-mod parsed_template_action;
-#[cfg(test)]
-mod parsed_template_date;
 pub(super) mod prometheus_functions;
-mod push_template_unicode_escape;
-mod quoted_template_token_value;
 mod render_template_parts;
-mod skip_leading_template_whitespace;
-mod split_template_pipeline;
-mod substring_template_string;
-mod template_action_trim_left;
-mod template_action_trim_right;
-mod template_assignment;
-mod template_collection_first_args;
 mod template_command;
-mod template_compare_values;
-mod template_conditional;
-mod template_control_action;
 mod template_control_expression;
 mod template_expression;
-mod template_float_args;
-mod template_index_value;
-mod template_integer_args;
-mod template_json_value_to_string;
-mod template_json_value_truthy;
-mod template_part;
 mod template_quote_scanner;
+use template_quote_scanner::TemplateQuoteScanner;
+mod collection;
 mod template_range;
-mod template_range_binding;
 mod template_render_context;
 mod template_render_error;
-mod template_root_field_value;
 mod template_runtime_value;
-mod template_slice_array;
-mod template_slice_bounds;
-mod template_slice_string;
-mod template_string_truthy;
 mod template_time;
 mod template_value;
-mod template_value_is_collection;
-mod template_variable_path_value;
-mod template_with;
-mod title_template_string;
-mod tokenize_template_command;
-mod trim_template_body_end;
-mod truncate_template_string;
-mod unix_to_template_timestamp;
-mod urldecode_template_string;
-mod urlencode_template_string;
-mod urlquery_template_string;
 
-#[cfg(test)]
-use advance_template_pos::advance_template_pos;
-use align_left_template_string::align_left_template_string;
-use align_right_template_string::align_right_template_string;
-use current_template_timestamp::current_template_timestamp;
+pub(crate) use collection::{evaluate_template_slice, template_collection_first_args};
 use decode_quoted_fragment::{decode_quoted_bytes, decode_quoted_fragment};
-use ensure_template_parenthesized_token::ensure_template_parenthesized_token;
-use ensure_template_quoted_token::ensure_template_quoted_token;
-use epoch_template_timestamp::epoch_template_timestamp;
 use evaluate_common_string_function::evaluate_common_string_function;
 use evaluate_template_byte_function::{evaluate_template_byte_function, template_bytes_to_string};
 use evaluate_template_function::evaluate_template_function;
-use evaluate_template_index::evaluate_template_index;
-use evaluate_template_slice::evaluate_template_slice;
 use evaluate_template_value_function::evaluate_template_value_function;
-use find_template_control_action::find_template_control_action;
-use format_go_time_layout::format_go_time_layout;
+pub(crate) use float_format::{format_template_float, format_template_float_fold};
 use format_template_bytes::{format_template_bytes, parse_template_bytes};
-use format_template_date::format_template_date;
 use format_template_duration_seconds::{format_template_duration_seconds, parse_template_duration};
-use format_template_float::format_template_float;
-use format_template_float_fold::format_template_float_fold;
-use format_template_float_min_max::format_template_float_min_max;
-use format_template_float_round::format_template_float_round;
-use format_template_float_unary::format_template_float_unary;
-use format_template_integer_binary::format_template_integer_binary;
-use format_template_integer_min_max::format_template_integer_min_max;
-use format_template_integer_product::format_template_integer_product;
-use format_template_integer_sum::format_template_integer_sum;
-use format_template_ordering::format_template_ordering;
 use format_template_print::{format_template_print, format_template_print_bytes};
 pub use format_template_printf::quote_go_bytes;
 use format_template_printf::{format_template_printf, format_template_printf_bytes};
-use format_template_printf_string::format_template_printf_string;
-use format_template_to_date::format_template_to_date;
-use format_template_to_date_in_zone::format_template_to_date_in_zone;
-use hex_digit::hex_digit;
-use html_escape_template_string::html_escape_template_string;
-use indent_template_string::indent_template_string;
-use is_template_comment_action::is_template_comment_action;
-use is_template_control_assignment_variable_char::is_template_control_assignment_variable_char;
-use is_template_function_name::is_template_function_name;
-use is_template_variable_name_char_invalid::is_template_variable_name_char_invalid;
-use is_unexpected_template_control_action::is_unexpected_template_control_action;
-use is_wrapped_template_token::is_wrapped_template_token;
-use js_escape_template_string::js_escape_template_string;
 pub use line_format::LineFormat;
-#[cfg(test)]
-use match_template_literal::match_template_literal;
-#[cfg(test)]
-use parse_fixed_template_digits::parse_fixed_template_digits;
-use parse_go_time_layout_to_unix_nanos::parse_go_time_layout_to_unix_nanos;
-#[cfg(test)]
-use parse_go_time_layout_value::parse_go_time_layout_value;
-use parse_template_action::parse_template_action;
-use parse_template_assignment::parse_template_assignment;
-use parse_template_bound::parse_template_bound;
-use parse_template_conditional::parse_template_conditional;
-use parse_template_control_assignment::parse_template_control_assignment;
-use parse_template_else_body::parse_template_else_body;
-use parse_template_float::parse_template_float;
-#[cfg(test)]
-use parse_template_fractional_nanoseconds::parse_template_fractional_nanoseconds;
 use parse_template_integer::parse_template_integer;
-use parse_template_parenthesized_token::parse_template_parenthesized_token;
 use parse_template_parts::{parse_template_control_body, parse_template_parts};
-use parse_template_quoted_token::parse_template_quoted_token;
-use parse_template_range::parse_template_range;
 use parse_template_range_expression::parse_template_range_expression;
-#[cfg(test)]
-use parse_template_timezone_offset::parse_template_timezone_offset;
-use parse_template_variable_name::parse_template_variable_name;
-use parse_template_with::parse_template_with;
-#[cfg(test)]
-use parse_variable_template_digits::parse_variable_template_digits;
-use parsed_template_action::ParsedTemplateAction;
-#[cfg(test)]
-use parsed_template_date::ParsedTemplateDate;
 pub use prometheus_functions::{
     histogram::{TemplateFloatHistogram, TemplateHistogramBucket, TemplateHistogramSpan},
     histogram_value::{
@@ -802,51 +1035,864 @@ pub use prometheus_functions::{
     },
     query_result::TemplateQueryResult,
 };
-use push_template_unicode_escape::push_template_unicode_escape;
-use quoted_template_token_value::quoted_template_token_value;
 use render_template_parts::render_template_parts;
-use skip_leading_template_whitespace::skip_leading_template_whitespace;
-use split_template_pipeline::split_template_pipeline;
-use substring_template_string::substring_template_string;
-use template_action_trim_left::template_action_trim_left;
-use template_action_trim_right::template_action_trim_right;
-use template_assignment::TemplateAssignment;
-use template_collection_first_args::template_collection_first_args;
 use template_command::TemplateCommand;
-use template_compare_values::template_compare_values;
-use template_conditional::{TemplateConditional, TemplateConditionalBranch};
-use template_control_action::{TemplateControlAction, template_control_action};
 use template_control_expression::TemplateControlExpression;
 use template_expression::TemplateExpression;
-use template_float_args::template_float_args;
-use template_index_value::template_index_value;
-use template_integer_args::template_integer_args;
-use template_json_value_to_string::template_json_value_to_string;
-use template_json_value_truthy::template_json_value_truthy;
-use template_part::TemplatePart;
 use template_range::TemplateRange;
-use template_range_binding::TemplateRangeBinding;
 use template_render_context::TemplateRenderContext;
 pub use template_render_error::TemplateRenderError;
-use template_root_field_value::template_root_field_value;
 pub use template_runtime_value::TemplateRuntimeValue;
-use template_slice_array::template_slice_array;
-use template_slice_bounds::template_slice_bounds;
-use template_slice_string::template_slice_string;
-use template_string_truthy::template_string_truthy;
 pub use template_time::{TemplateTime, TemplateTimeLocation};
 use template_value::TemplateValue;
 pub use template_value::number::parse_float as parse_go_float;
-use template_value_is_collection::template_value_is_collection;
-use template_variable_path_value::template_variable_path_value;
-use template_with::TemplateWith;
-use title_template_string::title_template_string;
-use tokenize_template_command::tokenize_template_command;
-use trim_template_body_end::trim_template_body_end;
-use truncate_template_string::truncate_template_string;
-use unix_to_template_timestamp::unix_to_template_timestamp;
-use urldecode_template_string::urldecode_template_string;
-use urlencode_template_string::urlencode_template_string;
-use urlquery_template_string::urlquery_template_string;
 
 pub(crate) use crate::error::syntax_parse_error as template_parse_error;
+
+#[cfg(test)]
+pub(crate) fn advance_template_pos(pos: &mut usize, amount: usize) -> Option<()> {
+    *pos = pos.checked_add(amount)?;
+    Some(())
+}
+
+pub(crate) fn align_left_template_string(width: usize, value: &str) -> String {
+    let mut chars = value.chars().take(width).collect::<String>();
+    let padding = width.saturating_sub(chars.chars().count());
+    chars.extend(std::iter::repeat_n(' ', padding));
+    chars
+}
+
+pub(crate) fn align_right_template_string(width: usize, value: &str) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.len() >= width {
+        return chars[chars.len() - width..].iter().collect();
+    }
+    let mut aligned = " ".repeat(width - chars.len());
+    aligned.extend(chars);
+    aligned
+}
+
+pub(crate) fn current_template_timestamp() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map_or_else(Default::default, |duration| duration.as_nanos().to_string())
+}
+
+pub(crate) fn epoch_template_timestamp(args: &[String], divisor: i64) -> String {
+    let Some(timestamp) = args.first() else {
+        return String::new();
+    };
+    let Ok(timestamp_ns) = timestamp.parse::<i64>() else {
+        return String::new();
+    };
+    timestamp_ns.div_euclid(divisor).to_string()
+}
+
+pub(crate) fn format_go_time_layout(layout: &str, timestamp: OffsetDateTime) -> String {
+    TemplateTime::from_offset(
+        timestamp.unix_timestamp(),
+        timestamp.nanosecond(),
+        timestamp.offset().whole_seconds(),
+    )
+    .format(layout)
+}
+
+pub(crate) fn format_template_float_unary(value: &str, op: impl FnOnce(f64) -> f64) -> String {
+    format_template_float(op(value.parse::<f64>().unwrap_or_default()))
+}
+
+pub(crate) fn format_template_integer_min_max(
+    args: &[String],
+    op: impl Fn(i64, i64) -> i64,
+) -> String {
+    let values = template_integer_args(args);
+    values
+        .into_iter()
+        .reduce(op)
+        .map_or_else(String::new, |value| value.to_string())
+}
+
+pub(crate) fn format_template_integer_product(args: &[String]) -> String {
+    let values = template_integer_args(args);
+    values.into_iter().fold(1i64, i64::wrapping_mul).to_string()
+}
+
+pub(crate) fn format_template_integer_sum(args: &[String]) -> String {
+    let values = template_integer_args(args);
+    values.into_iter().fold(0i64, i64::wrapping_add).to_string()
+}
+
+pub(crate) fn format_template_to_date(args: &[String]) -> String {
+    if args.len() < 2 {
+        return String::new();
+    }
+    parse_go_time_layout_to_unix_nanos(&args[0], "Local", &args[1])
+}
+
+pub(crate) fn format_template_to_date_in_zone(args: &[String]) -> String {
+    if args.len() < 3 {
+        return String::new();
+    }
+    parse_go_time_layout_to_unix_nanos(&args[0], &args[1], &args[2])
+}
+
+pub(crate) fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => char::from(b'0' + value),
+        10..=15 => char::from(b'A' + value - 10),
+        _ => '0',
+    }
+}
+
+pub(crate) fn indent_template_string(spaces: usize, value: &str) -> String {
+    let prefix = " ".repeat(spaces);
+    value
+        .split('\n')
+        .map(|line| format!("{prefix}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub(crate) fn is_template_comment_action(expression: &str) -> bool {
+    expression.starts_with("/*") && expression.ends_with("*/")
+}
+
+pub(crate) fn is_template_control_assignment_variable_char(ch: char) -> bool {
+    match ch {
+        '|' => true,
+        _ => ch.is_whitespace(),
+    }
+}
+
+pub(crate) fn is_template_variable_name_char_invalid(ch: char) -> bool {
+    match ch {
+        '.' => true,
+        _ => ch.is_whitespace(),
+    }
+}
+
+pub(crate) fn is_unexpected_template_control_action(expression: &str) -> bool {
+    matches!(
+        template_control_action(expression),
+        TemplateControlAction::Else
+            | TemplateControlAction::ElseIf
+            | TemplateControlAction::ElseWith
+            | TemplateControlAction::End
+    )
+}
+
+pub(crate) fn is_wrapped_template_token(token: &str, quote: char) -> bool {
+    if token.len() < quote.len_utf8().saturating_mul(2) {
+        return false;
+    }
+    token.starts_with(quote) && token.ends_with(quote)
+}
+
+#[cfg(test)]
+pub(crate) fn match_template_literal(value: &str, pos: &mut usize, expected: char) -> Option<()> {
+    let ch = value.get(*pos..)?.chars().next()?;
+    if ch != expected {
+        return None;
+    }
+    advance_template_pos(pos, ch.len_utf8())?;
+    Some(())
+}
+
+pub(crate) fn parse_go_time_layout_to_unix_nanos(layout: &str, zone: &str, value: &str) -> String {
+    TemplateTime::parse(layout, zone, value)
+        .unwrap_or_else(TemplateTime::zero)
+        .unix_nanos()
+        .to_string()
+}
+
+pub(crate) fn parse_template_bound(value: &TemplateRuntimeValue) -> Option<usize> {
+    value.as_rendered_string().parse::<usize>().ok()
+}
+
+pub(crate) fn push_template_unicode_escape(output: &mut String, value: u32) {
+    let _ = write!(output, "\\u{value:04X}");
+}
+
+pub(crate) fn quoted_template_token_value(token: &str) -> Result<Option<String>, ParseError> {
+    if is_wrapped_template_token(token, '`') {
+        return Ok(Some(token[1..token.len() - 1].to_string()));
+    }
+    if is_wrapped_template_token(token, '"') {
+        return Ok(Some(decode_quoted_fragment(&token[1..token.len() - 1])?));
+    }
+    Ok(None)
+}
+
+pub(crate) fn skip_leading_template_whitespace(template: &str, mut pos: usize) -> usize {
+    let Some(rest) = template.get(pos..) else {
+        return template.len();
+    };
+    let trimmed = rest.trim_start_matches(char::is_whitespace);
+    pos = template
+        .len()
+        .checked_sub(trimmed.len())
+        .expect("trimmed suffix cannot be longer than template");
+    pos
+}
+
+pub(crate) fn substring_template_string(value: &str, start: i64, end: i64) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    let len = chars.len();
+    let start = usize::try_from(start.max(0)).unwrap_or(usize::MAX).min(len);
+    let end = usize::try_from(end).ok().map_or(len, |end| end.min(len));
+    if end <= start {
+        return String::new();
+    }
+    chars[start..end].iter().collect()
+}
+
+pub(crate) fn template_action_trim_left(template: &str, open: usize) -> Result<bool, ParseError> {
+    let expression_start = open + 2;
+    if !template[expression_start..].starts_with('-') {
+        return Ok(false);
+    }
+    let Some(next) = template[expression_start + 1..].chars().next() else {
+        return Err(template_parse_error("expected closing template action"));
+    };
+    Ok(next.is_whitespace())
+}
+
+pub(crate) fn template_compare_values(left: &str, right: &str) -> Option<Ordering> {
+    if let Ok(left_number) = left.parse::<f64>()
+        && let Ok(right_number) = right.parse::<f64>()
+        && left_number.is_finite()
+        && right_number.is_finite()
+    {
+        return left_number.partial_cmp(&right_number);
+    }
+    Some(left.cmp(right))
+}
+
+pub(crate) fn template_float_args(args: &[String]) -> Vec<f64> {
+    args.iter()
+        .map(|value| value.parse::<f64>().unwrap_or_default())
+        .collect()
+}
+
+pub(crate) fn template_integer_args(args: &[String]) -> Vec<i64> {
+    args.iter()
+        .map(|value| parse_template_integer(value))
+        .collect()
+}
+
+pub(crate) fn template_slice_string(
+    value: &str,
+    bounds: &[TemplateRuntimeValue],
+) -> TemplateRuntimeValue {
+    let Some(bounds) = template_slice_bounds(value.len(), bounds) else {
+        return TemplateRuntimeValue::String(String::new());
+    };
+    TemplateRuntimeValue::Bytes(value.as_bytes()[bounds.start..bounds.end].to_vec())
+}
+
+pub(crate) fn template_string_truthy(value: &str) -> bool {
+    !value.is_empty()
+}
+
+pub(crate) fn trim_template_body_end(template: &str, start: usize, end: usize) -> usize {
+    template[..end]
+        .trim_end_matches(char::is_whitespace)
+        .len()
+        .max(start)
+}
+
+pub(crate) fn truncate_template_string(value: &str, count: i64) -> String {
+    if count >= 0 {
+        let count = usize::try_from(count).unwrap_or(usize::MAX);
+        return value.chars().take(count).collect();
+    }
+    let count = usize::try_from(count.unsigned_abs()).unwrap_or(usize::MAX);
+    let len = value.chars().count();
+    value.chars().skip(len.saturating_sub(count)).collect()
+}
+
+pub(crate) fn urlencode_template_string(value: &str) -> String {
+    urlquery_template_string(value)
+}
+
+pub(crate) fn ensure_template_parenthesized_token(
+    command: &str,
+    pos: usize,
+    token: &str,
+    next: usize,
+) -> Result<(), ParseError> {
+    ensure_template_token(command, pos, token, next, |token| {
+        if !token.starts_with('(') {
+            return Err(template_parse_error(
+                "template token parser returned token without opening parenthesis",
+            ));
+        }
+        if !token.ends_with(')') {
+            return Err(template_parse_error(
+                "template token parser returned token without closing parenthesis",
+            ));
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn ensure_template_quoted_token(
+    command: &str,
+    pos: usize,
+    token: &str,
+    next: usize,
+    quote: char,
+) -> Result<(), ParseError> {
+    ensure_template_token(command, pos, token, next, |token| {
+        if is_wrapped_template_token(token, quote) {
+            Ok(())
+        } else {
+            Err(template_parse_error(
+                "template token parser returned unwrapped quoted token",
+            ))
+        }
+    })
+}
+
+pub(crate) fn evaluate_template_index(args: &[TemplateRuntimeValue]) -> TemplateRuntimeValue {
+    let Some(split) = template_collection_first_args(args) else {
+        return TemplateRuntimeValue::String(String::new());
+    };
+    let mut current = split.collection.clone();
+    for index in split.args {
+        let Some(element) = template_index_value(&current, &index.as_rendered_string()) else {
+            return TemplateRuntimeValue::String(String::new());
+        };
+        current = element;
+    }
+    current
+}
+
+pub(crate) fn format_template_date(args: &[String]) -> String {
+    if args.len() < 2 {
+        return String::new();
+    }
+    let Ok(timestamp_ns) = args[1].parse::<i128>() else {
+        return String::new();
+    };
+    let Ok(timestamp) = OffsetDateTime::from_unix_timestamp_nanos(timestamp_ns) else {
+        return String::new();
+    };
+    format_go_time_layout(&args[0], timestamp)
+}
+
+pub(crate) fn format_template_float_min_max(
+    args: &[String],
+    op: impl Fn(f64, f64) -> f64,
+) -> String {
+    let values = template_float_args(args);
+    values
+        .into_iter()
+        .reduce(|left, right| {
+            if left.is_nan() || right.is_nan() {
+                f64::NAN
+            } else {
+                op(left, right)
+            }
+        })
+        .map_or_else(String::new, format_template_float)
+}
+
+pub(crate) fn format_template_float_round(args: &[String]) -> String {
+    if args.len() < 2 {
+        return String::new();
+    }
+    let value = args[0].parse::<f64>().unwrap_or_default();
+    let precision = args[1].parse::<f64>().unwrap_or_default();
+    let round_on = args
+        .get(2)
+        .map_or(0.5, |value| value.parse::<f64>().unwrap_or_default());
+    let factor = 10f64.powf(precision);
+    let shifted = value * factor;
+    let rounded = if shifted.fract() >= round_on {
+        shifted.ceil()
+    } else {
+        shifted.floor()
+    } / factor;
+    format_template_float(rounded)
+}
+
+pub(crate) fn format_template_integer_binary(
+    args: &[String],
+    op: impl FnOnce(i64, i64) -> Option<i64>,
+) -> String {
+    if args.len() < 2 {
+        return String::new();
+    }
+    let left = parse_template_integer(&args[0]);
+    let right = parse_template_integer(&args[1]);
+    op(left, right).map_or_else(String::new, |value| value.to_string())
+}
+
+pub(crate) fn format_template_ordering(
+    args: &[String],
+    predicate: impl FnOnce(Ordering) -> bool,
+) -> String {
+    if args.len() < 2 {
+        return "false".to_string();
+    }
+    template_compare_values(&args[0], &args[1])
+        .is_some_and(predicate)
+        .to_string()
+}
+
+pub(crate) fn format_template_printf_string(
+    value: &str,
+    width: Option<usize>,
+    precision: Option<usize>,
+    left_align: bool,
+) -> String {
+    let mut rendered = precision.map_or_else(
+        || value.to_string(),
+        |precision| value.chars().take(precision).collect(),
+    );
+    let Some(width) = width else {
+        return rendered;
+    };
+
+    let len = rendered.chars().count();
+    if len >= width {
+        return rendered;
+    }
+    let padding = " ".repeat(width - len);
+    if left_align {
+        rendered.push_str(&padding);
+        rendered
+    } else {
+        format!("{padding}{rendered}")
+    }
+}
+
+pub(crate) fn html_escape_template_string(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&#34;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+pub(crate) fn js_escape_template_string(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\'' => escaped.push_str("\\'"),
+            '"' => escaped.push_str("\\\""),
+            '<' => escaped.push_str("\\u003C"),
+            '>' => escaped.push_str("\\u003E"),
+            '&' => escaped.push_str("\\u0026"),
+            '=' => escaped.push_str("\\u003D"),
+            '\u{2028}' => escaped.push_str("\\u2028"),
+            '\u{2029}' => escaped.push_str("\\u2029"),
+            ch if ch.is_control() => push_template_unicode_escape(&mut escaped, u32::from(ch)),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+#[cfg(test)]
+pub(crate) fn parse_fixed_template_digits(
+    value: &str,
+    pos: &mut usize,
+    count: usize,
+) -> Option<u32> {
+    let start = *pos;
+    let digits = value.get(start..)?.get(..count)?;
+    digits
+        .bytes()
+        .all(|byte| byte.is_ascii_digit())
+        .then_some(())?;
+    advance_template_pos(pos, count)?;
+    digits.parse::<u32>().ok()
+}
+
+#[cfg(test)]
+pub(crate) fn parse_go_time_layout_value(layout: &str, value: &str) -> Option<ParsedTemplateDate> {
+    let parsed = TemplateTime::parse(layout, "UTC", value)?;
+    let fields = parsed.parsed_fields();
+    let year = fields.year;
+    let month = fields.month;
+    let day = fields.day;
+    let hour = fields.hour;
+    let minute = fields.minute;
+    let second = fields.second;
+    let nanosecond = fields.nanosecond;
+    let offset = fields.offset;
+    Some(ParsedTemplateDate {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        nanosecond,
+        offset_seconds: Some(offset),
+    })
+}
+
+/// Parses an `{{else}}` body that runs to its `{{end}}`, returning the body's
+/// parts and the position just past `{{end}}`.
+pub(crate) fn parse_template_else_body(
+    template: &str,
+    else_body_start: usize,
+) -> Result<ParsedTemplateValue<Vec<TemplatePart>>, ParseError> {
+    let Some(control) = find_template_control_action(template, else_body_start)? else {
+        return Err(template_parse_error("expected template end action"));
+    };
+    if control.expression != "end" {
+        return Err(template_parse_error("unexpected template control action"));
+    }
+    let else_parts = parse_template_parts(&template[else_body_start..control.body_end])?;
+    Ok(ParsedTemplateValue {
+        value: else_parts,
+        next_position: control.next_position,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn parse_template_fractional_nanoseconds(
+    value: &str,
+    pos: &mut usize,
+    max_digits: usize,
+) -> Option<u32> {
+    match_template_literal(value, pos, '.')?;
+    let start = *pos;
+    let rest = value.get(start..)?;
+    let digits_len = rest
+        .bytes()
+        .take(max_digits)
+        .take_while(u8::is_ascii_digit)
+        .count();
+    let digits = rest.get(..digits_len).filter(|digits| !digits.is_empty())?;
+    advance_template_pos(pos, digits_len)?;
+    let mut fraction = digits.parse::<u32>().ok()?;
+    for _ in digits_len..9 {
+        fraction = fraction.checked_mul(10)?;
+    }
+    Some(fraction)
+}
+
+#[cfg(test)]
+pub(crate) fn parse_template_timezone_offset(value: &str, pos: &mut usize) -> Option<i32> {
+    let rest = value.get(*pos..)?;
+    if rest.starts_with('Z') {
+        advance_template_pos(pos, 1)?;
+        return Some(0);
+    }
+    let sign: i32 = if rest.starts_with('+') {
+        advance_template_pos(pos, 1)?;
+        1
+    } else if rest.starts_with('-') {
+        advance_template_pos(pos, 1)?;
+        -1
+    } else {
+        return None;
+    };
+    let hours = i32::try_from(parse_fixed_template_digits(value, pos, 2)?).ok()?;
+    match_template_literal(value, pos, ':')?;
+    let minutes = i32::try_from(parse_fixed_template_digits(value, pos, 2)?).ok()?;
+    let total_minutes = hours.checked_mul(60)?.checked_add(minutes)?;
+    sign.checked_mul(total_minutes.checked_mul(60)?)
+}
+
+pub(crate) fn parse_template_variable_name(
+    variable: &str,
+    message: &'static str,
+) -> Result<String, ParseError> {
+    let Some(variable) = variable.strip_prefix('$') else {
+        return Err(template_parse_error(message));
+    };
+    if variable.is_empty() {
+        return Err(template_parse_error(message));
+    }
+    if variable.contains(is_template_variable_name_char_invalid) {
+        return Err(template_parse_error(message));
+    }
+    Ok(variable.to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn parse_variable_template_digits(
+    value: &str,
+    pos: &mut usize,
+    max_count: usize,
+) -> Option<u32> {
+    let start = *pos;
+    let rest = value.get(start..)?;
+    let digits_len = rest
+        .bytes()
+        .take(max_count)
+        .take_while(u8::is_ascii_digit)
+        .count();
+    let digits = rest.get(..digits_len).filter(|digits| !digits.is_empty())?;
+    advance_template_pos(pos, digits_len)?;
+    digits.parse::<u32>().ok()
+}
+
+pub(crate) fn template_action_trim_right(
+    template: &str,
+    expression_start: usize,
+    close: usize,
+) -> bool {
+    if close <= expression_start || !template[..close].ends_with('-') {
+        return false;
+    }
+    template[expression_start..close - 1]
+        .chars()
+        .next_back()
+        .is_some_and(char::is_whitespace)
+}
+
+pub(crate) fn template_json_value_truthy(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                value != 0
+            } else if let Some(value) = value.as_u64() {
+                value != 0
+            } else {
+                value.as_f64().is_some_and(|value| value != 0.0)
+            }
+        }
+        serde_json::Value::String(value) => !value.is_empty(),
+        serde_json::Value::Array(value) => !value.is_empty(),
+        serde_json::Value::Object(value) => !value.is_empty(),
+    }
+}
+
+pub(crate) fn template_root_field_value(fields: &Labels, path: &[String]) -> TemplateRuntimeValue {
+    let Some(first_and_rest) = path.split_first() else {
+        return TemplateRuntimeValue::Labels(fields.clone());
+    };
+    let first = first_and_rest.0;
+    let rest = first_and_rest.1;
+
+    let Some(value) = fields.get(first) else {
+        return TemplateRuntimeValue::String(String::new());
+    };
+    if rest.is_empty() {
+        return TemplateRuntimeValue::String(value.clone());
+    }
+
+    serde_json::from_str::<serde_json::Value>(value)
+        .ok()
+        .and_then(|json| template_variable_path_value(&TemplateRuntimeValue::Json(json), rest))
+        .unwrap_or_else(|| TemplateRuntimeValue::String(String::new()))
+}
+
+pub(crate) fn template_slice_array(
+    values: &[serde_json::Value],
+    bounds: &[TemplateRuntimeValue],
+) -> TemplateRuntimeValue {
+    let Some(bounds) = template_slice_bounds(values.len(), bounds) else {
+        return TemplateRuntimeValue::String(String::new());
+    };
+    TemplateRuntimeValue::Json(serde_json::Value::Array(
+        values[bounds.start..bounds.end].to_vec(),
+    ))
+}
+
+pub(crate) fn template_value_is_collection(value: &TemplateRuntimeValue) -> bool {
+    matches!(
+        value,
+        TemplateRuntimeValue::FloatSlice(_)
+            | TemplateRuntimeValue::HistogramSpans(_)
+            | TemplateRuntimeValue::Labels(_)
+            | TemplateRuntimeValue::Bytes(_)
+            | TemplateRuntimeValue::ByteSlice(_)
+            | TemplateRuntimeValue::ByteLabels(_)
+            | TemplateRuntimeValue::Object(_)
+            | TemplateRuntimeValue::Array(_)
+            | TemplateRuntimeValue::QueryResult(_)
+            | TemplateRuntimeValue::String(_)
+            | TemplateRuntimeValue::Json(
+                serde_json::Value::String(_)
+                    | serde_json::Value::Array(_)
+                    | serde_json::Value::Object(_)
+            )
+    )
+}
+
+pub(crate) fn title_template_string(value: &str) -> String {
+    let mut titled = String::new();
+    let mut capitalize_next = true;
+    for ch in value.chars() {
+        if ch.is_alphanumeric() {
+            if capitalize_next {
+                for upper in ch.to_uppercase() {
+                    titled.push(upper);
+                }
+            } else {
+                for lower in ch.to_lowercase() {
+                    titled.push(lower);
+                }
+            }
+            capitalize_next = false;
+        } else {
+            titled.push(ch);
+            capitalize_next = true;
+        }
+    }
+    titled
+}
+
+pub(crate) fn unix_to_template_timestamp(epoch: &str) -> String {
+    let Ok(value) = epoch.parse::<i128>() else {
+        return String::new();
+    };
+    let nanos = match epoch.len() {
+        5 => value.checked_mul(86_400_000_000_000),
+        10 => value.checked_mul(1_000_000_000),
+        13 => value.checked_mul(1_000_000),
+        16 => value.checked_mul(1_000),
+        19 => Some(value),
+        _ => None,
+    };
+    nanos.map_or_else(String::new, |value| value.to_string())
+}
+
+pub(crate) fn urldecode_template_string(value: &str) -> String {
+    let mut bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    while let Some(first) = bytes.split_first() {
+        let byte = *first.0;
+        let rest = first.1;
+        if byte == b'%'
+            && let Some(hex_bytes) = rest.get(..2)
+            && let Ok(hex) = std::str::from_utf8(hex_bytes)
+            && let Ok(decoded_byte) = u8::from_str_radix(hex, 16)
+        {
+            decoded.push(decoded_byte);
+            bytes = &rest[2..];
+            continue;
+        }
+        decoded.push(if byte == b'+' { b' ' } else { byte });
+        bytes = rest;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+pub(crate) fn urlquery_template_string(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            b' ' => encoded.push('+'),
+            _ => {
+                encoded.push('%');
+                encoded.push(hex_digit(byte >> 4));
+                encoded.push(hex_digit(byte & 0x0f));
+            }
+        }
+    }
+    encoded
+}
+
+pub(crate) fn is_template_function_name(name: &str) -> bool {
+    prometheus_functions::is_name(name)
+        || matches!(
+            name,
+            "query"
+                | "humanize"
+                | "humanizeDuration"
+                | "humanizePercentage"
+                | "humanize1024"
+                | "reReplaceAll"
+                | "first"
+                | "label"
+                | "value"
+                | "alignLeft"
+                | "alignRight"
+                | "add"
+                | "addf"
+                | "and"
+                | "b64dec"
+                | "b64enc"
+                | "lower"
+                | "upper"
+                | "replace"
+                | "default"
+                | "contains"
+                | "call"
+                | "bytes"
+                | "date"
+                | "eq"
+                | "ge"
+                | "gt"
+                | "hasPrefix"
+                | "hasSuffix"
+                | "html"
+                | "index"
+                | "js"
+                | "le"
+                | "duration"
+                | "duration_seconds"
+                | "div"
+                | "divf"
+                | "ceil"
+                | "float64"
+                | "floor"
+                | "fromJson"
+                | "indent"
+                | "int"
+                | "len"
+                | "lt"
+                | "max"
+                | "maxf"
+                | "min"
+                | "minf"
+                | "mod"
+                | "mul"
+                | "mulf"
+                | "ne"
+                | "nindent"
+                | "now"
+                | "not"
+                | "or"
+                | "print"
+                | "printf"
+                | "println"
+                | "repeat"
+                | "count"
+                | "regexReplaceAll"
+                | "regexReplaceAllLiteral"
+                | "substr"
+                | "title"
+                | "toDate"
+                | "toDateInZone"
+                | "trim"
+                | "trimAll"
+                | "trimPrefix"
+                | "trimSuffix"
+                | "trunc"
+                | "sub"
+                | "subf"
+                | "round"
+                | "slice"
+                | "unixEpoch"
+                | "unixEpochMillis"
+                | "unixEpochNanos"
+                | "unixToTime"
+                | "urlquery"
+                | "urlencode"
+                | "urldecode"
+        )
+}

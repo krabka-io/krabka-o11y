@@ -1,10 +1,18 @@
 use krabka_o11y_verified::overlap_window;
 
 use super::{
-    BTreeMap, BTreeSet, BlockEntry, BlockLevel, BlockListRepr, BlockMeta, Deserialize, Serialize,
+    BTreeMap, BTreeSet, BlockEntry, BlockLevel, BlockMeta, Deserialize, Serialize,
     SeriesFingerprint, fingerprint_set_digest,
 };
 use crate::block::BlockTimeBounds;
+
+/// The persisted shape of a [`BlockList`]. The time ordering, key lookup and
+/// running maximum are derived when this representation is loaded.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct BlockListRepr {
+    pub(crate) entries: Vec<BlockEntry>,
+    pub(crate) postings: BTreeMap<SeriesFingerprint, Vec<u32>>,
+}
 
 /// A tenant's blocks, ordered by time, with the block-to-series pairs inverted.
 ///

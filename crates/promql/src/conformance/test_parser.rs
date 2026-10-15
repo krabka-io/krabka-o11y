@@ -160,9 +160,7 @@ impl<'a> TestParser<'a> {
                 }
                 let offsets = split_sample_tokens(values, line)?
                     .into_iter()
-                    .map(|token| {
-                        super::parse_start_offset_token::parse_start_offset_token(token, line)
-                    })
+                    .map(|token| super::parse_start_offset_token(token, line))
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .flatten()

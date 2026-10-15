@@ -5,6 +5,24 @@ use std::collections::HashMap;
 use krabka_units::{Time, secs};
 use serde::{Deserialize, Serialize};
 
+/// Tempo-default latency histogram bucket edges, in nanoseconds.
+pub const DEFAULT_LATENCY_BUCKETS_NS: &[f64] = &[
+    2_000_000.0,
+    4_000_000.0,
+    8_000_000.0,
+    16_000_000.0,
+    32_000_000.0,
+    64_000_000.0,
+    128_000_000.0,
+    256_000_000.0,
+    512_000_000.0,
+    1_024_000_000.0,
+    2_048_000_000.0,
+    4_096_000_000.0,
+    8_192_000_000.0,
+    16_384_000_000.0,
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,11 +124,9 @@ overrides:
     }
 }
 
-mod default_latency_buckets_ns;
 mod metrics_gen_config;
 mod processor_config;
 
-pub use default_latency_buckets_ns::DEFAULT_LATENCY_BUCKETS_NS;
 pub use metrics_gen_config::MetricsGenConfig;
 pub use processor_config::{
     AttributeMatch, DimensionMapping, FilterPolicy, HostInfoConfig, MatchType, ProcessorConfig,

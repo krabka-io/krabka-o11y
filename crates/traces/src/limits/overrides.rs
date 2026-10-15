@@ -12,6 +12,74 @@ use thiserror::Error;
 
 use super::Limits;
 
+pub(crate) fn merge_limits(defaults: &Limits, partial: &PartialLimits) -> Limits {
+    Limits {
+        query_admission: defaults.query_admission.merge(partial.query_admission),
+        ingestion_rate: partial
+            .ingestion_rate_spans_per_sec
+            .map_or(defaults.ingestion_rate, Frequency::from_per_sec),
+        ingestion_burst_spans: partial
+            .ingestion_burst_spans
+            .unwrap_or(defaults.ingestion_burst_spans),
+        max_spans_per_request: partial
+            .max_spans_per_request
+            .unwrap_or(defaults.max_spans_per_request),
+        max_traces_per_search: partial
+            .max_traces_per_search
+            .unwrap_or(defaults.max_traces_per_search),
+        max_spans_per_trace: partial
+            .max_spans_per_trace
+            .unwrap_or(defaults.max_spans_per_trace),
+        max_attribute: partial
+            .max_attribute_bytes
+            .map_or(defaults.max_attribute, ByteSize::from_bytes),
+        max_search_duration: partial
+            .max_search_duration_secs
+            .map_or(defaults.max_search_duration, |secs| {
+                Time::from_secs(i64::try_from(secs).unwrap_or(i64::MAX))
+            }),
+        block_retention: partial.block_retention.unwrap_or(defaults.block_retention),
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum OverridesError {
+    #[error("failed to parse overrides yaml: {0}")]
+    Yaml(String),
+}
+
+// The Tempo-shaped runtime-overrides keys, in the units an operator writes them
+// (spans/sec, bytes, seconds). This is intentionally partial configuration, not
+// old-schema compatibility: each tenant entry overrides only the limit fields it
+// names, and `merge_limits` lifts them into the dimensioned `Limits`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct PartialLimits {
+    pub(crate) query_admission: AdmissionLimitsOverride,
+    pub(crate) ingestion_rate_spans_per_sec: Option<f64>,
+    pub(crate) ingestion_burst_spans: Option<u64>,
+    pub(crate) max_spans_per_request: Option<u64>,
+    pub(crate) max_traces_per_search: Option<u64>,
+    pub(crate) max_spans_per_trace: Option<u64>,
+    pub(crate) max_attribute_bytes: Option<u64>,
+    pub(crate) max_search_duration_secs: Option<u64>,
+    // Tempo writes this one as a duration rather than a count, and it is the
+    // only knob here an operator copies straight out of a Tempo overrides
+    // file, so it keeps Tempo's spelling and Tempo's value form: `336h`.
+    #[serde(with = "krabka_units::serde_units::human::option_time")]
+    pub(crate) block_retention: Option<Time>,
+    // Parsed by `MetricsGenConfig` from the same document. Keeping it here
+    // lets the trace-limit reader validate a real Tempo override entry without
+    // owning the metrics-generator configuration.
+    pub(crate) metrics_generator: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RuntimeFile {
+    #[serde(default)]
+    pub(crate) overrides: HashMap<String, PartialLimits>,
+}
+
 #[cfg(test)]
 mod tests {
     use krabka_units::{bytes, hours, per_sec};
@@ -246,14 +314,6 @@ overrides:
     }
 }
 
-mod merge_limits;
-mod overrides_error;
 mod overrides_provider;
-mod partial_limits;
-mod runtime_file;
 
-use merge_limits::merge_limits;
-pub use overrides_error::OverridesError;
 pub use overrides_provider::{OverrideMutationError, OverridesProvider};
-use partial_limits::PartialLimits;
-use runtime_file::RuntimeFile;

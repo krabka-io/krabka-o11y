@@ -1058,26 +1058,72 @@ mod tests {
     }
 }
 
-mod block_probe_concurrency;
-mod block_scan;
 mod block_store;
-mod max_fingerprint_in_list;
 mod probe_blocks;
 mod probed_block_table;
-mod require_blocks;
 mod scan_filter;
 mod scan_report;
-mod scan_table_request;
-mod table_name;
 
-use block_probe_concurrency::BLOCK_PROBE_CONCURRENCY;
-pub use block_scan::BlockScan;
 pub use block_store::{BlockStore, RegisteredTable};
-use max_fingerprint_in_list::MAX_FINGERPRINT_IN_LIST;
 use probe_blocks::probe_blocks;
 use probed_block_table::ProbedBlockTable;
-use require_blocks::require_blocks;
 use scan_filter::scan_filter;
 pub use scan_report::ScanReport;
-pub use scan_table_request::ScanTableRequest;
-use table_name::TABLE_NAME;
+
+/// How many blocks a scan probes at once before registering them.
+pub(crate) const BLOCK_PROBE_CONCURRENCY: usize = 16;
+
+/// Largest resolved fingerprint set still emitted as a series `IN` predicate.
+pub(crate) const MAX_FINGERPRINT_IN_LIST: usize = 1_024;
+
+/// A registered scan: its context, table name, and what it could not read.
+#[derive(Clone)]
+pub struct BlockScan {
+    /// The session the table is registered in.
+    pub ctx: SessionContext,
+    /// The registered table's name.
+    pub table: String,
+    /// What was skipped, if anything.
+    pub report: ScanReport,
+}
+
+/// One named `DataFusion` table registration request over indexed blocks.
+pub struct ScanTableRequest<'a> {
+    pub table_name: &'a str,
+    pub tenant: &'a str,
+    pub matchers: &'a [LabelMatcher],
+    pub min_ts: i64,
+    pub max_ts: i64,
+    pub schema: SchemaRef,
+}
+
+pub(crate) const TABLE_NAME: &str = "logs";
+
+/// Fails unless every one of `keys` is readable.
+///
+/// `DataFusion` resolves each path it is given as a listing, so a key with no
+/// object behind it contributes no files and no error: the scan returns the
+/// other blocks' rows and says nothing. That is a wrong answer delivered
+/// confidently, and it is why this runs before the keys reach `DataFusion`
+/// rather than being left to it.
+///
+/// The footer each probe reads is cached, so on a warm store the check costs
+/// one `head` per block, and one footer read per block the first time. The scan
+/// reads the blocks with the `ObjectMeta` and footer this returns, so it does
+/// not `head` them again.
+///
+/// # Errors
+/// Returns [`BlockStoreError::BlockUnreadable`](crate::BlockStoreError::BlockUnreadable)
+/// for the first block that cannot be read.
+#[instrument(level = "debug", skip_all, fields(keys = keys.len()), err)]
+pub(crate) async fn require_blocks(
+    store: &Arc<dyn ObjectStore>,
+    keys: &[String],
+    max_bytes: ByteSize,
+    cache: &BlockMetadataCache,
+) -> Result<Vec<ProbedBlock>> {
+    probe_blocks::probe_keys(store, keys, max_bytes, cache)
+        .await
+        .into_iter()
+        .collect()
+}

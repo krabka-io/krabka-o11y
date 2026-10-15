@@ -3120,6 +3120,7 @@ mod chunk_reset_hints;
 mod compacted_native_histogram;
 mod conformance_labels_key;
 mod cumulative_to_bucket_counts;
+mod directives;
 mod escape_label_value;
 mod expect_block;
 mod expect_directive;
@@ -3140,24 +3141,11 @@ mod native_custom_bucket_histogram;
 mod nhcb_bucket_series;
 mod nhcb_group;
 mod nhcb_sample_at;
-mod parse_bucket_bound;
-mod parse_duration_ms;
-mod parse_error;
-mod parse_expect_directive;
-mod parse_expect_string;
-mod parse_float;
 mod parse_histogram_expansion;
 mod parse_histogram_literal;
-mod parse_histogram_repetition;
-mod parse_optional_histogram_buckets;
-mod parse_optional_histogram_f64;
-mod parse_optional_histogram_i32;
-mod parse_optional_histogram_i8;
-mod parse_optional_histogram_reset_hint;
-mod parse_range_vector_directive;
 mod parse_sample_token;
-mod parse_start_offset_token;
 mod parse_test_file;
+mod parsing;
 mod range_expect;
 mod sample_spec;
 mod split_metric_and_tail;
@@ -3174,6 +3162,11 @@ use chunk_reset_hints::ChunkResetHints;
 use compacted_native_histogram::compacted_native_histogram;
 use conformance_labels_key::conformance_labels_key;
 use cumulative_to_bucket_counts::cumulative_to_bucket_counts;
+use directives::{
+    parse_error, parse_expect_directive, parse_expect_string, parse_histogram_repetition,
+    parse_optional_histogram_buckets, parse_optional_histogram_reset_hint,
+    parse_range_vector_directive, parse_start_offset_token,
+};
 use escape_label_value::escape_label_value;
 use expect_block::ExpectBlock;
 use expect_directive::ExpectDirective;
@@ -3194,23 +3187,14 @@ use native_custom_bucket_histogram::native_custom_bucket_histogram;
 use nhcb_bucket_series::NhcbBucketSeries;
 use nhcb_group::NhcbGroup;
 use nhcb_sample_at::nhcb_sample_at;
-use parse_bucket_bound::parse_bucket_bound;
-use parse_duration_ms::parse_duration_ms;
-use parse_error::parse_error;
-use parse_expect_directive::parse_expect_directive;
-use parse_expect_string::parse_expect_string;
-use parse_float::parse_float;
 use parse_histogram_expansion::parse_histogram_expansion;
 use parse_histogram_literal::parse_histogram_literal;
-use parse_histogram_repetition::parse_histogram_repetition;
-use parse_optional_histogram_buckets::parse_optional_histogram_buckets;
-use parse_optional_histogram_f64::parse_optional_histogram_f64;
-use parse_optional_histogram_i8::parse_optional_histogram_i8;
-use parse_optional_histogram_i32::parse_optional_histogram_i32;
-use parse_optional_histogram_reset_hint::parse_optional_histogram_reset_hint;
-use parse_range_vector_directive::parse_range_vector_directive;
 use parse_sample_token::parse_sample_token;
 pub use parse_test_file::parse_test_file;
+use parsing::{
+    parse_bucket_bound, parse_duration_ms, parse_float, parse_optional_histogram_f64,
+    parse_optional_histogram_i8, parse_optional_histogram_i32,
+};
 pub use range_expect::RangeExpect;
 pub use sample_spec::SampleSpec;
 use split_metric_and_tail::split_metric_and_tail;

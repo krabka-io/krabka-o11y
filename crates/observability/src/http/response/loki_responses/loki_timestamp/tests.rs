@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 
-use super::{
-    super::{Labels, LokiStreamEntry, json},
-    LokiTimestamp,
-};
+use super::LokiTimestamp;
+use crate::{Labels, LokiStreamEntry, json};
 
 #[test]
 fn timestamps_keep_their_exact_wire_spelling() {

@@ -477,29 +477,83 @@ mod tests {
         assert2::assert!(approx_eq(column.value(0), 5.0 / 300.0));
     }
 }
-
-mod delta_udf;
-mod idelta_udf;
-mod increase_udf;
-mod irate_udf;
 mod rate_family;
-mod rate_family_udfs;
 mod rate_udf;
-mod register_rate_udfs;
-mod scalar_i64;
 
-pub use delta_udf::delta_udf;
-pub use idelta_udf::idelta_udf;
-pub use increase_udf::increase_udf;
-pub use irate_udf::irate_udf;
 use rate_family::RateFamily;
-pub use rate_family_udfs::rate_family_udfs;
 use rate_udf::RateUdf;
 pub use rate_udf::rate_udf;
-pub use register_rate_udfs::register_rate_udfs;
-use scalar_i64::scalar_i64;
 
 use super::{
     impl_window_udf_identity,
     udf_args::{WindowColumns, append_window_values},
 };
+
+/// The `delta` UDF: gauge first..last delta with boundary extrapolation.
+#[must_use]
+pub fn delta_udf() -> ScalarUDF {
+    ScalarUDF::from(RateUdf::new(RateFamily::Delta))
+}
+
+/// The `idelta` UDF: gauge delta of the last two samples.
+#[must_use]
+pub fn idelta_udf() -> ScalarUDF {
+    ScalarUDF::from(RateUdf::new(RateFamily::Idelta))
+}
+
+/// The `increase` UDF: counter-reset-corrected, extrapolated total increase.
+#[must_use]
+pub fn increase_udf() -> ScalarUDF {
+    ScalarUDF::from(RateUdf::new(RateFamily::Increase))
+}
+
+/// The `irate` UDF: per-second instant rate from the last two samples.
+#[must_use]
+pub fn irate_udf() -> ScalarUDF {
+    ScalarUDF::from(RateUdf::new(RateFamily::Irate))
+}
+
+/// Registers every rate-family UDF on `ctx` so a planner can lower onto them.
+pub fn register_rate_udfs(ctx: &SessionContext) {
+    for udf in rate_family_udfs() {
+        ctx.register_udf(udf);
+    }
+}
+
+/// Every rate-family UDF, ready to register on a [`datafusion::prelude::SessionContext`].
+#[must_use]
+pub fn rate_family_udfs() -> Vec<ScalarUDF> {
+    vec![
+        rate_udf(),
+        increase_udf(),
+        delta_udf(),
+        irate_udf(),
+        idelta_udf(),
+    ]
+}
+
+/// Reads a scalar `Int64` argument, with a single-row array as a fallback.
+pub(crate) fn scalar_i64(value: &ColumnarValue, arg: &str, udf: &str) -> DfResult<i64> {
+    match value {
+        ColumnarValue::Scalar(scalar) => match scalar {
+            datafusion::common::ScalarValue::Int64(Some(v)) => Ok(*v),
+            other => Err(DataFusionError::Execution(format!(
+                "{udf}: `{arg}` must be a non-null Int64 scalar, got {other:?}"
+            ))),
+        },
+        ColumnarValue::Array(array) => {
+            let ints = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                DataFusionError::Execution(format!(
+                    "{udf}: `{arg}` must be Int64, got {:?}",
+                    array.data_type()
+                ))
+            })?;
+            if ints.is_empty() || ints.is_null(0) {
+                return Err(DataFusionError::Execution(format!(
+                    "{udf}: `{arg}` must be a non-null Int64"
+                )));
+            }
+            Ok(ints.value(0))
+        }
+    }
+}

@@ -1,6 +1,59 @@
 //! Neutral series payload model consumed by `remote_write` sinks.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use crate::metricsgen::NativeHistogram;
+
+/// Prometheus exemplar attached to a sample.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Exemplar {
+    pub value: f64,
+    pub labels: Vec<krabka_traceql::MetricLabel>,
+    pub timestamp_ms: i64,
+}
+
+/// Batch of series for one tenant.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SeriesPayload {
+    pub tenant: String,
+    pub series: Vec<Series>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistogramBucket {
+    pub upper_bound: f64,
+    pub cumulative_count: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistogramSummary {
+    pub buckets: Vec<HistogramBucket>,
+    pub sum: f64,
+    pub count: f64,
+}
+
+/// Neutral sample shape emitted by metrics-generator processors.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SeriesSample {
+    Counter(f64),
+    Gauge(f64),
+    ClassicHistogram {
+        buckets: Vec<HistogramBucket>,
+        sum: f64,
+        count: f64,
+    },
+    NativeHistogram(NativeHistogram),
+}
+
+/// One named Prometheus series without the `__name__` label.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Series {
+    pub name: String,
+    pub labels: Vec<krabka_traceql::MetricLabel>,
+    pub sample: SeriesSample,
+    pub exemplars: Vec<Exemplar>,
+    pub timestamp_ms: i64,
+}
 
 #[cfg(test)]
 mod tests {
@@ -57,14 +110,11 @@ mod tests {
     }
 }
 
-mod exemplar;
-mod series_payload;
-mod series_sample;
-mod series_type;
-mod sorted_labels;
-
-pub use exemplar::Exemplar;
-pub use series_payload::SeriesPayload;
-pub use series_sample::{HistogramBucket, HistogramSummary, SeriesSample};
-pub use series_type::Series;
-pub use sorted_labels::sorted_labels;
+/// Sort labels into a deterministic order for the encoder and the tests.
+#[must_use]
+pub fn sorted_labels(
+    mut labels: Vec<krabka_traceql::MetricLabel>,
+) -> Vec<krabka_traceql::MetricLabel> {
+    labels.sort();
+    labels
+}

@@ -53,3 +53,23 @@ pub async fn spawn_axum(app: axum::Router) -> std::net::SocketAddr {
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     addr
 }
+
+pub fn complete_trace_response() -> axum::response::Response {
+    use axum::{Json, response::IntoResponse as _};
+    use serde_json::json;
+
+    Json(json!({
+        "trace": {
+            "resourceSpans": [{
+                "resource": { "attributes": [] },
+                "scopeSpans": [{
+                    "scope": {},
+                    "spans": [{ "spanId": "BgYGBgYGBgY=", "name": "op" }]
+                }]
+            }]
+        },
+        "status": "COMPLETE",
+        "message": ""
+    }))
+    .into_response()
+}

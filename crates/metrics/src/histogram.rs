@@ -1,6 +1,6 @@
 //! In-memory native-histogram representation and Arrow codec.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use arrow::{
     array::{
@@ -14,8 +14,8 @@ use arrow::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    NativeHistogramRow,
-    arrow_codec::{require_non_null, schema_mismatch, typed_column},
+    NativeHistogramRow, append_optional_i64,
+    arrow_codec::{decode_rows_with_identity, require_non_null, schema_mismatch, typed_column},
     schema::{
         COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
         COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA,
@@ -259,43 +259,411 @@ mod tests {
             .build()
     }
 }
+pub(crate) fn append_f64_list(builder: &mut ListBuilder<Float64Builder>, values: &[f64]) {
+    for value in values {
+        builder.values().append_value(*value);
+    }
+    builder.append(true);
+}
 
-mod append_f64_list;
-mod append_spans;
-mod bucket_span;
-mod compact_spanned_histogram_counts;
-mod decode_native_histograms;
-mod encode_native_histograms;
-mod f64_list_field;
-mod histogram_codec_error;
-mod native_histogram;
-mod new_f64_list_builder;
-mod new_span_list_builder;
-mod read_f64_list;
-mod read_spans;
-mod reset_hint;
-mod span_bucket_total;
-mod span_list_field;
-mod span_struct_fields;
-mod validate_span_count_consistency;
+pub(crate) fn f64_list_field() -> Field {
+    Field::new("item", DataType::Float64, false)
+}
 
-use append_f64_list::append_f64_list;
-use append_spans::append_spans;
-pub use bucket_span::BucketSpan;
-pub use compact_spanned_histogram_counts::{
-    SpannedHistogramCounts, compact_spanned_histogram_counts,
-};
-pub use decode_native_histograms::decode_native_histograms;
-pub use encode_native_histograms::encode_native_histograms;
-use f64_list_field::f64_list_field;
-pub use histogram_codec_error::HistogramCodecError;
-pub use native_histogram::NativeHistogram;
-use new_f64_list_builder::new_f64_list_builder;
-use new_span_list_builder::new_span_list_builder;
-use read_f64_list::read_f64_list;
-use read_spans::read_spans;
-pub use reset_hint::ResetHint;
-use span_bucket_total::span_bucket_total;
-use span_list_field::span_list_field;
-use span_struct_fields::span_struct_fields;
-use validate_span_count_consistency::validate_span_count_consistency;
+pub(crate) fn new_f64_list_builder() -> ListBuilder<Float64Builder> {
+    ListBuilder::new(Float64Builder::new()).with_field(f64_list_field())
+}
+
+pub(crate) fn span_bucket_total(spans: &[BucketSpan]) -> usize {
+    spans.iter().map(|span| span.length as usize).sum()
+}
+
+pub(crate) fn span_list_field() -> Field {
+    Field::new("item", DataType::Struct(span_struct_fields()), false)
+}
+
+pub(crate) fn span_struct_fields() -> Fields {
+    Fields::from(vec![
+        Field::new("offset", DataType::Int32, false),
+        Field::new("length", DataType::UInt32, false),
+    ])
+}
+
+pub(crate) fn append_spans(builder: &mut ListBuilder<StructBuilder>, spans: &[BucketSpan]) {
+    let struct_builder = builder.values();
+    for span in spans {
+        struct_builder
+            .field_builder::<Int32Builder>(0)
+            .expect("span offset builder")
+            .append_value(span.offset);
+        struct_builder
+            .field_builder::<UInt32Builder>(1)
+            .expect("span length builder")
+            .append_value(span.length);
+        struct_builder.append(true);
+    }
+    builder.append(true);
+}
+
+pub(crate) fn new_span_list_builder() -> ListBuilder<StructBuilder> {
+    let struct_builder = StructBuilder::new(
+        span_struct_fields(),
+        vec![
+            Box::new(Int32Builder::new()),
+            Box::new(UInt32Builder::new()),
+        ],
+    );
+    ListBuilder::new(struct_builder).with_field(span_list_field())
+}
+
+pub(crate) fn read_f64_list(
+    list: &ListArray,
+    row: usize,
+    column: &str,
+) -> Result<Vec<f64>, HistogramCodecError> {
+    require_non_null(list, row, column)?;
+    let value = list.value(row);
+    let array = value
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .ok_or_else(|| schema_mismatch(column))?;
+
+    (0..array.len())
+        .map(|index| {
+            require_non_null(array, index, column)?;
+            Ok(array.value(index))
+        })
+        .collect()
+}
+
+pub(crate) fn validate_span_count_consistency(
+    spans: &[BucketSpan],
+    counts: &[f64],
+) -> Result<(), HistogramCodecError> {
+    let span_total = span_bucket_total(spans);
+    if span_total == counts.len() {
+        Ok(())
+    } else {
+        Err(HistogramCodecError::SpanCountMismatch {
+            spans: span_total,
+            counts: counts.len(),
+        })
+    }
+}
+
+/// Encodes `(fingerprint, timestamp, NativeHistogram)` rows into a
+/// `RecordBatch` that matches [`native_histogram_schema`].
+/// # Errors
+/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+pub fn encode_native_histograms(
+    rows: &[NativeHistogramRow],
+) -> Result<RecordBatch, HistogramCodecError> {
+    for row in rows {
+        let histogram = &row.hist;
+        validate_span_count_consistency(&histogram.positive_spans, &histogram.positive_counts)?;
+        validate_span_count_consistency(&histogram.negative_spans, &histogram.negative_counts)?;
+    }
+
+    let mut fingerprints = UInt64Builder::new();
+    let mut timestamps = Int64Builder::new();
+    let mut schemas = Int8Builder::new();
+    let mut is_floats = BooleanBuilder::new();
+    let mut reset_hints = Int8Builder::new();
+    let mut zero_thresholds = Float64Builder::new();
+    let mut zero_counts = Float64Builder::new();
+    let mut counts = Float64Builder::new();
+    let mut sums = Float64Builder::new();
+    let mut positive_spans = new_span_list_builder();
+    let mut positive_counts = new_f64_list_builder();
+    let mut negative_spans = new_span_list_builder();
+    let mut negative_counts = new_f64_list_builder();
+    let mut custom_values = new_f64_list_builder();
+    let mut start_timestamps = Int64Builder::new();
+
+    for row in rows {
+        let histogram = &row.hist;
+        fingerprints.append_value(row.fingerprint);
+        timestamps.append_value(row.timestamp_ms);
+        schemas.append_value(histogram.schema);
+        is_floats.append_value(histogram.is_float);
+        reset_hints.append_value(histogram.reset_hint.as_i8());
+        zero_thresholds.append_value(histogram.zero_threshold);
+        zero_counts.append_value(histogram.zero_count);
+        counts.append_value(histogram.count);
+        sums.append_value(histogram.sum);
+        append_spans(&mut positive_spans, &histogram.positive_spans);
+        append_f64_list(&mut positive_counts, &histogram.positive_counts);
+        append_spans(&mut negative_spans, &histogram.negative_spans);
+        append_f64_list(&mut negative_counts, &histogram.negative_counts);
+        match &histogram.custom_values {
+            Some(values) => append_f64_list(&mut custom_values, values),
+            None => custom_values.append(false),
+        }
+        append_optional_i64(&mut start_timestamps, histogram.start_timestamp_ms);
+    }
+
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(fingerprints.finish()),
+        Arc::new(timestamps.finish()),
+        Arc::new(schemas.finish()),
+        Arc::new(is_floats.finish()),
+        Arc::new(reset_hints.finish()),
+        Arc::new(zero_thresholds.finish()),
+        Arc::new(zero_counts.finish()),
+        Arc::new(counts.finish()),
+        Arc::new(sums.finish()),
+        Arc::new(positive_spans.finish()),
+        Arc::new(positive_counts.finish()),
+        Arc::new(negative_spans.finish()),
+        Arc::new(negative_counts.finish()),
+        Arc::new(custom_values.finish()),
+        Arc::new(start_timestamps.finish()),
+    ];
+
+    Ok(RecordBatch::try_new(native_histogram_schema(), columns)?)
+}
+
+/// Decodes a `RecordBatch` that [`crate::encode_native_histograms`] produced.
+/// # Errors
+/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+pub fn decode_native_histograms(
+    batch: &RecordBatch,
+) -> Result<Vec<NativeHistogramRow>, HistogramCodecError> {
+    let fingerprints = typed_column::<UInt64Array>(batch, COL_FINGERPRINT)?;
+    let timestamps = typed_column::<Int64Array>(batch, COL_TIMESTAMP)?;
+    let schemas = typed_column::<Int8Array>(batch, COL_NH_SCHEMA)?;
+    let is_floats = typed_column::<BooleanArray>(batch, COL_NH_IS_FLOAT)?;
+    let reset_hints = typed_column::<Int8Array>(batch, COL_NH_RESET_HINT)?;
+    let zero_thresholds = typed_column::<Float64Array>(batch, COL_NH_ZERO_THRESHOLD)?;
+    let zero_counts = typed_column::<Float64Array>(batch, COL_NH_ZERO_COUNT)?;
+    let counts = typed_column::<Float64Array>(batch, COL_NH_COUNT)?;
+    let sums = typed_column::<Float64Array>(batch, COL_NH_SUM)?;
+    let positive_spans = typed_column::<ListArray>(batch, COL_NH_POS_SPANS)?;
+    let positive_counts = typed_column::<ListArray>(batch, COL_NH_POS_COUNTS)?;
+    let negative_spans = typed_column::<ListArray>(batch, COL_NH_NEG_SPANS)?;
+    let negative_counts = typed_column::<ListArray>(batch, COL_NH_NEG_COUNTS)?;
+    let custom_values = typed_column::<ListArray>(batch, COL_NH_CUSTOM_VALUES)?;
+    let start_timestamps = typed_column::<Int64Array>(batch, COL_NH_START_TS)?;
+
+    decode_rows_with_identity(batch, fingerprints, timestamps, |identity, row| {
+        require_non_null(schemas, row, COL_NH_SCHEMA)?;
+        require_non_null(is_floats, row, COL_NH_IS_FLOAT)?;
+        require_non_null(reset_hints, row, COL_NH_RESET_HINT)?;
+        require_non_null(zero_thresholds, row, COL_NH_ZERO_THRESHOLD)?;
+        require_non_null(zero_counts, row, COL_NH_ZERO_COUNT)?;
+        require_non_null(counts, row, COL_NH_COUNT)?;
+        require_non_null(sums, row, COL_NH_SUM)?;
+
+        let positive_spans = read_spans(positive_spans, row, COL_NH_POS_SPANS)?;
+        let positive_counts = read_f64_list(positive_counts, row, COL_NH_POS_COUNTS)?;
+        let negative_spans = read_spans(negative_spans, row, COL_NH_NEG_SPANS)?;
+        let negative_counts = read_f64_list(negative_counts, row, COL_NH_NEG_COUNTS)?;
+
+        validate_span_count_consistency(&positive_spans, &positive_counts)?;
+        validate_span_count_consistency(&negative_spans, &negative_counts)?;
+
+        Ok(NativeHistogramRow {
+            fingerprint: identity.fingerprint,
+            timestamp_ms: identity.timestamp_ms,
+            hist: NativeHistogram {
+                schema: schemas.value(row),
+                is_float: is_floats.value(row),
+                reset_hint: ResetHint::from_i8(reset_hints.value(row)),
+                zero_threshold: zero_thresholds.value(row),
+                zero_count: zero_counts.value(row),
+                count: counts.value(row),
+                sum: sums.value(row),
+                positive_spans,
+                positive_counts,
+                negative_spans,
+                negative_counts,
+                custom_values: if custom_values.is_null(row) {
+                    None
+                } else {
+                    Some(read_f64_list(custom_values, row, COL_NH_CUSTOM_VALUES)?)
+                },
+                start_timestamp_ms: if start_timestamps.is_null(row) {
+                    None
+                } else {
+                    Some(start_timestamps.value(row))
+                },
+            },
+        })
+    })
+}
+
+/// A run of populated buckets.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BucketSpan {
+    pub offset: i32,
+    pub length: u32,
+}
+
+/// Errors raised by the native-histogram Arrow codec.
+#[derive(Debug, thiserror::Error)]
+pub enum HistogramCodecError {
+    #[error("span/count mismatch: spans claim {spans} buckets, got {counts} counts")]
+    SpanCountMismatch { spans: usize, counts: usize },
+
+    #[error("schema mismatch: {0}")]
+    SchemaMismatch(String),
+
+    #[error("arrow error: {0}")]
+    Arrow(#[from] arrow::error::ArrowError),
+}
+
+/// A native histogram sample with absolute bucket counts.
+#[derive(bon::Builder, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NativeHistogram {
+    #[builder(default)]
+    pub schema: i8,
+    #[builder(default)]
+    pub is_float: bool,
+    #[builder(default)]
+    pub reset_hint: ResetHint,
+    #[builder(default)]
+    pub zero_threshold: f64,
+    #[builder(default)]
+    pub zero_count: f64,
+    #[builder(default)]
+    pub count: f64,
+    #[builder(default)]
+    pub sum: f64,
+    #[builder(default)]
+    pub positive_spans: Vec<BucketSpan>,
+    #[builder(default)]
+    pub positive_counts: Vec<f64>,
+    #[builder(default)]
+    pub negative_spans: Vec<BucketSpan>,
+    #[builder(default)]
+    pub negative_counts: Vec<f64>,
+    pub custom_values: Option<Vec<f64>>,
+    pub start_timestamp_ms: Option<i64>,
+}
+
+impl NativeHistogram {
+    /// Sentinel schema for NHCB, a native histogram with custom buckets.
+    #[must_use]
+    pub fn is_nhcb(&self) -> bool {
+        self.schema == -53
+    }
+}
+
+/// Counter-reset semantics carried with each histogram sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResetHint {
+    #[default]
+    Unknown,
+    Yes,
+    No,
+    Gauge,
+}
+
+impl ResetHint {
+    #[must_use]
+    pub fn as_i8(self) -> i8 {
+        match self {
+            Self::Unknown => 0,
+            Self::Yes => 1,
+            Self::No => 2,
+            Self::Gauge => 3,
+        }
+    }
+
+    #[must_use]
+    pub fn from_i8(value: i8) -> Self {
+        match value {
+            1 => Self::Yes,
+            2 => Self::No,
+            3 => Self::Gauge,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+pub(crate) fn read_spans(
+    list: &ListArray,
+    row: usize,
+    column: &str,
+) -> Result<Vec<BucketSpan>, HistogramCodecError> {
+    require_non_null(list, row, column)?;
+    let value = list.value(row);
+    let struct_array = value
+        .as_any()
+        .downcast_ref::<StructArray>()
+        .ok_or_else(|| schema_mismatch(column))?;
+    if struct_array.num_columns() < 2 {
+        return Err(schema_mismatch(column));
+    }
+    let offsets = struct_array
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .ok_or_else(|| schema_mismatch(column))?;
+    let lengths = struct_array
+        .column(1)
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .ok_or_else(|| schema_mismatch(column))?;
+
+    (0..struct_array.len())
+        .map(|index| {
+            require_non_null(struct_array, index, column)?;
+            require_non_null(offsets, index, column)?;
+            require_non_null(lengths, index, column)?;
+            Ok(BucketSpan {
+                offset: offsets.value(index),
+                length: lengths.value(index),
+            })
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpannedHistogramCounts {
+    pub spans: Vec<BucketSpan>,
+    pub counts: Vec<f64>,
+}
+
+/// Run-length-encodes the non-zero buckets of a sparse `index -> count` map
+/// into native-histogram spans and their dense counts.
+///
+/// Zero counts are dropped, and a run breaks wherever bucket indexes stop
+/// being consecutive.
+#[must_use]
+pub fn compact_spanned_histogram_counts(buckets: BTreeMap<i32, f64>) -> SpannedHistogramCounts {
+    let buckets = buckets
+        .into_iter()
+        .filter(|entry| entry.1 != 0.0)
+        .collect::<Vec<_>>();
+    let mut spans = Vec::new();
+    let mut counts = Vec::with_capacity(buckets.len());
+    let mut span_start = None;
+    let mut previous_index = 0_i32;
+    let mut previous_span_end = 0_i32;
+    for bucket in buckets {
+        let index = bucket.0;
+        let count = bucket.1;
+        match span_start {
+            None => span_start = Some(index),
+            Some(start) if index != previous_index + 1 => {
+                spans.push(BucketSpan {
+                    offset: start - previous_span_end,
+                    length: u32::try_from(previous_index - start + 1).unwrap_or(u32::MAX),
+                });
+                previous_span_end = previous_index + 1;
+                span_start = Some(index);
+            }
+            Some(_) => {}
+        }
+        counts.push(count);
+        previous_index = index;
+    }
+    if let Some(start) = span_start {
+        spans.push(BucketSpan {
+            offset: start - previous_span_end,
+            length: u32::try_from(previous_index - start + 1).unwrap_or(u32::MAX),
+        });
+    }
+    SpannedHistogramCounts { spans, counts }
+}

@@ -114,17 +114,70 @@ mod tests {
         paths
     }
 }
-
-mod collect_samples;
-mod intern_string;
 mod pprof_builder;
 mod resolved_to_pprof_with_max_nodes;
-mod tree_to_pprof;
-mod tree_to_pprof_with_max_nodes;
-
-use collect_samples::collect_samples;
-use intern_string::intern_string;
 use pprof_builder::PprofBuilder;
 pub(crate) use resolved_to_pprof_with_max_nodes::resolved_to_pprof_with_max_nodes;
-pub use tree_to_pprof::tree_to_pprof;
-pub use tree_to_pprof_with_max_nodes::tree_to_pprof_with_max_nodes;
+
+pub(crate) fn collect_samples(
+    root: usize,
+    node_idx: usize,
+    nodes: &[crate::tree::TreeSnapshotNode],
+    path: &mut Vec<String>,
+    builder: &mut PprofBuilder,
+) {
+    if node_idx != root {
+        path.push(nodes[node_idx].name.clone());
+    }
+    if nodes[node_idx].self_ != 0 && !path.is_empty() {
+        builder.add_sample(path, nodes[node_idx].self_);
+    }
+    for child in &nodes[node_idx].children {
+        collect_samples(root, *child, nodes, path, builder);
+    }
+    if node_idx != root {
+        path.pop();
+    }
+}
+
+pub(crate) fn intern_string(
+    strings: &mut Vec<String>,
+    index: &mut HashMap<String, i64>,
+    value: &str,
+) -> i64 {
+    if let Some(slot) = index.get(value) {
+        return *slot;
+    }
+    let slot = i64::try_from(strings.len()).expect("string index fits i64");
+    strings.push(value.to_string());
+    index.insert(value.to_string(), slot);
+    slot
+}
+
+#[must_use]
+pub fn tree_to_pprof(tree: &Tree, profile_type: &ProfileType) -> PprofProfile {
+    let mut builder = PprofBuilder::new(profile_type);
+    let snapshot = tree.snapshot();
+    let mut path = Vec::new();
+    collect_samples(
+        snapshot.root,
+        snapshot.root,
+        &snapshot.nodes,
+        &mut path,
+        &mut builder,
+    );
+    builder.finish()
+}
+
+#[must_use]
+pub fn tree_to_pprof_with_max_nodes(
+    tree: &Tree,
+    profile_type: &ProfileType,
+    max_nodes: i64,
+) -> PprofProfile {
+    let mut builder = PprofBuilder::new(profile_type);
+    for sample in tree.sample_paths(max_nodes) {
+        builder.add_sample(&sample.frames, sample.self_value);
+    }
+    builder.finish()
+}

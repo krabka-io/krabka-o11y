@@ -526,25 +526,75 @@ mod attribute_label;
 mod decode_otlp;
 mod otlp_profile_to_pprof;
 mod otlp_sample_links;
-mod otlp_sample_timestamps;
-mod profile_labels;
 mod resolve_service_name;
 mod sample_labels;
-mod string_table;
-mod table_ref;
-mod table_ref_checked;
-mod value_type;
 
 use attribute_label::attribute_label;
 pub use decode_otlp::decode_otlp;
 use krabka_blockstore::encode_lower_hex;
 use otlp_profile_to_pprof::otlp_profile_to_pprof;
 use otlp_sample_links::otlp_sample_links;
-use otlp_sample_timestamps::otlp_sample_timestamps;
-use profile_labels::profile_labels;
 use resolve_service_name::resolve_service_name;
 use sample_labels::sample_labels;
-use string_table::string_table;
-use table_ref::table_ref;
-use table_ref_checked::table_ref_checked;
-use value_type::value_type;
+
+pub(crate) fn profile_labels(
+    profile: &pb::otlp_profiles::Profile,
+    dict: &pb::otlp_profiles::ProfilesDictionary,
+) -> Result<Vec<krabka_blockstore::LabelPair>, ProfilesError> {
+    profile
+        .attribute_indices
+        .iter()
+        .map(|idx| attribute_label(*idx, dict))
+        .collect()
+}
+
+pub(crate) fn string_table(dict: &pb::otlp_profiles::ProfilesDictionary) -> Vec<String> {
+    if dict.string_table.is_empty() {
+        vec![String::new()]
+    } else {
+        dict.string_table.clone()
+    }
+}
+
+pub(crate) fn table_ref(index: i32, len: usize) -> u64 {
+    table_ref_checked(index, len, "").unwrap_or(0)
+}
+
+pub(crate) fn value_type(value: pb::otlp_profiles::ValueType) -> krabka_pprof::proto::ValueType {
+    krabka_pprof::proto::ValueType {
+        r#type: i64::from(value.type_strindex),
+        unit: i64::from(value.unit_strindex),
+    }
+}
+
+pub(crate) fn otlp_sample_timestamps(
+    profile: &pb::otlp_profiles::Profile,
+) -> Result<Vec<Vec<i64>>, ProfilesError> {
+    profile
+        .samples
+        .iter()
+        .map(|sample| {
+            sample
+                .timestamps_unix_nano
+                .iter()
+                .map(|timestamp| {
+                    i64::try_from(*timestamp).map_err(|_| {
+                        ProfilesError::Invalid("OTLP sample timestamp overflows i64".to_string())
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+pub(crate) fn table_ref_checked(
+    index: i32,
+    len: usize,
+    message: &str,
+) -> Result<u64, ProfilesError> {
+    let idx = usize::try_from(index).map_err(|_| ProfilesError::Invalid(message.to_string()))?;
+    if idx >= len {
+        return Err(ProfilesError::Invalid(message.to_string()));
+    }
+    Ok(u64::try_from(idx + 1).unwrap_or(u64::MAX))
+}

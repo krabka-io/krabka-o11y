@@ -14,7 +14,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::arrow::array::AsArray;
-use krabka_units::{ByteSize, Time, convert::TimeExt as _, millis};
+use krabka_units::{ByteSize, Time, millis};
 
 use crate::{
     ast::{
@@ -42,6 +42,61 @@ use crate::{
         INSTRUMENTATION_ATTR_PREFIX, LINK_ATTR_PREFIX,
     },
     store::{ScanOptions, SpanMatcher, SpanStore},
+};
+
+mod options;
+pub use options::{EngineOpts, SearchOptions};
+
+mod regex_collection;
+use regex_collection::{collect_field_expr_regexes, collect_selection_regexes};
+
+mod response_builders;
+use response_builders::{
+    assemble_compare_response, assemble_metrics_response, assemble_search_response,
+};
+
+mod row_attributes;
+#[cfg(test)]
+use row_attributes::block_attr_values_for_key;
+pub use row_attributes::block_row_attrs_where;
+use row_attributes::{push_scoped_attr, row_attrs};
+
+mod array_utils;
+use array_utils::{fixed_8, fixed_16, optional_fixed_8, optional_list_column, span_start_column};
+
+mod attr_values;
+#[cfg(test)]
+use attr_values::row_attr_values;
+use attr_values::{
+    bool_attr_values, f64_attr_values, i64_attr_values, string_array_value, string_attr_values,
+};
+
+mod compare;
+use compare::{
+    CompareFieldClass, CompareRegexCache, CompareSpec, DisplayAttribute, SpanIdentity,
+    accumulate_compare_counts, build_compare_series, compare_field_class, compare_row_attr_values,
+    compare_span_identities, field_expr_matches_row, validate_compare_field_expr,
+    validate_compare_selection,
+};
+#[cfg(test)]
+use compare::{
+    CompareGroup, compare_attr_values_match, compare_field_present, compare_group_for_row,
+    compare_intrinsic_matches, compare_intrinsic_present, compare_value_match, enum_cmp,
+    spanset_matches_row, string_cmp,
+};
+pub(crate) use compare::{CompareRow, compare_row};
+
+mod metrics;
+use metrics::{
+    MetricExemplarPolicy, MetricPlan, MetricsRange, apply_metric_filter, metric_exemplar,
+    metric_field_column, metric_filter, metric_label_key, metric_labels, metric_log2_bucket_value,
+    metric_nested_projection_matchers, metric_numeric_value, metric_plan, metric_series_for_group,
+    rank_limit,
+};
+#[cfg(test)]
+use metrics::{
+    MetricFilter, count_over_time_plan, metric_filter_passes, metric_pipeline_parts,
+    usize_from_integer_f64,
 };
 
 #[cfg(test)]
@@ -6175,242 +6230,197 @@ mod tests {
     }
 }
 
-mod accumulate_compare_counts;
-mod apply_metric_filter;
 mod apply_rank;
-mod assemble_compare_response;
-mod assemble_metrics_response;
-mod assemble_search_response;
-mod attr_value_display;
-mod block_attr_keys;
-mod block_attr_value;
-mod block_attr_value_bool;
-mod block_attr_value_double;
-mod block_attr_value_int;
-mod block_attr_values_for_key;
-mod block_row_attrs;
-mod block_row_attrs_where;
-mod block_row_scoped_attrs;
-mod bool_attr_values;
-mod bool_cmp;
-mod build_compare_series;
-mod bytes_to_hex;
-mod collect_field_expr_regexes;
-mod collect_planned_batches;
-mod collect_selection_regexes;
-mod compare_attr_values_match;
-mod compare_by_attr;
-mod compare_comparison_matches;
-mod compare_counts;
-mod compare_field_class;
-mod compare_field_present;
-mod compare_group;
-mod compare_group_for_row;
-mod compare_intrinsic_matches;
-mod compare_intrinsic_present;
-mod compare_points;
-mod compare_regex_cache;
-mod compare_row;
-mod compare_row_attr_values;
-mod compare_row_in_selection_window;
-mod compare_span_identities;
-mod compare_spec;
-mod compare_total_series;
-mod compare_totals;
-mod compare_value_match;
-mod compare_value_series;
-mod count_over_time_plan;
-mod deduplicate_search_spans;
-mod engine_opts;
-mod enum_cmp;
-mod extend_metric_projection_matchers;
-mod f64_attr_values;
-mod f64_from_i64;
-mod f64_from_u64;
-mod f64_from_usize;
-mod field_expr_matches_row;
-mod fixed_16;
-mod fixed_8;
-mod fixed_bytes;
 mod float_cmp;
-mod hinted_max_exemplars;
-mod histogram_points;
-mod histogram_series_for_group;
-mod i32_value;
-mod i64_attr_values;
-mod i64_value;
-mod is_inert_metric_stage;
-mod kind_enum_name;
-mod meta_type_key;
-mod metric_bucket;
-mod metric_exemplar;
-mod metric_exemplars;
-mod metric_field_column;
-mod metric_field_number;
-mod metric_filter;
-mod metric_filter_passes;
-mod metric_function;
-mod metric_label_key;
-mod metric_label_value;
-mod metric_labels;
-mod metric_nested_projection_matchers;
-mod metric_numeric_value;
-mod metric_pipeline_parts;
-mod metric_plan;
-mod metric_plan_for;
-mod metric_plan_with_compare;
-mod metric_series_for_group;
-mod metric_timing;
-mod metrics_range;
-mod num_cmp;
-mod optional_fixed_8;
-mod optional_list_column;
-mod push_scoped_attr;
-mod quantile_label;
-mod rank_limit;
-mod resource_attr_prefix;
-mod row_attr_values;
-mod row_attrs;
+use float_cmp::cmp_ordering;
 mod sample_exemplar_rows;
-mod search_options;
-mod span_start_column;
-mod spanset_matches_row;
-mod status_enum_name;
-mod string_array_value;
-mod string_attr_values;
-mod string_cmp;
-mod string_value;
-mod trace_acc;
 mod traceql_engine;
-mod u64_from_i64;
-mod unsupported_metric_pipeline;
-mod usize_from_integer_f64;
-mod validate_compare_field_expr;
-mod validate_compare_selection;
 
-use accumulate_compare_counts::accumulate_compare_counts;
-use apply_metric_filter::apply_metric_filter;
 use apply_rank::apply_rank;
-use assemble_compare_response::assemble_compare_response;
-use assemble_metrics_response::assemble_metrics_response;
-pub(crate) use assemble_search_response::assemble_search_response;
-use attr_value_display::attr_value_display;
-use block_attr_keys::BLOCK_ATTR_KEYS;
-use block_attr_value::BLOCK_ATTR_VALUE;
-use block_attr_value_bool::BLOCK_ATTR_VALUE_BOOL;
-use block_attr_value_double::BLOCK_ATTR_VALUE_DOUBLE;
-use block_attr_value_int::BLOCK_ATTR_VALUE_INT;
-use block_attr_values_for_key::block_attr_values_for_key;
-use block_row_attrs::block_row_attrs;
-pub use block_row_attrs_where::block_row_attrs_where;
-use block_row_scoped_attrs::block_row_scoped_attrs;
-use bool_attr_values::bool_attr_values;
-use bool_cmp::bool_cmp;
-use build_compare_series::build_compare_series;
-pub use bytes_to_hex::bytes_to_hex;
-use collect_field_expr_regexes::collect_field_expr_regexes;
-use collect_planned_batches::collect_planned_batches;
-use collect_selection_regexes::collect_selection_regexes;
-use compare_attr_values_match::compare_attr_values_match;
-use compare_by_attr::CompareByAttr;
-use compare_comparison_matches::compare_comparison_matches;
-use compare_counts::{CompareAttributeKey, CompareCountKey, CompareCounts};
-use compare_field_class::{CompareFieldClass, compare_field_class};
-use compare_field_present::compare_field_present;
-use compare_group::CompareGroup;
-use compare_group_for_row::compare_group_for_row;
-use compare_intrinsic_matches::compare_intrinsic_matches;
-use compare_intrinsic_present::compare_intrinsic_present;
-use compare_points::compare_points;
-use compare_regex_cache::CompareRegexCache;
-pub(crate) use compare_row::{CompareRow, DisplayAttribute, compare_row};
-use compare_row_attr_values::compare_row_attr_values;
-use compare_row_in_selection_window::compare_row_in_selection_window;
-use compare_span_identities::{SpanIdentity, compare_span_identities};
-use compare_spec::CompareSpec;
-use compare_total_series::compare_total_series;
-use compare_totals::CompareTotals;
-use compare_value_match::compare_value_match;
-use compare_value_series::compare_value_series;
-use count_over_time_plan::count_over_time_plan;
-use deduplicate_search_spans::deduplicate_search_spans;
-pub use engine_opts::EngineOpts;
-use enum_cmp::enum_cmp;
-use extend_metric_projection_matchers::extend_metric_projection_matchers;
-use f64_attr_values::f64_attr_values;
-use f64_from_i64::f64_from_i64;
-use f64_from_u64::f64_from_u64;
-use f64_from_usize::f64_from_usize;
-use field_expr_matches_row::field_expr_matches_row;
-use fixed_8::fixed_8;
-use fixed_16::fixed_16;
+pub use array_utils::bytes_to_hex;
 use float_cmp::float_cmp;
-use hinted_max_exemplars::hinted_max_exemplars;
-use histogram_points::histogram_points;
-use histogram_series_for_group::histogram_series_for_group;
-use i32_value::i32_value;
-use i64_attr_values::i64_attr_values;
-use i64_value::i64_value;
-use is_inert_metric_stage::is_inert_metric_stage;
-pub(crate) use kind_enum_name::kind_enum_name;
-use meta_type_key::META_TYPE_KEY;
-use metric_bucket::MetricBucket;
-use metric_exemplar::metric_exemplar;
-use metric_exemplars::metric_exemplars;
-use metric_field_column::metric_field_column;
-use metric_field_number::{MetricFieldNumber, metric_field_number};
-use metric_filter::{MetricFilter, metric_filter};
-use metric_filter_passes::metric_filter_passes;
-use metric_function::MetricFunction;
-use metric_label_key::metric_label_key;
-use metric_label_value::metric_label_value;
-use metric_labels::{MetricLabels, metric_labels};
-use metric_nested_projection_matchers::metric_nested_projection_matchers;
-use metric_numeric_value::metric_numeric_value;
-use metric_pipeline_parts::metric_pipeline_parts;
-use metric_plan::{MetricPlan, metric_plan};
-use metric_plan_for::metric_plan_for;
-use metric_plan_with_compare::metric_plan_with_compare;
-use metric_series_for_group::metric_series_for_group;
-use metric_timing::{ExemplarRange, MetricExemplarPolicy, MetricGrid};
-use metrics_range::MetricsRange;
-use num_cmp::num_cmp;
-use optional_fixed_8::optional_fixed_8;
-use optional_list_column::optional_list_column;
-use push_scoped_attr::push_scoped_attr;
-use quantile_label::quantile_label;
-use rank_limit::rank_limit;
-use resource_attr_prefix::RESOURCE_ATTR_PREFIX;
-use row_attr_values::row_attr_values;
-use row_attrs::row_attrs;
 use sample_exemplar_rows::sample_exemplar_rows;
-pub use search_options::SearchOptions;
-use span_start_column::span_start_column;
-use spanset_matches_row::spanset_matches_row;
-pub(crate) use status_enum_name::status_enum_name;
-use string_array_value::string_array_value;
-use string_attr_values::string_attr_values;
-use string_cmp::string_cmp;
-use string_value::string_value;
-use trace_acc::TraceAcc;
 pub use traceql_engine::TraceqlEngine;
-use u64_from_i64::u64_from_i64;
-use unsupported_metric_pipeline::unsupported_metric_pipeline;
-use usize_from_integer_f64::usize_from_integer_f64;
-use validate_compare_field_expr::validate_compare_field_expr;
-use validate_compare_selection::validate_compare_selection;
 
 use crate::span_enum_codes::{kind_enum_value, status_enum_value};
 
 mod field_comparison;
 pub(crate) use field_comparison::field_comparison_column_values;
-
-mod metric_log2_bucket_value;
-use metric_log2_bucket_value::metric_log2_bucket_value;
-
-mod metric_duration_label;
-pub(crate) use metric_duration_label::metric_duration_label;
+pub(crate) use metrics::metric_duration_label;
 
 mod scalar_expression_value;
 pub(crate) use field_comparison::{field_values, scalar_matches};
 pub(crate) use scalar_expression_value::{evaluate_typed_predicate, scalar_expression_value};
+
+pub(crate) const BLOCK_ATTR_KEYS: &str = "attr_keys";
+
+pub(crate) const BLOCK_ATTR_VALUE: &str = "attr_value";
+
+pub(crate) const BLOCK_ATTR_VALUE_BOOL: &str = "attr_value_bool";
+
+pub(crate) const BLOCK_ATTR_VALUE_DOUBLE: &str = "attr_value_double";
+
+pub(crate) const BLOCK_ATTR_VALUE_INT: &str = "attr_value_int";
+
+pub(crate) const RESOURCE_ATTR_PREFIX: &str = "__resource.";
+
+pub(crate) fn block_row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<Attribute>> {
+    block_row_attrs_where(batch, row, |key| !key.starts_with(RESOURCE_ATTR_PREFIX))
+}
+
+/// Like `block_row_attrs`, but keeps the `__resource.`-prefixed keys.
+///
+/// The caller can then split the span scope from the resource scope. The
+/// search path drops the resource attributes.
+pub(crate) fn block_row_scoped_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<Attribute>> {
+    block_row_attrs_where(batch, row, |_| true)
+}
+
+pub(crate) fn bool_cmp(value: bool, op: ComparisonOp, rhs: bool) -> bool {
+    match op {
+        ComparisonOp::Eq => value == rhs,
+        ComparisonOp::Neq => value != rhs,
+        _ => false,
+    }
+}
+
+pub(crate) async fn collect_planned_batches(
+    planned: crate::planner::PlannedSpanset,
+) -> Result<Vec<RecordBatch>> {
+    Ok(planned
+        .ctx
+        .execute_logical_plan(planned.plan)
+        .await?
+        .collect()
+        .await?)
+}
+
+/// Tells whether the row start time is inside the compare selection window.
+///
+/// The selection sub-window is optional. With no window, every span that
+/// matched the outer spanset is eligible for the selection group.
+pub(crate) fn compare_row_in_selection_window(row: &CompareRow, compare: &CompareSpec) -> bool {
+    compare.start.is_none_or(|start| row.ts >= start) && compare.end.is_none_or(|end| row.ts <= end)
+}
+
+pub(crate) fn deduplicate_search_spans(spans: &mut Vec<SpanRef>) {
+    spans.sort_by_key(|span| span.span_id);
+    spans.dedup_by_key(|span| span.span_id);
+    spans.sort_by(|left, right| {
+        left.start_time_unix_nano
+            .cmp(&right.start_time_unix_nano)
+            .then_with(|| left.span_id.cmp(&right.span_id))
+    });
+}
+
+pub(crate) fn extend_metric_projection_matchers(options: &mut ScanOptions, metric: &MetricPlan) {
+    for matcher in metric_nested_projection_matchers(metric) {
+        if !options.projection_matchers.contains(&matcher) {
+            options.projection_matchers.push(matcher);
+        }
+    }
+}
+
+/// Converts an `i64` to the nearest representable `f64`.
+pub(crate) fn f64_from_i64(value: i64) -> f64 {
+    value
+        .to_string()
+        .parse()
+        .expect("every i64 has a finite f64 representation")
+}
+
+pub(crate) fn f64_from_u64(value: u64) -> Result<f64> {
+    value
+        .to_string()
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| TraceqlError::Exec(e.to_string()))
+}
+
+pub(crate) fn f64_from_usize(value: usize) -> Result<f64> {
+    value
+        .to_string()
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| TraceqlError::Exec(e.to_string()))
+}
+
+pub(crate) fn hinted_max_exemplars(default: usize, hint: Option<bool>) -> usize {
+    match hint {
+        Some(false) => 0,
+        Some(true) | None => default,
+    }
+}
+
+pub(crate) fn i32_value(batch: &RecordBatch, col: &str, row: usize) -> Result<i32> {
+    Ok(batch
+        .column_by_name(col)
+        .ok_or_else(|| TraceqlError::Exec(format!("missing column {col}")))?
+        .as_primitive::<arrow::datatypes::Int32Type>()
+        .value(row))
+}
+
+pub(crate) fn i64_value(batch: &RecordBatch, col: &str, row: usize) -> Result<i64> {
+    Ok(batch
+        .column_by_name(col)
+        .ok_or_else(|| TraceqlError::Exec(format!("missing column {col}")))?
+        .as_primitive::<arrow::datatypes::Int64Type>()
+        .value(row))
+}
+
+pub(crate) fn is_inert_metric_stage(stage: &Pipeline) -> bool {
+    matches!(
+        stage,
+        Pipeline::Select(_) | Pipeline::Coalesce | Pipeline::With(_)
+    )
+}
+
+pub(crate) fn kind_enum_name(code: i32) -> &'static str {
+    match code {
+        1 => "internal",
+        2 => "server",
+        3 => "client",
+        4 => "producer",
+        5 => "consumer",
+        _ => "unspecified",
+    }
+}
+
+pub(crate) fn num_cmp(value: i64, op: ComparisonOp, rhs: i64) -> bool {
+    cmp_ordering(Some(value.cmp(&rhs)), op)
+}
+
+pub(crate) fn quantile_label(quantile: f64) -> String {
+    let mut label = quantile.to_string();
+    if label.contains('.') {
+        while label.ends_with('0') {
+            label.pop();
+        }
+        if label.ends_with('.') {
+            label.push('0');
+        }
+    }
+    label
+}
+
+pub(crate) fn status_enum_name(code: i32) -> &'static str {
+    match code {
+        1 => "ok",
+        2 => "error",
+        _ => "unset",
+    }
+}
+
+pub(crate) fn string_value(batch: &RecordBatch, col: &str, row: usize) -> Option<String> {
+    let arr = batch.column_by_name(col)?;
+    if arr.is_null(row) {
+        return None;
+    }
+    string_array_value(arr.as_ref(), row)
+}
+
+pub(crate) fn u64_from_i64(v: i64) -> Result<u64> {
+    u64::try_from(v).map_err(|e| TraceqlError::Exec(e.to_string()))
+}
+
+pub(crate) fn unsupported_metric_pipeline() -> TraceqlError {
+    TraceqlError::Unsupported("traceql metrics: expected supported *_over_time() metric".into())
+}

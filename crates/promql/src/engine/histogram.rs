@@ -459,98 +459,50 @@ mod tests {
     }
 }
 
-mod add_bucket_maps;
 mod add_compatible_native_histogram;
 mod add_custom_histogram;
 mod add_exponential_histogram;
 mod almost_equal;
-mod append_native_spanned_buckets;
 mod apply_histogram_accessor;
-mod apply_histogram_fraction;
-mod apply_histogram_quantile;
-mod apply_histogram_quantiles;
 mod apply_histogram_reduction;
-mod bucket_overlap_fraction;
-mod classic_bucket;
-mod classic_bucket_bound;
-mod classic_bucket_groups;
-mod classic_histogram_buckets;
-mod classic_histogram_fraction;
-mod classic_histogram_quantile;
-mod combined_reset_hint;
-mod custom_histogram_bound;
+mod bucket_helpers;
 mod detect_reset_bucket_counts;
-mod divide_native_histogram_values;
-mod fraction_bounds;
-mod histogram_accessor;
-mod histogram_accessor_from_function_name;
+mod fractions;
 mod histogram_accumulator;
-mod native_histogram_all_buckets;
-mod native_histogram_bucket_mean;
-mod native_histogram_bucket_quantile;
-mod native_histogram_buckets;
 mod native_histogram_detect_reset;
-mod native_histogram_fraction;
-mod native_histogram_quantile;
 mod native_histogram_stdvar;
-mod native_histograms_are_range_compatible;
-mod native_quantile_bucket;
-mod normalized_classic_histogram_buckets;
-pub(super) use normalized_classic_histogram_buckets::NormalizedClassicBuckets;
-mod parse_classic_bucket_bound;
+mod quantiles;
 mod reconcile_native_histogram_layouts;
-mod reduced_counts_outside_zero;
-mod remap_custom_counts;
-mod scale_native_histogram_values;
-mod scaled_native_histogram;
-mod spanned_histogram_counts;
-mod standard_histogram_bound;
 mod template_histogram;
 mod trim_native_histogram;
-pub(crate) use template_histogram::template_histogram_value;
-mod zero_bucket_bounds;
-mod zero_count_at_threshold;
-
-use add_bucket_maps::add_bucket_maps;
 pub(crate) use add_compatible_native_histogram::add_compatible_native_histogram;
 use add_custom_histogram::add_custom_histogram;
 use add_exponential_histogram::add_exponential_histogram;
 use almost_equal::almost_equal;
-use append_native_spanned_buckets::append_native_spanned_buckets;
 pub(super) use apply_histogram_accessor::apply_histogram_accessor;
-pub(super) use apply_histogram_fraction::apply_histogram_fraction;
-pub(super) use apply_histogram_quantile::apply_histogram_quantile;
-#[cfg(feature = "experimental-functions")]
-pub(super) use apply_histogram_quantiles::apply_histogram_quantiles;
-use apply_histogram_reduction::{HistogramReducers, apply_histogram_reduction};
-use bucket_overlap_fraction::bucket_overlap_fraction;
-use classic_bucket::ClassicBucket;
-use classic_bucket_bound::classic_bucket_bound;
-use classic_bucket_groups::{
-    ClassicBucketGroups, find_mixed_histogram_keys, group_classic_bucket_sample,
+pub(super) use apply_histogram_reduction::{HistogramReducers, apply_histogram_reduction};
+pub(super) use bucket_helpers::{
+    NormalizedClassicBuckets, ZeroCountAtThreshold, find_mixed_histogram_keys,
+    group_classic_bucket_sample, normalized_classic_histogram_buckets, zero_count_at_threshold,
 };
-use classic_histogram_buckets::classic_histogram_buckets;
-use classic_histogram_fraction::classic_histogram_fraction;
-use classic_histogram_quantile::classic_histogram_quantile;
-use combined_reset_hint::combined_reset_hint;
-use custom_histogram_bound::custom_histogram_bound;
+use bucket_helpers::{add_bucket_maps, append_native_spanned_buckets, native_histogram_buckets};
+pub(crate) use bucket_helpers::{
+    for_each_spanned_histogram_count, spanned_histogram_counts, standard_histogram_bound,
+};
 use detect_reset_bucket_counts::detect_reset_bucket_counts;
-pub(super) use divide_native_histogram_values::divide_native_histogram_values;
-pub(super) use fraction_bounds::FractionBounds;
-pub(super) use histogram_accessor::HistogramAccessor;
-pub(super) use histogram_accessor_from_function_name::histogram_accessor_from_function_name;
+pub(super) use fractions::apply_histogram_fraction;
+#[cfg(test)]
+use fractions::{classic_histogram_fraction, native_histogram_fraction};
 pub(super) use histogram_accumulator::HistogramAccumulator;
 pub(crate) use krabka_metrics::compact_spanned_histogram_counts;
-use native_histogram_all_buckets::native_histogram_all_buckets;
-use native_histogram_bucket_mean::native_histogram_bucket_mean;
-use native_histogram_bucket_quantile::native_histogram_bucket_quantile;
-use native_histogram_buckets::native_histogram_buckets;
 pub(super) use native_histogram_detect_reset::native_histogram_detect_reset;
-use native_histogram_fraction::native_histogram_fraction;
-use native_histogram_quantile::native_histogram_quantile;
 use native_histogram_stdvar::native_histogram_stdvar;
-pub(super) use native_histograms_are_range_compatible::native_histograms_are_range_compatible;
-use native_quantile_bucket::NativeQuantileBucket;
+pub(super) use quantiles::apply_histogram_quantile;
+#[cfg(feature = "experimental-functions")]
+pub(super) use quantiles::apply_histogram_quantiles;
+#[cfg(test)]
+use quantiles::{classic_histogram_quantile, format_quantile_label, native_histogram_quantile};
+pub(crate) use template_histogram::template_histogram_value;
 
 fn observed_histogram_count(
     walked_count: f64,
@@ -564,22 +516,333 @@ fn observed_histogram_count(
             .map(|bucket| bucket.count)
             .sum::<f64>()
 }
-use normalized_classic_histogram_buckets::normalized_classic_histogram_buckets;
-use parse_classic_bucket_bound::parse_classic_bucket_bound;
 pub(super) use reconcile_native_histogram_layouts::reconcile_native_histogram_layouts;
-use reduced_counts_outside_zero::reduced_counts_outside_zero;
-use remap_custom_counts::remap_custom_counts;
-pub(super) use scale_native_histogram_values::scale_native_histogram_values;
-pub(super) use scaled_native_histogram::scaled_native_histogram;
-pub(crate) use spanned_histogram_counts::{
-    for_each_spanned_histogram_count, spanned_histogram_counts,
-};
-pub(crate) use standard_histogram_bound::standard_histogram_bound;
 pub(super) use trim_native_histogram::trim_native_histogram;
-use zero_bucket_bounds::zero_bucket_bounds;
-use zero_count_at_threshold::{ZeroCountAtThreshold, zero_count_at_threshold};
 
-#[cfg(feature = "experimental-functions")]
-mod format_quantile_label;
-#[cfg(feature = "experimental-functions")]
-use format_quantile_label::format_quantile_label;
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClassicBucket {
+    pub(crate) upper_bound: f64,
+    pub(crate) count: f64,
+}
+
+/// The observation-value bounds of `histogram_fraction(lower, upper, v)`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FractionBounds {
+    pub(crate) lower: f64,
+    pub(crate) upper: f64,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct NativeQuantileBucket {
+    pub(crate) lower: f64,
+    pub(crate) upper: f64,
+    pub(crate) count: f64,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum HistogramAccessor {
+    Count,
+    Sum,
+    Avg,
+    Stddev,
+    Stdvar,
+}
+
+impl HistogramAccessor {
+    pub(crate) fn value(self, hist: &NativeHistogram) -> f64 {
+        match self {
+            Self::Count => hist.count,
+            Self::Sum => hist.sum,
+            Self::Avg => hist.sum / hist.count,
+            Self::Stddev => native_histogram_stdvar(hist).sqrt(),
+            Self::Stdvar => native_histogram_stdvar(hist),
+        }
+    }
+}
+
+pub(crate) fn combined_reset_hint(left: ResetHint, right: ResetHint) -> ResetHint {
+    if left == right {
+        left
+    } else if left == ResetHint::Gauge || right == ResetHint::Gauge {
+        ResetHint::Gauge
+    } else {
+        ResetHint::Unknown
+    }
+}
+
+pub(crate) fn custom_histogram_bound(index: i32, custom_values: &[f64]) -> f64 {
+    match index {
+        -1 if custom_values.first().is_some_and(|value| *value > 0.0) => 0.0,
+        -1 => f64::NEG_INFINITY,
+        _ => usize::try_from(index)
+            .ok()
+            .and_then(|index| custom_values.get(index).copied())
+            .unwrap_or(f64::INFINITY),
+    }
+}
+
+pub(crate) fn scaled_native_histogram(histogram: &NativeHistogram, factor: f64) -> NativeHistogram {
+    let mut out = histogram.clone();
+    scale_native_histogram_values(&mut out, factor);
+    if factor.is_sign_negative() {
+        out.reset_hint = ResetHint::Gauge;
+    }
+    out
+}
+
+pub(crate) fn bucket_overlap_fraction(bucket: NativeQuantileBucket, lower: f64, upper: f64) -> f64 {
+    let overlap_lower = bucket.lower.max(lower);
+    let overlap_upper = bucket.upper.min(upper);
+    // `>=` against `>` is a permanent mutation survivor: the two differ only on
+    // a zero-width overlap, and there the fall-through divides that zero width
+    // by the bucket's own and returns the same 0.0.
+    if overlap_lower >= overlap_upper {
+        return 0.0;
+    }
+    if bucket.lower.is_infinite() || bucket.upper.is_infinite() {
+        // An open-ended bucket counts in full, or not at all: a finite query
+        // bound never reaches into one, however far out it goes.
+        //
+        // Only two open bounds get this far. A `+Inf` lower or a `-Inf` upper
+        // leaves the overlap empty against any range -- `max(+Inf, lower)` is
+        // never below `upper`, and `min(-Inf, upper)` is never above `lower` --
+        // so the test above has already returned for them.
+        if bucket.lower.is_infinite() {
+            return f64::from(lower.is_infinite() && lower.is_sign_negative());
+        }
+        return f64::from(upper.is_infinite() && upper.is_sign_positive());
+    }
+    (overlap_upper - overlap_lower) / (bucket.upper - bucket.lower)
+}
+
+/// Reads the `le` bound of one classic bucket series.
+///
+/// A series with no `le`, or with an `le` that is not a float, is not a bucket
+/// at all. `resetHistograms` warns and drops it rather than failing the query,
+/// because one malformed series should not take the rest of the vector with it.
+pub(crate) fn classic_bucket_bound(labels: &Labels) -> Option<f64> {
+    let label = labels.get("le").unwrap_or("");
+    let Ok(bound) = parse_classic_bucket_bound(label) else {
+        emit_warning(bad_bucket_label_warning(
+            label,
+            labels.get("__name__").unwrap_or(""),
+        ));
+        return None;
+    };
+    Some(bound)
+}
+
+pub(crate) fn classic_histogram_buckets(buckets: &[ClassicBucket]) -> Vec<NativeQuantileBucket> {
+    let mut out = Vec::with_capacity(buckets.len());
+    let mut lower = if buckets
+        .first()
+        .is_some_and(|bucket| bucket.upper_bound <= 0.0)
+    {
+        f64::NEG_INFINITY
+    } else {
+        0.0
+    };
+    let mut previous_count = 0.0;
+    for bucket in buckets {
+        let count = bucket.count - previous_count;
+        previous_count = bucket.count;
+        out.push(NativeQuantileBucket {
+            lower,
+            upper: bucket.upper_bound,
+            count,
+        });
+        lower = bucket.upper_bound;
+    }
+    out
+}
+
+pub(crate) fn divide_native_histogram_values(histogram: &mut NativeHistogram, divisor: f64) {
+    histogram.count /= divisor;
+    histogram.sum /= divisor;
+    histogram.zero_count /= divisor;
+    for count in histogram
+        .positive_counts
+        .iter_mut()
+        .chain(&mut histogram.negative_counts)
+    {
+        *count /= divisor;
+    }
+}
+
+/// Maps a native-histogram accessor function name to its [`HistogramAccessor`] variant.
+///
+/// This function mirrors the accessor arms of `PromqlEngine::eval_instant_call`.
+/// It returns `None` for any other function, so the planner dispatch falls
+/// through.
+pub(crate) fn histogram_accessor_from_function_name(name: &str) -> Option<HistogramAccessor> {
+    Some(match name {
+        "histogram_count" => HistogramAccessor::Count,
+        "histogram_sum" => HistogramAccessor::Sum,
+        "histogram_avg" => HistogramAccessor::Avg,
+        "histogram_stddev" => HistogramAccessor::Stddev,
+        "histogram_stdvar" => HistogramAccessor::Stdvar,
+        _ => return None,
+    })
+}
+
+/// Every populated bucket of `hist`, in ascending order of value.
+///
+/// This is `FloatHistogram.AllBucketIterator`: the negative buckets from the
+/// most negative upwards, then the zero bucket where it holds anything, then
+/// the positive buckets. Both `histogram_quantile` and `histogram_fraction`
+/// walk the buckets in that order and accumulate a rank as they go, so the
+/// order is part of the answer.
+pub(crate) fn native_histogram_all_buckets(hist: &NativeHistogram) -> Vec<NativeQuantileBucket> {
+    let mut buckets = native_histogram_buckets(hist);
+    buckets.sort_by(|left, right| left.lower.total_cmp(&right.lower));
+    buckets
+}
+
+/// The value that `histogram_stdvar` gives to the observations of `bucket`.
+///
+/// A custom bucket and the zero bucket take the arithmetic midpoint, so an
+/// open custom bucket takes an infinite value. An exponential bucket takes the
+/// geometric midpoint, negated below zero.
+pub(crate) fn native_histogram_bucket_mean(
+    hist: &NativeHistogram,
+    bucket: NativeQuantileBucket,
+) -> f64 {
+    if hist.is_nhcb() || (bucket.lower <= 0.0 && bucket.upper >= 0.0) {
+        return f64::midpoint(bucket.lower, bucket.upper);
+    }
+    if bucket.upper <= 0.0 {
+        return -(bucket.lower * bucket.upper).sqrt();
+    }
+    (bucket.lower * bucket.upper).sqrt()
+}
+
+/// Interpolates `fraction` of the way through one bucket.
+///
+/// Custom buckets and the zero bucket interpolate LINEARLY, matching the
+/// classic-histogram convention. An exponential bucket interpolates on a
+/// logarithmic scale, where every bucket of a schema has the same width, so the
+/// same fraction applies to the logarithms of the bounds and the result comes
+/// back through `exp2`. A negative bucket mirrors that.
+pub(crate) fn native_histogram_bucket_quantile(
+    hist: &NativeHistogram,
+    bucket: NativeQuantileBucket,
+    fraction: f64,
+) -> f64 {
+    if hist.is_nhcb() || (bucket.lower <= 0.0 && bucket.upper >= 0.0) {
+        return bucket.lower + (bucket.upper - bucket.lower) * fraction;
+    }
+    let log_lower = bucket.lower.abs().log2();
+    let log_upper = bucket.upper.abs().log2();
+    if bucket.lower > 0.0 {
+        return (log_lower + (log_upper - log_lower) * fraction).exp2();
+    }
+    -(log_upper + (log_lower - log_upper) * (1.0 - fraction)).exp2()
+}
+
+pub(crate) fn native_histograms_are_range_compatible(
+    left: &NativeHistogram,
+    right: &NativeHistogram,
+) -> bool {
+    left.schema == right.schema
+        && left.is_float == right.is_float
+        && left.zero_threshold.to_bits() == right.zero_threshold.to_bits()
+        && left.custom_values == right.custom_values
+        && left.positive_spans == right.positive_spans
+        && left.negative_spans == right.negative_spans
+        && left.positive_counts.len() == right.positive_counts.len()
+        && left.negative_counts.len() == right.negative_counts.len()
+}
+
+pub(crate) fn parse_classic_bucket_bound(value: &str) -> Result<f64> {
+    // Both infinity arms are permanent mutation survivors, and both are
+    // redundant: Rust's own float parser accepts "+Inf", "-Inf" and "Inf", so
+    // deleting either falls through to the same value. They stay because the
+    // `le` spellings are Prometheus wire format, and leaning on the standard
+    // library happening to accept them is not something to discover later.
+    match value {
+        "+Inf" | "Inf" => Ok(f64::INFINITY),
+        "-Inf" => Ok(f64::NEG_INFINITY),
+        _ => value.parse::<f64>().map_err(|error| {
+            PromqlError::Plan(format!(
+                "invalid classic histogram bucket `{value}`: {error}"
+            ))
+        }),
+    }
+}
+
+pub(crate) fn reduced_counts_outside_zero(
+    histogram: &NativeHistogram,
+    spans: &[BucketSpan],
+    counts: &[f64],
+    zero_threshold: f64,
+    target_schema: i8,
+) -> BTreeMap<i32, f64> {
+    let schema_delta =
+        u32::try_from(i16::from(histogram.schema) - i16::from(target_schema)).unwrap_or_default();
+    let divisor = 1_i32.checked_shl(schema_delta).unwrap_or(i32::MAX);
+    let mut out = BTreeMap::new();
+    for entry in spanned_histogram_counts(spans, counts) {
+        let index = entry.0;
+        let count = entry.1;
+        if standard_histogram_bound(index - 1, histogram.schema) < zero_threshold {
+            continue;
+        }
+        let quotient = index.div_euclid(divisor);
+        let target_index = quotient + i32::from(index.rem_euclid(divisor) != 0);
+        *out.entry(target_index).or_insert(0.0) += count;
+    }
+    out
+}
+
+pub(crate) fn remap_custom_counts(
+    spans: &[BucketSpan],
+    counts: &[f64],
+    source_values: &[f64],
+    target_values: &[f64],
+) -> BTreeMap<i32, f64> {
+    let mut out = BTreeMap::new();
+    for entry in spanned_histogram_counts(spans, counts) {
+        let index = entry.0;
+        let count = entry.1;
+        let upper = custom_histogram_bound(index, source_values);
+        let target_index = target_values
+            .iter()
+            .position(|bound| bound.total_cmp(&upper).is_ge())
+            .unwrap_or(target_values.len());
+        let target_index = i32::try_from(target_index).unwrap_or(i32::MAX);
+        *out.entry(target_index).or_insert(0.0) += count;
+    }
+    out
+}
+
+pub(crate) fn scale_native_histogram_values(histogram: &mut NativeHistogram, factor: f64) {
+    histogram.zero_count *= factor;
+    histogram.count *= factor;
+    histogram.sum *= factor;
+    for count in &mut histogram.positive_counts {
+        *count *= factor;
+    }
+    for count in &mut histogram.negative_counts {
+        *count *= factor;
+    }
+}
+
+/// Narrows the zero bucket's bounds to the side the histogram actually observed.
+///
+/// Prometheus reads a zero bucket in a histogram that has only positive buckets
+/// as starting at zero, and one in a histogram that has only negative buckets as
+/// ending at zero, so that an interpolation inside it does not reach across a
+/// side where nothing was observed. A histogram with buckets on both sides, or
+/// on neither, keeps the threshold on both sides.
+pub(crate) fn zero_bucket_bounds(
+    hist: &NativeHistogram,
+    bucket: NativeQuantileBucket,
+) -> NativeQuantileBucket {
+    let mut bucket = bucket;
+    if hist.negative_counts.is_empty() && !hist.positive_counts.is_empty() {
+        bucket.lower = 0.0;
+    } else if hist.positive_counts.is_empty() && !hist.negative_counts.is_empty() {
+        bucket.upper = 0.0;
+    }
+    bucket
+}
