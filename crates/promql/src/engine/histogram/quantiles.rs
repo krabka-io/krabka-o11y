@@ -52,15 +52,11 @@ pub(crate) fn apply_histogram_quantile(
 }
 
 #[cfg(feature = "experimental-functions")]
-use krabka_metrics::NativeHistogram;
-
+use super::bucket_helpers::ClassicBucketGroups;
 #[cfg(feature = "experimental-functions")]
 use super::{
-    BTreeMap, ClassicBucketGroups, InstantSample, Result, SampleValue, classic_histogram_quantile,
-    emit_histogram_quantile_forced_monotonicity_info, emit_warning, find_mixed_histogram_keys,
-    format_quantile_label, group_classic_bucket_sample, invalid_quantile_warning,
-    is_valid_quantile, labels_key, labels_without_metric_name, native_histogram_quantile,
-    record_metric_name,
+    BTreeMap, SampleValue, find_mixed_histogram_keys, group_classic_bucket_sample, labels_key,
+    labels_without_metric_name, record_metric_name,
 };
 
 #[cfg(feature = "experimental-functions")]
@@ -371,7 +367,7 @@ fn bucket_walk(
 }
 
 /// Quantile labels use `OpenMetrics` floats, including a decimal for integers.
-#[cfg(test)]
+#[cfg(any(test, feature = "experimental-functions"))]
 pub(crate) fn format_quantile_label(value: f64) -> String {
     if !value.is_finite() {
         return crate::http_api::format_sample_value(value);
