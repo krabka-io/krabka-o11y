@@ -29,7 +29,6 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    mod parallel_reads;
     use std::sync::Arc;
 
     use assert2::{assert, check};
@@ -40,6 +39,12 @@ mod tests {
     };
     use krabka_units::{mebibytes, millis, secs};
     use object_store::{ObjectStore, memory::InMemory};
+    use std::time::Duration;
+
+    use krabka_blockstore::OffsetRange;
+    use object_store::throttle::{ThrottleConfig, ThrottledStore};
+
+    use crate::hot_store::WalTailProfileStore;
 
     /// `block_partition_map` gives every block its own 32-bit namespace so
     /// stacktrace partition ids from different blocks cannot collide. The
@@ -1033,20 +1038,98 @@ mod tests {
             function: "main",
         })
     }
-}
 
-mod batch_fingerprints_overlap;
+    #[tokio::test]
+    async fn many_cold_blocks_keep_their_symbols_and_fail_as_a_whole_if_one_is_missing() {
+        // Awaiting reads makes block loads interleave. More than four blocks
+        // exercise several waves, with the same local partition in every block.
+        let store: Arc<dyn ObjectStore> = Arc::new(ThrottledStore::new(
+            InMemory::new(),
+            ThrottleConfig {
+                wait_get_per_call: Duration::from_millis(1),
+                ..ThrottleConfig::default()
+            },
+        ));
+        let records = (1..=9)
+            .map(|value| {
+                let mut record = record("t", "api", vec![0], value);
+                record.symbols.strings[1] = format!("frame-{value}");
+                record
+            })
+            .collect::<Vec<_>>();
+        let hot = Arc::new(WalTailProfileStore::new());
+        hot.append_records(records.clone()).unwrap();
+        let control = FlameEngine::new(hot, EngineOpts::default())
+            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+            .await
+            .unwrap();
+        check!(control.total == 45);
+        let mut index = ProfileIndex::new();
+        let labels = Labels::from_pairs(records[0].labels.iter().cloned());
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
+        let mut keys = Vec::new();
+        for record_entry in records.iter().enumerate() {
+            let offset = i64::try_from(record_entry.0).unwrap();
+            let record = record_entry.1;
+            let meta = build_block(
+                &store,
+                "t",
+                0,
+                std::slice::from_ref(record),
+                OffsetRange::new(offset, offset),
+                &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+            )
+            .await
+            .unwrap()
+            .remove(0);
+            keys.push(meta.object_key.clone());
+            index.add_block(&meta);
+            index.add_profile_block("t", &meta.object_key, vec![STACKTRACE_PARTITION]);
+        }
+        let cold = Arc::new(ColdProfileStore::new(Arc::clone(&store), Arc::new(index)));
+        let engine = FlameEngine::new(cold, EngineOpts::default());
+        let result = engine
+            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+            .await
+            .unwrap();
+        check!(result == control);
+
+        // A failed load must not publish a flamegraph from the other eight blocks.
+        store.delete(&Path::from(keys[4].clone())).await.unwrap();
+        check!(
+            engine
+                .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+                .await
+                .is_err()
+        );
+    }
+}
 mod block_partition_map;
 mod cold_profile_store;
 mod composite_symbols;
 mod filter_and_remap_batch;
-mod is_unbounded_metadata_range;
-mod local_native_resolver;
-
-use batch_fingerprints_overlap::batch_fingerprints_overlap;
 use block_partition_map::block_partition_map;
 pub use cold_profile_store::ColdProfileStore;
 use composite_symbols::CompositeSymbols;
 use filter_and_remap_batch::{BlockRowFilter, filter_and_remap_batch};
-use is_unbounded_metadata_range::is_unbounded_metadata_range;
-use local_native_resolver::local_native_resolver;
+
+pub(crate) fn batch_fingerprints_overlap(
+    batch: &RecordBatch,
+    fps: &BTreeSet<SeriesFingerprint>,
+) -> bool {
+    let fingerprints = batch.column(0).as_primitive::<UInt64Type>();
+    (0..batch.num_rows()).any(|row| fps.contains(&fingerprints.value(row)))
+}
+
+pub(crate) fn is_unbounded_metadata_range(start_ms: i64, end_ms: i64) -> bool {
+    start_ms == 0 && end_ms == i64::MAX
+}
+
+pub(crate) fn local_native_resolver() -> Arc<ChainedResolver> {
+    Arc::new(ChainedResolver::new(vec![
+        Arc::new(FileSystemResolver::default()),
+        Arc::new(AddressFallbackResolver),
+    ]))
+}

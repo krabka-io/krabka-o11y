@@ -4,7 +4,7 @@ use super::{
     TraceMetricsResponse, TraceSpans, TypedValue, UnixNano, assemble_compare_response,
     assemble_metrics_response, assemble_search_response, collect_planned_batches,
     compare_span_identities, extend_metric_projection_matchers, hinted_max_exemplars, metric_plan,
-    metric_timing::MetricExemplarPolicy, parse, plan_query, validate_compare_selection,
+    MetricExemplarPolicy, parse, plan_query, validate_compare_selection,
 };
 
 pub struct TraceqlEngine<S: SpanStore> {

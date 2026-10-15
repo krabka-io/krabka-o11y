@@ -8,6 +8,17 @@
 
 use krabka_observability::RoleKind;
 
-mod drain_order;
-
-pub use drain_order::DRAIN_ORDER;
+/// The roles `--target all` runs, in the order a stop walks them.
+///
+/// The distributor stops first so that nothing new enters the WAL. The block
+/// builder follows and commits the records it has already read. The read path
+/// follows, and the compactor stops last because its pass is the longest unit
+/// of work and can be replanned on the next start.
+pub const DRAIN_ORDER: [RoleKind; 6] = [
+    RoleKind::Distributor,
+    RoleKind::BlockBuilder,
+    RoleKind::Querier,
+    RoleKind::QueryFrontend,
+    RoleKind::Symbolizer,
+    RoleKind::Compactor,
+];

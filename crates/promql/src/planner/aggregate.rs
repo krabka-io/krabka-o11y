@@ -481,18 +481,67 @@ mod tests {
     }
 }
 
-mod aggregate_value_column;
-mod all_group_column;
-mod grouping;
-mod input_label_columns;
 mod plan_simple_aggregate;
-mod resolve_group_labels;
 mod simple_aggregate_op;
 
-pub use aggregate_value_column::AGGREGATE_VALUE_COLUMN;
-use all_group_column::ALL_GROUP_COLUMN;
-pub use grouping::Grouping;
-use input_label_columns::input_label_columns;
 pub use plan_simple_aggregate::plan_simple_aggregate;
-use resolve_group_labels::resolve_group_labels;
 pub use simple_aggregate_op::SimpleAggregateOp;
+
+/// Result-value column that the aggregation projection emits.
+pub const AGGREGATE_VALUE_COLUMN: &str = VALUE_COLUMN;
+
+/// Synthetic per-row grouping column for an empty `PromQL` grouping.
+pub(crate) const ALL_GROUP_COLUMN: &str = "__krabka_agg_all__";
+
+/// How a `PromQL` aggregation selects its grouping labels.
+#[derive(Clone, Debug)]
+pub enum Grouping {
+    /// `by (labels...)`: group by exactly these label columns.
+    By(Vec<String>),
+    /// `without (labels...)`: group by all input label columns except these and
+    /// except `__name__`, which `without` always drops.
+    Without(Vec<String>),
+}
+
+/// The `Utf8` label columns of an inner plan's output schema, in schema order.
+///
+/// The `value`/`timestamp`/`sample_timestamp` columns are the index and value
+/// columns of the operator chain. They are never labels.
+pub(crate) fn input_label_columns(input: &LogicalPlan) -> Vec<String> {
+    input
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| field.name().clone())
+        .filter(|name| name != VALUE_COLUMN && name != TIME_COLUMN && name != SAMPLE_TIME_COLUMN)
+        .collect()
+}
+
+/// Maps a `PromQL` [`Grouping`] onto the concrete grouping label columns.
+///
+/// The result is intersected with the labels present in the input. `by` keeps
+/// the listed labels in their given order and drops each label that is not
+/// present. `without` keeps every present label except the listed ones and
+/// `__name__`.
+pub(crate) fn resolve_group_labels(input_labels: &[String], grouping: &Grouping) -> Vec<String> {
+    match grouping {
+        Grouping::By(labels) => {
+            let present: BTreeSet<&String> = input_labels.iter().collect();
+            // Preserve the user's `by` order; drop labels absent from the input.
+            let mut seen = BTreeSet::new();
+            labels
+                .iter()
+                .filter(|name| present.contains(name) && seen.insert((*name).clone()))
+                .cloned()
+                .collect()
+        }
+        Grouping::Without(labels) => {
+            let excluded: BTreeSet<&String> = labels.iter().collect();
+            input_labels
+                .iter()
+                .filter(|name| name.as_str() != "__name__" && !excluded.contains(name))
+                .cloned()
+                .collect()
+        }
+    }
+}

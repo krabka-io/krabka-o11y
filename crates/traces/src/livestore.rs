@@ -258,48 +258,100 @@ mod tests {
         );
     }
 }
-
-mod attr_string;
-mod collect_event_values;
-mod collect_link_values;
-mod collect_span_intrinsic_value;
-mod collect_trace_intrinsic_values;
-mod event_ref;
-mod event_tags;
-mod in_time_range;
-mod ingest_wal_payloads;
-mod intrinsic_tags;
-mod link_ref;
-mod link_tags;
 mod live_store;
-mod non_negative_u64;
-mod order_spans;
-mod root_span;
 mod run;
-mod span_ref;
-mod trace_spans;
-mod traceql_attr;
-
-use attr_string::attr_string;
-use collect_event_values::collect_event_values;
-use collect_link_values::collect_link_values;
-use collect_span_intrinsic_value::collect_span_intrinsic_value;
-use collect_trace_intrinsic_values::collect_trace_intrinsic_values;
-use event_ref::event_ref;
-use event_tags::EVENT_TAGS;
-use in_time_range::in_time_range;
-pub use ingest_wal_payloads::ingest_wal_payloads;
-use intrinsic_tags::INTRINSIC_TAGS;
+mod values;
+use values::{
+    INTRINSIC_TAGS, collect_event_values, collect_link_values, collect_span_intrinsic_value,
+    collect_trace_intrinsic_values, event_ref, order_spans, span_ref,
+};
 use krabka_traceql::bytes_to_hex;
-use link_ref::link_ref;
-use link_tags::LINK_TAGS;
 pub use live_store::LiveStore;
-use non_negative_u64::non_negative_u64;
-use order_spans::order_spans;
-use root_span::root_span;
 pub use run::run;
-use span_ref::span_ref;
-use trace_spans::trace_spans;
-use traceql_attr::traceql_attr;
 
 use crate::span::typed_value_parts::typed_value_parts;
+
+pub(crate) const EVENT_TAGS: &[&str] = &["event:name", "event:timeSinceStart"];
+
+pub(crate) const LINK_TAGS: &[&str] = &["link:traceID", "link:spanID"];
+
+pub(crate) fn attr_string(attrs: &[KeyValue], key: &str) -> Option<String> {
+    attrs.iter().find_map(|attr| {
+        (attr.key == key).then(|| match &attr.value {
+            AttrValue::Str(value) => Some(value.clone()),
+            _ => None,
+        })?
+    })
+}
+
+pub(crate) fn in_time_range(span: &Span, start_ns: UnixNano, end_ns: UnixNano) -> bool {
+    start_ns.0 <= span.start_ns && span.start_ns <= end_ns.0
+}
+
+pub(crate) fn link_ref(link: &LinkRecord) -> krabka_traceql::LinkRef {
+    krabka_traceql::LinkRef {
+        trace_id: link.trace_id,
+        span_id: link.span_id,
+        attributes: traceql_attributes(&link.attrs),
+    }
+}
+
+pub(crate) fn non_negative_u64(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or(0)
+}
+
+pub(crate) fn root_span<'a>(spans: &'a [&'a Span]) -> Option<&'a Span> {
+    spans
+        .iter()
+        .copied()
+        .find(|span| span.is_root())
+        .or_else(|| spans.iter().copied().min_by_key(|span| span.start_ns))
+}
+
+pub(crate) fn traceql_attr(attr: &KeyValue) -> Option<krabka_traceql::AttrValue> {
+    attr.value.traceql_value()
+}
+
+/// Decode WAL payloads and ingest them into the live store.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn ingest_wal_payloads<'a, I>(store: &mut LiveStore, payloads: I) -> Result<usize, TracesError>
+where
+    I: IntoIterator<Item = &'a [u8]>,
+{
+    let mut count = 0;
+    for payload in payloads {
+        store.ingest(SpanRecord::decode(payload)?);
+        count += 1;
+    }
+    Ok(count)
+}
+
+pub(crate) fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> krabka_traceql::TraceSpans {
+    let root = spans
+        .iter()
+        .find(|span| span.is_root())
+        .or_else(|| spans.iter().min_by_key(|span| span.start_ns));
+    krabka_traceql::TraceSpans {
+        trace_id: *trace_id,
+        root_service_name: root
+            .and_then(|span| attr_string(&span.resource_attrs, "service.name"))
+            .unwrap_or_default(),
+        root_trace_name: root.map_or_else(Default::default, |span| span.name.clone()),
+        resource_attributes: root.map_or_else(Default::default, |span| {
+            span.resource_attrs
+                .iter()
+                .filter_map(|attr| {
+                    traceql_attr(attr)
+                        .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+                })
+                .collect()
+        }),
+        spans: spans
+            .iter()
+            .zip(nested_set::assign_nested_set(spans))
+            .map(|entry| span_ref(entry.0, entry.1))
+            .collect(),
+    }
+}

@@ -484,25 +484,49 @@ mod tests {
 }
 
 mod apply_record;
-mod default_max_age;
-mod default_max_records;
-mod rebuild_amortize_factor;
-mod retained;
-mod retained_state;
 mod retention_config;
-mod run_wal_tail;
+mod retention_state;
 mod run_wal_tail_with_topic;
 mod wal_tail_config;
 mod wal_tail_profile_store;
 use apply_record::apply_record;
-use default_max_age::DEFAULT_MAX_AGE;
-use default_max_records::DEFAULT_MAX_RECORDS;
-use rebuild_amortize_factor::REBUILD_AMORTIZE_FACTOR;
-use retained::Retained;
-use retained_state::RetainedState;
+/// Default retention horizon for the in-memory WAL tail.
+pub(crate) const DEFAULT_MAX_AGE: Time = hours(6);
+
+/// Rebuild the queryable store after evictions reach `1 / FACTOR` of the
+/// retained window, amortizing the O(window) rebuild cost.
+pub(crate) const REBUILD_AMORTIZE_FACTOR: usize = 8;
 pub use retention_config::RetentionConfig;
-pub use run_wal_tail::run_wal_tail;
+use retention_state::{Retained, RetainedState};
 pub use run_wal_tail_with_topic::run_wal_tail_with_topic;
 pub use wal_tail_config::WalTailConfig;
 pub(crate) use wal_tail_profile_store::PositionedWalRecord;
 pub use wal_tail_profile_store::WalTailProfileStore;
+
+/// Hard cap on the number of retained source records, so a burst of same-instant
+/// samples still cannot grow the hot store unboundedly.
+pub(crate) const DEFAULT_MAX_RECORDS: usize = 1_000_000;
+
+/// Consumes the default profiles WAL topic into the hot query store until
+/// `shutdown` is cancelled.
+///
+/// `config.wal_topic` is replaced with [`PROFILES_WAL_TOPIC`], so a caller that
+/// reads the standard topic does not have to name it.
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn run_wal_tail(
+    store: WalTailProfileStore,
+    config: WalTailConfig,
+    shutdown: CancellationToken,
+) -> Result<(), ProfilesError> {
+    run_wal_tail_with_topic(
+        store,
+        WalTailConfig {
+            wal_topic: PROFILES_WAL_TOPIC.to_owned(),
+            ..config
+        },
+        shutdown,
+    )
+    .await
+}

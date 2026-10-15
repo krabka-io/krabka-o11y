@@ -17,6 +17,59 @@ use crate::{
     symbolizer::{NativeResolver, SymbolizeRequest},
 };
 
+/// Stacktrace id reserved for samples with no frames. It stays distinct from
+/// node `0`, the root of the first real stacktrace.
+pub const EMPTY_STACKTRACE_ID: u32 = u32::MAX;
+
+/// A function record whose strings index into the `SymbolDb` string table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FunctionRec {
+    pub name: u32,
+    pub system_name: u32,
+    pub filename: u32,
+    pub start_line: i64,
+}
+
+/// One inlined line within a location.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LineRec {
+    pub function_id: u32,
+    pub line: i32,
+}
+
+/// A program location and its inlined lines, innermost first.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LocationRec {
+    pub address: u64,
+    pub mapping_id: u32,
+    pub lines: Vec<LineRec>,
+}
+
+/// A binary mapping record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MappingRec {
+    pub memory_start: u64,
+    pub memory_limit: u64,
+    pub file_offset: u64,
+    pub filename: u32,
+    pub build_id: u32,
+    pub symbolization: MappingSymbolization,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawLocation {
+    pub address: u64,
+    pub mapping: MappingRec,
+    pub filename: String,
+    pub build_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TreeNode {
+    pub(crate) parent: i32,
+    pub(crate) location_ref: i32,
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -375,30 +428,55 @@ mod tests {
     }
 }
 
-mod drop_go_type_parameters;
-mod empty_stacktrace_id;
-mod function_rec;
-mod go_shape_prefix;
-mod line_rec;
-mod location_rec;
-mod mapping_rec;
 mod mapping_symbolization;
 mod partition;
-mod raw_location;
-mod remap_index;
 mod symbol_db_type;
-mod tree_node;
 
-use drop_go_type_parameters::drop_go_type_parameters;
-pub use empty_stacktrace_id::EMPTY_STACKTRACE_ID;
-pub use function_rec::FunctionRec;
-use go_shape_prefix::GO_SHAPE_PREFIX;
-pub use line_rec::LineRec;
-pub use location_rec::LocationRec;
-pub use mapping_rec::MappingRec;
 pub use mapping_symbolization::{MappingSymbolization, MappingSymbolizationParts};
 use partition::Partition;
-pub use raw_location::RawLocation;
-use remap_index::remap_index;
 pub use symbol_db_type::SymbolDb;
-use tree_node::TreeNode;
+
+pub(crate) const GO_SHAPE_PREFIX: &str = "[go.shape.";
+
+pub(crate) fn drop_go_type_parameters(input: &str) -> Cow<'_, str> {
+    if !input.contains(GO_SHAPE_PREFIX) {
+        return Cow::Borrowed(input);
+    }
+
+    let mut result = String::with_capacity(input.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = input[cursor..].find(GO_SHAPE_PREFIX) {
+        let start = cursor + relative_start;
+        result.push_str(&input[cursor..start]);
+
+        let mut depth = 0_i32;
+        let mut end = None;
+        for (offset, byte) in input[start..].bytes().enumerate() {
+            match byte {
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(start + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(next) = end else {
+            result.push_str(&input[start..]);
+            return Cow::Owned(result);
+        };
+        cursor = next;
+    }
+    result.push_str(&input[cursor..]);
+    Cow::Owned(result)
+}
+
+pub(crate) fn remap_index(index: u32, remapped: &[u32]) -> u32 {
+    remapped
+        .get(usize::try_from(index).expect("u32 fits usize"))
+        .copied()
+        .unwrap_or(index)
+}

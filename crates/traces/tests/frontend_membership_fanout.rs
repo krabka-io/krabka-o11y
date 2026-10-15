@@ -41,8 +41,6 @@ use krabka_units::convert::TimeExt as _;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-#[path = "support/complete_trace_response.rs"]
-mod complete_trace_response;
 #[path = "support/mod.rs"]
 mod support;
 
@@ -171,7 +169,7 @@ async fn spawn_querier_holding(
                         .body(axum::body::Body::from("trace not found"))
                         .unwrap();
                 }
-                complete_trace_response::complete_trace_response()
+                support::complete_trace_response()
             }),
         )
         .with_state(state.clone());

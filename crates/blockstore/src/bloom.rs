@@ -172,11 +172,33 @@ mod tests {
 }
 
 mod bloom_shard;
-mod fnv1_32;
-mod fnv1a_32;
 mod sharded_trace_bloom;
 
 pub(crate) use bloom_shard::BloomShard;
-pub use fnv1_32::fnv1_32;
-use fnv1a_32::fnv1a_32;
 pub use sharded_trace_bloom::ShardedTraceBloom;
+
+/// FNV-1 32-bit hash.
+#[must_use]
+pub fn fnv1_32(bytes: &[u8]) -> u32 {
+    const OFFSET: u32 = 2_166_136_261;
+    const PRIME: u32 = 16_777_619;
+
+    let mut hash = OFFSET;
+    for &b in bytes {
+        hash = hash.wrapping_mul(PRIME);
+        hash ^= u32::from(b);
+    }
+    hash
+}
+
+pub(crate) fn fnv1a_32(bytes: &[u8]) -> u32 {
+    const OFFSET: u32 = 2_166_136_261;
+    const PRIME: u32 = 16_777_619;
+
+    let mut hash = OFFSET;
+    for &b in bytes {
+        hash ^= u32::from(b);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}

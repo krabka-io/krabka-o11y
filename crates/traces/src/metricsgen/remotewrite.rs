@@ -15,6 +15,212 @@ use crate::metricsgen::{
     sink::{RemoteWriteSink, SinkError},
 };
 
+use krabka_metrics::wire::pb::v1::histogram::{Count, ResetHint, ZeroCount};
+
+
+pub(crate) fn encode_write_request(rows: &[WireTimeSeries]) -> Result<Vec<u8>, String> {
+    let request = WriteRequest {
+        timeseries: rows
+            .iter()
+            .map(|row| TimeSeries {
+                labels: labels_to_proto(&row.labels),
+                samples: samples_to_proto(row),
+                exemplars: row
+                    .exemplars
+                    .iter()
+                    .map(|exemplar| RemoteWriteExemplar {
+                        labels: labels_to_proto(&exemplar.labels),
+                        value: exemplar.value,
+                        timestamp: exemplar.timestamp_ms,
+                    })
+                    .collect(),
+                histograms: histograms_to_proto(row),
+            })
+            .collect(),
+        ..Default::default()
+    };
+
+    let mut protobuf = Vec::with_capacity(request.encoded_len());
+    request
+        .encode(&mut protobuf)
+        .map_err(|err| format!("remote_write pb encode: {err}"))?;
+    snap::raw::Encoder::new()
+        .compress_vec(&protobuf)
+        .map_err(|err| format!("remote_write snappy encode: {err}"))
+}
+
+pub(crate) fn histograms_to_proto(row: &WireTimeSeries) -> Vec<Histogram> {
+    row.native_histogram
+        .iter()
+        .map(|histogram| Histogram {
+            count: Some(Count::CountFloat(histogram.count)),
+            sum: histogram.sum,
+            schema: i32::from(histogram.schema),
+            zero_threshold: histogram.zero_threshold,
+            zero_count: Some(ZeroCount::ZeroCountFloat(histogram.zero_count)),
+            positive_spans: bucket_spans_to_proto(&histogram.positive_spans),
+            positive_counts: histogram.positive_counts.clone(),
+            reset_hint: ResetHint::No as i32,
+            timestamp: row.timestamp_ms,
+            ..Default::default()
+        })
+        .collect()
+}
+
+/// HTTP client for Prometheus `remote_write`.
+pub struct PrometheusRemoteWriteSink {
+    pub(crate) url: String,
+    pub(crate) http: reqwest::Client,
+}
+
+impl PrometheusRemoteWriteSink {
+    /// A sink that writes to `url` with `internal_client` applied.
+    ///
+    /// The target is a Krabka metrics distributor, so the sink presents the
+    /// internal client: its token as the `Authorization` header, its
+    /// certificate as the TLS identity, and its CA bundle as the only roots
+    /// that the distributor certificate can chain to. With no
+    /// `--internal-client-*` flag, the client is a plain `reqwest` client.
+    ///
+    /// # Errors
+    /// Returns the `reqwest` error when the client cannot be built, for
+    /// example from an identity that the TLS backend refuses.
+    pub fn new(
+        url: impl Into<String>,
+        internal_client: &InternalClient,
+    ) -> Result<Self, reqwest::Error> {
+        Ok(Self {
+            url: url.into(),
+            http: internal_client.apply(reqwest::Client::builder()).build()?,
+        })
+    }
+}
+
+#[async_trait]
+impl RemoteWriteSink for PrometheusRemoteWriteSink {
+    async fn write(&self, payload: &SeriesPayload) -> Result<(), SinkError> {
+        let rows = to_timeseries(&payload.series);
+        let body = encode_write_request(&rows).map_err(SinkError::Decode)?;
+        let resp = self
+            .http
+            .post(&self.url)
+            .header("Content-Type", "application/x-protobuf")
+            .header("Content-Encoding", "snappy")
+            .header("X-Prometheus-Remote-Write-Version", "0.1.0")
+            .header(TENANT_HEADER, &payload.tenant)
+            .body(body)
+            .send()
+            .await
+            .map_err(|err| SinkError::Transport(err.to_string()))?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(SinkError::Transport(format!(
+                "remote_write status {}",
+                resp.status()
+            )))
+        }
+    }
+}
+
+pub(crate) fn push_classic_histogram(
+    out: &mut Vec<WireTimeSeries>,
+    s: &Series,
+    buckets: &[HistogramBucket],
+    sum: f64,
+    count: f64,
+) {
+    let bucket_name = format!("{}_bucket", s.name);
+    let mut assigned_exemplars = vec![false; s.exemplars.len()];
+
+    for bucket in buckets {
+        let le = bucket.upper_bound;
+        let cumulative = bucket.cumulative_count;
+        let mut labels = s.labels.clone();
+        labels.push(krabka_traceql::MetricLabel::new("le", le_label(le)));
+        let exemplars =
+            bucket_exemplars(&s.exemplars, &mut assigned_exemplars, |ex| ex.value <= le);
+        out.push(WireTimeSeries {
+            labels: with_name(&bucket_name, &labels),
+            value: cumulative,
+            timestamp_ms: s.timestamp_ms,
+            exemplars,
+            native_histogram: None,
+        });
+    }
+
+    let mut inf_labels = s.labels.clone();
+    inf_labels.push(krabka_traceql::MetricLabel::new("le", "+Inf"));
+    let inf_exemplars = bucket_exemplars(&s.exemplars, &mut assigned_exemplars, |_| true);
+    out.push(WireTimeSeries {
+        labels: with_name(&bucket_name, &inf_labels),
+        value: count,
+        timestamp_ms: s.timestamp_ms,
+        exemplars: inf_exemplars,
+        native_histogram: None,
+    });
+    out.push(WireTimeSeries {
+        labels: with_name(&format!("{}_sum", s.name), &s.labels),
+        value: sum,
+        timestamp_ms: s.timestamp_ms,
+        exemplars: Vec::new(),
+        native_histogram: None,
+    });
+    out.push(WireTimeSeries {
+        labels: with_name(&format!("{}_count", s.name), &s.labels),
+        value: count,
+        timestamp_ms: s.timestamp_ms,
+        exemplars: Vec::new(),
+        native_histogram: None,
+    });
+}
+
+#[must_use]
+pub fn to_timeseries(series: &[Series]) -> Vec<WireTimeSeries> {
+    let mut out = Vec::new();
+    for s in series {
+        match &s.sample {
+            SeriesSample::Counter(value) | SeriesSample::Gauge(value) => {
+                out.push(WireTimeSeries {
+                    labels: with_name(&s.name, &s.labels),
+                    value: *value,
+                    timestamp_ms: s.timestamp_ms,
+                    exemplars: s.exemplars.clone(),
+                    native_histogram: None,
+                });
+            }
+            SeriesSample::ClassicHistogram {
+                buckets,
+                sum,
+                count,
+            } => {
+                push_classic_histogram(&mut out, s, buckets, *sum, *count);
+            }
+            SeriesSample::NativeHistogram(histogram) => {
+                out.push(WireTimeSeries {
+                    labels: with_name(&s.name, &s.labels),
+                    value: 0.0,
+                    timestamp_ms: s.timestamp_ms,
+                    exemplars: s.exemplars.clone(),
+                    native_histogram: Some(histogram.clone()),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Flat `remote_write` row, neutral to the encoder.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WireTimeSeries {
+    pub labels: Vec<krabka_traceql::MetricLabel>,
+    pub value: f64,
+    pub timestamp_ms: i64,
+    pub exemplars: Vec<Exemplar>,
+    pub native_histogram: Option<NativeHistogram>,
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -326,28 +532,70 @@ mod tests {
     }
 }
 
-mod bucket_exemplars;
-mod bucket_spans_to_proto;
-mod encode_write_request;
-mod histograms_to_proto;
-mod labels_to_proto;
-mod le_label;
-mod prometheus_remote_write_sink;
-mod push_classic_histogram;
-mod samples_to_proto;
-mod to_timeseries;
-mod wire_time_series;
-mod with_name;
+pub(crate) fn bucket_spans_to_proto(spans: &[BucketSpan]) -> Vec<RemoteWriteBucketSpan> {
+    spans
+        .iter()
+        .map(|span| RemoteWriteBucketSpan {
+            offset: span.offset,
+            length: span.length,
+        })
+        .collect()
+}
 
-use bucket_exemplars::bucket_exemplars;
-use bucket_spans_to_proto::bucket_spans_to_proto;
-use encode_write_request::encode_write_request;
-use histograms_to_proto::histograms_to_proto;
-use labels_to_proto::labels_to_proto;
-pub use le_label::le_label;
-pub use prometheus_remote_write_sink::PrometheusRemoteWriteSink;
-use push_classic_histogram::push_classic_histogram;
-use samples_to_proto::samples_to_proto;
-pub use to_timeseries::to_timeseries;
-pub use wire_time_series::WireTimeSeries;
-use with_name::with_name;
+pub(crate) fn labels_to_proto(labels: &[krabka_traceql::MetricLabel]) -> Vec<Label> {
+    labels
+        .iter()
+        .map(|label| Label {
+            name: label.key.clone(),
+            value: label.value.clone(),
+        })
+        .collect()
+}
+
+#[must_use]
+pub fn le_label(le_seconds: f64) -> String {
+    if le_seconds.is_infinite() {
+        "+Inf".to_string()
+    } else {
+        le_seconds.to_string()
+    }
+}
+
+pub(crate) fn samples_to_proto(row: &WireTimeSeries) -> Vec<Sample> {
+    if row.native_histogram.is_some() {
+        Vec::new()
+    } else {
+        vec![Sample {
+            value: row.value,
+            timestamp: row.timestamp_ms,
+        }]
+    }
+}
+
+pub(crate) fn with_name(
+    name: &str,
+    labels: &[krabka_traceql::MetricLabel],
+) -> Vec<krabka_traceql::MetricLabel> {
+    let mut out = Vec::with_capacity(labels.len() + 1);
+    out.push(krabka_traceql::MetricLabel::new("__name__", name));
+    out.extend(labels.iter().cloned());
+    out.sort();
+    out
+}
+
+pub(crate) fn bucket_exemplars(
+    exemplars: &[Exemplar],
+    assigned: &mut [bool],
+    mut predicate: impl FnMut(&Exemplar) -> bool,
+) -> Vec<Exemplar> {
+    let mut out = Vec::new();
+    for indexed_exemplar in exemplars.iter().enumerate() {
+        let idx = indexed_exemplar.0;
+        let exemplar = indexed_exemplar.1;
+        if !assigned[idx] && predicate(exemplar) {
+            assigned[idx] = true;
+            out.push(exemplar.clone());
+        }
+    }
+    out
+}

@@ -1,10 +1,10 @@
 use super::{
-    DurationExprContext, Expr, PromqlError, Result,
+    Call, DurationExprContext, Expr, Function, FunctionArgs, PromqlError, Result, ValueType,
     histogram_trim_operators::{normalize_histogram_trim, restore_histogram_trim},
     info_label_selector::{
         normalize_info_selectors, normalize_start_timestamp, restore_info_selectors,
     },
-    normalize_duration_expressions, parse, parse_experimental_zero_arg_helper,
+    normalize_duration_expressions, parse,
     strip_extended_selector_modifiers, wrap_extended_selectors,
 };
 
@@ -62,4 +62,17 @@ pub fn parse_promql_with_duration_context(
         }
         Err(error) => parse_experimental_zero_arg_helper(&query).ok_or(PromqlError::Parse(error)),
     }
+}
+
+fn parse_experimental_zero_arg_helper(query: &str) -> Option<Expr> {
+    let name = match query.trim() {
+        "start()" => "start",
+        "end()" => "end",
+        _ => return None,
+    };
+
+    Some(Expr::Call(Call {
+        func: Function::new(name, vec![], 0, ValueType::Scalar, true),
+        args: FunctionArgs::empty_args(),
+    }))
 }

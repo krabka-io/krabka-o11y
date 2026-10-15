@@ -101,10 +101,50 @@ mod tests {
 
 mod parse_label_selector;
 mod split_top_level_commas;
-mod trim_selector;
-mod unescape_quoted;
 
 pub use parse_label_selector::parse_label_selector;
 use split_top_level_commas::split_top_level_commas;
-use trim_selector::trim_selector;
-use unescape_quoted::unescape_quoted;
+
+pub(crate) fn trim_selector(input: &str) -> Result<&str, ProfileError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok("");
+    }
+    if let Some(inner) = trimmed.strip_prefix('{') {
+        return inner
+            .strip_suffix('}')
+            .ok_or_else(|| ProfileError::Plan("unclosed label selector".to_string()));
+    }
+    if trimmed.ends_with('}') {
+        return Err(ProfileError::Plan(
+            "label selector has closing brace without opening brace".to_string(),
+        ));
+    }
+    Ok(trimmed)
+}
+
+pub(crate) fn unescape_quoted(input: &str) -> Result<String, ProfileError> {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(next) = chars.next() else {
+            return Err(ProfileError::Plan(
+                "trailing escape in matcher value".to_string(),
+            ));
+        };
+        match next {
+            '"' | '\\' => out.push(next),
+            'n' => out.push('\n'),
+            't' => out.push('\t'),
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+    Ok(out)
+}

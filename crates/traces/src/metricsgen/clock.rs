@@ -8,6 +8,54 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+
+/// Wall-clock source in epoch nanoseconds.
+pub trait Clock: Send + Sync {
+    fn now_ns(&self) -> i64;
+}
+
+/// Deterministic test clock.
+#[derive(Debug, Clone)]
+pub struct MockClock {
+    pub(crate) now: Arc<AtomicI64>,
+}
+
+impl MockClock {
+    #[must_use]
+    pub fn new(start_ns: i64) -> Self {
+        Self {
+            now: Arc::new(AtomicI64::new(start_ns)),
+        }
+    }
+
+    pub fn advance(&self, ns: i64) {
+        self.now.fetch_add(ns, Ordering::SeqCst);
+    }
+
+    pub fn set(&self, ns: i64) {
+        self.now.store(ns, Ordering::SeqCst);
+    }
+}
+
+impl Clock for MockClock {
+    fn now_ns(&self) -> i64 {
+        self.now.load(Ordering::SeqCst)
+    }
+}
+
+/// Production clock.
+#[derive(Debug, Clone, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now_ns(&self) -> i64 {
+        let d = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        i64::try_from(d.as_nanos()).unwrap_or(i64::MAX)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -23,11 +71,3 @@ mod tests {
         assert2::assert!(c.now_ns() == 42);
     }
 }
-
-mod clock_type;
-mod mock_clock;
-mod system_clock;
-
-pub use clock_type::Clock;
-pub use mock_clock::MockClock;
-pub use system_clock::SystemClock;

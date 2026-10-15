@@ -45,9 +45,8 @@ use crate::{
     store::MetricStore,
 };
 
-mod max_grid_leaf_points;
-
-use max_grid_leaf_points::MAX_GRID_LEAF_POINTS;
+/// Points one range query may memoize across its grid-driven leaves.
+pub(crate) const MAX_GRID_LEAF_POINTS: usize = 2_000_000;
 
 /// A range fold over a matrix selector across a range query's grid.
 struct GridFold<'a> {

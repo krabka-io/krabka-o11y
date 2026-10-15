@@ -92,7 +92,6 @@ impl<'a> RulerEvaluationSchedule<'a> {
 #[cfg(test)]
 mod tests;
 
-mod alert_state_key;
 mod alertmanager_alert;
 mod alertmanager_sink;
 mod noop_recording_rule_wal_sink;
@@ -100,29 +99,28 @@ mod noop_ruler_state_sink;
 mod promql_error;
 mod recording_rule_wal_sink;
 mod ruler_alert_state;
-mod ruler_alert_state_record;
 mod ruler_evaluation_report;
 mod ruler_group_evaluation;
 mod ruler_group_state;
-mod ruler_group_state_key;
-mod ruler_group_state_record;
 mod ruler_state_sink;
+mod state_keys;
+mod state_records;
 mod ruler_wal_error;
 
-use alert_state_key::AlertStateKey;
+use state_keys::{AlertStateKey, RulerGroupStateKey};
 pub use alertmanager_alert::AlertmanagerAlert;
 pub use alertmanager_sink::AlertmanagerSink;
 use noop_recording_rule_wal_sink::NoopRecordingRuleWalSink;
 use noop_ruler_state_sink::NoopRulerStateSink;
 pub use recording_rule_wal_sink::RecordingRuleWalSink;
 pub use ruler_alert_state::RulerAlertState;
-pub use ruler_alert_state_record::RulerAlertStateRecord;
+pub use state_records::RulerAlertStateRecord;
 pub use ruler_evaluation_report::{
     RulerEvaluationReport, RulerGroupEvaluationStatus, RulerRuleEvaluationStatus,
 };
 pub use ruler_group_evaluation::RulerGroupEvaluation;
 pub use ruler_group_state::RulerGroupState;
-use ruler_group_state_key::RulerGroupStateKey;
-pub use ruler_group_state_record::RulerGroupStateRecord;
+
+pub use state_records::RulerGroupStateRecord;
 pub use ruler_state_sink::RulerStateSink;
 pub use ruler_wal_error::RulerWalError;

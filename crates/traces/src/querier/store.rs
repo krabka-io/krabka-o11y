@@ -108,6 +108,11 @@ pub(crate) mod test_support {
     }
 }
 
+mod batch_projection;
+mod nested_scan;
+mod attribute_values;
+mod array_columns;
+mod scan_helpers;
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -4106,177 +4111,208 @@ mod tests {
     }
 }
 
-mod add_nested_intrinsic_columns;
-mod add_nested_intrinsic_columns_to_batch;
 mod add_span_attr_columns;
-mod add_span_attr_columns_to_batch;
-mod align_scan_batch_to_schema;
-mod align_scan_batches_to_schema;
-mod append_nested_attr;
-mod append_nested_event;
-mod append_nested_link;
-mod attr_match;
-mod attr_values;
-mod attr_values_with_resource;
-mod batch_attr_matches;
-mod batch_attr_matches_with_resource;
-mod block_builder_frontier_ns;
-mod block_err;
-mod block_span_schema;
-mod bool_array_value;
-mod cold_attribute_tag_names;
-mod collect_attribute_tag_names;
-mod collect_attribute_tag_values;
-mod collect_intrinsic_value;
-mod collect_table;
-mod deduplicate_scan_batches;
-mod deduplicate_trace_spans;
-mod default_scan_concat_max;
-mod event_tags;
-mod event_values;
-mod filter_batches_by_matchers;
-mod fixed;
-mod fixed_array_value;
-mod fixed_value;
-mod float64_array_value;
-mod insert_i32_value;
-mod insert_i64_value;
-mod insert_string_value;
-mod instrumentation_matches;
-mod instrumentation_tags;
-mod int32_value;
-mod int64_array_value;
-mod int64_value;
-mod intrinsic_matches;
-mod intrinsic_values_from_batches;
-mod is_event_matcher;
-mod is_intrinsic_tag;
-mod is_link_matcher;
-mod is_nested_intrinsic_tag;
 mod krabka_span_store;
-mod link_tags;
-mod link_values;
-mod matching_events_for_scan;
-mod matching_links_for_scan;
-mod merge_dynamic_scope;
-mod merge_static_scope;
-mod nested_attr_column;
-mod nested_attr_columns;
-mod nested_attr_scope;
-mod nested_event_matchers_match;
-mod nested_intrinsic_rows;
-mod nested_link_matchers_match;
-mod nested_string_attrs;
-mod nullable_fixed_value;
-mod optional_list_column;
-mod projected_attr_column;
-mod recompute_batch_nested_sets;
-mod recompute_scan_nested_sets;
-mod recompute_trace_nested_sets;
-mod replace_scan_int32_columns;
-mod resource_attr_values;
-mod resource_attrs;
-mod resource_matches;
-mod root_service_matches;
-mod row_matcher_matches;
-mod row_matches;
-mod scope_order;
-mod shared_trace_index;
-mod string_array_value;
-mod string_value;
-mod struct_fixed_field;
-mod struct_int64_field;
-mod struct_list_field;
-mod struct_string_field;
-mod tag_scope_key;
-mod trace_from_batches;
-mod unscoped_attribute_tag;
+mod nested_projection;
 
-use add_nested_intrinsic_columns::add_nested_intrinsic_columns;
-use add_nested_intrinsic_columns_to_batch::add_nested_intrinsic_columns_to_batch;
+use batch_projection::add_nested_intrinsic_columns;
+use batch_projection::add_nested_intrinsic_columns_to_batch;
+use nested_projection::nested_intrinsic_rows;
 use add_span_attr_columns::add_span_attr_columns;
-use add_span_attr_columns_to_batch::add_span_attr_columns_to_batch;
-use align_scan_batch_to_schema::align_scan_batch_to_schema;
-use align_scan_batches_to_schema::align_scan_batches_to_schema;
-use append_nested_attr::append_nested_attr;
-use append_nested_event::append_nested_event;
-use append_nested_link::append_nested_link;
-use attr_match::AttrMatch;
-use attr_values::attr_values;
-use attr_values_with_resource::attr_values_with_resource;
-use batch_attr_matches::batch_attr_matches;
-use batch_attr_matches_with_resource::batch_attr_matches_with_resource;
-pub use block_builder_frontier_ns::block_builder_frontier_ns;
-use block_err::block_err;
-use block_span_schema::block_span_schema;
-use bool_array_value::bool_array_value;
-pub(crate) use cold_attribute_tag_names::ColdAttributeTagNames;
-use collect_attribute_tag_names::collect_attribute_tag_names;
-use collect_attribute_tag_values::{RequestedTag, collect_attribute_tag_values};
-use collect_intrinsic_value::collect_intrinsic_value;
-use collect_table::collect_table;
-use deduplicate_scan_batches::deduplicate_scan_batches;
-use deduplicate_trace_spans::deduplicate_trace_spans;
-pub use default_scan_concat_max::DEFAULT_SCAN_CONCAT_MAX;
-use event_tags::EVENT_TAGS;
-use event_values::event_values;
-use filter_batches_by_matchers::filter_batches_by_matchers;
-use fixed::fixed;
-use fixed_array_value::fixed_array_value;
-use fixed_value::fixed_value;
-use float64_array_value::float64_array_value;
-use insert_i32_value::insert_i32_value;
-use insert_i64_value::insert_i64_value;
-use insert_string_value::insert_string_value;
-use instrumentation_matches::instrumentation_matches;
-use instrumentation_tags::INSTRUMENTATION_TAGS;
-use int32_value::int32_value;
-use int64_array_value::int64_array_value;
-use int64_value::int64_value;
-use intrinsic_matches::intrinsic_matches;
-use intrinsic_values_from_batches::intrinsic_values_from_batches;
-use is_event_matcher::is_event_matcher;
-use is_intrinsic_tag::is_intrinsic_tag;
-use is_link_matcher::is_link_matcher;
-use is_nested_intrinsic_tag::is_nested_intrinsic_tag;
+use batch_projection::add_span_attr_columns_to_batch;
+use batch_projection::align_scan_batch_to_schema;
+use nested_scan::append_nested_attr;
+use nested_scan::append_nested_event;
+use nested_scan::append_nested_link;
+use attribute_values::AttrMatch;
+use attribute_values::attr_values_with_resource;
+use attribute_values::batch_attr_matches;
+use attribute_values::batch_attr_matches_with_resource;
+pub use scan_helpers::block_builder_frontier_ns;
+use batch_projection::block_span_schema;
+use batch_projection::deduplicate_scan_batches;
+pub(crate) use attribute_values::ColdAttributeTagNames;
+use attribute_values::collect_attribute_tag_names;
+use attribute_values::{RequestedTag, collect_attribute_tag_values};
+use attribute_values::collect_intrinsic_value;
+use attribute_values::event_values;
+use batch_projection::filter_batches_by_matchers;
+use array_columns::fixed_array_value;
+use array_columns::insert_i32_value;
+use array_columns::insert_i64_value;
+use array_columns::insert_string_value;
+use attribute_values::instrumentation_matches;
+use scan_helpers::INSTRUMENTATION_TAGS;
+use array_columns::int32_value;
+use scan_helpers::intrinsic_matches;
+use attribute_values::intrinsic_values_from_batches;
 pub use krabka_span_store::KrabkaSpanStore;
 use krabka_traceql::{kind_enum_value, status_enum_value, typed_value_parts};
-use link_tags::LINK_TAGS;
-use link_values::link_values;
-use matching_events_for_scan::matching_events_for_scan;
-use matching_links_for_scan::matching_links_for_scan;
-use merge_dynamic_scope::merge_dynamic_scope;
-use merge_static_scope::merge_static_scope;
-use nested_attr_column::NestedAttrColumn;
-use nested_attr_columns::nested_attr_columns;
-use nested_attr_scope::NestedAttrScope;
-use nested_event_matchers_match::nested_event_matchers_match;
-use nested_intrinsic_rows::nested_intrinsic_rows;
-use nested_link_matchers_match::nested_link_matchers_match;
-use nested_string_attrs::nested_string_attrs;
-use nullable_fixed_value::nullable_fixed_value;
-use optional_list_column::optional_list_column;
-use projected_attr_column::ProjectedAttrColumn;
-use recompute_batch_nested_sets::recompute_batch_nested_sets;
-use recompute_scan_nested_sets::recompute_scan_nested_sets;
-use recompute_trace_nested_sets::recompute_trace_nested_sets;
-use replace_scan_int32_columns::replace_scan_int32_columns;
-use resource_attr_values::resource_attr_values;
-use resource_attrs::ResourceAttrs;
-use resource_matches::resource_matches;
-use root_service_matches::root_service_matches;
-use row_matcher_matches::row_matcher_matches;
-use row_matches::row_matches;
-use scope_order::SCOPE_ORDER;
-pub use shared_trace_index::SharedTraceIndex;
-use string_array_value::string_array_value;
-use string_value::string_value;
-use struct_fixed_field::struct_fixed_field;
-use struct_int64_field::struct_int64_field;
-use struct_list_field::struct_list_field;
-use struct_string_field::struct_string_field;
-use tag_scope_key::tag_scope_key;
-use trace_from_batches::trace_from_batches;
-use unscoped_attribute_tag::unscoped_attribute_tag;
+use attribute_values::link_values;
+use nested_scan::matching_events_for_scan;
+use nested_scan::matching_links_for_scan;
+use attribute_values::merge_dynamic_scope;
+use attribute_values::merge_static_scope;
+use nested_projection::{
+    NestedAttrColumn, NestedAttrColumnProjection, ScanInt32ColumnReplacement,
+    replace_scan_int32_columns,
+};
+use nested_scan::nested_attr_columns;
+use nested_scan::NestedAttrScope;
+use nested_scan::nested_event_matchers_match;
+use nested_scan::nested_link_matchers_match;
+use nested_scan::nested_string_attrs;
+use array_columns::nullable_fixed_value;
+use array_columns::optional_list_column;
+use array_columns::ProjectedAttrColumn;
+use nested_scan::recompute_batch_nested_sets;
+use nested_scan::recompute_scan_nested_sets;
+use nested_scan::recompute_trace_nested_sets;
+use attribute_values::resource_attr_values;
+use attribute_values::ResourceAttrs;
+use attribute_values::resource_matches;
+use scan_helpers::row_matcher_matches;
+use scan_helpers::row_matches;
+use scan_helpers::SCOPE_ORDER;
+pub use scan_helpers::SharedTraceIndex;
+use array_columns::string_array_value;
+use array_columns::string_value;
+use array_columns::struct_fixed_field;
+use array_columns::struct_int64_field;
+use array_columns::struct_list_field;
+use array_columns::struct_string_field;
+use scan_helpers::trace_from_batches;
 
 use super::INTRINSIC_TAGS;
+
+/// Default and maximum safe memory size for a concatenation of scan batches.
+pub const DEFAULT_SCAN_CONCAT_MAX: ByteSize = krabka_units::bytes(1_500_000_000);
+
+pub(crate) const EVENT_TAGS: &[&str] = &["event:name", "event:timeSinceStart"];
+
+pub(crate) const LINK_TAGS: &[&str] = &["link:spanID", "link:traceID"];
+
+pub(crate) fn align_scan_batches_to_schema(
+    batches: Vec<RecordBatch>,
+    schema: &SchemaRef,
+) -> Result<Vec<RecordBatch>, TraceqlError> {
+    batches
+        .into_iter()
+        .map(|batch| align_scan_batch_to_schema(&batch, schema))
+        .collect()
+}
+
+pub(crate) fn attr_values(batch: &RecordBatch, row: usize) -> Result<Vec<Attribute>, TraceqlError> {
+    attr_values_with_resource(batch, row, ResourceAttrs::Exclude)
+}
+
+pub(crate) fn block_err(err: &krabka_blockstore::BlockStoreError) -> TraceqlError {
+    TraceqlError::Store(err.to_string())
+}
+
+pub(crate) fn bool_array_value(col: &dyn Array, row: usize) -> Result<bool, TraceqlError> {
+    col.as_any()
+        .downcast_ref::<BooleanArray>()
+        .map(|a| a.value(row))
+        .ok_or_else(|| TraceqlError::Store("unsupported bool column type".into()))
+}
+
+pub(crate) async fn collect_table(
+    ctx: &SessionContext,
+    table: &str,
+) -> Result<Vec<RecordBatch>, TraceqlError> {
+    Ok(ctx.table(table).await?.collect().await?)
+}
+
+pub(crate) fn deduplicate_trace_spans(spans: &mut Vec<SpanRef>) {
+    spans.sort_by_key(|span| span.span_id);
+    spans.dedup_by_key(|span| span.span_id);
+    recompute_trace_nested_sets(spans);
+    spans.sort_by(|left, right| {
+        left.start_time_unix_nano
+            .cmp(&right.start_time_unix_nano)
+            .then_with(|| left.span_id.cmp(&right.span_id))
+    });
+}
+
+pub(crate) fn fixed<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Result<&'a FixedSizeBinaryArray, TraceqlError> {
+    batch
+        .column_by_name(name)
+        .and_then(|col| col.as_any().downcast_ref::<FixedSizeBinaryArray>())
+        .ok_or_else(|| TraceqlError::Store(format!("missing fixed binary column `{name}`")))
+}
+
+pub(crate) fn fixed_value<const N: usize>(
+    batch: &RecordBatch,
+    name: &str,
+    row: usize,
+) -> Result<[u8; N], TraceqlError> {
+    fixed(batch, name)?
+        .value(row)
+        .try_into()
+        .map_err(|_| TraceqlError::Store(format!("bad fixed binary width for `{name}`")))
+}
+
+pub(crate) fn float64_array_value(col: &dyn Array, row: usize) -> Result<f64, TraceqlError> {
+    col.as_any()
+        .downcast_ref::<Float64Array>()
+        .map(|a| a.value(row))
+        .ok_or_else(|| TraceqlError::Store("unsupported float64 column type".into()))
+}
+
+pub(crate) fn int64_array_value(col: &dyn Array, row: usize) -> Result<i64, TraceqlError> {
+    col.as_any()
+        .downcast_ref::<Int64Array>()
+        .map(|a| a.value(row))
+        .ok_or_else(|| TraceqlError::Store("unsupported int64 column type".into()))
+}
+
+pub(crate) fn int64_value(
+    batch: &RecordBatch,
+    name: &str,
+    row: usize,
+) -> Result<i64, TraceqlError> {
+    let col = batch
+        .column_by_name(name)
+        .ok_or_else(|| TraceqlError::Store(format!("missing int64 column `{name}`")))?;
+    int64_array_value(col.as_ref(), row)
+}
+
+pub(crate) fn is_event_matcher(matcher: &SpanMatcher) -> bool {
+    krabka_traceql::scope_is_event_matcher(matcher.scope, &matcher.key)
+}
+
+pub(crate) fn is_intrinsic_tag(tag: &str) -> bool {
+    tag.contains(':')
+}
+
+pub(crate) fn is_link_matcher(matcher: &SpanMatcher) -> bool {
+    krabka_traceql::scope_is_link_matcher(matcher.scope, &matcher.key)
+}
+
+pub(crate) fn is_nested_intrinsic_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "event:name" | "event:timeSinceStart" | "link:traceID" | "link:spanID"
+    )
+}
+
+pub(crate) fn root_service_matches(value: &str, matcher: &SpanMatcher) -> bool {
+    nested_presence_matches(!value.is_empty(), matcher.op, &matcher.value)
+        .unwrap_or_else(|| string_matches(value, matcher.op, &matcher.value))
+}
+
+pub(crate) fn tag_scope_key(scope: TagScope) -> &'static str {
+    crate::frontend::merge::scope_key(scope)
+}
+
+pub(crate) fn unscoped_attribute_tag(tag: &str) -> &str {
+    tag.strip_prefix("resource.")
+        .or_else(|| tag.strip_prefix("span."))
+        .or_else(|| tag.strip_prefix("event.").filter(|tag| tag.contains('.')))
+        .or_else(|| tag.strip_prefix("link.").filter(|tag| tag.contains('.')))
+        .unwrap_or(tag)
+}

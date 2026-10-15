@@ -160,19 +160,43 @@ mod tests {
         assert2::assert!(value.is_null(0));
     }
 }
-
-mod over_time_family_from_function_name;
 mod over_time_fold;
 mod over_time_range_plan;
-mod over_time_value_column;
 mod plan_over_time_range_selector;
-mod time_column;
-mod value_column;
-
-pub use over_time_family_from_function_name::over_time_family_from_function_name;
 pub use over_time_fold::OverTimeFold;
 pub use over_time_range_plan::OverTimeRangePlan;
-pub use over_time_value_column::OVER_TIME_VALUE_COLUMN;
 pub use plan_over_time_range_selector::plan_over_time_range_selector;
-pub use time_column::TIME_COLUMN;
-pub use value_column::VALUE_COLUMN;
+
+/// Projection output column name with the `*_over_time` UDF result.
+pub const OVER_TIME_VALUE_COLUMN: &str = "value";
+
+/// Leaf-batch column with the per-sample timestamp in epoch milliseconds.
+pub const TIME_COLUMN: &str = "timestamp";
+
+/// Leaf-batch column with the per-sample float value.
+pub const VALUE_COLUMN: &str = "value";
+
+/// Resolves a matrix-selector `*_over_time` function name to its [`OverTimeFamily`].
+///
+/// [`OverTimeFamily`] is the operator path, the float UDF chain. This function
+/// returns `None` for the experimental members `mad_over_time`,
+/// `first_over_time`, and the `ts_of_*_over_time` family. Those members have no
+/// operator-leaf UDF and route through the engine's shared
+/// `apply_outer_range_fn` kernel instead. This function also returns `None` for
+/// any function outside the `*_over_time` set.
+#[must_use]
+pub fn over_time_family_from_function_name(name: &str) -> Option<OverTimeFamily> {
+    match name {
+        "sum_over_time" => Some(OverTimeFamily::Sum),
+        "avg_over_time" => Some(OverTimeFamily::Avg),
+        "count_over_time" => Some(OverTimeFamily::Count),
+        "min_over_time" => Some(OverTimeFamily::Min),
+        "max_over_time" => Some(OverTimeFamily::Max),
+        "stddev_over_time" => Some(OverTimeFamily::Stddev),
+        "stdvar_over_time" => Some(OverTimeFamily::Stdvar),
+        "last_over_time" => Some(OverTimeFamily::Last),
+        "present_over_time" => Some(OverTimeFamily::Present),
+        "quantile_over_time" => Some(OverTimeFamily::Quantile),
+        _ => None,
+    }
+}

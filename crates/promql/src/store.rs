@@ -1,10 +1,139 @@
 //! Metric data access abstraction.
 
-use std::collections::BTreeSet;
+use std::{collections::{BTreeMap, BTreeSet}, sync::Arc};
 
 use datafusion::prelude::SessionContext;
+use krabka_blockstore::SeriesFingerprint;
+use krabka_metrics::FloatSampleRow;
 
 use crate::{PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher};
+
+/// One exemplar attached to a metric series.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExemplarRecord {
+    pub series_labels: Labels,
+    pub labels: Labels,
+    pub ts_ms: i64,
+    pub value: f64,
+}
+
+/// The exemplars a store returned, and the blocks it answered without.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ExemplarScan {
+    pub exemplars: Vec<ExemplarRecord>,
+    pub warnings: Vec<String>,
+}
+
+/// Cardinality for one label name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabelNameCardinality {
+    pub name: String,
+    pub series_count: usize,
+}
+
+/// Cardinality for one label value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabelValueCardinality {
+    pub label_name: String,
+    pub label_value: String,
+    pub series_count: usize,
+}
+
+/// Latest instant samples and the labels resolved over their label window.
+pub struct LatestFloatScan {
+    pub samples: Vec<FloatSampleRow>,
+    pub labels: BTreeMap<SeriesFingerprint, Arc<Labels>>,
+}
+
+/// Metric metadata served by `/api/v1/metadata`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MetadataRecord {
+    pub metric_family_name: String,
+    pub metric_type: String,
+    pub help: String,
+    pub unit: String,
+}
+
+/// The metric metadata a store returned, and the blocks it answered without.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MetadataScan {
+    pub metadata: Vec<MetadataRecord>,
+    pub warnings: Vec<String>,
+}
+
+/// One named TSDB status statistic.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedTsdbStat {
+    pub name: String,
+    pub value: usize,
+}
+
+/// A leaf scan result with up to two `DataFusion` tables registered.
+pub struct ScanResult {
+    pub ctx: SessionContext,
+    pub float_table: Option<String>,
+    pub histogram_table: Option<String>,
+    /// One line for each block the scan answered without.
+    pub warnings: Vec<String>,
+}
+
+/// One compacted TSDB block exposed by `/api/v1/status/tsdb/blocks`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TsdbBlock {
+    pub id: String,
+    pub min_time: i64,
+    pub max_time: i64,
+    pub num_samples: usize,
+    pub num_series: usize,
+}
+
+pub(crate) fn sort_tsdb_blocks(blocks: &mut [TsdbBlock]) {
+    blocks.sort_by(|left, right| {
+        left.min_time
+            .cmp(&right.min_time)
+            .then_with(|| left.max_time.cmp(&right.max_time))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
+/// Prometheus-style head block stats for `/api/v1/status/tsdb`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TsdbHeadStats {
+    pub num_series: usize,
+    pub num_samples: usize,
+    pub num_chunks: usize,
+    pub min_time: i64,
+    pub max_time: i64,
+}
+
+/// Tenant-scoped TSDB status statistics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TsdbStats {
+    pub head_stats: TsdbHeadStats,
+    pub series_count_by_metric_name: Vec<NamedTsdbStat>,
+    pub label_value_count_by_label_name: Vec<NamedTsdbStat>,
+    pub memory_in_bytes_by_label_name: Vec<NamedTsdbStat>,
+    pub series_count_by_label_value_pair: Vec<NamedTsdbStat>,
+}
+
+#[cfg(test)]
+impl TsdbStats {
+    pub(crate) fn empty() -> Self {
+        Self {
+            head_stats: TsdbHeadStats {
+                num_series: 0,
+                num_samples: 0,
+                num_chunks: 0,
+                min_time: 0,
+                max_time: 0,
+            },
+            series_count_by_metric_name: Vec::new(),
+            label_value_count_by_label_name: Vec::new(),
+            memory_in_bytes_by_label_name: Vec::new(),
+            series_count_by_label_value_pair: Vec::new(),
+        }
+    }
+}
 
 pub(crate) fn distinct_label_names(series: impl IntoIterator<Item = Labels>) -> Vec<String> {
     let mut names = BTreeSet::new();
@@ -251,31 +380,5 @@ mod tests {
     }
 }
 
-mod exemplar_record;
-mod exemplar_scan;
-mod label_name_cardinality;
-mod label_value_cardinality;
-mod latest_float_scan;
-mod metadata_record;
-mod metadata_scan;
 mod metric_store;
-mod named_tsdb_stat;
-mod scan_result;
-mod tsdb_block;
-mod tsdb_head_stats;
-mod tsdb_stats;
-
-pub use exemplar_record::ExemplarRecord;
-pub use exemplar_scan::ExemplarScan;
-pub use label_name_cardinality::LabelNameCardinality;
-pub use label_value_cardinality::LabelValueCardinality;
-pub use latest_float_scan::LatestFloatScan;
-pub use metadata_record::MetadataRecord;
-pub use metadata_scan::MetadataScan;
 pub use metric_store::MetricStore;
-pub use named_tsdb_stat::NamedTsdbStat;
-pub use scan_result::ScanResult;
-pub use tsdb_block::TsdbBlock;
-pub(crate) use tsdb_block::sort_tsdb_blocks;
-pub use tsdb_head_stats::TsdbHeadStats;
-pub use tsdb_stats::TsdbStats;

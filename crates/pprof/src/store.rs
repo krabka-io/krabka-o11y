@@ -7,6 +7,13 @@ use krabka_blockstore::LabelMatcher;
 
 use crate::{error::ProfileError, frame::SymbolSource};
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProfileStats {
+    pub data_ingested: bool,
+    pub oldest_profile_time: Option<i64>,
+    pub newest_profile_time: Option<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -119,10 +126,8 @@ mod tests {
 
 mod profile_query_stats;
 mod profile_scan;
-mod profile_stats;
 mod profile_store;
 
 pub use profile_query_stats::{ProfileInstanceKey, ProfileQueryScope, ProfileQueryStats};
 pub use profile_scan::ProfileScan;
-pub use profile_stats::ProfileStats;
 pub use profile_store::ProfileStore;

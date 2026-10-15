@@ -10,8 +10,149 @@ use crate::metricsgen::{
     checkpoint::{CheckpointCodecError, encode_checkpoint_key, parse_checkpoint_key},
     config::MetricsGenConfig,
     contract::{SpanKind, SpanRecord, StatusCode},
-    series::{Series, SeriesSample, sorted_labels},
+    series::{HistogramBucket, Series, SeriesSample, sorted_labels},
 };
+
+
+/// Tempo service-graph connection classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ConnectionType {
+    Unset,
+    VirtualNode,
+    MessagingSystem,
+    Database,
+}
+
+impl ConnectionType {
+    #[must_use]
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Unset => "unset",
+            Self::VirtualNode => "virtual_node",
+            Self::MessagingSystem => "messaging_system",
+            Self::Database => "database",
+        }
+    }
+}
+
+pub(crate) fn decode_checkpoint_value(mut buf: &[u8]) -> Result<Edge, CheckpointCodecError> {
+    if buf.len() < 10 {
+        return Err(CheckpointCodecError::Truncated);
+    }
+    let connection_type = match buf.get_u8() {
+        0 => ConnectionType::Unset,
+        1 => ConnectionType::VirtualNode,
+        2 => ConnectionType::MessagingSystem,
+        3 => ConnectionType::Database,
+        _ => return Err(CheckpointCodecError::BadConnectionType),
+    };
+    let first_seen_ns = buf.get_i64();
+    let failed = buf.get_u8() != 0;
+    let client_service = get_optional_string(&mut buf)?;
+    let server_service = get_optional_string(&mut buf)?;
+    let client_latency_ns = get_optional_i64(&mut buf)?;
+    let server_latency_ns = get_optional_i64(&mut buf)?;
+    let mut multiplier = 1.0;
+    let mut labels = Vec::new();
+    if !buf.is_empty() {
+        if buf.len() < 12 {
+            return Err(CheckpointCodecError::Truncated);
+        }
+        multiplier = buf.get_f64();
+        let count = buf.get_u32();
+        for _ in 0..count {
+            let name = get_optional_string(&mut buf)?.ok_or(CheckpointCodecError::Truncated)?;
+            let value = get_optional_string(&mut buf)?.ok_or(CheckpointCodecError::Truncated)?;
+            labels.push(krabka_traceql::MetricLabel::new(name, value));
+        }
+    }
+    Ok(Edge {
+        client_service,
+        server_service,
+        client_latency_ns,
+        server_latency_ns,
+        failed,
+        connection_type,
+        first_seen_ns,
+        labels,
+        multiplier,
+    })
+}
+
+/// A half-edge until both client and server sides arrive.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Edge {
+    pub client_service: Option<String>,
+    pub server_service: Option<String>,
+    pub client_latency_ns: Option<i64>,
+    pub server_latency_ns: Option<i64>,
+    pub failed: bool,
+    pub connection_type: ConnectionType,
+    pub first_seen_ns: i64,
+    pub labels: Vec<krabka_traceql::MetricLabel>,
+    pub multiplier: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct EdgeAgg {
+    pub(crate) requests: f64,
+    pub(crate) failed: f64,
+    pub(crate) client_seconds_sum: f64,
+    pub(crate) client_seconds_count: f64,
+    pub(crate) client_bucket_counts: Vec<f64>,
+    pub(crate) server_seconds_sum: f64,
+    pub(crate) server_seconds_count: f64,
+    pub(crate) server_bucket_counts: Vec<f64>,
+    pub(crate) messaging_seconds_sum: f64,
+    pub(crate) messaging_seconds_count: f64,
+    pub(crate) messaging_bucket_counts: Vec<f64>,
+}
+
+impl EdgeAgg {
+    pub(crate) fn new(bucket_count: usize) -> Self {
+        Self {
+            client_bucket_counts: vec![0.0; bucket_count],
+            server_bucket_counts: vec![0.0; bucket_count],
+            messaging_bucket_counts: vec![0.0; bucket_count],
+            ..Self::default()
+        }
+    }
+}
+
+pub(crate) fn get_optional_string(buf: &mut &[u8]) -> Result<Option<String>, CheckpointCodecError> {
+    let present = get_presence(buf)?;
+    if !present {
+        return Ok(None);
+    }
+    let value = String::from_utf8(super::read_length_prefixed_bytes(buf)?)
+        .map_err(|_| CheckpointCodecError::Utf8)?;
+    Ok(Some(value))
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct HistogramSnapshot<'a> {
+    pub(crate) sum: f64,
+    pub(crate) count: f64,
+    pub(crate) bucket_edges_ns: &'a [f64],
+    pub(crate) bucket_counts: &'a [f64],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct LabelKey {
+    pub(crate) client: String,
+    pub(crate) server: String,
+    pub(crate) connection_type: ConnectionType,
+    pub(crate) dimensions: Vec<krabka_traceql::MetricLabel>,
+}
+
+/// Result of recording one span into the edge store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordOutcome {
+    Recorded,
+    Completed,
+    Dropped,
+    Ignored,
+}
 
 #[cfg(test)]
 mod tests {
@@ -943,65 +1084,249 @@ mod tests {
         );
     }
 }
-
-mod attr_value;
-mod classify;
-mod connection_type;
-mod counter;
-mod cumulative_buckets_seconds;
-mod decode_checkpoint_value;
-mod edge;
-mod edge_agg;
 mod edge_key;
-mod edge_side;
 mod edge_store;
-mod encode_checkpoint_value;
-mod fill_edge;
-mod fill_virtual_node;
-mod get_optional_i64;
-mod get_optional_string;
-mod get_presence;
-mod has_attr;
-mod histogram_snapshot;
-mod label_key;
-mod label_key_for_edge;
-mod label_key_for_span;
-mod ns_per_sec;
-mod ns_to_seconds;
-mod observe_latency;
-mod push_histogram;
-mod put_optional_i64;
-mod put_optional_string;
-mod record_outcome;
-mod service_graph_labels;
-
-use attr_value::attr_value;
-use classify::classify;
-pub use connection_type::ConnectionType;
-use counter::counter;
-use cumulative_buckets_seconds::cumulative_buckets_seconds;
-use decode_checkpoint_value::decode_checkpoint_value;
-pub use edge::Edge;
-use edge_agg::EdgeAgg;
 use edge_key::{EdgeKey, edge_key};
-use edge_side::edge_side;
 pub use edge_store::EdgeStore;
-use encode_checkpoint_value::encode_checkpoint_value;
-use fill_edge::fill_edge;
-use fill_virtual_node::fill_virtual_node;
-use get_optional_i64::get_optional_i64;
-use get_optional_string::get_optional_string;
-use get_presence::get_presence;
-use has_attr::has_attr;
-use histogram_snapshot::HistogramSnapshot;
-use label_key::LabelKey;
-use label_key_for_edge::label_key_for_edge;
-use label_key_for_span::label_key_for_span;
-use ns_per_sec::NS_PER_SEC;
-use ns_to_seconds::ns_to_seconds;
-use observe_latency::observe_latency;
-use push_histogram::push_histogram;
-use put_optional_i64::put_optional_i64;
-use put_optional_string::put_optional_string;
-pub use record_outcome::RecordOutcome;
-use service_graph_labels::service_graph_labels;
+
+pub(crate) const NS_PER_SEC: f64 = 1_000_000_000.0;
+
+pub(crate) fn attr_value<'a>(span: &'a SpanRecord, name: &str) -> Option<&'a str> {
+    span.attributes.iter().find_map(|attribute| {
+        (attribute.key == name && !attribute.value.is_empty()).then_some(attribute.value.as_str())
+    })
+}
+
+pub(crate) fn edge_side(kind: SpanKind) -> Option<bool> {
+    match kind {
+        SpanKind::Client | SpanKind::Producer => Some(true),
+        SpanKind::Server | SpanKind::Consumer => Some(false),
+        SpanKind::Unspecified | SpanKind::Internal => None,
+    }
+}
+
+pub(crate) fn fill_edge(edge: &mut Edge, span: &SpanRecord, is_client: bool, latency_ns: i64) {
+    if is_client {
+        edge.client_service = Some(span.service_name.clone());
+        edge.client_latency_ns = Some(latency_ns);
+    } else {
+        edge.server_service = Some(span.service_name.clone());
+        edge.server_latency_ns = Some(latency_ns);
+    }
+}
+
+pub(crate) fn get_optional_i64(buf: &mut &[u8]) -> Result<Option<i64>, CheckpointCodecError> {
+    let present = get_presence(buf)?;
+    if !present {
+        return Ok(None);
+    }
+    if buf.len() < 8 {
+        return Err(CheckpointCodecError::Truncated);
+    }
+    Ok(Some(buf.get_i64()))
+}
+
+pub(crate) fn get_presence(buf: &mut &[u8]) -> Result<bool, CheckpointCodecError> {
+    if buf.is_empty() {
+        return Err(CheckpointCodecError::Truncated);
+    }
+    Ok(buf.get_u8() != 0)
+}
+
+pub(crate) fn has_attr(span: &SpanRecord, name: &str) -> bool {
+    span.attributes
+        .iter()
+        .any(|attribute| attribute.key == name)
+}
+
+pub(crate) fn label_key_for_edge(edge: &Edge) -> LabelKey {
+    LabelKey {
+        client: edge.client_service.clone().unwrap_or_default(),
+        server: edge.server_service.clone().unwrap_or_default(),
+        connection_type: edge.connection_type,
+        dimensions: edge.labels.clone(),
+    }
+}
+
+pub(crate) fn ns_to_seconds(ns: i64) -> f64 {
+    ns.max(0).to_f64().unwrap_or(f64::MAX) / NS_PER_SEC
+}
+
+pub(crate) fn put_optional_i64(buf: &mut BytesMut, value: Option<i64>) {
+    match value {
+        Some(value) => {
+            buf.put_u8(1);
+            buf.put_i64(value);
+        }
+        None => buf.put_u8(0),
+    }
+}
+
+pub(crate) fn service_graph_labels(key: LabelKey) -> Vec<krabka_traceql::MetricLabel> {
+    let mut dimensions = key.dimensions;
+    dimensions.extend([
+        krabka_traceql::MetricLabel::new("client", key.client),
+        krabka_traceql::MetricLabel::new("server", key.server),
+        krabka_traceql::MetricLabel::new("connection_type", key.connection_type.as_label()),
+    ]);
+    sorted_labels(dimensions)
+}
+
+pub(crate) fn classify(span: &SpanRecord) -> ConnectionType {
+    if has_attr(span, "db.system") {
+        ConnectionType::Database
+    } else if has_attr(span, "messaging.system") {
+        ConnectionType::MessagingSystem
+    } else if has_attr(span, "peer.service") {
+        ConnectionType::VirtualNode
+    } else {
+        ConnectionType::Unset
+    }
+}
+
+pub(crate) fn counter(
+    name: &str,
+    labels: &[krabka_traceql::MetricLabel],
+    value: f64,
+    timestamp_ms: i64,
+) -> Series {
+    Series {
+        name: name.to_string(),
+        labels: labels.to_vec(),
+        sample: SeriesSample::Counter(value),
+        exemplars: Vec::new(),
+        timestamp_ms,
+    }
+}
+
+pub(crate) fn cumulative_buckets_seconds(
+    bucket_edges_ns: &[f64],
+    bucket_counts: &[f64],
+) -> Vec<HistogramBucket> {
+    let mut cumulative = 0.0;
+    bucket_edges_ns
+        .iter()
+        .enumerate()
+        .map(|indexed_edge| {
+            let idx = indexed_edge.0;
+            let edge_ns = indexed_edge.1;
+            cumulative += bucket_counts.get(idx).copied().unwrap_or_default();
+            HistogramBucket {
+                upper_bound: *edge_ns / NS_PER_SEC,
+                cumulative_count: cumulative,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn encode_checkpoint_value(edge: &Edge) -> Vec<u8> {
+    let mut buf = BytesMut::new();
+    buf.put_u8(edge.connection_type as u8);
+    buf.put_i64(edge.first_seen_ns);
+    buf.put_u8(u8::from(edge.failed));
+    put_optional_string(&mut buf, edge.client_service.as_deref());
+    put_optional_string(&mut buf, edge.server_service.as_deref());
+    put_optional_i64(&mut buf, edge.client_latency_ns);
+    put_optional_i64(&mut buf, edge.server_latency_ns);
+    buf.put_f64(edge.multiplier);
+    buf.put_u32(edge.labels.len().try_into().unwrap_or(u32::MAX));
+    for label in &edge.labels {
+        put_optional_string(&mut buf, Some(&label.key));
+        put_optional_string(&mut buf, Some(&label.value));
+    }
+    buf.to_vec()
+}
+
+pub(crate) fn fill_virtual_node(
+    edge: &mut Edge,
+    span: &SpanRecord,
+    is_client: bool,
+    connection_type: ConnectionType,
+    peer_attributes: &[String],
+) {
+    if connection_type != ConnectionType::VirtualNode {
+        return;
+    }
+    let Some(peer) = peer_attributes
+        .iter()
+        .find_map(|attribute| attr_value(span, attribute))
+    else {
+        return;
+    };
+    if is_client {
+        edge.server_service = Some(peer.to_string());
+    } else {
+        edge.client_service = Some(peer.to_string());
+    }
+}
+
+pub(crate) fn label_key_for_span(
+    span: &SpanRecord,
+    is_client: bool,
+    connection_type: ConnectionType,
+    labels: Vec<krabka_traceql::MetricLabel>,
+) -> LabelKey {
+    if is_client {
+        LabelKey {
+            client: span.service_name.clone(),
+            server: String::new(),
+            connection_type,
+            dimensions: labels,
+        }
+    } else {
+        LabelKey {
+            client: String::new(),
+            server: span.service_name.clone(),
+            connection_type,
+            dimensions: labels,
+        }
+    }
+}
+
+pub(crate) fn observe_latency(
+    bucket_edges_ns: &[f64],
+    bucket_counts: &mut [f64],
+    ns: i64,
+    multiplier: f64,
+) {
+    let value_ns = ns.max(0).to_f64().unwrap_or(f64::MAX);
+    let idx = bucket_edges_ns
+        .iter()
+        .position(|edge| value_ns <= *edge)
+        .unwrap_or(bucket_edges_ns.len());
+    if let Some(count) = bucket_counts.get_mut(idx) {
+        *count += multiplier;
+    }
+}
+
+pub(crate) fn push_histogram(
+    out: &mut Vec<Series>,
+    name: &str,
+    labels: &[krabka_traceql::MetricLabel],
+    histogram: HistogramSnapshot<'_>,
+    timestamp_ms: i64,
+) {
+    out.push(Series {
+        name: name.to_string(),
+        labels: labels.to_vec(),
+        sample: SeriesSample::ClassicHistogram {
+            buckets: cumulative_buckets_seconds(histogram.bucket_edges_ns, histogram.bucket_counts),
+            sum: histogram.sum,
+            count: histogram.count,
+        },
+        exemplars: Vec::new(),
+        timestamp_ms,
+    });
+}
+
+pub(crate) fn put_optional_string(buf: &mut BytesMut, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            buf.put_u8(1);
+            let len = u32::try_from(value.len()).expect("service name too long");
+            buf.put_u32(len);
+            buf.put_slice(value.as_bytes());
+        }
+        None => buf.put_u8(0),
+    }
+}

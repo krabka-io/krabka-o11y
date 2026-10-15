@@ -54,8 +54,12 @@ use url::Url;
 mod tests {
     // The vector-sample check the PromQL HTTP API's unit tests share,
     // reached with `#[path]` from //crates/promql.
-    #[path = "../../../promql/src/http_api/tests/first_vector_sample.rs"]
-    mod first_vector_sample;
+    use krabka_blockstore::Labels;
+    use krabka_metrics::{NativeHistogram, ResetHint};
+    use krabka_promql::InMemoryMetricStore;
+    #[path = "../../../promql/src/http_api/tests/support.rs"]
+    mod shared_test_support;
+    use shared_test_support::first_vector_sample;
     mod instant_float_scan;
     mod owned_wal_replay;
     mod parallel_manifest_reads;
@@ -2964,18 +2968,7 @@ rules:
     }
 }
 
-mod alertmanager_http_sink;
-mod alertmanager_payload;
-mod apply_ruler_state_record;
-mod blockstore_prometheus_router;
 mod buffered_ruler_outputs;
-mod bundled_group_label;
-mod bundled_rule_file;
-mod bundled_rules_address;
-mod bundled_rules_error;
-mod bundled_rules_host;
-mod bundled_rules_namespace;
-mod bundled_rules_response_max;
 mod cached_metric_block_store;
 mod consumer;
 mod current_time_ms;
@@ -2983,79 +2976,24 @@ mod default_cold_cache_ttl;
 mod default_unbounded_compatibility_lookback;
 mod duration_ms;
 mod evaluate_ruler_once;
-mod finish_wal_consumer_replay;
-mod in_memory_prometheus_router;
-mod install_bundled_rule_groups;
 mod kafka_recording_rule_wal_sink;
-mod kafka_ruler_state_sink;
 mod keyed_producer_record;
-mod load_compaction_manifests;
-mod load_compaction_manifests_filtered;
-mod load_compaction_manifests_filtered_with_cache;
-mod load_compaction_manifests_for_range;
-mod load_compaction_manifests_for_range_with_cache;
-mod manifest_time_range;
 mod metrics_service_error;
 mod mimir_block_upload;
 mod mimir_tenant_admin;
-mod noop_alertmanager_sink;
-mod normalize_refresh_range;
-mod poll_checked_replay_records;
 mod poll_ruler_state_consumer_once;
-mod poll_wal_head_consumer_once;
 mod prometheus_api_state_for_store;
-mod prometheus_router_for_store;
-mod prometheus_ruler_state_sink;
 mod promql_error;
-mod query_frontend_prometheus_router_for_store;
-mod query_frontend_prometheus_router_for_store_with_cache;
-mod queued_alertmanager_sink;
-mod refreshing_blockstore_prometheus_router;
-mod refreshing_blockstore_prometheus_router_with_hot_store;
+mod prometheus_routers;
+mod prometheus_server;
 mod refreshing_metric_block_store;
-mod replay_ruler_state_records;
-mod replay_wal_head_records;
-mod ruler_alertmanager_sink;
 mod ruler_lease;
-mod ruler_state_compaction_key;
-mod ruler_state_consumer_error;
-mod ruler_state_fanout_sink;
-mod ruler_state_replay_error;
-mod ruler_state_topic;
-mod ruler_state_wal_record;
-mod ruler_state_wal_record_error;
 mod run_fenced_ruler_evaluation_loop;
 mod run_ruler_evaluation_loop;
-mod run_ruler_state_consumer_loop;
-mod run_wal_head_consumer_loop;
-mod serve_in_memory_prometheus;
-mod serve_prometheus_router;
-mod serve_prometheus_router_joinable;
 mod unix_ms_to_rfc3339;
 mod unix_time_ms;
-mod wal_head_consumer_commit;
-mod wal_head_consumer_error;
-mod wal_head_consumer_loop_summary;
-mod wal_head_consumer_poll;
-mod wal_head_consumer_record;
-mod wal_head_partition_offset;
-mod wal_head_recovery_state;
-mod wal_head_replay_error;
-mod wal_head_replay_result;
-mod wal_record_max_timestamp_ms;
 
-pub use alertmanager_http_sink::AlertmanagerHttpSink;
-use alertmanager_payload::alertmanager_payload;
-pub use apply_ruler_state_record::apply_ruler_state_record;
-pub use blockstore_prometheus_router::blockstore_prometheus_router;
 pub use buffered_ruler_outputs::{BufferedRulerOutputs, RulerOutputBatch, TenantAlertBatch};
-use bundled_group_label::bundled_group_label;
-use bundled_rule_file::BundledRuleFile;
-pub use bundled_rules_address::bundled_rules_address;
-pub use bundled_rules_error::BundledRulesError;
-pub use bundled_rules_host::BUNDLED_RULES_HOST;
-use bundled_rules_namespace::bundled_rules_namespace;
-use bundled_rules_response_max::BUNDLED_RULES_RESPONSE_MAX;
 use cached_metric_block_store::CachedMetricBlockStore;
 use current_time_ms::current_time_ms;
 pub use default_cold_cache_ttl::DEFAULT_COLD_CACHE_TTL;
@@ -3064,63 +3002,62 @@ use duration_ms::duration_ms;
 pub use evaluate_ruler_once::{
     RulerEvaluationContext, evaluate_ruler_once, evaluate_ruler_once_deferred,
 };
-pub use in_memory_prometheus_router::in_memory_prometheus_router;
-pub use install_bundled_rule_groups::install_bundled_rule_groups;
 pub use kafka_recording_rule_wal_sink::KafkaRecordingRuleWalSink;
-pub use kafka_ruler_state_sink::KafkaRulerStateSink;
 use keyed_producer_record::keyed_producer_record;
-pub use load_compaction_manifests::load_compaction_manifests;
-use load_compaction_manifests_filtered::load_compaction_manifests_filtered;
-use load_compaction_manifests_filtered_with_cache::load_compaction_manifests_filtered_with_cache;
-pub use load_compaction_manifests_for_range::load_compaction_manifests_for_range;
-use load_compaction_manifests_for_range_with_cache::load_compaction_manifests_for_range_with_cache;
-pub(crate) use manifest_time_range::ManifestTimeRange;
+mod alertmanager;
+pub use alertmanager::{
+    AlertmanagerHttpSink, NoopAlertmanagerSink, QueuedAlertmanagerSink, RulerAlertmanagerSink,
+};
+use alertmanager::alertmanager_payload;
+mod bundled_rules;
+pub use bundled_rules::{
+    BUNDLED_RULES_HOST, BundledRulesError, bundled_rules_address, install_bundled_rule_groups,
+};
+mod ruler_state;
+pub use ruler_state::{
+    KafkaRulerStateSink, PrometheusRulerStateSink, RULER_STATE_TOPIC, RulerStateConsumerError,
+    RulerStateFanoutSink, RulerStateReplayError, RulerStateWalRecord,
+    RulerStateWalRecordError, apply_ruler_state_record, replay_ruler_state_records,
+    ruler_state_compaction_key, run_ruler_state_consumer_loop,
+};
+mod wal_head;
+pub use wal_head::{
+    WalHeadConsumerCommit, WalHeadConsumerError, WalHeadConsumerLoopSummary, WalHeadConsumerPoll,
+    WalHeadConsumerRecord, WalHeadPartitionOffset, WalHeadRecoveryState, WalHeadReplayError,
+    WalHeadReplayResult, WalPartitionAssignment, poll_wal_head_consumer_once,
+    replay_wal_head_records, run_wal_head_consumer_loop,
+};
+use wal_head::{
+    checked_replay_records, finish_wal_consumer_replay, poll_checked_replay_records,
+    wal_record_max_timestamp_ms,
+};
+mod manifests;
+pub use manifests::{load_compaction_manifests, load_compaction_manifests_for_range};
+pub(crate) use manifests::ManifestTimeRange;
+use manifests::{
+    load_compaction_manifests_filtered, load_compaction_manifests_filtered_with_cache,
+    load_compaction_manifests_for_range_with_cache, normalize_refresh_range,
+};
 pub use metrics_service_error::MetricsServiceError;
 pub use mimir_tenant_admin::{MimirTenantAdminState, mimir_tenant_admin_router};
-pub use noop_alertmanager_sink::NoopAlertmanagerSink;
-use normalize_refresh_range::normalize_refresh_range;
 pub use poll_ruler_state_consumer_once::poll_ruler_state_consumer_once;
-pub use poll_wal_head_consumer_once::poll_wal_head_consumer_once;
 pub use prometheus_api_state_for_store::prometheus_api_state_for_store;
-pub use prometheus_router_for_store::prometheus_router_for_store;
-pub use prometheus_ruler_state_sink::PrometheusRulerStateSink;
-pub use query_frontend_prometheus_router_for_store::query_frontend_prometheus_router_for_store;
-pub use query_frontend_prometheus_router_for_store_with_cache::query_frontend_prometheus_router_for_store_with_cache;
-pub use queued_alertmanager_sink::QueuedAlertmanagerSink;
-pub use refreshing_blockstore_prometheus_router::refreshing_blockstore_prometheus_router;
-pub use refreshing_blockstore_prometheus_router_with_hot_store::refreshing_blockstore_prometheus_router_with_hot_store;
 pub(crate) use refreshing_metric_block_store::MIMIR_TENANT_DELETION_PREFIX;
 pub use refreshing_metric_block_store::RefreshingMetricBlockStore;
-pub use replay_ruler_state_records::replay_ruler_state_records;
-pub use replay_wal_head_records::replay_wal_head_records;
-pub use ruler_alertmanager_sink::RulerAlertmanagerSink;
 pub use ruler_lease::{RulerLeaseState, advance_ruler_lease};
-pub use ruler_state_compaction_key::ruler_state_compaction_key;
-pub use ruler_state_consumer_error::RulerStateConsumerError;
-pub use ruler_state_fanout_sink::RulerStateFanoutSink;
-pub use ruler_state_replay_error::RulerStateReplayError;
-pub use ruler_state_topic::RULER_STATE_TOPIC;
-pub use ruler_state_wal_record::RulerStateWalRecord;
-pub use ruler_state_wal_record_error::RulerStateWalRecordError;
 pub use run_fenced_ruler_evaluation_loop::{RulerTopics, run_fenced_ruler_evaluation_loop};
 pub use run_ruler_evaluation_loop::run_ruler_evaluation_loop;
-pub use run_ruler_state_consumer_loop::run_ruler_state_consumer_loop;
-pub use run_wal_head_consumer_loop::run_wal_head_consumer_loop;
-pub use serve_in_memory_prometheus::serve_in_memory_prometheus;
-pub use serve_prometheus_router::serve_prometheus_router;
-pub use serve_prometheus_router_joinable::{
-    JoinableRouterServer, serve_prometheus_router_joinable,
-};
 use unix_ms_to_rfc3339::unix_ms_to_rfc3339;
 use unix_time_ms::unix_time_ms;
-pub use wal_head_consumer_commit::WalHeadConsumerCommit;
-pub use wal_head_consumer_error::WalHeadConsumerError;
-pub use wal_head_consumer_loop_summary::WalHeadConsumerLoopSummary;
-pub use wal_head_consumer_poll::WalHeadConsumerPoll;
-pub use wal_head_consumer_record::WalHeadConsumerRecord;
-use wal_head_consumer_record::checked_replay_records;
-pub use wal_head_partition_offset::WalHeadPartitionOffset;
-pub use wal_head_recovery_state::{WalHeadRecoveryState, WalPartitionAssignment};
-pub use wal_head_replay_error::WalHeadReplayError;
-pub use wal_head_replay_result::WalHeadReplayResult;
-use wal_record_max_timestamp_ms::wal_record_max_timestamp_ms;
+
+pub use prometheus_routers::{
+    blockstore_prometheus_router, in_memory_prometheus_router, prometheus_router_for_store,
+    query_frontend_prometheus_router_for_store,
+    query_frontend_prometheus_router_for_store_with_cache,
+    refreshing_blockstore_prometheus_router,
+    refreshing_blockstore_prometheus_router_with_hot_store,
+};
+pub use prometheus_server::{
+    JoinableRouterServer, serve_in_memory_prometheus, serve_prometheus_router,
+    serve_prometheus_router_joinable,
+};

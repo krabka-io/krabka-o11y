@@ -1758,48 +1758,157 @@ mod tests {
         assert!(msg.contains("duration out of range"));
     }
 }
-
-mod arithmetic_type_error;
-mod default_compare_top_n;
-mod i64_to_f64;
+mod duration;
+use duration::parse_duration_nanos;
+mod arithmetic;
+use arithmetic::{value_div, value_pow};
 mod intrinsic;
-mod is_duration_field;
-mod numeric_filter_field;
-mod numeric_filter_value;
-mod parse;
-mod parse_duration_component_nanos;
-mod parse_duration_nanos;
 mod parser_type;
-mod scope;
-mod scopeless_intrinsic;
-mod value_add;
-mod value_div;
-mod value_mod;
-mod value_mul;
-mod value_neg;
-mod value_pow;
-mod value_sub;
-
-use arithmetic_type_error::arithmetic_type_error;
-use default_compare_top_n::DEFAULT_COMPARE_TOP_N;
-use i64_to_f64::i64_to_f64;
 use intrinsic::intrinsic;
-use is_duration_field::is_duration_field;
-use numeric_filter_field::numeric_filter_field;
-use numeric_filter_value::numeric_filter_value;
-pub use parse::parse;
-use parse_duration_component_nanos::parse_duration_component_nanos;
-use parse_duration_nanos::parse_duration_nanos;
 use parser_type::Parser;
-use scope::scope;
-use scopeless_intrinsic::scopeless_intrinsic;
-use value_add::value_add;
-use value_div::value_div;
-use value_mod::value_mod;
-use value_mul::value_mul;
-use value_neg::value_neg;
-use value_pow::value_pow;
-use value_sub::value_sub;
 
 mod scalar_type;
 use scalar_type::validate_scalar_comparison;
+
+/// Default `topN` for `compare()` when the query omits the argument, as in Tempo.
+pub(crate) const DEFAULT_COMPARE_TOP_N: usize = 10;
+
+pub(crate) fn arithmetic_type_error(op: &str, lhs: &Value, rhs: &Value) -> Result<Value> {
+    Err(TraceqlError::Parse(format!(
+        "operator {op} is not supported for {lhs:?} and {rhs:?}"
+    )))
+}
+
+pub(crate) fn i64_to_f64(value: i64) -> Result<f64> {
+    value
+        .to_string()
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| TraceqlError::Parse(e.to_string()))
+}
+
+pub(crate) fn is_duration_field(field: &Field) -> bool {
+    matches!(
+        field.scope,
+        Scope::Intrinsic(
+            Intrinsic::Duration | Intrinsic::TraceDuration | Intrinsic::EventTimeSinceStart
+        )
+    )
+}
+
+pub(crate) fn numeric_filter_field() -> Field {
+    Field {
+        scope: Scope::Intrinsic(Intrinsic::Duration),
+        key: String::new(),
+    }
+}
+
+pub(crate) fn numeric_filter_value(value: Value) -> Result<f64> {
+    match value {
+        Value::Int(value) | Value::Duration(value) => i64_to_f64(value),
+        Value::Float(value) => Ok(value),
+        other => Err(TraceqlError::Parse(format!(
+            "expected numeric filter value, got {other:?}"
+        ))),
+    }
+}
+
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn parse(query: &str) -> Result<Query> {
+    Parser {
+        tokens: lex(query)?,
+        pos: 0,
+    }
+    .parse_query()
+}
+
+pub(crate) fn value_add(lhs: Value, rhs: Value) -> Result<Value> {
+    apply_value_arithmetic(lhs, rhs, ValueArithmetic::Add)
+}
+
+pub(crate) fn value_mul(lhs: Value, rhs: Value) -> Result<Value> {
+    apply_value_arithmetic(lhs, rhs, ValueArithmetic::Multiply)
+}
+
+pub(crate) fn value_sub(lhs: Value, rhs: Value) -> Result<Value> {
+    apply_value_arithmetic(lhs, rhs, ValueArithmetic::Subtract)
+}
+
+pub(crate) fn scope(s: &str) -> Result<Scope> {
+    match s {
+        "span" => Ok(Scope::Span),
+        "resource" => Ok(Scope::Resource),
+        "parent" => Ok(Scope::Parent),
+        "event" => Ok(Scope::Event),
+        "link" => Ok(Scope::Link),
+        "instrumentation" => Ok(Scope::Instrumentation),
+        _ => Err(TraceqlError::Parse(format!("unknown scope {s:?}"))),
+    }
+}
+
+/// Resolves a bare identifier with no scope to a `TraceQL` intrinsic.
+///
+/// The set matches the reserved intrinsic field names that Tempo recognizes
+/// without a scope. A name outside this set is a span or resource attribute,
+/// that is, `Scope::Both`. This function excludes `parentID`, `id`, `traceID`,
+/// and the event, link, and instrumentation intrinsics on purpose. Tempo needs
+/// an explicit scope such as `span:` or `trace:` for those names.
+pub(crate) fn scopeless_intrinsic(name: &str) -> Option<Intrinsic> {
+    Some(match name {
+        "duration" => Intrinsic::Duration,
+        "kind" => Intrinsic::Kind,
+        "name" => Intrinsic::Name,
+        "status" => Intrinsic::Status,
+        "statusMessage" => Intrinsic::StatusMessage,
+        "childCount" => Intrinsic::ChildCount,
+        "nestedSetLeft" => Intrinsic::NestedSetLeft,
+        "nestedSetRight" => Intrinsic::NestedSetRight,
+        "nestedSetParent" => Intrinsic::NestedSetParent,
+        "rootName" => Intrinsic::TraceRootName,
+        "rootServiceName" => Intrinsic::TraceRootService,
+        "traceDuration" => Intrinsic::TraceDuration,
+        _ => return None,
+    })
+}
+
+pub(crate) fn value_mod(lhs: Value, rhs: Value) -> Result<Value> {
+    let operands = ArithmeticOperands { lhs, rhs };
+    match operands {
+        ArithmeticOperands {
+            rhs: Value::Int(0) | Value::Duration(0),
+            ..
+        } => Err(TraceqlError::Parse("modulo by zero".into())),
+        ArithmeticOperands {
+            lhs: Value::Int(lhs),
+            rhs: Value::Int(rhs),
+        } => lhs
+            .checked_rem(rhs)
+            .map(Value::Int)
+            .ok_or_else(|| TraceqlError::Parse("integer modulo out of range".into())),
+        ArithmeticOperands {
+            lhs: Value::Duration(lhs),
+            rhs: Value::Duration(rhs),
+        } => lhs
+            .checked_rem(rhs)
+            .map(Value::Duration)
+            .ok_or_else(|| TraceqlError::Parse("duration modulo out of range".into())),
+        ArithmeticOperands { lhs, rhs } => arithmetic_type_error("%", &lhs, &rhs),
+    }
+}
+
+pub(crate) fn value_neg(value: Value) -> Result<Value> {
+    match value {
+        Value::Int(value) => value
+            .checked_neg()
+            .map(Value::Int)
+            .ok_or_else(|| TraceqlError::Parse("integer negation out of range".into())),
+        Value::Float(value) => Ok(Value::Float(-value)),
+        Value::Duration(value) => value
+            .checked_neg()
+            .map(Value::Duration)
+            .ok_or_else(|| TraceqlError::Parse("duration negation out of range".into())),
+        other => Err(TraceqlError::Parse(format!(
+            "unary - is not supported for {other:?}"
+        ))),
+    }
+}

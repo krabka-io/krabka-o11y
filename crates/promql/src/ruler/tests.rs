@@ -12,38 +12,16 @@ use crate::{
     EngineOpts, InMemoryMetricStore, PromqlEngine, RulerGroupEvaluation, test_support::tenant_id,
 };
 
-mod alerting_rule_dispatch_expands_value_and_labels_templates;
-mod alerting_rule_dispatch_sends_firing_alerts_to_alertmanager_sink;
-mod alerting_rule_dispatch_waits_for_for_duration_before_sending;
-mod alerting_rule_group_dispatch_runs_alerts_and_skips_recording_rules;
-mod alerting_rule_state_persistence_records_active_and_cleared_alerts;
-mod alerting_rule_with_compound_for_does_not_fire_immediately;
-mod alerting_rule_with_negative_for_is_a_hard_error;
 mod byte_alert_templates_and_replayed_state_preserve_series_identity;
-mod firing_alert_emits_resolved_when_series_stops_matching;
-mod keep_firing_for_holds_alert_firing_then_resolves_after_window;
-mod labels;
-mod parse_duration_supports_all_units_and_compounds_and_rejects_bad_input;
 mod recording_alertmanager_sink;
-mod recording_rule_append_writes_materialized_records_to_sink;
-mod recording_rule_evaluation_materializes_float_samples_as_wal_records;
-mod recording_rule_fails_on_labelset_collision_after_rule_labels;
-mod recording_rule_group_append_runs_recording_rules_and_skips_alerts;
-mod recording_rule_merges_rule_level_labels_into_every_series;
 mod recording_ruler_state_sink;
 mod recording_sink;
 mod rule_fixtures;
-mod ruler_alert_state_replays_compacted_records_before_evaluation;
 mod ruler_failure_isolation_and_alert_series;
-mod ruler_group_state_replays_compacted_last_eval_records;
-mod ruler_rule_group_evaluation_appends_recordings_and_dispatches_firing_alerts;
-mod ruler_rule_set_evaluation_persists_group_last_eval_state;
-mod ruler_rule_set_evaluation_runs_namespaced_groups;
-mod ruler_rule_set_filter_combines_shard_ownership_and_due_evaluation;
-mod ruler_rule_set_filter_keeps_only_groups_due_for_evaluation;
-mod ruler_rule_set_filter_partitions_groups_by_tenant_namespace_and_group;
-mod ruler_rule_set_scheduled_evaluation_runs_only_owned_due_groups;
 
+mod alerting_dispatch;
+mod recording_rule_cases;
+mod rule_set_scheduling;
 use labels::labels;
 use recording_alertmanager_sink::RecordingAlertmanagerSink;
 use recording_ruler_state_sink::RecordingRulerStateSink;
@@ -103,3 +81,7 @@ fn assert_pending_rule_evaluation(pending: &RulerGroupEvaluation) {
             }
     );
 }
+
+mod support;
+pub(crate) use support::labels;
+pub(crate) use support::parse_duration_supports_all_units_and_compounds_and_rejects_bad_input;

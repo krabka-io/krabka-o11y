@@ -45,12 +45,43 @@ mod tests {
     }
 }
 
-mod span_id_be_bytes_from_u64;
-mod span_id_hex_from_u64;
-mod span_id_u64_from_be_bytes;
-mod span_id_u64_from_be_slice;
+/// Renders a `u64` span id as sixteen lowercase hex digits.
+///
+/// The digits are the big-endian bytes of the id, so this string is what
+/// `hex::encode` gives for the same span id held as `[u8; 8]`. The leading
+/// zeroes are kept: a span id is a fixed eight-byte identifier, and an id
+/// printed short does not match the id a trace carries.
+#[must_use]
+pub fn span_id_hex_from_u64(span_id: u64) -> String {
+    format!("{span_id:016x}")
+}
 
-pub use span_id_be_bytes_from_u64::span_id_be_bytes_from_u64;
-pub use span_id_hex_from_u64::span_id_hex_from_u64;
-pub use span_id_u64_from_be_bytes::span_id_u64_from_be_bytes;
-pub use span_id_u64_from_be_slice::span_id_u64_from_be_slice;
+/// Reads a span id off the wire as a big-endian `u64`.
+///
+/// Returns `None` unless the slice is exactly eight bytes long, so a short or
+/// long id is a decode failure for the caller to report, never a pad or a
+/// truncation.
+#[must_use]
+pub fn span_id_u64_from_be_slice(bytes: &[u8]) -> Option<u64> {
+    <[u8; 8]>::try_from(bytes)
+        .ok()
+        .map(span_id_u64_from_be_bytes)
+}
+
+/// Writes a `u64` span id back as its eight big-endian bytes.
+///
+/// The inverse of [`span_id_u64_from_be_bytes`](span_id_u64_from_be_bytes).
+#[must_use]
+pub const fn span_id_be_bytes_from_u64(span_id: u64) -> [u8; 8] {
+    span_id.to_be_bytes()
+}
+
+/// Reads an eight-byte span id as a big-endian `u64`.
+///
+/// This is the one place the byte order of a span id is decided. Traces hold a
+/// span id as its eight bytes, profiles hold the same id as a `u64`, and the
+/// two agree only while both read those bytes big-endian.
+#[must_use]
+pub const fn span_id_u64_from_be_bytes(bytes: [u8; 8]) -> u64 {
+    u64::from_be_bytes(bytes)
+}

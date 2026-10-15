@@ -496,12 +496,10 @@ mod orch_tests {
     }
 }
 
-mod catalog_error;
-mod querier_scheme;
 mod query_frontend;
 
-use catalog_error::catalog_error;
-pub use querier_scheme::QuerierScheme;
+use backend::catalog_error;
+pub use config::QuerierScheme;
 pub use query_frontend::{
     MetricsQueryWindow, QueryFrontend, TagNamesResult, TagValuesResult, TraceByIdResult,
 };

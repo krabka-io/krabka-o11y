@@ -4,8 +4,8 @@ use clap::Args;
 use krabka_units::Time;
 
 use super::{
-    ClientAuth, ServerSecurity, ServerSecurityError, load_credentials::load_credentials,
-    load_internal_client::load_internal_client, load_server_tls::load_server_tls,
+    ClientAuth, ServerSecurity, ServerSecurityError,
+    load_security_config::{load_credentials, load_internal_client, load_server_tls},
 };
 
 /// The TLS, authentication and outbound-credential flags that every Krabka service shares.

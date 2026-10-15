@@ -583,34 +583,47 @@ mod tests {
 }
 
 mod apply_relabel;
-mod cap_session_id;
-mod decoded_profile;
-mod decoded_sample;
 mod enforce_limits;
-mod fnv1a;
-mod intern_profile_string;
 mod raw_profile;
-mod regex_anchored;
-mod relabel_action;
-mod relabel_config;
-mod remove_label;
-mod replace_label;
-mod require_service_name;
 
 pub use apply_relabel::apply_relabel;
-pub use cap_session_id::cap_session_id;
-pub use decoded_profile::DecodedProfile;
-pub use decoded_sample::DecodedSample;
 pub use enforce_limits::enforce_limits;
-use fnv1a::fnv1a;
-pub(crate) use intern_profile_string::intern_profile_string;
 pub use raw_profile::RawProfile;
-use regex_anchored::regex_anchored;
-pub use relabel_action::RelabelAction;
-pub use relabel_config::RelabelConfig;
-use remove_label::remove_label;
-use replace_label::replace_label;
 
+/// One sample's raw payload, still unsymbolized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedSample {
+    pub stacktrace_location_refs: Vec<u32>,
+    pub value: i64,
+    pub timestamp_ns: i64,
+    pub span_id: Option<u64>,
+    pub trace_id: Option<Vec<u8>>,
+}
+
+/// One series after the multi-value split: a single `__profile_type__`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedProfile {
+    pub labels: Labels,
+    pub profile_type: String,
+    pub samples: Vec<DecodedSample>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelabelAction {
+    Replace,
+    Keep,
+    Drop,
+}
+
+/// A Prometheus-style relabel rule subset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelabelConfig {
+    pub source_labels: Vec<String>,
+    pub regex: String,
+    pub target_label: String,
+    pub replacement: String,
+    pub action: RelabelAction,
+}
 fn labels_without_target(labels: &Labels, target: &str) -> Labels {
     labels
         .iter()
@@ -620,4 +633,60 @@ fn labels_without_target(labels: &Labels, target: &str) -> Labels {
             rebuilt
         })
 }
-pub use require_service_name::require_service_name;
+
+pub(crate) fn remove_label(labels: &mut Labels, target: &str) {
+    *labels = labels_without_target(labels, target);
+}
+
+pub(crate) fn replace_label(labels: &mut Labels, target: &str, replacement: &str) {
+    let mut rebuilt = labels_without_target(labels, target);
+    rebuilt.insert(target, replacement);
+    *labels = rebuilt;
+}
+
+/// Inject `service_name="unknown_service"` when absent or empty.
+pub fn require_service_name(labels: &mut Labels) {
+    if labels.get("service_name").unwrap_or("").is_empty() {
+        labels.insert("service_name", "unknown_service");
+    }
+}
+
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+pub(crate) fn regex_anchored(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    regex::Regex::new(&format!("^(?:{pattern})$"))
+}
+
+/// Returns the index of `value` in a pprof string table, appending it first
+/// when the table does not hold it yet.
+pub(crate) fn intern_profile_string(strings: &mut Vec<String>, value: &str) -> i64 {
+    if let Some(idx) = strings.iter().position(|existing| existing == value) {
+        return i64::try_from(idx).expect("string index fits i64");
+    }
+    let idx = i64::try_from(strings.len()).expect("string index fits i64");
+    strings.push(value.to_string());
+    idx
+}
+
+/// Cap the cardinality of `__session_id__` with a stable modulo hash.
+pub fn cap_session_id(labels: &mut Labels, limits: &Limits) {
+    let buckets = limits.max_session_id_cardinality;
+    if buckets == 0 {
+        return;
+    }
+    let Some(raw) = labels.get("__session_id__").map(str::to_owned) else {
+        return;
+    };
+    let bucket = fnv1a(raw.as_bytes()) % buckets;
+    replace_label(labels, "__session_id__", &bucket.to_string());
+}

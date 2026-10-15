@@ -11,20 +11,34 @@
 
 use derive_more::{Display, From, Into};
 
-mod default_ms;
-mod end_ms;
-mod external_partition;
-mod local_partition;
-mod max_value;
-mod min_value;
-mod now_ms;
-mod start_ms;
+/// The fallback value a render-time parameter takes when absent, in Unix milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct DefaultMs(pub i64);
 
-pub use default_ms::DefaultMs;
-pub use end_ms::EndMs;
-pub use external_partition::ExternalPartition;
-pub use local_partition::LocalPartition;
-pub use max_value::MaxValue;
-pub use min_value::MinValue;
-pub use now_ms::NowMs;
-pub use start_ms::StartMs;
+/// A query-window end bound, in Unix milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct EndMs(pub i64);
+
+/// A partition key in the composite cold-read address space. Symbol resolution routes on this key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct ExternalPartition(pub u64);
+
+/// A partition key within a single block's own symbol DB, scoped to that block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct LocalPartition(pub u64);
+
+/// The upper edge of a heatmap's value axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct MaxValue(pub i64);
+
+/// The lower edge of a heatmap's value axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct MinValue(pub i64);
+
+/// The current wall-clock instant a relative render time resolves against, in Unix milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct NowMs(pub i64);
+
+/// A query-window start bound, in Unix milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+pub struct StartMs(pub i64);

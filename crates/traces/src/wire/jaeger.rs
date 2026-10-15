@@ -212,6 +212,105 @@ pub(crate) mod test_support {
     }
 }
 
+
+#[derive(Clone, Default)]
+pub(super) struct JaegerBatch {
+    pub(crate) process: JaegerProcess,
+    pub(crate) spans: Vec<JaegerSpan>,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct JaegerLog {
+    pub(crate) timestamp_micros: i64,
+    pub(crate) fields: Vec<KeyValue>,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct JaegerProcess {
+    pub(crate) service_name: String,
+    pub(crate) tags: Vec<KeyValue>,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct JaegerRef {
+    pub(crate) ref_type: i32,
+    pub(crate) trace_id_low: i64,
+    pub(crate) trace_id_high: i64,
+    pub(crate) span_id: i64,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct JaegerSpan {
+    pub(crate) trace_id_low: i64,
+    pub(crate) trace_id_high: i64,
+    pub(crate) span_id: i64,
+    pub(crate) parent_span_id: i64,
+    pub(crate) operation_name: String,
+    pub(crate) references: Vec<JaegerRef>,
+    pub(crate) start_time_micros: i64,
+    pub(crate) duration_micros: i64,
+    pub(crate) tags: Vec<KeyValue>,
+    pub(crate) logs: Vec<JaegerLog>,
+}
+
+pub(crate) fn jaeger_span_to_internal(span: &JaegerSpan, process: &JaegerProcess) -> Span {
+    let mut resource_attrs = process.tags.clone();
+    resource_attrs.push(KeyValue {
+        key: "service.name".into(),
+        value: AttrValue::Str(process.service_name.clone()),
+    });
+    let parent_span_id = span
+        .references
+        .iter()
+        .find(|reference| reference.ref_type == 0)
+        .map(|reference| i64_bytes(reference.span_id))
+        .or_else(|| (span.parent_span_id != 0).then(|| i64_bytes(span.parent_span_id)));
+    let links = span
+        .references
+        .iter()
+        .filter(|reference| reference.ref_type != 0)
+        .map(|reference| LinkRecord {
+            trace_id: trace_id(
+                TraceIdHigh(reference.trace_id_high),
+                TraceIdLow(reference.trace_id_low),
+            ),
+            span_id: i64_bytes(reference.span_id),
+            attrs: vec![KeyValue {
+                key: "ref.type".into(),
+                value: AttrValue::Str(ref_type_name(reference.ref_type).into()),
+            }],
+        })
+        .collect();
+    Span {
+        trace_id: trace_id(
+            TraceIdHigh(span.trace_id_high),
+            TraceIdLow(span.trace_id_low),
+        ),
+        span_id: i64_bytes(span.span_id),
+        parent_span_id,
+        name: span.operation_name.clone(),
+        kind: span_kind(&span.tags),
+        start_ns: span.start_time_micros.saturating_mul(1_000),
+        duration_ns: span.duration_micros.saturating_mul(1_000),
+        status: span_status(&span.tags),
+        status_message: String::new(),
+        resource_attrs,
+        span_attrs: span.tags.clone(),
+        events: span_logs_to_events(&span.logs),
+        links,
+        instrumentation_scope: String::new(),
+        instrumentation_version: String::new(),
+    }
+}
+
+pub(crate) fn read_binary_key_value(input: &mut BinaryInput<'_>) -> Result<KeyValue, WireError> {
+    parse_key_value(input)
+}
+
+pub(crate) fn read_key_value(input: &mut CompactInput<'_>) -> Result<KeyValue, WireError> {
+    parse_key_value(input)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -926,122 +1025,353 @@ mod tests {
 }
 
 mod binary_input;
-mod bt_binary;
-mod bt_bool;
-mod bt_byte;
-mod bt_double;
-mod bt_i16;
-mod bt_i32;
-mod bt_i64;
-mod bt_list;
-mod bt_map;
-mod bt_set;
-mod bt_stop;
-mod bt_struct;
-mod check_collection_header;
 mod compact_input;
-mod decode_jaeger_binary_thrift;
-mod decode_jaeger_thrift;
-mod i64_bytes;
-mod jaeger_batch;
-mod jaeger_log;
-mod jaeger_process;
-mod jaeger_ref;
-mod jaeger_span;
-mod jaeger_span_to_internal;
-mod read_batch;
-mod read_binary_batch;
-mod read_binary_key_value;
-mod read_binary_log;
-mod read_binary_process;
-mod read_binary_ref;
-mod read_binary_span;
-mod read_key_value;
-mod read_log;
-mod read_process;
-mod read_ref;
-mod read_span;
-mod ref_type_name;
-mod span_kind;
-mod span_logs_to_events;
-mod span_status;
-mod spans_from_batch;
-mod t_binary;
-mod t_bool_false;
-mod t_bool_true;
-mod t_byte;
-mod t_double;
-mod t_i16;
-mod t_i32;
-mod t_i64;
-mod t_list;
-mod t_map;
-mod t_set;
-mod t_stop;
-mod t_struct;
-mod take_bytes;
 mod thrift_cursor;
-mod trace_id;
-mod utf8_string;
 
 use binary_input::BinaryInput;
-use bt_binary::BT_BINARY;
-use bt_bool::BT_BOOL;
-use bt_byte::BT_BYTE;
-use bt_double::BT_DOUBLE;
-use bt_i16::BT_I16;
-use bt_i32::BT_I32;
-use bt_i64::BT_I64;
-use bt_list::BT_LIST;
-use bt_map::BT_MAP;
-use bt_set::BT_SET;
-use bt_stop::BT_STOP;
-use bt_struct::BT_STRUCT;
-use check_collection_header::{
-    CollectionHeader, FieldHeader, MapHeader, check_collection_header, check_map_header,
-};
 use compact_input::CompactInput;
-pub use decode_jaeger_binary_thrift::decode_jaeger_binary_thrift;
-pub use decode_jaeger_thrift::decode_jaeger_thrift;
-use i64_bytes::i64_bytes;
-pub(super) use jaeger_batch::JaegerBatch;
-pub(super) use jaeger_log::JaegerLog;
-pub(super) use jaeger_process::JaegerProcess;
-pub(super) use jaeger_ref::JaegerRef;
-pub(super) use jaeger_span::JaegerSpan;
-use jaeger_span_to_internal::jaeger_span_to_internal;
-use read_batch::read_batch;
-use read_binary_batch::read_binary_batch;
-use read_binary_key_value::read_binary_key_value;
-use read_binary_log::read_binary_log;
-use read_binary_process::read_binary_process;
-use read_binary_ref::read_binary_ref;
-use read_binary_span::read_binary_span;
-use read_key_value::read_key_value;
-use read_log::read_log;
-use read_process::read_process;
-use read_ref::read_ref;
-use read_span::read_span;
-use ref_type_name::ref_type_name;
-use span_kind::span_kind;
-use span_logs_to_events::span_logs_to_events;
-use span_status::span_status;
-pub(super) use spans_from_batch::spans_from_batch;
-use t_binary::T_BINARY;
-use t_bool_false::T_BOOL_FALSE;
-use t_bool_true::T_BOOL_TRUE;
-use t_byte::T_BYTE;
-use t_double::T_DOUBLE;
-use t_i16::T_I16;
-use t_i32::T_I32;
-use t_i64::T_I64;
-use t_list::T_LIST;
-use t_map::T_MAP;
-use t_set::T_SET;
-use t_stop::T_STOP;
-use t_struct::T_STRUCT;
-use take_bytes::take_bytes;
-use thrift_cursor::descend_skip_depth;
+use thrift_cursor::{
+    CollectionHeader, FieldHeader, MapHeader, check_collection_header, check_map_header,
+    descend_skip_depth, read_utf8_binary,
+};
 pub(super) use thrift_cursor::wire_length;
-use trace_id::trace_id;
-use utf8_string::read_utf8_binary;
+
+pub(crate) const BT_BINARY: u8 = 11;
+
+pub(crate) const BT_BOOL: u8 = 2;
+
+pub(crate) const BT_BYTE: u8 = 3;
+
+pub(crate) const BT_DOUBLE: u8 = 4;
+
+pub(crate) const BT_I16: u8 = 6;
+
+pub(crate) const BT_I32: u8 = 8;
+
+pub(crate) const BT_I64: u8 = 10;
+
+pub(crate) const BT_LIST: u8 = 15;
+
+pub(crate) const BT_MAP: u8 = 13;
+
+pub(crate) const BT_SET: u8 = 14;
+
+pub(crate) const BT_STOP: u8 = 0;
+
+pub(crate) const BT_STRUCT: u8 = 12;
+
+pub(crate) const T_BINARY: u8 = 8;
+
+pub(crate) const T_BOOL_FALSE: u8 = 2;
+
+pub(crate) const T_BOOL_TRUE: u8 = 1;
+
+pub(crate) const T_BYTE: u8 = 3;
+
+pub(crate) const T_DOUBLE: u8 = 7;
+
+pub(crate) const T_I16: u8 = 4;
+
+pub(crate) const T_I32: u8 = 5;
+
+pub(crate) const T_I64: u8 = 6;
+
+pub(crate) const T_LIST: u8 = 9;
+
+pub(crate) const T_MAP: u8 = 11;
+
+pub(crate) const T_SET: u8 = 10;
+
+pub(crate) const T_STOP: u8 = 0;
+
+pub(crate) const T_STRUCT: u8 = 12;
+
+/// Decode a Jaeger binary-Thrift HTTP `Batch` body into internal spans.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn decode_jaeger_binary_thrift(body: &[u8]) -> Result<Vec<Span>, WireError> {
+    let mut input = BinaryInput::new(body);
+    let batch = read_binary_batch(&mut input)?;
+    Ok(spans_from_batch(&batch))
+}
+
+/// Decode a Jaeger compact-Thrift HTTP `Batch` body into internal spans.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn decode_jaeger_thrift(body: &[u8]) -> Result<Vec<Span>, WireError> {
+    let mut input = CompactInput::new(body);
+    let batch = read_batch(&mut input)?;
+    Ok(spans_from_batch(&batch))
+}
+
+// Jaeger carries a span id as a signed 64-bit integer, and OTLP carries the
+// same id as its eight big-endian bytes. The reading is the one the profiles
+// side uses too, so it comes from the block store rather than from here.
+pub(crate) fn i64_bytes(value: i64) -> [u8; 8] {
+    span_id_be_bytes_from_u64(value.cast_unsigned())
+}
+
+pub(crate) fn ref_type_name(ref_type: i32) -> &'static str {
+    match ref_type {
+        0 => "child_of",
+        1 => "follows_from",
+        _ => "reference",
+    }
+}
+
+pub(crate) fn spans_from_batch(batch: &JaegerBatch) -> Vec<Span> {
+    batch
+        .spans
+        .iter()
+        .map(|span| jaeger_span_to_internal(span, &batch.process))
+        .collect()
+}
+
+pub(crate) fn trace_id(high: TraceIdHigh, low: TraceIdLow) -> [u8; 16] {
+    let mut out = [0; 16];
+    out[..8].copy_from_slice(&high.0.to_be_bytes());
+    out[8..].copy_from_slice(&low.0.to_be_bytes());
+    out
+}
+
+pub(crate) fn read_batch(input: &mut CompactInput<'_>) -> Result<JaegerBatch, WireError> {
+    let mut out = JaegerBatch::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_STRUCT => out.process = read_process(input)?,
+            2 if field.field_type == T_LIST => out.spans = input.read_struct_list(read_span)?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_binary_batch(input: &mut BinaryInput<'_>) -> Result<JaegerBatch, WireError> {
+    let mut out = JaegerBatch::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_STRUCT => out.process = read_binary_process(input)?,
+            2 if field.field_type == BT_LIST => {
+                out.spans = input.read_struct_list(read_binary_span)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_binary_log(input: &mut BinaryInput<'_>) -> Result<JaegerLog, WireError> {
+    let mut out = JaegerLog::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_I64 => out.timestamp_micros = input.read_i64()?,
+            2 if field.field_type == BT_LIST => {
+                out.fields = input.read_struct_list(read_binary_key_value)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_binary_process(input: &mut BinaryInput<'_>) -> Result<JaegerProcess, WireError> {
+    let mut out = JaegerProcess::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_BINARY => out.service_name = input.read_string()?,
+            2 if field.field_type == BT_LIST => {
+                out.tags = input.read_struct_list(read_binary_key_value)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_binary_ref(input: &mut BinaryInput<'_>) -> Result<JaegerRef, WireError> {
+    let mut out = JaegerRef::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_I32 => out.ref_type = input.read_i32()?,
+            2 if field.field_type == BT_I64 => out.trace_id_low = input.read_i64()?,
+            3 if field.field_type == BT_I64 => out.trace_id_high = input.read_i64()?,
+            4 if field.field_type == BT_I64 => out.span_id = input.read_i64()?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_binary_span(input: &mut BinaryInput<'_>) -> Result<JaegerSpan, WireError> {
+    let mut out = JaegerSpan::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_I64 => out.trace_id_low = input.read_i64()?,
+            2 if field.field_type == BT_I64 => out.trace_id_high = input.read_i64()?,
+            3 if field.field_type == BT_I64 => out.span_id = input.read_i64()?,
+            4 if field.field_type == BT_I64 => out.parent_span_id = input.read_i64()?,
+            5 if field.field_type == BT_BINARY => out.operation_name = input.read_string()?,
+            6 if field.field_type == BT_LIST => {
+                out.references = input.read_struct_list(read_binary_ref)?;
+            }
+            8 if field.field_type == BT_I64 => out.start_time_micros = input.read_i64()?,
+            9 if field.field_type == BT_I64 => out.duration_micros = input.read_i64()?,
+            10 if field.field_type == BT_LIST => {
+                out.tags = input.read_struct_list(read_binary_key_value)?;
+            }
+            11 if field.field_type == BT_LIST => {
+                out.logs = input.read_struct_list(read_binary_log)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_log(input: &mut CompactInput<'_>) -> Result<JaegerLog, WireError> {
+    let mut out = JaegerLog::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_I64 => out.timestamp_micros = input.read_i64()?,
+            2 if field.field_type == T_LIST => {
+                out.fields = input.read_struct_list(read_key_value)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_process(input: &mut CompactInput<'_>) -> Result<JaegerProcess, WireError> {
+    let mut out = JaegerProcess::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_BINARY => out.service_name = input.read_string()?,
+            2 if field.field_type == T_LIST => out.tags = input.read_struct_list(read_key_value)?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_ref(input: &mut CompactInput<'_>) -> Result<JaegerRef, WireError> {
+    let mut out = JaegerRef::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_I32 => out.ref_type = input.read_i32()?,
+            2 if field.field_type == T_I64 => out.trace_id_low = input.read_i64()?,
+            3 if field.field_type == T_I64 => out.trace_id_high = input.read_i64()?,
+            4 if field.field_type == T_I64 => out.span_id = input.read_i64()?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_span(input: &mut CompactInput<'_>) -> Result<JaegerSpan, WireError> {
+    let mut out = JaegerSpan::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_I64 => out.trace_id_low = input.read_i64()?,
+            2 if field.field_type == T_I64 => out.trace_id_high = input.read_i64()?,
+            3 if field.field_type == T_I64 => out.span_id = input.read_i64()?,
+            4 if field.field_type == T_I64 => out.parent_span_id = input.read_i64()?,
+            5 if field.field_type == T_BINARY => out.operation_name = input.read_string()?,
+            6 if field.field_type == T_LIST => out.references = input.read_struct_list(read_ref)?,
+            8 if field.field_type == T_I64 => out.start_time_micros = input.read_i64()?,
+            9 if field.field_type == T_I64 => out.duration_micros = input.read_i64()?,
+            10 if field.field_type == T_LIST => {
+                out.tags = input.read_struct_list(read_key_value)?;
+            }
+            11 if field.field_type == T_LIST => out.logs = input.read_struct_list(read_log)?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn span_kind(tags: &[KeyValue]) -> SpanKind {
+    tags.iter()
+        .find_map(|tag| {
+            if tag.key != "span.kind" {
+                return None;
+            }
+            match &tag.value {
+                AttrValue::Str(value) => match value.as_str() {
+                    "server" => Some(SpanKind::Server),
+                    "client" => Some(SpanKind::Client),
+                    "producer" => Some(SpanKind::Producer),
+                    "consumer" => Some(SpanKind::Consumer),
+                    "internal" => Some(SpanKind::Internal),
+                    _ => None,
+                },
+                _ => None,
+            }
+        })
+        .unwrap_or(SpanKind::Internal)
+}
+
+pub(crate) fn span_logs_to_events(logs: &[JaegerLog]) -> Vec<crate::span::EventRecord> {
+    logs.iter()
+        .map(|log| {
+            let name = log
+                .fields
+                .iter()
+                .find_map(|field| {
+                    if field.key != "event" {
+                        return None;
+                    }
+                    match &field.value {
+                        AttrValue::Str(value) if !value.is_empty() => Some(value.clone()),
+                        _ => None,
+                    }
+                })
+                .unwrap_or_else(|| "log".to_string());
+            crate::span::EventRecord {
+                time_unix_nano: log.timestamp_micros.saturating_mul(1_000),
+                name,
+                attrs: log.fields.clone(),
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn span_status(tags: &[KeyValue]) -> StatusCode {
+    if tags.iter().any(|tag| {
+        tag.key == "error"
+            && match &tag.value {
+                AttrValue::Bool(true) => true,
+                AttrValue::Str(value) => value == "true",
+                AttrValue::Int(_)
+                | AttrValue::Double(_)
+                | AttrValue::Bool(false)
+                | AttrValue::Bytes(_)
+                | AttrValue::Array(_)
+                | AttrValue::Unsupported(_) => false,
+            }
+    }) {
+        StatusCode::Error
+    } else {
+        StatusCode::Unset
+    }
+}
+
+/// Take `len` bytes from `bytes` at `*pos`, and advance `*pos` past them.
+pub(crate) fn take_bytes(bytes: &[u8], pos: &mut usize, len: usize) -> Result<Vec<u8>, WireError> {
+    let end = pos
+        .checked_add(len)
+        .ok_or_else(|| WireError::Decode("binary length overflow".into()))?;
+    let out = bytes
+        .get(*pos..end)
+        .ok_or_else(|| WireError::Decode("truncated binary".into()))?
+        .to_vec();
+    *pos = end;
+    Ok(out)
+}

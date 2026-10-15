@@ -13,21 +13,18 @@ use super::{
 };
 use crate::{MetricStore, store::MetadataRecord};
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct MetadataParams {
+    pub(crate) metric: Option<String>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) limit_per_metric: Option<usize>,
+}
+
 mod limited_metadata;
-mod metadata_fn;
-mod metadata_json;
-mod metadata_params;
 mod parse_metadata_params;
-mod target_metadata;
-mod target_metadata_json;
 
 use limited_metadata::limited_metadata;
-pub(super) use metadata_fn::metadata;
-use metadata_json::metadata_json;
-use metadata_params::MetadataParams;
 use parse_metadata_params::parse_metadata_params;
-pub(super) use target_metadata::target_metadata;
-use target_metadata_json::target_metadata_json;
 
 async fn metadata_response<S, Render>(
     state: &PrometheusApiState<S>,
@@ -80,4 +77,56 @@ pub(super) async fn metadata_response_for_representation<S: MetricStore>(
     representation: MetadataRepresentation,
 ) -> Response {
     metadata_route(State(state), caller, RawQuery(raw_query), representation).await
+}
+
+pub(crate) async fn metadata<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    caller: RequestCaller,
+    RawQuery(raw_query): RawQuery,
+) -> Response {
+    metadata_response_for_representation(state, caller, raw_query, MetadataRepresentation::Series)
+        .await
+}
+
+pub(crate) fn metadata_json(
+    metadata: Vec<MetadataRecord>,
+    limit_per_metric: Option<usize>,
+) -> BTreeMap<String, Vec<Value>> {
+    let mut by_metric = BTreeMap::<String, Vec<Value>>::new();
+    for record in metadata {
+        let entries = by_metric.entry(record.metric_family_name).or_default();
+        if limit_per_metric == Some(0) || limit_per_metric.is_none_or(|limit| entries.len() < limit)
+        {
+            entries.push(json!({
+                "type": record.metric_type,
+                "help": record.help,
+                "unit": record.unit,
+            }));
+        }
+    }
+    by_metric
+}
+
+pub(crate) async fn target_metadata<S: MetricStore>(
+    State(state): State<Arc<PrometheusApiState<S>>>,
+    caller: RequestCaller,
+    RawQuery(raw_query): RawQuery,
+) -> Response {
+    metadata_response_for_representation(state, caller, raw_query, MetadataRepresentation::Targets)
+        .await
+}
+
+pub(crate) fn target_metadata_json(metadata: Vec<MetadataRecord>) -> Vec<Value> {
+    metadata
+        .into_iter()
+        .map(|record| {
+            json!({
+                "target": {},
+                "metric": record.metric_family_name,
+                "type": record.metric_type,
+                "help": record.help,
+                "unit": record.unit,
+            })
+        })
+        .collect()
 }

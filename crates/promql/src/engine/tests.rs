@@ -145,247 +145,38 @@ async fn assert_annotated_call_planner_matches_interpreter<S: MetricStore>(
     assert2::assert!(parity.via_operators.annotations == parity.via_interpreter.annotations);
 }
 
-mod a_classic_histogram_answers_beside_a_native_sibling;
-mod a_comparison_keeps_the_metric_name_that_arithmetic_drops;
-mod a_fill_modifier_is_refused_on_a_set_operator;
-mod a_range_query_agrees_with_instant_evaluation_at_every_step;
-mod a_range_query_over_or_matchers_counts_a_doubly_matched_series_once;
-mod abusive_subquery_resolution_errors_before_looping;
-mod aggregate_genuine_nan_group_parity;
-mod anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset;
 mod api_series_engines;
-mod approx_eq;
-mod assert_aggregate_nan_staleness;
-mod assert_filled_many_side;
-mod assert_minmax_nan_ignoring;
-mod assert_one_unnamed_float;
 mod assert_single_float_sample;
 mod assert_single_on_x_float_sample;
-mod assert_sparse_aggregate_excludes_no_value;
-mod avg_over_time_carries_infinities_and_keeps_its_compensation;
-mod avg_over_time_scales_a_native_histogram_by_one_over_the_count;
-mod binary_planner_path_matches_interpreter;
 mod byte_strings_keep_identity_through_composed_queries;
 mod case_values;
-mod changes_compares_histogram_counts_bitwise_and_the_zero_threshold_numerically;
-mod check_resolution_points_enforces_cap;
-mod classic_bucket_store;
-mod classic_histogram_quantile_planner_path_matches_interpreter;
-mod clean_query_raises_no_annotations;
-mod comparison_bool_returns_one_or_zero;
-mod comparison_without_bool_filters_false_samples;
-mod conformance_corpus_runs_green_through_planner;
 mod counter_warning_composed_paths_preserve_origin_and_position;
-mod created_timestamps_inject_counter_zeros;
-mod empty_valued_label_planner_path_matches_interpreter;
-mod experimental_call_planner_path_matches_interpreter;
-mod experimental_param_aggregate_planner_path_matches_interpreter;
-mod extended_range_fold_planner_matches_interpreter;
 mod float_store;
-mod float_value;
-mod group_left_does_not_copy_a_metadata_label_from_the_one_side;
-mod histogram_aggregation_planner_path_matches_interpreter;
-mod histogram_float_comparison_emits_incompatible_types_info;
-mod histogram_fraction_counts_open_ended_classic_buckets_only_against_open_bounds;
-mod histogram_fraction_mixed_emits_exact_warning;
-mod histogram_quantile_interpolates_each_kind_of_native_bucket;
-mod histogram_quantile_mixed_emits_exact_warning_and_no_info;
-mod histogram_quantiles_emits_one_sample_per_requested_quantile;
-mod histogram_quantiles_requires_experimental_feature;
-mod histogram_range_planner_path_matches_interpreter;
-mod histogram_stdvar_places_each_bucket_at_its_own_midpoint;
-mod histogram_stdvar_takes_custom_bucket_bounds_from_get_bound;
-mod increase_extrapolates_native_histogram_counts_by_the_sample_spacing;
-mod increase_extrapolates_the_same_way_through_the_histogram_kernel;
-mod increase_extrapolates_to_the_range_edges_by_the_sample_spacing;
-mod increase_recompacts_native_histogram_spans_around_gaps;
-mod increase_refuses_native_histograms_that_do_not_line_up;
-mod info_function_adds_target_info_data_labels_by_job_and_instance;
-mod info_function_drops_series_when_required_data_label_selector_does_not_match;
-mod info_function_keeps_base_label_when_info_label_overlaps;
-mod info_function_merges_data_labels_from_multiple_info_metrics;
-mod info_function_uses_data_label_selector_to_filter_and_copy_labels;
-mod info_function_uses_named_info_metric_selector;
-mod info_planner_path_matches_interpreter;
-mod instant_absent_over_time_returns_one_when_range_is_empty;
-mod instant_absent_over_time_treats_native_histograms_as_present;
-mod instant_absent_over_time_with_or_matchers_returns_unlabeled_absence_sample;
-mod instant_absent_returns_one_with_equality_matcher_labels_when_vector_is_empty;
-mod instant_absent_with_or_matchers_returns_unlabeled_absence_sample;
-mod instant_avg_aggregate_does_not_overflow;
-mod instant_avg_over_time_holds_an_infinite_mean_until_it_is_contradicted;
-mod instant_basic_over_time_functions_reduce_range_samples;
-mod instant_bottomk_keeps_smallest_samples_with_original_labels;
-mod instant_bottomk_without_selects_smallest_sample_per_group_with_original_labels;
-mod instant_calendar_functions_extract_utc_fields_from_sample_values;
-mod instant_calendar_functions_without_args_use_eval_time;
-mod instant_changes_counts_value_transitions_in_range;
-mod instant_clamp_bounds_vector_values;
-mod instant_clamp_min_and_max_apply_single_bound;
-mod instant_clamp_with_reversed_bounds_returns_empty_vector;
-mod instant_count_and_group_aggregations_include_histograms;
-mod instant_count_and_present_over_time_include_native_histograms;
-mod instant_count_counts_series;
-mod instant_count_values_counts_by_sample_value;
-mod instant_count_values_counts_native_histogram_sample_values;
-mod instant_count_values_formats_infinity_as_prometheus;
-mod instant_delta_is_gauge_delta_without_reset_correction;
-mod instant_deriv_returns_gauge_slope_per_second;
-mod instant_double_exponential_smoothing_smooths_gauge_series;
-mod instant_double_exponential_smoothing_validates_factors;
-mod instant_double_exponential_smoothing_weights_each_factor_distinctly;
-mod instant_duration_expression_helpers_require_experimental_feature;
-mod instant_duration_expression_helpers_return_zero;
-mod instant_experimental_functions_require_feature;
-mod instant_first_and_last_over_time_return_native_histograms;
-mod instant_group_returns_one_for_each_group;
-mod instant_histogram_avg_returns_native_histogram_average;
-mod instant_histogram_count_returns_native_histogram_count;
-mod instant_histogram_fraction_estimates_native_histogram_bucket_overlap;
-mod instant_histogram_quantile_interpolates_classic_buckets;
-mod instant_histogram_quantile_interpolates_native_histogram_buckets;
-mod instant_histogram_stddev_returns_native_histogram_population_stddev;
-mod instant_histogram_stdvar_estimates_native_histogram_population_variance;
-mod instant_histogram_sum_returns_native_histogram_sum;
-mod instant_hyperbolic_functions_transform_vector_values;
-mod instant_idelta_uses_last_two_samples_without_per_second_division;
-mod instant_increase_corrects_counter_resets;
-mod instant_irate_reads_the_last_two_samples_and_recovers_from_a_reset;
-mod instant_irate_uses_last_two_samples_per_second;
-mod instant_label_join_combines_source_labels;
-mod instant_label_replace_uses_regex_capture_groups;
-mod instant_limit_ratio_negative_selects_complement_subset;
-mod instant_limit_ratio_selects_deterministic_hash_subset;
-mod instant_limitk_by_selects_deterministic_hash_subset_per_group;
-mod instant_limitk_selects_deterministic_hash_subset;
-mod instant_min_max_and_std_aggregations_ignore_histograms;
-mod instant_over_time_accepts_subquery_range_argument;
-mod instant_over_time_windows_are_open_at_the_start_and_closed_at_the_end;
-mod instant_predict_linear_extrapolates_gauge_series;
-mod instant_quantile_aggregation_ignores_histograms;
-mod instant_quantile_interpolates_per_group;
-mod instant_rate_extrapolates_counter_window;
-mod instant_resets_counts_counter_decreases_in_range;
 mod instant_samples_match;
-mod instant_selector_at_and_offset_combine_order_independently;
-mod instant_selector_at_uses_absolute_evaluation_time;
-mod instant_selector_honors_label_matchers_and_tenant;
-mod instant_selector_offset_shifts_evaluation_time_backwards;
-mod instant_selector_or_matchers_union_matching_series;
-mod instant_selector_planner_path_matches_interpreter;
-mod instant_selector_returns_latest_sample_within_lookback;
-mod instant_selector_stale_marker_terminates_series_before_lookback_expiry;
-mod instant_sort_functions_order_vector_by_sample_value;
-mod instant_sort_functions_place_nan_last;
-mod instant_statistical_over_time_functions_reduce_range_samples;
-mod instant_stddev_and_stdvar_aggregate_population_variance;
-mod instant_stdvar_aggregate_is_stable_for_large_offset_group;
-mod instant_subquery_aligns_start_to_step_grid;
-mod instant_subquery_evaluates_expression_at_explicit_steps;
-mod instant_subquery_uses_global_eval_interval_when_step_is_omitted;
-mod instant_sum_aggregates_all_series;
-mod instant_sum_aggregation_combines_native_histograms_with_different_span_layouts;
-mod instant_sum_aggregation_downscales_native_histograms;
-mod instant_sum_and_avg_aggregations_combine_compatible_native_histograms;
-mod instant_sum_and_avg_aggregations_omit_mixed_float_and_histogram_groups;
-mod instant_sum_by_groups_by_exact_labels_and_drops_metric_name;
-mod instant_time_returns_evaluation_timestamp_seconds;
-mod instant_timestamp_returns_sample_timestamp_seconds;
-mod instant_topk_and_bottomk_ignore_histograms;
-mod instant_topk_and_bottomk_rank_nan_last;
-mod instant_topk_by_selects_largest_sample_per_group_with_original_labels;
-mod instant_topk_keeps_largest_samples_with_original_labels;
-mod instant_trigonometric_functions_transform_vector_values;
-mod instant_ts_of_over_time_functions_return_sample_timestamps_seconds;
-mod instant_unary_numeric_functions_transform_vector_values;
 mod instant_vector;
-mod kahan_sum_inc_recovers_lost_bits_on_both_branches;
-mod label_ops_planner_path_matches_interpreter;
-mod last_over_time_aggregate;
-mod limit_ratio_over_bound_emits_capping_warning;
 mod lone_matrix_series;
-mod matching_on_a_metadata_label_keeps_it_out_of_the_result;
 mod memory_bytes_engine;
 mod mixed_histogram_store;
-mod native_histogram;
-mod native_histogram_bucket_bounds_follow_the_schema;
-mod native_histogram_planner_path_matches_interpreter;
-mod native_histogram_scalar_arithmetic_drops_invalid_operator_orders;
-mod native_histogram_scalar_arithmetic_scales_histograms;
 mod native_histogram_store;
-mod one_to_one_fill_subtracts_in_the_declared_operand_order;
-mod over_time_range_planner_path_matches_interpreter;
-mod param_aggregate_planner_path_matches_interpreter;
-mod plan_instant_expr_is_total_over_construct_sweep;
 mod planned_and_interpreted;
-mod quantile_out_of_range_phi_returns_signed_inf_with_warning;
-mod query_results_match;
-mod queue_depth_engine;
-mod range_at_start_end_selector_planner_matches_interpreter;
-mod range_bare_selector_lookback_boundary_matches_prometheus;
-mod range_duration_expression_helpers_return_query_range_and_step_seconds;
-mod range_matrices_match;
-mod range_planner_gate_routes_expected_shapes;
-mod range_planner_path_matches_interpreter;
-mod range_query_accepts_parenthesized_expression;
-mod range_query_routes_through_planner;
-mod range_query_scans_store_once_per_matcher_set_not_per_step;
-mod range_rate_uses_each_step_as_window_end;
-mod range_scalar_expr_planner_path_matches_interpreter;
-mod range_selector_at_start_and_end_use_query_bounds;
-mod range_selector_offset_shifts_matrix_window_backwards;
-mod range_selector_returns_samples_in_each_step_window;
-mod rate_range_planner_path_matches_interpreter;
-mod region_info_engine;
-mod resets_counts_a_drop_in_any_native_histogram_component;
 mod sample_instances;
-mod scalar_binary_arithmetic_returns_scalar;
-mod scalar_binary_atan2_returns_angle_radians;
-mod scalar_function_converts_single_sample_vector_and_nan_otherwise;
-mod scalar_math_planner_path_matches_interpreter;
-mod scalar_max_of_min_of_require_experimental_feature;
-mod scalar_max_of_min_of_return_larger_and_smaller_scalar;
-mod scalar_pi_function_returns_pi_constant;
 mod series_store;
-mod set_op_store;
-mod shared_series_labels_follow_snapshots_and_limits;
-mod short_lookback_up_engine;
-mod simple_aggregate_planner_path_matches_interpreter;
-mod smoothed_delta_extrapolates_only_within_the_sample_interval_slack;
-mod sort_instant_result;
-mod stale_nan;
-mod stdvar_over_time_adds_back_each_of_its_compensations;
-mod structural_node_planner_path_matches_interpreter;
-mod subquery_planner_path_matches_interpreter;
-mod sum_avg_collapsed_is_deterministic_and_matches_interpreter;
 mod target_info_engine;
-mod the_histogram_folds_refuse_their_degenerate_inputs;
-mod topk_refuses_a_k_that_does_not_fit_an_int64;
-mod unary_minus_negates_native_histogram_values_and_marks_gauge;
-mod unary_minus_negates_scalar_expression;
-mod unary_minus_negates_vector_values_and_drops_metric_name;
-mod util_planner_path_matches_interpreter;
-mod vector_and_default_matching_ignores_metadata_labels;
-mod vector_and_keeps_left_samples_with_matching_right_key;
-mod vector_function_converts_scalar_to_unlabeled_instant_vector;
-mod vector_or_returns_left_union_unmatched_right_samples;
-mod vector_scalar_arithmetic_preserves_labels_and_drops_metric_name;
-mod vector_scalar_atan2_preserves_labels_and_drops_metric_name;
-mod vector_unless_keeps_left_samples_without_matching_right_key;
-mod vector_vector_arithmetic_combines_compatible_native_histograms;
-mod vector_vector_arithmetic_drops_metadata_labels;
-mod vector_vector_arithmetic_fill_uses_missing_side_values;
-mod vector_vector_arithmetic_matches_on_labels;
-mod vector_vector_arithmetic_scales_native_histograms_with_matched_floats;
-mod vector_vector_comparison_matches_native_histogram_equality;
-mod vector_vector_group_left_carries_labels_from_one_side;
-mod vector_vector_group_left_fill_right_preserves_unmatched_many_side;
-mod vector_vector_group_right_carries_labels_from_one_side;
-mod vector_vector_group_right_fill_left_preserves_unmatched_many_side;
 mod zoned_queue_depth_engine;
 
+mod range_semantics;
+mod vector_semantics;
+mod histogram_semantics;
+mod info_function_cases;
+mod instant_selection;
+mod instant_aggregation_cases;
+mod instant_function_cases;
+mod counter_functions;
+mod binary_semantics;
+mod planner_parity_core;
+mod planner_parity_ranges;
+mod scalar_semantics;
 use api_series_engines::{api_latency_engine, late_jump_engine, requests_counter_engine};
-use approx_eq::approx_eq;
 use assert_aggregate_nan_staleness::assert_aggregate_nan_staleness;
 use assert_filled_many_side::assert_filled_many_side;
 use assert_minmax_nan_ignoring::assert_minmax_nan_ignoring;
@@ -399,7 +190,6 @@ use case_values::{
 };
 use classic_bucket_store::classic_bucket_store;
 use float_store::{FloatStore, default_engine, lookback_engine};
-use float_value::float_value;
 use instant_samples_match::{instant_samples_match, nan_equal_samples};
 use instant_vector::{
     LoneValueQuery, assert_lone_unlabeled_value_at, assert_lone_value, assert_lone_value_at,
@@ -559,7 +349,6 @@ fn sample_with_label<'a>(
 use set_op_store::set_op_store;
 use short_lookback_up_engine::short_lookback_up_engine;
 use sort_instant_result::sort_instant_result;
-use stale_nan::stale_nan;
 use target_info_engine::{info_metrics_engine, target_info_engine};
 use zoned_queue_depth_engine::{
     ZonedQueueDepth, standard_zoned_queue_depth_series, zoned_queue_depth_engine,
@@ -598,3 +387,52 @@ async fn assert_label_transform<S: MetricStore>(
     assert2::assert!(samples[0].labels.get(preserved_label) == Some(expected_preserved));
     assert2::assert!(approx_eq(float_value(&samples[0].value), 1.0));
 }
+
+fn approx_eq(left: f64, right: f64) -> bool {
+    if !left.is_finite() || !right.is_finite() {
+        return left == right;
+    }
+    // Relative tolerance: an absolute `f64::EPSILON` bound is too tight for
+    // magnitudes above ~1 — a Kahan/Welford-compensated fold (matching
+    // Prometheus) rounds in the last ULP, e.g. a population variance of 4.0
+    // lands at 3.999999999999_9996. Scale the bound by operand magnitude.
+    let scale = left.abs().max(right.abs()).max(1.0);
+    (left - right).abs() <= f64::EPSILON * 4.0 * scale
+}
+
+fn float_value(value: &SampleValue) -> f64 {
+    match value {
+        SampleValue::Float(value) => *value,
+        SampleValue::Histogram(_) => panic!("expected float sample"),
+    }
+}
+
+fn stale_nan() -> f64 {
+    f64::from_bits(0x7ff0_0000_0000_0002)
+}
+
+mod histogram_edge_cases;
+
+mod planner_edge_cases;
+
+mod aggregation_edge_cases;
+
+mod range_aggregation_edges;
+
+mod support;
+pub(crate) use support::assert_aggregate_nan_staleness;
+pub(crate) use support::assert_filled_many_side;
+pub(crate) use support::assert_minmax_nan_ignoring;
+pub(crate) use support::assert_one_unnamed_float;
+pub(crate) use support::assert_sparse_aggregate_excludes_no_value;
+pub(crate) use support::classic_bucket_store;
+pub(crate) use support::instant_experimental_functions_require_feature;
+pub(crate) use support::native_histogram;
+pub(crate) use support::query_results_match;
+pub(crate) use support::queue_depth_engine;
+pub(crate) use support::range_matrices_match;
+pub(crate) use support::range_query_routes_through_planner;
+pub(crate) use support::region_info_engine;
+pub(crate) use support::set_op_store;
+pub(crate) use support::short_lookback_up_engine;
+pub(crate) use support::sort_instant_result;

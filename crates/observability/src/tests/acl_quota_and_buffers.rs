@@ -1,6 +1,6 @@
 use krabka_units::convert::{ByteSizeExt as _, TimeExt as _};
 
-use super::prelude::{
+use crate::tests::prelude::{
     AclOperation, AclSet, BTreeMap, ByteSize, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap,
     IngestQuotaBucket, KafkaWalHeader, Labels, Limits, NonZeroUsize, Offset, PartitionIndex,
     PatternType, PermissionType, Principal, ResourceType, TenantId, Time, WalLogRecord, acl_entry,
@@ -11,15 +11,572 @@ use super::prelude::{
     validate_ingest_body_limit,
 };
 
-mod a_hot_tail_buffer_range_query_loses_no_record_to_its_buckets;
-mod accumulating_a_wal_batch_stops_when_empty_or_full;
-mod acl_helpers_require_topic_operation_principal_and_pattern;
-mod hot_tail_bucket_key_uses_euclidean_minutes;
-mod ingest_quota_bucket_and_byte_accounting_are_precise;
-mod loki_content_type;
-mod loki_content_type_and_body_decoding_accept_only_expected_forms;
-mod native_header_detection_requires_native_log_shape;
-mod only_an_object_store_compactor_error_is_classified_as_one;
-mod varint_encoding_and_ingest_limits_pin_boundaries;
 
-pub(crate) use loki_content_type::loki_content_type;
+/// The buffer answers a range query through its bucket index, and nothing
+/// had exercised that path. The index is a granularity, not a filter: the
+/// exact bound is applied within the buckets it scans, so what has to hold
+/// is that no record in the window is left behind in a bucket the scan
+/// skipped.
+#[test]
+pub(crate) fn a_hot_tail_buffer_range_query_loses_no_record_to_its_buckets() {
+    let minute = minutes(1).nanos_i64();
+    let record = |timestamp_ns: i64| WalLogRecord {
+        tenant: "t".to_string(),
+        labels: Labels::default(),
+        timestamp_ns,
+        line: timestamp_ns.to_string(),
+        structured_metadata: BTreeMap::new(),
+        position: None,
+    };
+
+    let tail = crate::tests::prelude::BufferedLogHotTail::with_bucket_width(minutes(1));
+    tail.append_records(vec![record(0), record(minute), record(minute * 2)]);
+
+    let stamps = |start: i64, end: i64| {
+        tail.records_in_range(start, end)
+            .into_iter()
+            .map(|record| record.timestamp_ns)
+            .collect::<Vec<_>>()
+    };
+    check!(tail.records().len() == 3, "every record is kept");
+    check!(
+        stamps(0, minute) == vec![0, minute],
+        "both ends are inclusive"
+    );
+    check!(
+        stamps(1, minute - 1) == Vec::<i64>::new(),
+        "a window between two records holds neither"
+    );
+    check!(
+        stamps(0, minute * 2) == vec![0, minute, minute * 2],
+        "a window spanning every bucket returns every record"
+    );
+}
+
+#[test]
+pub(crate) fn hot_tail_bucket_key_uses_euclidean_minutes() {
+    let bucket_width = minutes(1);
+    assert_eq!(hot_tail_bucket_key(0, bucket_width), 0);
+    check!(hot_tail_bucket_key(bucket_width.nanos_i64() - 1, bucket_width) == 0);
+    check!(hot_tail_bucket_key(bucket_width.nanos_i64(), bucket_width) == 1);
+    assert_eq!(hot_tail_bucket_key(-1, bucket_width), -1);
+    check!(hot_tail_bucket_key(-bucket_width.nanos_i64(), bucket_width) == -1);
+    check!(hot_tail_bucket_key(-bucket_width.nanos_i64() - 1, bucket_width) == -2);
+    check!(hot_tail_bucket_key(minutes(2).nanos_i64(), minutes(2)) == 1);
+}
+
+#[test]
+pub(crate) fn ingest_quota_bucket_and_byte_accounting_are_precise() {
+    let mut labels = BTreeMap::new();
+    labels.insert("app".to_string(), "api".to_string());
+    labels.insert("env".to_string(), "prod".to_string());
+    let mut structured_metadata = BTreeMap::new();
+    structured_metadata.insert("trace_id".to_string(), "abc".to_string());
+    let record = WalLogRecord {
+        tenant: "tenant-a".to_string(),
+        labels,
+        timestamp_ns: 42,
+        line: "hello".to_string(),
+        structured_metadata,
+        position: None,
+    };
+    let expected_bytes = "tenant-a".len()
+        + "hello".len()
+        + std::mem::size_of::<i64>()
+        + "app".len()
+        + "api".len()
+        + "env".len()
+        + "prod".len()
+        + "trace_id".len()
+        + "abc".len();
+    check!(ingest_quota_bytes(&[record]) == measured_size(expected_bytes));
+
+    let mut bucket = IngestQuotaBucket::new(bytes_per_sec(10), secs(1));
+    check!(bucket.capacity() == bytes(10));
+    check!(bucket.consume(bytes(10)));
+    check!(!bucket.consume(ByteSize::from_bytes_f64(0.1)));
+    bucket.update_rate(bytes_per_sec(5));
+    check!(bucket.available <= bytes(5));
+    bucket.available = bytes(4);
+    bucket.update_rate(bytes_per_sec(20));
+    check!(bucket.available >= bytes(4));
+    check!(bucket.consume(bytes(4)));
+
+    // Neither assertion above reaches the clamp: the bucket is empty by
+    // then, so nothing is banked over the new capacity and `available`
+    // could have been left alone -- or topped up to the new capacity --
+    // without either inequality noticing.
+    //
+    // Lowering the rate shrinks the capacity, and what was banked above it
+    // is given up.
+    bucket.available = bytes(20);
+    bucket.update_rate(bytes_per_sec(5));
+    check!(bucket.available == bytes(5), "clamped to the new capacity");
+
+    // Raising it grows the capacity and hands out nothing: a bucket
+    // refills over time, not on a configuration change. The bound is loose
+    // by a byte because `update_rate` refills first, over however long the
+    // two statements took.
+    bucket.available = bytes(2);
+    bucket.update_rate(bytes_per_sec(50));
+    check!(
+        bucket.available < bytes(3),
+        "not topped up to the new capacity"
+    );
+
+    // Refilling adds the rate over however long has passed. Every case
+    // above reaches it only through `update_rate`, which calls it against
+    // a bucket whose clock has not moved -- so with the body removed they
+    // all behave the same.
+    let mut refilling = IngestQuotaBucket::new(bytes_per_sec(10), secs(1));
+    refilling.available = bytes(0);
+    refilling.updated_at = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_millis(500))
+        .expect("the process has been running for at least half a second");
+    refilling.refill();
+    check!(
+        refilling.available >= bytes(5),
+        "half a second at ten bytes a second is at least five bytes"
+    );
+    check!(
+        refilling.available <= bytes(10),
+        "and never past the capacity"
+    );
+
+    let bucket = IngestQuotaBucket::new(bytes_per_sec(10), secs(2));
+    check!(bucket.capacity() == bytes(20));
+}
+
+#[test]
+pub(crate) fn varint_encoding_and_ingest_limits_pin_boundaries() {
+    let mut body = Vec::new();
+    encode_varint(0, &mut body);
+    encode_varint(127, &mut body);
+    encode_varint(128, &mut body);
+    encode_varint(300, &mut body);
+    assert_eq!(body, vec![0x00, 0x7f, 0x80, 0x01, 0xac, 0x02]);
+
+    let limits = Limits {
+        max_ingest_body: bytes(5),
+        ..Limits::unenforced()
+    };
+    assert!(validate_ingest_body_limit(&limits, bytes(5)).is_ok());
+    assert!(validate_ingest_body_limit(&limits, bytes(6)).is_err());
+    // Zero is the sentinel for "no cap", so a body of any size passes.
+    assert!(validate_ingest_body_limit(&Limits::unenforced(), bytes(6)).is_ok());
+}
+
+/// Accumulating a WAL batch stops on two conditions, and neither had ever
+/// been reached. An empty first poll returns straight away rather than
+/// waiting out the accumulation window for records that are not coming;
+/// and once the batch is full the loop stops, rather than taking one more
+/// poll's worth beyond the cap it was given.
+#[tokio::test]
+pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
+    struct ScriptedConsumer {
+        pub(crate) batches: std::collections::VecDeque<Vec<WalRecordForTest>>,
+        revoked: std::collections::BTreeSet<i32>,
+    }
+    type WalRecordForTest = crate::tests::prelude::KafkaWalRecord;
+
+    #[async_trait]
+    impl crate::tests::prelude::LogWalConsumer for ScriptedConsumer {
+        fn take_revoked_partitions(&mut self) -> std::collections::BTreeSet<i32> {
+            std::mem::take(&mut self.revoked)
+        }
+
+        async fn poll(
+            &mut self,
+            _timeout: Time,
+        ) -> Result<
+            Vec<crate::tests::prelude::KafkaWalRecord>,
+            crate::tests::prelude::WalConsumerError,
+        > {
+            Ok(self.batches.pop_front().unwrap_or_default())
+        }
+        async fn commit_compacted(
+            &mut self,
+            _position: crate::tests::prelude::WalPosition,
+        ) -> Result<(), crate::tests::prelude::WalConsumerError> {
+            Ok(())
+        }
+    }
+
+    let record = |offset: i64| crate::tests::prelude::KafkaWalRecord {
+        value: Vec::new(),
+        partition: PartitionIndex(0),
+        offset: Offset(offset),
+        timestamp_ms: None,
+        headers: Vec::new(),
+    };
+    let poll = |batches: Vec<Vec<crate::tests::prelude::KafkaWalRecord>>, max: usize| async move {
+        let mut consumer = ScriptedConsumer {
+            batches: batches.into_iter().collect(),
+            revoked: std::collections::BTreeSet::new(),
+        };
+        crate::tests::prelude::poll_accumulated_log_compaction_records(
+            &mut consumer,
+            secs(1),
+            secs(5),
+            millis(10),
+            NonZeroUsize::new(max).expect("a positive cap"),
+        )
+        .await
+        .expect("the scripted consumer does not fail")
+    };
+    async fn poll_consumer(consumer: &mut ScriptedConsumer) -> Vec<WalRecordForTest> {
+        crate::tests::prelude::poll_accumulated_log_compaction_records(
+            consumer,
+            secs(1),
+            secs(5),
+            millis(10),
+            NonZeroUsize::new(3).expect("a positive cap"),
+        )
+        .await
+        .expect("the scripted consumer does not fail")
+    }
+
+    // An empty first poll is the answer, not the start of a wait: the
+    // batch waiting behind it must not be drawn in.
+    let empty = poll(vec![vec![], vec![record(1)]], 3).await;
+    check!(empty.is_empty(), "an empty poll returns empty");
+
+    // One short of the cap accumulates; reaching the cap stops, leaving
+    // the batch behind it alone.
+    let full = poll(
+        vec![vec![record(1)], vec![record(2), record(3)], vec![record(4)]],
+        3,
+    )
+    .await;
+    check!(full.len() == 3, "stops at the cap, got {}", full.len());
+
+    // A rebalance observed on an empty first poll belongs to the previous
+    // accumulation cycle and must not discard a later record for that shard.
+    let mut consumer = ScriptedConsumer {
+        batches: vec![vec![], vec![record(5)], vec![]].into_iter().collect(),
+        revoked: [0].into_iter().collect(),
+    };
+    let empty = poll_consumer(&mut consumer).await;
+    check!(empty.is_empty(), "the rebalance poll remains empty");
+    let replayed = poll_consumer(&mut consumer).await;
+    check!(replayed.len() == 1, "the later record survives");
+}
+
+struct ContentTypeCase {
+    value: &'static str,
+    accepted: Option<bool>,
+}
+
+#[test]
+pub(crate) fn loki_content_type_and_body_decoding_accept_only_expected_forms() {
+    let mut headers = HeaderMap::new();
+    assert_eq!(decode_loki_http_body(&headers, b"raw").unwrap(), b"raw");
+    headers.insert(CONTENT_ENCODING, "snappy".parse().unwrap());
+    assert_eq!(decode_loki_http_body(&headers, b"raw").unwrap(), b"raw");
+    headers.insert(CONTENT_ENCODING, "gzip".parse().unwrap());
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut encoder, b"raw").unwrap();
+    assert_eq!(
+        decode_loki_http_body(&headers, &encoder.finish().unwrap()).unwrap(),
+        b"raw"
+    );
+    headers.insert(CONTENT_ENCODING, "br".parse().unwrap());
+    assert!(decode_loki_http_body(&headers, b"raw").is_err());
+
+    for case in [
+        ContentTypeCase {
+            value: "application/json",
+            accepted: Some(true),
+        },
+        ContentTypeCase {
+            value: "Application/JSON; charset=utf-8",
+            accepted: Some(true),
+        },
+        ContentTypeCase {
+            value: "application/x-protobuf",
+            accepted: Some(false),
+        },
+        ContentTypeCase {
+            value: "application/json; charset",
+            accepted: None,
+        },
+        ContentTypeCase {
+            value: "application/json; charset=",
+            accepted: None,
+        },
+    ] {
+        assert_eq!(
+            is_loki_json_content_type(&loki_content_type(case.value)).ok(),
+            case.accepted
+        );
+    }
+}
+
+struct NativeHeaderCase {
+    key: &'static str,
+    value: Option<&'static [u8]>,
+    expected: bool,
+}
+
+#[test]
+pub(crate) fn native_header_detection_requires_native_log_shape() {
+    for case in [
+        NativeHeaderCase {
+            key: "krabka-wal-record-type",
+            value: Some(&b"log-line"[..]),
+            expected: true,
+        },
+        NativeHeaderCase {
+            key: "krabka-log-timestamp-ns",
+            value: Some(&b"1"[..]),
+            expected: true,
+        },
+        NativeHeaderCase {
+            key: "krabka-log-label-app",
+            value: Some(&b"api"[..]),
+            expected: true,
+        },
+        NativeHeaderCase {
+            key: "krabka-wal-record-type",
+            value: Some(&b"log"[..]),
+            expected: false,
+        },
+        NativeHeaderCase {
+            key: "other",
+            value: None,
+            expected: false,
+        },
+    ] {
+        let header = KafkaWalHeader {
+            key: case.key.to_string(),
+            value: case.value.map(<[u8]>::to_vec),
+        };
+        assert_eq!(has_native_kafka_log_headers(&[header]), case.expected);
+    }
+}
+
+/// Whether a compactor run failed on the object store decides whether the
+/// run is retried, and every variant that is not one has to say so. With
+/// the classifier stuck at true, a decode failure or a missing commit
+/// position would be retried forever.
+#[test]
+pub(crate) fn only_an_object_store_compactor_error_is_classified_as_one() {
+    use crate::tests::prelude::{CompactionFrontierStoreError, CompactorRunError};
+
+    check!(crate::tests::prelude::compactor_run_error_is_object_store(
+        &CompactorRunError::Frontier(CompactionFrontierStoreError::ObjectStore(
+            object_store::Error::NotFound {
+                path: "p".to_string(),
+                source: "gone".into(),
+            }
+        ))
+    ));
+    check!(!crate::tests::prelude::compactor_run_error_is_object_store(
+        &CompactorRunError::MissingCommitPosition
+    ));
+    check!(!crate::tests::prelude::compactor_run_error_is_object_store(
+        &CompactorRunError::Frontier(CompactionFrontierStoreError::InvalidVersion {
+            expected: 1,
+            actual: 2,
+        })
+    ));
+}
+
+use crate::tests::prelude::AclEntry;
+
+struct TopicMatchCase<'a> {
+    entry: &'a AclEntry,
+    topic: &'a str,
+    expected: bool,
+}
+
+#[test]
+pub(crate) fn acl_helpers_require_topic_operation_principal_and_pattern() {
+    let allow_write = acl_entry(
+        ResourceType::Topic,
+        "__krabka_observability_logs_wal",
+        PatternType::Literal,
+        "User:tenant-a",
+        AclOperation::Write,
+        PermissionType::Allow,
+    );
+    let allow_read = acl_entry(
+        ResourceType::Topic,
+        "__krabka_",
+        PatternType::Prefixed,
+        "User:*",
+        AclOperation::Read,
+        PermissionType::Allow,
+    );
+    let deny_write = acl_entry(
+        ResourceType::Topic,
+        "*",
+        PatternType::Literal,
+        "User:tenant-a",
+        AclOperation::All,
+        PermissionType::Deny,
+    );
+
+    for case in [
+        TopicMatchCase {
+            entry: &allow_write,
+            topic: "__krabka_observability_logs_wal",
+            expected: true,
+        },
+        TopicMatchCase {
+            entry: &allow_read,
+            topic: "__krabka_observability_logs_wal",
+            expected: true,
+        },
+        TopicMatchCase {
+            entry: &allow_read,
+            topic: "other-topic",
+            expected: false,
+        },
+    ] {
+        check!(
+            matches_acl_topic_pattern(case.entry, case.topic) == case.expected,
+            "pattern={} topic={}",
+            case.entry.resource_name,
+            case.topic
+        );
+    }
+    // A literal "*" resource name matches any topic. Neither entry in the
+    // loop above asks it: one names the topic, the other is a prefix.
+    check!(matches_acl_topic_pattern(
+        &deny_write,
+        "some-unrelated-topic"
+    ));
+
+    check!(acl_matches_tenant_wal_write(
+        &allow_write,
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+
+    // The wildcard principal grants on the write side too. Only the read
+    // entry above carries one, so the write side's own check was free.
+    check!(acl_matches_tenant_wal_write(
+        &acl_entry(
+            ResourceType::Topic,
+            "__krabka_observability_logs_wal",
+            PatternType::Literal,
+            "User:*",
+            AclOperation::Write,
+            PermissionType::Allow,
+        ),
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+
+    // And a non-Topic resource is refused reading, as it already is
+    // writing.
+    check!(!acl_matches_tenant_wal_read(
+        &acl_entry(
+            ResourceType::Group,
+            "__krabka_observability_logs_wal",
+            PatternType::Literal,
+            "User:tenant-a",
+            AclOperation::Read,
+            PermissionType::Allow,
+        ),
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+    check!(acl_matches_tenant_wal_read(
+        &allow_read,
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+
+    // A concrete principal grants itself and nobody else. `allow_read`
+    // above carries the wildcard, so its second arm answered for both and
+    // nothing yet separated "this principal" from "any principal but this
+    // one".
+    let read_as = |principal: &str| {
+        acl_entry(
+            ResourceType::Topic,
+            "__krabka_observability_logs_wal",
+            PatternType::Literal,
+            principal,
+            AclOperation::Read,
+            PermissionType::Allow,
+        )
+    };
+    check!(acl_matches_tenant_wal_read(
+        &read_as("User:tenant-a"),
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+    check!(!acl_matches_tenant_wal_read(
+        &read_as("User:tenant-b"),
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+    check!(!acl_matches_tenant_wal_write(
+        &allow_read,
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+    check!(!acl_matches_tenant_wal_read(
+        &allow_write,
+        "User:tenant-a",
+        "__krabka_observability_logs_wal"
+    ));
+    check!(!acl_matches_tenant_wal_write(
+        &acl_entry(
+            ResourceType::Group,
+            "__krabka_observability_logs_wal",
+            PatternType::Literal,
+            "User:tenant-a",
+            AclOperation::Write,
+            PermissionType::Allow,
+        ),
+        "User:tenant-a",
+        "__krabka_observability_logs_wal",
+    ));
+    let tenant = TenantId::new("tenant-a").expect("a valid tenant id");
+    check!(
+        check_tenant_wal_write_acl(
+            &Principal::Unauthenticated,
+            &tenant,
+            "__krabka_observability_logs_wal",
+            &AclSet::Configured(vec![allow_write.clone()])
+        )
+        .is_ok()
+    );
+    check!(
+        check_tenant_wal_read_acl(
+            &Principal::Unauthenticated,
+            &tenant,
+            "__krabka_observability_logs_wal",
+            &AclSet::Configured(vec![allow_read])
+        )
+        .is_ok()
+    );
+    check!(
+        check_tenant_wal_write_acl(
+            &Principal::Unauthenticated,
+            &tenant,
+            "__krabka_observability_logs_wal",
+            &AclSet::Configured(vec![deny_write])
+        )
+        .is_err()
+    );
+    check!(
+        check_tenant_wal_read_acl(
+            &Principal::Unauthenticated,
+            &tenant,
+            "__krabka_observability_logs_wal",
+            &AclSet::Configured(vec![allow_write])
+        )
+        .is_err()
+    );
+}
+
+/// Builds a header map with a Loki content type.
+pub(crate) fn loki_content_type(value: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, value.parse().unwrap());
+    headers
+}

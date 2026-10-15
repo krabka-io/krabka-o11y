@@ -11,7 +11,6 @@ mod heatmap;
 mod in_memory;
 mod matcher;
 mod pprof;
-mod profile_samples_mem_table;
 mod profile_session_context;
 mod profile_type;
 mod raw_profile;
@@ -48,14 +47,13 @@ pub use in_memory::{
 };
 pub use matcher::parse_label_selector;
 pub use pprof::{PprofProfile, SampleType};
-pub use profile_samples_mem_table::profile_samples_mem_table;
 pub use profile_session_context::profile_session_context;
 pub use profile_type::ProfileType;
 pub use raw_profile::{tree_to_pprof, tree_to_pprof_with_max_nodes};
 pub use samples::{
     COL_FINGERPRINT, COL_TIMESTAMP, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
     PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, PCOL_WAL_SAMPLE_IDS,
-    profile_samples_schema,
+    profile_samples_mem_table, profile_samples_schema,
 };
 pub use series::{
     ProfileLabel, SamplePoint, Series, SeriesAgg, fold_bucket, series_bucket_ms, step_bucket_ms,

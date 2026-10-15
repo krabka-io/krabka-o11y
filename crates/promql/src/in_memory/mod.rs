@@ -1,6 +1,6 @@
 //! In-memory `MetricStore` used by conformance and engine tests.
 
-use std::collections::{BTreeMap, HashMap};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 
 use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::NativeHistogram;
@@ -24,27 +24,66 @@ pub(crate) use matcher::{prepare_matchers, row_matches};
 #[cfg(test)]
 mod tests;
 
-mod default_retention;
-mod exemplar_row;
 mod float_head_summary;
-mod float_row;
-mod hist_row;
 mod in_memory_metric_store;
-mod partition_watermark;
-mod prune_stats;
-mod row_chunk_len;
 mod row_chunks;
 mod series_sample_ref;
 
-pub use default_retention::DEFAULT_RETENTION;
-use exemplar_row::ExemplarRow;
-use float_row::FloatRow;
-use hist_row::HistRow;
 pub use in_memory_metric_store::InMemoryMetricStore;
-pub use partition_watermark::PartitionWatermark;
-pub use prune_stats::PruneStats;
-use row_chunk_len::ROW_CHUNK_LEN;
 use row_chunks::RowChunks;
 use series_sample_ref::SeriesSampleRef;
 
 use self::float_head_summary::FloatHeadSummary;
+
+/// Default head retention window: the head keeps six hours of samples hot.
+pub const DEFAULT_RETENTION: Time = hours(6);
+
+#[derive(Clone)]
+pub(crate) struct ExemplarRow {
+    /// Shared, and cloned by pointer when the head is copied.
+    pub(crate) series_labels: Arc<Labels>,
+    pub(crate) labels: Arc<Labels>,
+    pub(crate) ts_ms: i64,
+    pub(crate) value: f64,
+}
+
+#[derive(Clone)]
+pub(crate) struct FloatRow {
+    pub(crate) fp: SeriesFingerprint,
+    /// Shared with every other row of the same series in the record that
+    /// produced it, and cloned by pointer when the head is copied.
+    pub(crate) labels: Arc<Labels>,
+    pub(crate) ts_ms: i64,
+    pub(crate) value: f64,
+    pub(crate) start_timestamp_ms: Option<i64>,
+}
+
+#[derive(Clone)]
+pub(crate) struct HistRow {
+    pub(crate) fp: SeriesFingerprint,
+    /// Shared, and cloned by pointer when the head is copied.
+    pub(crate) labels: Arc<Labels>,
+    pub(crate) ts_ms: i64,
+    /// Behind an `Arc` because a histogram owns four vectors, and head clones
+    /// should share those vectors.
+    pub(crate) hist: Arc<NativeHistogram>,
+}
+
+/// WAL offset watermarks materialized in the head for one partition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PartitionWatermark {
+    /// First WAL offset the store ingested into the head for this partition.
+    pub low_water_offset: Offset,
+    /// Most recent WAL offset the store ingested into the head for this partition.
+    pub high_water_offset: Offset,
+}
+
+/// Counts of what an [`crate::InMemoryMetricStore::prune`] pass evicted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PruneStats {
+    pub samples_dropped: usize,
+    pub series_dropped: usize,
+}
+
+/// Rows per sealed chunk in a [`RowChunks`].
+pub(crate) const ROW_CHUNK_LEN: usize = 1_024;

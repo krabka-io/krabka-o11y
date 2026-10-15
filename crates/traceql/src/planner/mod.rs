@@ -31,6 +31,540 @@ macro_rules! numeric_aggregate {
     };
 }
 
+// Rank Direction
+#[derive(Clone, Copy)]
+pub(crate) enum RankDirection {
+    Top,
+    Bottom,
+}
+
+// Rank Filter
+#[derive(Clone, Copy)]
+pub(crate) struct RankFilter {
+    pub(crate) op: ComparisonOp,
+    pub(crate) value: f64,
+}
+
+impl RankFilter {
+    pub(crate) fn new(op: ComparisonOp, value: f64) -> Self {
+        Self { op, value }
+    }
+}
+
+// Rank Limit
+#[derive(Clone, Copy)]
+pub(crate) struct RankLimit {
+    pub(crate) direction: RankDirection,
+    pub(crate) k: usize,
+}
+
+/// The direction and size of a `topk` or `bottomk` stage, or `None` for any
+/// other pipeline stage.
+pub(crate) fn rank_stage_limit(pipeline: &Pipeline) -> Option<RankLimit> {
+    match pipeline {
+        Pipeline::TopK(k) => Some(RankLimit {
+            direction: RankDirection::Top,
+            k: *k,
+        }),
+        Pipeline::BottomK(k) => Some(RankLimit {
+            direction: RankDirection::Bottom,
+            k: *k,
+        }),
+        _ => None,
+    }
+}
+
+pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
+    rank_stage_limit(pipeline).ok_or_else(|| {
+        TraceqlError::Unsupported(format!("expected topk/bottomk, got {pipeline:?}"))
+    })
+}
+
+// Ungrouped Rank Parts
+pub(crate) struct UngroupedRankParts<'a> {
+    pub(crate) aggregate: &'a Aggregate,
+    pub(crate) rank: &'a Pipeline,
+    pub(crate) filter: Option<RankFilter>,
+}
+
+// Ungrouped Rank Pipeline Parts
+pub(crate) fn ungrouped_rank_pipeline_parts(
+    pipeline: &[Pipeline],
+) -> Option<UngroupedRankParts<'_>> {
+    match pipeline {
+        [Pipeline::Aggregate(agg), rank_pipeline!(rank)] => Some(UngroupedRankParts {
+            aggregate: agg,
+            rank,
+            filter: None,
+        }),
+        [
+            Pipeline::Aggregate(agg),
+            Pipeline::Filter { op, value },
+            rank_pipeline!(rank),
+        ]
+        | [
+            Pipeline::Aggregate(agg),
+            rank_pipeline!(rank),
+            Pipeline::Filter { op, value },
+        ] => Some(UngroupedRankParts {
+            aggregate: agg,
+            rank,
+            filter: Some(RankFilter::new(*op, *value)),
+        }),
+        _ => None,
+    }
+}
+
+// Ungrouped Rank Pipeline Sql
+pub(crate) fn ungrouped_rank_pipeline_sql(
+    spanset_sql: &str,
+    pipeline: &[Pipeline],
+) -> Result<Option<String>> {
+    let Some(parts) = ungrouped_rank_pipeline_parts(pipeline) else {
+        return Ok(None);
+    };
+    if !is_search_preserving_aggregate(parts.aggregate) {
+        return Ok(None);
+    }
+    let rank = rank_limit(parts.rank)?;
+    if rank.k == 0 {
+        return Ok(Some(ungrouped_rank_sql(spanset_sql, rank)));
+    }
+    let Some(filter) = parts.filter else {
+        return Ok(Some(ungrouped_rank_sql(spanset_sql, rank)));
+    };
+    Ok(Some(aggregate_filter_sql_query_any(
+        spanset_sql,
+        parts.aggregate,
+        filter.op,
+        filter.value,
+    )?))
+}
+
+// Ungrouped Rank Sql
+pub(crate) fn ungrouped_rank_sql(spanset_sql: &str, rank: RankLimit) -> String {
+    if rank.k == 0 {
+        return format!("SELECT * FROM ({spanset_sql}) AS q WHERE FALSE");
+    }
+    format!("SELECT * FROM ({spanset_sql}) AS q")
+}
+
+// Grouped Rank Pipeline Parts
+pub(crate) struct GroupedRankPipelineParts<'a> {
+    pub(crate) aggregate: &'a Aggregate,
+    pub(crate) by: &'a [Field],
+    pub(crate) rank: &'a Pipeline,
+    pub(crate) pre_filter: Option<RankFilter>,
+    pub(crate) post_filter: Option<RankFilter>,
+}
+
+pub(crate) fn grouped_rank_pipeline_parts(
+    pipeline: &[Pipeline],
+) -> Option<GroupedRankPipelineParts<'_>> {
+    match pipeline {
+        [
+            Pipeline::Aggregate(agg),
+            Pipeline::By(by),
+            rank_pipeline!(rank),
+        ]
+        | [
+            Pipeline::By(by),
+            Pipeline::Aggregate(agg),
+            rank_pipeline!(rank),
+        ]
+        | [
+            Pipeline::Aggregate(agg),
+            rank_pipeline!(rank),
+            Pipeline::By(by),
+        ] => Some(GroupedRankPipelineParts {
+            aggregate: agg,
+            by,
+            rank,
+            pre_filter: None,
+            post_filter: None,
+        }),
+        [
+            Pipeline::Aggregate(agg),
+            Pipeline::By(by),
+            Pipeline::Filter { op, value },
+            rank_pipeline!(rank),
+        ]
+        | [
+            Pipeline::By(by),
+            Pipeline::Aggregate(agg),
+            Pipeline::Filter { op, value },
+            rank_pipeline!(rank),
+        ]
+        | [
+            Pipeline::Aggregate(agg),
+            Pipeline::Filter { op, value },
+            rank_pipeline!(rank),
+            Pipeline::By(by),
+        ] => Some(GroupedRankPipelineParts {
+            aggregate: agg,
+            by,
+            rank,
+            pre_filter: Some(RankFilter::new(*op, *value)),
+            post_filter: None,
+        }),
+        [
+            Pipeline::Aggregate(agg),
+            Pipeline::By(by),
+            rank_pipeline!(rank),
+            Pipeline::Filter { op, value },
+        ]
+        | [
+            Pipeline::By(by),
+            Pipeline::Aggregate(agg),
+            rank_pipeline!(rank),
+            Pipeline::Filter { op, value },
+        ]
+        | [
+            Pipeline::Aggregate(agg),
+            rank_pipeline!(rank),
+            Pipeline::By(by),
+            Pipeline::Filter { op, value },
+        ]
+        | [
+            Pipeline::Aggregate(agg),
+            rank_pipeline!(rank),
+            Pipeline::Filter { op, value },
+            Pipeline::By(by),
+        ] => Some(GroupedRankPipelineParts {
+            aggregate: agg,
+            by,
+            rank,
+            pre_filter: None,
+            post_filter: Some(RankFilter::new(*op, *value)),
+        }),
+        _ => None,
+    }
+}
+
+// Grouped Rank Pipeline Sql
+pub(crate) fn grouped_rank_pipeline_sql(
+    spanset_sql: &str,
+    pipeline: &[Pipeline],
+) -> Result<Option<String>> {
+    let Some(parts) = grouped_rank_pipeline_parts(pipeline) else {
+        return Ok(None);
+    };
+    if !is_search_preserving_aggregate(parts.aggregate) {
+        return Ok(None);
+    }
+    Ok(Some(grouped_rank_sql(
+        spanset_sql,
+        parts.by,
+        &aggregate_rank_expr_sql(parts.aggregate)?,
+        rank_limit(parts.rank)?,
+        parts.pre_filter,
+        parts.post_filter,
+    )?))
+}
+
+// Grouped Rank Sql
+pub(crate) fn grouped_rank_sql(
+    spanset_sql: &str,
+    by: &[Field],
+    expr: &str,
+    rank: RankLimit,
+    pre_filter: Option<RankFilter>,
+    post_filter: Option<RankFilter>,
+) -> Result<String> {
+    let GroupJoinSql {
+        group_exprs,
+        join_pred,
+    } = group_join_sql(by);
+    let direction = match rank.direction {
+        RankDirection::Top => "DESC",
+        RankDirection::Bottom => "ASC",
+    };
+    let having = if let Some(filter) = pre_filter {
+        format!(
+            " HAVING {}",
+            aggregate_filter_sql(expr, filter.op, filter.value)?
+        )
+    } else {
+        String::new()
+    };
+    let passing_source = if let Some(filter) = post_filter {
+        let pred = aggregate_filter_sql("rank_value", filter.op, filter.value)?;
+        format!("SELECT * FROM ranked WHERE {pred}")
+    } else {
+        "SELECT * FROM ranked".to_string()
+    };
+    Ok(format!(
+        "WITH matched AS ({spanset_sql}), \
+         ranked AS (SELECT {group_exprs}, {expr} AS rank_value FROM matched GROUP BY {group_exprs} \
+                    {having} ORDER BY rank_value {direction} LIMIT {}), \
+         passing AS ({passing_source}) \
+         SELECT matched.* FROM matched JOIN passing ON {join_pred}",
+        rank.k
+    ))
+}
+
+// Aggregate Rank Expr Sql
+pub(crate) fn aggregate_rank_expr_sql(agg: &Aggregate) -> Result<String> {
+    match agg {
+        Aggregate::Count => Ok("COUNT(*)".to_string()),
+        Aggregate::Sum(_) | Aggregate::Avg(_) | Aggregate::Min(_) | Aggregate::Max(_) => {
+            aggregate_expr_sql(agg)
+        }
+        _ => Err(TraceqlError::Unsupported(format!(
+            "aggregate {agg:?} is not supported in search ranking"
+        ))),
+    }
+}
+
+
+// Structural Base Op
+pub(crate) fn structural_base_op(op: StructuralOp) -> StructuralOp {
+    match op {
+        StructuralOp::NegDescendant | StructuralOp::UnionDescendant => StructuralOp::Descendant,
+        StructuralOp::NegAncestor | StructuralOp::UnionAncestor => StructuralOp::Ancestor,
+        StructuralOp::NegChild | StructuralOp::UnionChild => StructuralOp::Child,
+        StructuralOp::NegParent | StructuralOp::UnionParent => StructuralOp::Parent,
+        StructuralOp::NegSibling | StructuralOp::UnionSibling => StructuralOp::Sibling,
+        StructuralOp::Descendant
+        | StructuralOp::Ancestor
+        | StructuralOp::Child
+        | StructuralOp::Parent
+        | StructuralOp::Sibling => op,
+    }
+}
+
+// Structural Is Negated
+pub(crate) fn structural_is_negated(op: StructuralOp) -> bool {
+    matches!(
+        op,
+        StructuralOp::NegDescendant
+            | StructuralOp::NegAncestor
+            | StructuralOp::NegChild
+            | StructuralOp::NegParent
+            | StructuralOp::NegSibling
+    )
+}
+
+// Structural Is Union
+pub(crate) fn structural_is_union(op: StructuralOp) -> bool {
+    matches!(
+        op,
+        StructuralOp::UnionDescendant
+            | StructuralOp::UnionAncestor
+            | StructuralOp::UnionChild
+            | StructuralOp::UnionParent
+            | StructuralOp::UnionSibling
+    )
+}
+
+// Structural Predicate Sql
+pub(crate) fn structural_predicate_sql(op: StructuralOp) -> String {
+    let trace = selector::ident(COL_TRACE_ID);
+    let left = selector::ident(COL_NS_LEFT);
+    let right = selector::ident(COL_NS_RIGHT);
+    let parent = selector::ident(COL_PARENT_ID);
+    let span_id = selector::ident(COL_SPAN_ID);
+    let trace_eq = format!("b.{trace} = a.{trace}");
+    match op {
+        StructuralOp::Descendant => {
+            format!("{trace_eq} AND b.{left} > a.{left} AND b.{right} < a.{right}")
+        }
+        StructuralOp::Ancestor => {
+            format!("{trace_eq} AND b.{left} < a.{left} AND b.{right} > a.{right}")
+        }
+        StructuralOp::Child => format!("{trace_eq} AND b.{parent} = a.{left}"),
+        StructuralOp::Parent => format!("{trace_eq} AND a.{parent} = b.{left}"),
+        StructuralOp::Sibling => {
+            format!("{trace_eq} AND b.{parent} = a.{parent} AND b.{span_id} != a.{span_id}")
+        }
+        StructuralOp::NegDescendant
+        | StructuralOp::NegAncestor
+        | StructuralOp::NegChild
+        | StructuralOp::NegParent
+        | StructuralOp::NegSibling
+        | StructuralOp::UnionDescendant
+        | StructuralOp::UnionAncestor
+        | StructuralOp::UnionChild
+        | StructuralOp::UnionParent
+        | StructuralOp::UnionSibling => unreachable!("mode variants are normalized first"),
+    }
+}
+
+// Is Inert Pipeline Stage
+pub(crate) fn is_inert_pipeline_stage(stage: &Pipeline) -> bool {
+    matches!(
+        stage,
+        Pipeline::Select(_) | Pipeline::Coalesce | Pipeline::With(_)
+    )
+}
+
+// Is Search Preserving Aggregate
+pub(crate) fn is_search_preserving_aggregate(agg: &Aggregate) -> bool {
+    matches!(
+        agg,
+        Aggregate::Count
+            | Aggregate::Sum(_)
+            | Aggregate::Avg(_)
+            | Aggregate::Min(_)
+            | Aggregate::Max(_)
+    )
+}
+
+// Is Search Preserving Pipeline Stage
+pub(crate) fn is_search_preserving_pipeline_stage(stage: &Pipeline) -> bool {
+    matches!(
+        stage,
+        Pipeline::By(_)
+            | Pipeline::Select(_)
+            | Pipeline::Coalesce
+            | Pipeline::With(_)
+            | Pipeline::Aggregate(
+                Aggregate::Count
+                    | Aggregate::Sum(_)
+                    | Aggregate::Avg(_)
+                    | Aggregate::Min(_)
+                    | Aggregate::Max(_)
+            )
+    )
+}
+
+
+// Aggregate Expr Sql
+pub(crate) fn aggregate_expr_sql(agg: &Aggregate) -> Result<String> {
+    let (field, func) = match agg {
+        Aggregate::Sum(field) => (field, "SUM"),
+        Aggregate::Avg(field) => (field, "AVG"),
+        Aggregate::Min(field) => (field, "MIN"),
+        Aggregate::Max(field) => (field, "MAX"),
+        _ => {
+            return Err(TraceqlError::Unsupported(format!(
+                "aggregate {agg:?} is not supported in scalar filters"
+            )));
+        }
+    };
+    Ok(format!(
+        "{func}({})",
+        selector::ident(&selector::field_to_column(field))
+    ))
+}
+
+// Aggregate Filter Sql
+pub(crate) fn aggregate_filter_sql(expr: &str, op: ComparisonOp, value: f64) -> Result<String> {
+    if !value.is_finite() {
+        return Err(TraceqlError::Plan(
+            "pipeline filter value is not finite".into(),
+        ));
+    }
+    let op = match op {
+        ComparisonOp::Eq => "=",
+        ComparisonOp::Neq => "!=",
+        ComparisonOp::Lt => "<",
+        ComparisonOp::Lte => "<=",
+        ComparisonOp::Gt => ">",
+        ComparisonOp::Gte => ">=",
+        ComparisonOp::Re | ComparisonOp::Nre => {
+            return Err(TraceqlError::Unsupported(
+                "regex filter on pipeline scalar is not supported".into(),
+            ));
+        }
+    };
+    Ok(format!("{expr} {op} {value}"))
+}
+
+// Aggregate Filter Sql Query
+pub(crate) fn aggregate_filter_sql_query(
+    spanset_sql: &str,
+    agg: &Aggregate,
+    op: ComparisonOp,
+    value: f64,
+) -> Result<String> {
+    aggregate_filter_sql_query_any(spanset_sql, agg, op, value)
+}
+
+// Aggregate Filter Sql Query Any
+pub(crate) fn aggregate_filter_sql_query_any(
+    spanset_sql: &str,
+    agg: &Aggregate,
+    op: ComparisonOp,
+    value: f64,
+) -> Result<String> {
+    let expr = match agg {
+        Aggregate::Count => "COUNT(*)".to_string(),
+        _ => aggregate_expr_sql(agg)?,
+    };
+    aggregate_filter_query_any_sql(spanset_sql, &expr, op, value)
+}
+
+// Aggregate Projection Field
+pub(crate) fn aggregate_projection_field(agg: &Aggregate) -> Option<&Field> {
+    match agg {
+        Aggregate::Sum(field)
+        | Aggregate::Avg(field)
+        | Aggregate::Min(field)
+        | Aggregate::Max(field)
+        | Aggregate::SumOverTime(field)
+        | Aggregate::AvgOverTime(field)
+        | Aggregate::MinOverTime(field)
+        | Aggregate::MaxOverTime(field)
+        | Aggregate::HistogramOverTime(field)
+        | Aggregate::QuantileOverTime { field, .. } => Some(field),
+        Aggregate::Expression { .. }
+        | Aggregate::Count
+        | Aggregate::Rate
+        | Aggregate::CountOverTime => None,
+    }
+}
+
+// Group Join Sql
+/// The SQL that groups `matched` rows by the `by` fields and joins them back
+/// to the `passing` groups.
+pub(crate) struct GroupJoinSql {
+    /// The comma-separated grouping columns, for `SELECT` and `GROUP BY`.
+    pub(crate) group_exprs: String,
+    /// The `matched.col = passing.col AND ...` join predicate.
+    pub(crate) join_pred: String,
+}
+
+pub(crate) fn group_join_sql(by: &[Field]) -> GroupJoinSql {
+    let group_cols = by
+        .iter()
+        .map(|field| selector::ident(&selector::field_to_column(field)))
+        .collect::<Vec<_>>();
+    let join_pred = group_cols
+        .iter()
+        .map(|col| format!("matched.{col} = passing.{col}"))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    GroupJoinSql {
+        group_exprs: group_cols.join(", "),
+        join_pred,
+    }
+}
+
+// Collect Nested Selectors
+pub(crate) fn collect_nested_selectors(expr: &SpansetExpr, out: &mut Vec<FieldExpr>) {
+    match expr {
+        SpansetExpr::Selector(fe) if selector::has_nested_scope(fe) => {
+            if !out.iter().any(|existing| existing == fe.as_ref()) {
+                out.push((**fe).clone());
+            }
+        }
+        SpansetExpr::Selector(_) => {}
+        SpansetExpr::And(lhs, rhs)
+        | SpansetExpr::Or(lhs, rhs)
+        | SpansetExpr::Structural { lhs, rhs, .. } => {
+            collect_nested_selectors(lhs, out);
+            collect_nested_selectors(rhs, out);
+        }
+    }
+}
+
+// Collect Table
+pub(crate) async fn collect_table(ctx: &SessionContext, table: &str) -> Result<Vec<RecordBatch>> {
+    Ok(ctx.table(table).await?.collect().await?)
+}
+
+
 #[cfg(test)]
 mod tests {
     use arrow::{array::Array, record_batch::RecordBatch};
@@ -1340,52 +1874,15 @@ mod tests {
     }
 }
 
-mod aggregate_expr_sql;
-mod aggregate_filter_sql;
-mod aggregate_filter_sql_query;
-mod aggregate_filter_sql_query_any;
-mod aggregate_projection_field;
-mod aggregate_rank_expr_sql;
-mod collect_nested_selectors;
-mod collect_table;
-mod group_join_sql;
-mod grouped_aggregate_sql;
-mod grouped_no_filter_by;
-mod grouped_pipeline_sql;
-mod grouped_rank_pipeline_parts;
-mod grouped_rank_pipeline_sql;
-mod grouped_rank_sql;
-mod is_inert_pipeline_stage;
-mod is_search_preserving_aggregate;
-mod is_search_preserving_pipeline_stage;
 pub(crate) mod nested_projection_matcher;
-mod pipeline_nested_projection_matchers;
-mod pipeline_to_sql;
 mod plan_query;
-mod plan_spanset_sql;
 mod planned_spanset;
 mod planner_context;
-mod push_nested_projection_matcher;
-mod rank_direction;
-mod rank_filter;
-mod rank_limit;
-mod register_batches;
-mod register_nested_selector_tables;
-mod scan_options_with_pipeline_projections;
-mod spanset_to_sql;
-mod structural_base_op;
-mod structural_is_negated;
-mod structural_is_union;
-mod structural_predicate_sql;
-mod ungrouped_rank_parts;
-mod ungrouped_rank_pipeline_parts;
-mod ungrouped_rank_pipeline_sql;
-mod ungrouped_rank_sql;
+mod registration;
+mod spanset_sql;
+mod grouped_sql;
+mod pipeline_sql;
 
-use aggregate_expr_sql::aggregate_expr_sql;
-use aggregate_filter_sql::aggregate_filter_sql;
-use aggregate_filter_sql_query::aggregate_filter_sql_query;
-use aggregate_filter_sql_query_any::aggregate_filter_sql_query_any;
 
 fn aggregate_filter_query_any_sql(
     spanset_sql: &str,
@@ -1401,48 +1898,17 @@ fn aggregate_filter_query_any_sql(
          SELECT matched.* FROM matched JOIN passing ON matched.{trace} = passing.{trace}"
     ))
 }
-use aggregate_projection_field::aggregate_projection_field;
-use aggregate_rank_expr_sql::aggregate_rank_expr_sql;
-use collect_nested_selectors::collect_nested_selectors;
-use collect_table::collect_table;
-use group_join_sql::{GroupJoinSql, group_join_sql};
-use grouped_aggregate_sql::grouped_aggregate_sql;
-use grouped_no_filter_by::grouped_no_filter_by;
-use grouped_pipeline_sql::grouped_pipeline_sql;
-use grouped_rank_pipeline_parts::grouped_rank_pipeline_parts;
-use grouped_rank_pipeline_sql::grouped_rank_pipeline_sql;
-use grouped_rank_sql::grouped_rank_sql;
-use is_inert_pipeline_stage::is_inert_pipeline_stage;
-use is_search_preserving_aggregate::is_search_preserving_aggregate;
-use is_search_preserving_pipeline_stage::is_search_preserving_pipeline_stage;
 use nested_projection_matcher::nested_projection_matcher;
-use pipeline_nested_projection_matchers::pipeline_nested_projection_matchers;
-use pipeline_to_sql::pipeline_to_sql;
 pub(crate) use plan_query::plan_query;
-use plan_spanset_sql::plan_spanset_sql;
 pub(crate) use planned_spanset::PlannedSpanset;
-pub(crate) use planner_context::PlannerContext;
-use push_nested_projection_matcher::push_nested_projection_matcher;
-pub(crate) use rank_direction::RankDirection;
-use rank_filter::RankFilter;
-pub(crate) use rank_limit::{RankLimit, rank_limit, rank_stage_limit};
-use register_batches::register_batches;
-use register_nested_selector_tables::register_nested_selector_tables;
-use scan_options_with_pipeline_projections::scan_options_with_pipeline_projections;
-use spanset_to_sql::spanset_to_sql;
-use structural_base_op::structural_base_op;
-use structural_is_negated::structural_is_negated;
-use structural_is_union::structural_is_union;
-use structural_predicate_sql::structural_predicate_sql;
-use ungrouped_rank_parts::UngroupedRankParts;
-use ungrouped_rank_pipeline_parts::ungrouped_rank_pipeline_parts;
-use ungrouped_rank_pipeline_sql::ungrouped_rank_pipeline_sql;
-use ungrouped_rank_sql::ungrouped_rank_sql;
-
-mod register_field_comparison_columns;
-use register_field_comparison_columns::{
-    collect_field_selectors, register_field_comparison_columns,
+use spanset_sql::{plan_spanset_sql, spanset_to_sql};
+use registration::{
+    register_batches, register_field_comparison_columns, register_nested_selector_tables,
 };
+use grouped_sql::{grouped_aggregate_sql, grouped_no_filter_by, grouped_pipeline_sql};
+use pipeline_sql::{pipeline_nested_projection_matchers, pipeline_to_sql, scan_options_with_pipeline_projections};
+pub(crate) use planner_context::PlannerContext;
+
 
 mod apply_expression_pipeline;
 

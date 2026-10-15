@@ -1,7 +1,7 @@
 use super::{
     Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, Principal, ProfileStore,
     QuerierState, QueryParameter, RawQuery, Response, authorized_http_tenant,
-    flamebearer_diff_json, parse_render_query, parse_render_query::ParsedRenderQuery,
+    flamebearer_diff_json, parse_render_query, render_params::ParsedRenderQuery,
     profile_error_response, query_param_i64, query_param_render_time, unix_now_ms,
 };
 

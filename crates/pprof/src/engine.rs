@@ -21,6 +21,20 @@ use crate::{
     series::{fold_bucket, step_bucket_ms, validated_step},
 };
 
+/// Engine configuration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineOpts {
+    pub default_max_nodes: i64,
+}
+
+impl Default for EngineOpts {
+    fn default() -> Self {
+        Self {
+            default_max_nodes: 2048,
+        }
+    }
+}
+
 async fn symbolization_worker<T>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ProfileError>
@@ -1805,38 +1819,122 @@ mod tests {
 }
 
 mod call_site_profile_totals;
-mod covering_range;
-mod engine_opts;
 mod flame_engine;
-mod group_frame_name;
-mod heatmap_points_from_totals;
 mod merge_scan_to_pprof;
-mod merge_scan_to_tree;
 mod merge_sql_to_tree;
 mod sample_selector_sql;
 mod selected_sample_rows;
-mod series_buckets_from_stacktrace_selector;
-mod series_buckets_from_totals;
 mod stack_matches_call_sites;
 mod timestamp_total_points;
-mod validate_range;
 
 pub use call_site_profile_totals::call_site_profile_totals;
-use covering_range::covering_range;
-pub use engine_opts::EngineOpts;
 pub use flame_engine::{
     DiffQuery, FlameEngine, HeatmapGrid, HeatmapQuery, MillisRange, ProfileSelection,
     SpanProfileShards,
 };
-use group_frame_name::group_frame_name;
-use heatmap_points_from_totals::heatmap_points_from_totals;
 use merge_scan_to_pprof::merge_scan_to_pprof;
-use merge_scan_to_tree::merge_scan_to_tree;
 use merge_sql_to_tree::merge_sql_to_tree;
 use sample_selector_sql::sample_selector_sql;
 use selected_sample_rows::selected_sample_rows;
-use series_buckets_from_stacktrace_selector::series_buckets_from_stacktrace_selector;
-use series_buckets_from_totals::series_buckets_from_totals;
 pub use stack_matches_call_sites::stack_matches_call_sites;
 pub use timestamp_total_points::{TimestampTotalPoint, timestamp_total_points};
-use validate_range::validate_range;
+
+pub(crate) fn covering_range(ranges: &[MillisRange]) -> Result<MillisRange, ProfileError> {
+    let mut start = i64::MAX;
+    let mut end = i64::MIN;
+    for range in ranges {
+        validate_range(range.start_ms, range.end_ms)?;
+        start = start.min(range.start_ms);
+        end = end.max(range.end_ms);
+    }
+    Ok(MillisRange::new(start, end))
+}
+
+pub(crate) fn group_frame_name(labels: &[crate::ProfileLabel]) -> String {
+    if labels.len() == 1 {
+        labels[0].value.clone()
+    } else {
+        labels
+            .iter()
+            .map(|label| format!("{}={}", label.name, label.value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+pub(crate) fn validate_range(start_ms: i64, end_ms: i64) -> Result<(), ProfileError> {
+    if start_ms > end_ms {
+        return Err(ProfileError::Plan(format!(
+            "invalid time range: start {start_ms} is after end {end_ms}"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) async fn heatmap_points_from_totals(
+    scan: &crate::ProfileScan,
+) -> Result<Vec<TimestampTotalPoint>, ProfileError> {
+    let sql = format!(
+        "SELECT {timestamp}, MAX({total}) AS total \
+         FROM {table} GROUP BY {timestamp}, {fingerprint}",
+        timestamp = COL_TIMESTAMP,
+        total = PCOL_TOTAL_VALUE,
+        table = scan.samples_table,
+        fingerprint = COL_FINGERPRINT,
+    );
+    timestamp_total_points(scan, &sql).await
+}
+
+pub(crate) async fn merge_scan_to_tree(
+    merge: ScanMerge<'_>,
+    tree: &mut Tree,
+    prefix_frames: &[Frame],
+) -> Result<(), ProfileError> {
+    let ScanMerge {
+        scan,
+        sample_selector,
+        call_sites,
+    } = merge;
+    let sql = sample_selector_sql(scan, sample_selector);
+    merge_sql_to_tree(
+        scan,
+        &sql,
+        tree,
+        prefix_frames,
+        call_sites,
+        match sample_selector {
+            SampleSelector::Trace(ids) => Some(ids),
+            SampleSelector::None | SampleSelector::Span(_) => None,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn series_buckets_from_stacktrace_selector(
+    scan: &crate::ProfileScan,
+    step: Time,
+    call_sites: &[String],
+) -> Result<Vec<SeriesBucket>, ProfileError> {
+    let mut buckets: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+    for point in call_site_profile_totals(scan, call_sites).await? {
+        buckets
+            .entry(step_bucket_ms(point.timestamp_ms, step))
+            .or_default()
+            .push(point.total);
+    }
+    Ok(into_series_buckets(buckets))
+}
+
+pub(crate) async fn series_buckets_from_totals(
+    scan: &crate::ProfileScan,
+    step: Time,
+) -> Result<Vec<SeriesBucket>, ProfileError> {
+    let mut buckets: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+    for point in heatmap_points_from_totals(scan).await? {
+        buckets
+            .entry(step_bucket_ms(point.timestamp_ms, step))
+            .or_default()
+            .push(point.total);
+    }
+    Ok(into_series_buckets(buckets))
+}

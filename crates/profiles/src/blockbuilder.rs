@@ -527,50 +527,167 @@ mod tests {
 }
 
 mod block_builder_config;
-mod block_object_prefix;
 mod build_block;
-mod built_sample;
 mod consumer_record_accumulator;
-mod default_flush_max_age;
-mod default_flush_records;
-mod default_wal_fetch_max;
-mod default_wal_fetch_partition_max;
-mod flush_consumer_records;
-mod flush_consumer_records_with_index;
-mod intern_record;
-mod intern_symbols;
-mod mapping_rec;
-mod nanos_per_milli;
-mod object_key;
-mod profile_timestamp_ms;
-mod remap_ref;
-mod run;
 mod run_with_config;
-mod samples_batch;
-mod stacktrace_partition;
-mod symbol_refs;
+mod record_writer;
 
 pub use block_builder_config::BlockBuilderConfig;
-pub use block_object_prefix::BLOCK_OBJECT_PREFIX;
 pub use build_block::build_block;
 pub(crate) use build_block::{PositionedProfileRecord, build_block_with_positions};
-pub use built_sample::BuiltSample;
 use consumer_record_accumulator::ConsumerRecordAccumulator;
-pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
-pub use default_flush_records::DEFAULT_FLUSH_RECORDS;
-pub use default_wal_fetch_max::DEFAULT_WAL_FETCH_MAX;
-pub use default_wal_fetch_partition_max::DEFAULT_WAL_FETCH_PARTITION_MAX;
-pub use flush_consumer_records::flush_consumer_records;
-pub use flush_consumer_records_with_index::flush_consumer_records_with_index;
-pub use intern_record::intern_record;
-use intern_symbols::intern_symbols;
-use mapping_rec::mapping_rec;
-use nanos_per_milli::NANOS_PER_MILLI;
-pub use object_key::object_key;
-pub use profile_timestamp_ms::profile_timestamp_ms;
-use remap_ref::remap_ref;
-pub use run::run;
+pub use record_writer::flush_consumer_records_with_index;
+use record_writer::intern_symbols;
 pub use run_with_config::run_with_config;
-pub use samples_batch::samples_batch;
-pub use stacktrace_partition::STACKTRACE_PARTITION;
-use symbol_refs::SymbolRefs;
+
+pub(crate) struct SymbolRefs {
+    pub(crate) locations: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Deref)]
+pub struct BuiltSample {
+    pub timestamp_ns: i64,
+    #[deref]
+    pub fields: krabka_blockstore::ProfileSampleFields,
+}
+
+/// The object-store prefix every profile block sits under.
+///
+/// Both writers of a block key start here: [`object_key`]
+/// for a block the block-builder flushes, and the compactor for a block a
+/// merge writes. The orphan sweep lists this prefix and deletes what the index
+/// does not name, so a block written outside it would never be reclaimed, and
+/// anything else written inside it would be deleted.
+pub const BLOCK_OBJECT_PREFIX: &str = "blocks";
+
+/// Scale between the epoch-nanosecond timestamps that the WAL carries and the
+/// epoch-millisecond timestamps that index blocks.
+///
+/// This is instant arithmetic and not an extent, so it stays exact integer
+/// division. An absolute nanosecond timestamp is about 1.8e18 and cannot
+/// round-trip through the `f64` seconds that a `Time` stores.
+pub(crate) const NANOS_PER_MILLI: i64 = 1_000_000;
+
+pub const DEFAULT_FLUSH_MAX_AGE: Time = secs(10);
+
+pub const DEFAULT_FLUSH_RECORDS: usize = 1024;
+
+pub const DEFAULT_WAL_FETCH_MAX: ByteSize = mebibytes(2);
+
+pub const DEFAULT_WAL_FETCH_PARTITION_MAX: ByteSize = kibibytes(256);
+
+pub const STACKTRACE_PARTITION: u64 = 0;
+
+#[must_use]
+pub fn profile_timestamp_ms(timestamp_ns: i64) -> i64 {
+    timestamp_ns.div_euclid(NANOS_PER_MILLI)
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn flush_consumer_records(
+    store: &Arc<dyn ObjectStore>,
+    records: &[ConsumerRecord],
+    flush_records: usize,
+    metrics: &ObjectStoreMetrics,
+) -> Result<Vec<BlockMeta>, ProfilesError> {
+    let mut index = ProfileIndex::new();
+    flush_consumer_records_with_index(store, &mut index, records, flush_records, metrics).await
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub fn intern_record(symdb: &mut SymbolDb, rec: &ProfileRecord) -> Result<Vec<u32>, ProfilesError> {
+    let symbols = intern_symbols(symdb, &rec.symbols)?;
+    rec.samples
+        .iter()
+        .map(|sample| {
+            let stack = sample
+                .stacktrace_location_refs
+                .iter()
+                .map(|location_ref| remap_ref(*location_ref, &symbols.locations))
+                .collect::<Vec<_>>();
+            Ok(symdb.intern_stacktrace(STACKTRACE_PARTITION, &stack))
+        })
+        .collect()
+}
+
+pub(crate) fn mapping_rec(mapping: &WalMapping, strings: &[u32]) -> MappingRec {
+    MappingRec {
+        memory_start: mapping.memory_start,
+        memory_limit: mapping.memory_limit,
+        file_offset: mapping.file_offset,
+        filename: remap_ref(mapping.filename, strings),
+        build_id: remap_ref(mapping.build_id, strings),
+        symbolization: MappingSymbolization::from_parts(krabka_pprof::MappingSymbolizationParts {
+            functions: mapping.has_functions.get(),
+            filenames: mapping.has_filenames.get(),
+            line_numbers: mapping.has_line_numbers.get(),
+            inline_frames: mapping.has_inline_frames.get(),
+        }),
+    }
+}
+
+/// Object key of one block that the block-builder writes.
+///
+/// The tenant is one path segment. It goes through
+/// [`escape_object_path_segment`], so a tenant name that holds a character
+/// such as `*` or `!` stays in its own segment and survives the object store.
+/// The other segments come from integers and cannot hold a separator.
+#[must_use]
+pub fn object_key(
+    tenant: &str,
+    partition: i32,
+    min_offset: i64,
+    max_offset: i64,
+    min_ts: i64,
+    max_ts: i64,
+) -> String {
+    let tenant = escape_object_path_segment(tenant);
+    format!(
+        "{BLOCK_OBJECT_PREFIX}/{tenant}/{partition:05}/{min_offset:020}-{max_offset:020}-{min_ts}-{max_ts}.parquet"
+    )
+}
+
+pub(crate) fn remap_ref(reference: u32, table: &[u32]) -> u32 {
+    usize::try_from(reference)
+        .ok()
+        .and_then(|idx| table.get(idx))
+        .copied()
+        .or_else(|| {
+            reference
+                .checked_sub(1)
+                .and_then(|idx| usize::try_from(idx).ok())
+                .and_then(|idx| table.get(idx))
+                .copied()
+        })
+        .unwrap_or(reference)
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn run(shutdown: CancellationToken) -> Result<(), ProfilesError> {
+    let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+    run_with_config(
+        BlockBuilderConfig::new("127.0.0.1:9092".to_string(), store),
+        shutdown,
+    )
+    .await
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub fn samples_batch(rows: &[BuiltSample]) -> Result<RecordBatch, ProfilesError> {
+    let rows = rows
+        .iter()
+        .map(|row| ProfileSampleRow {
+            timestamp: row.timestamp_ns,
+            fields: row.fields.clone(),
+        })
+        .collect::<Vec<_>>();
+    encode_profile_samples(&rows).map_err(|err| ProfilesError::Block(err.to_string()))
+}

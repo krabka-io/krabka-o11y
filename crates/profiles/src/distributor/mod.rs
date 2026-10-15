@@ -1552,25 +1552,20 @@ overrides:
     }
 }
 
-mod client_facing_message;
-mod connect_error;
 mod connect_ingest;
 mod distributor_state;
 mod enforce_and_reserve_max_series;
 mod enforce_ingestion_rate;
+mod connect_error;
 mod evict_one_tenant;
+mod id_normalization;
+mod ingest_span;
 mod export_handler;
 mod extract_symbols;
 mod ingest_handler;
 mod ingest_request_parts;
-mod ingest_request_span;
-mod ingest_span_tenant;
 mod ingestion_bucket_for_tenant;
-mod internal_error_message;
 mod kafka_sink;
-mod limit_connect_code;
-mod normalize_optional_pprof_id;
-mod normalize_required_pprof_id;
 mod otlp_http_handler;
 mod process_raw;
 mod profiles_error_response;
@@ -1581,30 +1576,24 @@ mod rollback_reserved_series;
 mod router;
 mod serve;
 mod serve_supervised;
-mod u32_from_i64;
 mod wal_sink;
 
-use client_facing_message::client_facing_message;
-use connect_error::connect_error;
 use connect_ingest::{ConnectIngest, connect_ingest};
 pub use distributor_state::DistributorState;
 #[doc(hidden)]
 pub use distributor_state::{CumulativeProfileCache, CumulativeProfileKey};
 use enforce_and_reserve_max_series::enforce_and_reserve_max_series;
 use enforce_ingestion_rate::enforce_ingestion_rate;
+use connect_error::{INTERNAL_ERROR_MESSAGE, client_facing_message, connect_error, limit_connect_code};
 use evict_one_tenant::evict_one_tenant;
+use id_normalization::{normalize_optional_pprof_id, normalize_required_pprof_id, u32_from_i64};
+use ingest_span::{ingest_request_span, ingest_span_tenant};
 use export_handler::export_handler;
 use extract_symbols::extract_symbols;
 use ingest_handler::ingest_handler;
 use ingest_request_parts::IngestRequestParts;
-use ingest_request_span::ingest_request_span;
-use ingest_span_tenant::ingest_span_tenant;
 use ingestion_bucket_for_tenant::ingestion_bucket_for_tenant;
-use internal_error_message::INTERNAL_ERROR_MESSAGE;
 pub use kafka_sink::KafkaSink;
-use limit_connect_code::limit_connect_code;
-use normalize_optional_pprof_id::normalize_optional_pprof_id;
-use normalize_required_pprof_id::normalize_required_pprof_id;
 use otlp_http_handler::otlp_http_handler;
 pub use process_raw::process_raw;
 use profiles_error_response::profiles_error_response;
@@ -1615,5 +1604,4 @@ use rollback_reserved_series::rollback_reserved_series;
 pub use router::router;
 pub use serve::serve;
 pub use serve_supervised::serve_supervised;
-use u32_from_i64::u32_from_i64;
 pub use wal_sink::WalSink;

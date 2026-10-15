@@ -43,6 +43,17 @@ struct AttrBuilderEntry {
     builder: AttrBuilder,
 }
 
+mod intrinsic_values;
+use intrinsic_values::{collect_span_intrinsic_values, collect_trace_intrinsic_values};
+
+mod matching;
+use matching::{
+    child_count_for, instrumentation_matches, intrinsic_matches, matcher_matches,
+    matching_events_for_scan, matching_links_for_scan, nested_attr_value,
+    nested_event_matchers_match, nested_link_matchers_match, span_attr_matches, span_matches,
+    span_ref,
+};
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -2485,55 +2496,15 @@ mod tests {
 }
 
 mod attr_builder;
-mod child_count_for;
-mod collect_span_intrinsic_values;
-mod collect_trace_intrinsic_values;
-mod event_tags;
-mod expansion_matchers;
 mod in_memory_span_store;
-mod instrumentation_matches;
-mod intrinsic_matches;
 mod intrinsic_tags;
-mod is_event_matcher;
-mod is_link_matcher;
-mod link_tags;
-mod matcher_matches;
-mod matching_events_for_scan;
-mod matching_links_for_scan;
-mod nested_attr_value;
-mod nested_event_matchers_match;
-mod nested_link_matchers_match;
-mod resource_matches;
 mod scan_builders;
-mod span_attr_matches;
-mod span_matches;
-mod span_ref;
 mod stored_trace;
 
 use attr_builder::AttrBuilder;
-use child_count_for::child_count_for;
-use collect_span_intrinsic_values::collect_span_intrinsic_values;
-use collect_trace_intrinsic_values::collect_trace_intrinsic_values;
-use event_tags::EVENT_TAGS;
-use expansion_matchers::expansion_matchers;
 pub use in_memory_span_store::InMemorySpanStore;
-use instrumentation_matches::instrumentation_matches;
-use intrinsic_matches::intrinsic_matches;
 use intrinsic_tags::INTRINSIC_TAGS;
-use is_event_matcher::is_event_matcher;
-use is_link_matcher::is_link_matcher;
-use link_tags::LINK_TAGS;
-use matcher_matches::matcher_matches;
-use matching_events_for_scan::matching_events_for_scan;
-use matching_links_for_scan::matching_links_for_scan;
-use nested_attr_value::nested_attr_value;
-use nested_event_matchers_match::nested_event_matchers_match;
-use nested_link_matchers_match::nested_link_matchers_match;
-use resource_matches::resource_matches;
 use scan_builders::ScanBuilders;
-use span_attr_matches::span_attr_matches;
-use span_matches::span_matches;
-use span_ref::span_ref;
 use stored_trace::StoredTrace;
 
 use crate::{
@@ -2542,3 +2513,31 @@ use crate::{
 };
 
 mod raw_attribute_columns;
+
+pub(crate) const EVENT_TAGS: &[&str] = &["event:name", "event:timeSinceStart"];
+
+pub(crate) const LINK_TAGS: &[&str] = &["link:spanID", "link:traceID"];
+
+/// Projection dependencies do not filter or expand event/link observations.
+/// Pinned vParquet5 resolves the first fetched value for each dynamic field.
+pub(crate) fn expansion_matchers(
+    matchers: &[SpanMatcher],
+    _projection_matchers: &[SpanMatcher],
+) -> Vec<SpanMatcher> {
+    matchers.to_vec()
+}
+
+pub(crate) fn is_event_matcher(matcher: &SpanMatcher) -> bool {
+    crate::scope_is_event_matcher(matcher.scope, &matcher.key)
+}
+
+pub(crate) fn is_link_matcher(matcher: &SpanMatcher) -> bool {
+    crate::scope_is_link_matcher(matcher.scope, &matcher.key)
+}
+
+pub(crate) fn resource_matches(trace: &StoredTrace, matcher: &SpanMatcher) -> bool {
+    match matcher.key.as_str() {
+        "service.name" => string_matches(&trace.root_service_name, matcher.op, &matcher.value),
+        _ => nil_matches(matcher.op, &matcher.value),
+    }
+}

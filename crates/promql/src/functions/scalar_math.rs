@@ -240,19 +240,9 @@ mod tests {
         }
     }
 }
-
-mod clamp_float;
-mod prometheus_sgn;
-mod register_scalar_math_udfs;
-mod round_to_nearest;
 mod scalar_math_op;
 mod scalar_math_udf;
 mod scalar_math_udfs;
-
-pub(crate) use clamp_float::clamp_float;
-pub(crate) use prometheus_sgn::prometheus_sgn;
-pub use register_scalar_math_udfs::register_scalar_math_udfs;
-use round_to_nearest::round_to_nearest;
 pub use scalar_math_op::ScalarMathOp;
 #[cfg(test)]
 use scalar_math_udf::ScalarMathUdf;
@@ -260,3 +250,53 @@ pub use scalar_math_udf::scalar_math_udf;
 pub use scalar_math_udfs::scalar_math_udfs;
 
 use super::udf_args::scalar_f64;
+
+/// Registers every scalar-math UDF on `ctx` so a planner can lower onto them.
+pub fn register_scalar_math_udfs(ctx: &SessionContext) {
+    for udf in scalar_math_udfs() {
+        ctx.register_udf(udf);
+    }
+}
+
+/// Rounds `value` to the nearest multiple of `to_nearest`, ties going up.
+///
+/// Prometheus INVERTS the step and multiplies, rather than dividing by it:
+/// `math.Floor(f*toNearestInverse+0.5) / toNearestInverse`. The two spellings
+/// disagree in the last bits for a step such as `0.1`, whose inverse is exact
+/// while the step itself is not, so the inversion is part of the answer.
+pub(crate) fn round_to_nearest(value: f64, to_nearest: f64) -> f64 {
+    let inverse = 1.0 / to_nearest;
+    (value * inverse + 0.5).floor() / inverse
+}
+
+/// Port of the interpreter's `clamp_float`.
+pub(crate) fn clamp_float(value: f64, min: Option<f64>, max: Option<f64>) -> f64 {
+    if min.is_some_and(f64::is_nan) || max.is_some_and(f64::is_nan) {
+        return f64::NAN;
+    }
+    if let Some(min) = min
+        && value < min
+    {
+        return min;
+    }
+    if let Some(max) = max
+        && value > max
+    {
+        return max;
+    }
+    value
+}
+
+/// Returns the sign of `value` as the `PromQL` `sgn` function does: `1`, `-1` or `0`, and
+/// NaN for NaN.
+pub(crate) fn prometheus_sgn(value: f64) -> f64 {
+    if value.is_nan() {
+        f64::NAN
+    } else if value > 0.0 {
+        1.0
+    } else if value < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}

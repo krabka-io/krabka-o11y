@@ -13,11 +13,6 @@ pub(crate) struct SampleIdentity {
     pub timestamp_ms: i64,
 }
 
-mod null_required_column;
-mod require_non_null;
-mod schema_mismatch;
-mod typed_column;
-
 pub(crate) fn read_sample_identity(
     fingerprints: &UInt64Array,
     timestamps: &Int64Array,
@@ -46,10 +41,48 @@ pub(crate) fn decode_rows_with_identity<T>(
 }
 
 #[cfg_attr(test, mutants::skip)]
-use null_required_column::null_required_column;
 #[cfg_attr(test, mutants::skip)]
-pub(crate) use require_non_null::require_non_null;
 #[cfg_attr(test, mutants::skip)]
-pub(crate) use schema_mismatch::schema_mismatch;
 #[cfg_attr(test, mutants::skip)]
-pub(crate) use typed_column::typed_column;
+
+// cargo-mutants: error formatting is validated through required-column decode tests.
+#[cfg_attr(test, mutants::skip)]
+pub(crate) fn null_required_column(column: &str, row: usize) -> HistogramCodecError {
+    HistogramCodecError::SchemaMismatch(format!(
+        "column `{column}` contains null for required row {row}"
+    ))
+}
+
+// cargo-mutants: exercised through the sample and histogram codec decode tests.
+#[cfg_attr(test, mutants::skip)]
+pub(crate) fn schema_mismatch(column: &str) -> HistogramCodecError {
+    HistogramCodecError::SchemaMismatch(format!("column `{column}` missing or wrong type"))
+}
+
+// cargo-mutants: exercised through the sample and histogram codec null-column tests.
+#[cfg_attr(test, mutants::skip)]
+pub(crate) fn require_non_null(
+    array: &dyn Array,
+    row: usize,
+    column: &str,
+) -> Result<(), HistogramCodecError> {
+    if array.is_null(row) {
+        Err(null_required_column(column, row))
+    } else {
+        Ok(())
+    }
+}
+
+// cargo-mutants: generic downcast glue is covered by caller-specific schema tests.
+#[cfg_attr(test, mutants::skip)]
+pub(crate) fn typed_column<'a, T: 'static>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Result<&'a T, HistogramCodecError> {
+    batch
+        .column_by_name(name)
+        .ok_or_else(|| schema_mismatch(name))?
+        .as_any()
+        .downcast_ref::<T>()
+        .ok_or_else(|| schema_mismatch(name))
+}

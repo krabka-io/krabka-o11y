@@ -1,3 +1,5 @@
+use super::EncodeLabelSet;
+
 /// One object-store operation, as the `operation` label spells it.
 ///
 /// The enum is closed on purpose. It is the `operation` label's whole domain,
@@ -70,5 +72,22 @@ impl ObjectStoreOperation {
 impl std::fmt::Display for ObjectStoreOperation {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+/// The `operation` label the object-store families carry.
+///
+/// The value is a `&'static str` taken from [`ObjectStoreOperation::as_str`],
+/// so building a label set to reach a series allocates nothing.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct ObjectStoreOperationLabel {
+    pub operation: &'static str,
+}
+
+impl From<ObjectStoreOperation> for ObjectStoreOperationLabel {
+    fn from(operation: ObjectStoreOperation) -> Self {
+        Self {
+            operation: operation.as_str(),
+        }
     }
 }

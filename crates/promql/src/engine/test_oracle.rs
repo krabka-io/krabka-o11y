@@ -34,13 +34,75 @@ use crate::{
     result::{InstantSample, QueryResult, SampleValue},
     store::MetricStore,
 };
-
-mod over_time_function;
 mod promql_engine;
-mod string_literal_arg;
-mod unary_float_function;
-
-use over_time_function::over_time_function;
 #[cfg(test)]
-use string_literal_arg::string_literal_arg;
-use unary_float_function::unary_float_function;
+
+pub(crate) fn over_time_function(name: &str) -> Option<OverTimeFn> {
+    Some(match name {
+        "sum_over_time" => OverTimeFn::Sum,
+        "avg_over_time" => OverTimeFn::Avg,
+        "count_over_time" => OverTimeFn::Count,
+        "min_over_time" => OverTimeFn::Min,
+        "max_over_time" => OverTimeFn::Max,
+        "stddev_over_time" => OverTimeFn::Stddev,
+        "stdvar_over_time" => OverTimeFn::Stdvar,
+        "mad_over_time" => OverTimeFn::Mad,
+        "first_over_time" => OverTimeFn::First,
+        "last_over_time" => OverTimeFn::Last,
+        "ts_of_first_over_time" => OverTimeFn::TsOfFirst,
+        "ts_of_last_over_time" => OverTimeFn::TsOfLast,
+        "ts_of_min_over_time" => OverTimeFn::TsOfMin,
+        "ts_of_max_over_time" => OverTimeFn::TsOfMax,
+        "present_over_time" => OverTimeFn::Present,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn string_literal_arg(
+    call: &Call,
+    index: usize,
+    name: &str,
+) -> Result<crate::PromqlString> {
+    let Some(arg) = call.args.args.get(index) else {
+        return Err(PromqlError::Plan(format!(
+            "{} missing {name} argument",
+            call.func.name
+        )));
+    };
+    crate::planner::byte_string_expr::string_expr_value(arg).ok_or_else(|| {
+        PromqlError::Plan(format!(
+            "{} {name} argument must be a string",
+            call.func.name
+        ))
+    })
+}
+
+pub(crate) fn unary_float_function(name: &str) -> Option<UnaryFloatFn> {
+    Some(match name {
+        "ceil" => UnaryFloatFn::Ceil,
+        "floor" => UnaryFloatFn::Floor,
+        "sgn" => UnaryFloatFn::Sgn,
+        "abs" => UnaryFloatFn::Abs,
+        "sqrt" => UnaryFloatFn::Sqrt,
+        "exp" => UnaryFloatFn::Exp,
+        "ln" => UnaryFloatFn::Ln,
+        "log2" => UnaryFloatFn::Log2,
+        "log10" => UnaryFloatFn::Log10,
+        "sin" => UnaryFloatFn::Sin,
+        "sinh" => UnaryFloatFn::Sinh,
+        "cos" => UnaryFloatFn::Cos,
+        "cosh" => UnaryFloatFn::Cosh,
+        "tan" => UnaryFloatFn::Tan,
+        "tanh" => UnaryFloatFn::Tanh,
+        "asin" => UnaryFloatFn::Asin,
+        "asinh" => UnaryFloatFn::Asinh,
+        "acos" => UnaryFloatFn::Acos,
+        "acosh" => UnaryFloatFn::Acosh,
+        "atan" => UnaryFloatFn::Atan,
+        "atanh" => UnaryFloatFn::Atanh,
+        "deg" => UnaryFloatFn::Deg,
+        "rad" => UnaryFloatFn::Rad,
+        _ => return None,
+    })
+}

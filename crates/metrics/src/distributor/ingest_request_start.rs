@@ -3,9 +3,12 @@ use std::future::Future;
 use tracing::Instrument as _;
 
 use super::{
-    BodyBytes, ByteSize, ByteSizeExt as _, DistributorState, HeaderMap, IntoResponse, Principal,
-    PushError, Response, StdDurationExt as _, TenantAccessError, TenantId,
-    authorized_tenant_from_headers, ingest_span, record_ingest_outcome,
+    WAL_TOPIC,
+    BodyBytes, ByteSize, ByteSizeExt as _, DistributorState, HeaderMap, IngestRequest,
+    IntoResponse, Principal,
+    PushError, PushOutcome, RequestOutcome, Response, StdDurationExt as _, TenantAccessError,
+    TenantId, Time,
+    authorized_tenant_from_headers,
 };
 
 /// What an ingest handler knows before it decodes a request: when the request
@@ -72,4 +75,46 @@ impl IngestRequestStart {
             Err(error) => error.into_response(),
         }
     }
+}
+
+
+/// Builds the per-request ingest span. This function declares
+/// `krabka.ingest.series` empty, and `push_inner` records it after it decodes
+/// the request body.
+///
+/// `tenant` is the resolved tenant, or `None` when the request names no usable
+/// tenant. The span of such a request carries the tenant `unknown`. The label
+/// is for the span only, and the push path rejects the request.
+pub(crate) fn ingest_span(tenant: Option<&TenantId>, body_size: ByteSize) -> tracing::Span {
+    let tenant = tenant.map_or("unknown", TenantId::as_str);
+    tracing::info_span!(
+        "metrics_ingest",
+        otel.kind = "server",
+        messaging.system = "kafka",
+        messaging.destination.name = WAL_TOPIC,
+        krabka.tenant = %tenant,
+        krabka.ingest.series = tracing::field::Empty,
+        krabka.ingest.bytes = body_size.bytes_u64(),
+    )
+}
+
+
+/// Records an ingest request outcome on the distributor metrics bundle, if one
+/// is configured. `body_size` is the compressed request-body length. `items` is
+/// the decoded series count on success and `0` on error.
+pub(crate) fn record_ingest_outcome(
+    state: &DistributorState,
+    result: &Result<PushOutcome, PushError>,
+    body_size: ByteSize,
+    elapsed: Time,
+) {
+    let Some(metrics) = &state.metrics else {
+        return;
+    };
+    metrics.record_ingest(IngestRequest {
+        outcome: RequestOutcome::from_result(result),
+        body: body_size,
+        items: result.as_ref().map_or(0, |outcome| outcome.items),
+        elapsed,
+    });
 }

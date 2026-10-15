@@ -110,15 +110,20 @@ mod tests {
 mod plan_rate_range_selector;
 mod rate_range_plan;
 mod rate_udf_kind;
-mod rate_value_column;
-mod time_column;
-mod value_column;
 
 pub use plan_rate_range_selector::plan_rate_range_selector;
 pub use rate_range_plan::RateRangePlan;
 pub use rate_udf_kind::RateUdfKind;
-pub use rate_value_column::RATE_VALUE_COLUMN;
-pub use time_column::TIME_COLUMN;
-pub use value_column::VALUE_COLUMN;
 
 mod fold_start_timestamp_rates;
+
+/// Name of the projection output column that holds the rate-family UDF result.
+pub const RATE_VALUE_COLUMN: &str = "value";
+
+/// Leaf-batch column that holds the per-sample timestamp in epoch milliseconds.
+/// This column is the operator chain's time index. `RangeManipulate` reuses the
+/// name for the scalar eval-timestamp column that it emits.
+pub const TIME_COLUMN: &str = "timestamp";
+
+/// Leaf-batch column that holds the per-sample float value.
+pub const VALUE_COLUMN: &str = "value";

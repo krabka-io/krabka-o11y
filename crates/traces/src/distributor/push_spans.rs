@@ -2,8 +2,8 @@ use krabka_observability::service_metrics::IngestPushMeasurement;
 use krabka_units::convert::ByteSizeExt as _;
 
 use super::{
-    ByteSize, Bytes, DistributorState, HeaderMap, HeaderValue, Principal, Response, Span,
-    StatusCode, TENANT_HEADER, TracesError, append_decoded, decode_body, error_response,
+    ByteSize, Bytes, DistributorState, HeaderMap, HeaderValue, IntoResponse, Principal, Response,
+    Span, StatusCode, TENANT_HEADER, TenantId, TracesError, append_decoded_response, decode_body, error_response,
     record_ingest_response, require_content_type,
 };
 
@@ -58,4 +58,14 @@ where
         }
         Err(err) => record_ingest_response(state, error_response(&err), measurement),
     }
+}
+
+
+pub(crate) async fn append_decoded(
+    state: &DistributorState,
+    tenant: &TenantId,
+    spans: Vec<Span>,
+    success: StatusCode,
+) -> Response {
+    append_decoded_response(state, tenant, spans, success.into_response()).await
 }

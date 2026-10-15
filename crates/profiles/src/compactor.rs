@@ -804,35 +804,108 @@ mod tests {
         })
     }
 }
-
-mod compact_blocks;
 mod compact_blocks_with_policy;
-mod compact_once;
 mod compact_once_with_policy;
-mod compacted_key;
 mod compaction_pass;
 mod destination_partitions;
 mod downsample_batches;
-mod downsample_key;
-mod downsample_policy;
+mod downsample_types;
 mod load_symdb;
-mod plan_compactions;
-mod remap_partitions;
 mod sample_group_buffer;
-mod source_partitions;
-
-pub use compact_blocks::compact_blocks;
 pub use compact_blocks_with_policy::compact_blocks_with_policy;
-pub use compact_once::compact_once;
 pub use compact_once_with_policy::compact_once_with_policy;
-use compacted_key::compacted_key;
 pub use compaction_pass::CompactionPass;
 use destination_partitions::destination_partitions;
 use downsample_batches::downsample_batches;
-use downsample_key::DownsampleKey;
-pub use downsample_policy::DownsamplePolicy;
+use downsample_types::DownsampleKey;
+pub use downsample_types::DownsamplePolicy;
 use load_symdb::load_symdb;
-pub use plan_compactions::plan_compactions;
-use remap_partitions::remap_partitions;
 use sample_group_buffer::SampleGroupBuffer;
-use source_partitions::source_partitions;
+
+/// Plans the merges the profile index is due, under `policy`.
+///
+/// The planner itself is signal-agnostic: the index only has to say what
+/// blocks it holds, at what level, over what time range, and how large they
+/// are. See [`plan_level_compactions`] for why the plan terminates.
+#[must_use]
+pub fn plan_compactions(index: &ProfileIndex, policy: CompactionPolicy) -> Vec<CompactionJob> {
+    plan_level_compactions(&index.compaction_candidates(), policy)
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn compact_blocks(
+    store: &Arc<dyn ObjectStore>,
+    index: &mut ProfileIndex,
+    tenant: &str,
+    input_keys: &[String],
+    output_key: &str,
+) -> Result<BlockMeta, ProfilesError> {
+    compact_blocks_with_policy(store, index, tenant, input_keys, output_key, None).await
+}
+
+/// Runs one compaction pass over the whole index, without downsampling.
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn compact_once(
+    store: &Arc<dyn ObjectStore>,
+    index: &mut ProfileIndex,
+    policy: CompactionPolicy,
+) -> Result<CompactionPass, ProfilesError> {
+    compact_once_with_policy(store, index, policy, None).await
+}
+
+/// Names the block a job writes.
+///
+/// The level is in the name because it is the first thing anyone reading a
+/// bucket listing wants to know, and the fingerprint of the input keys is what
+/// keeps two jobs over the same time range from colliding. The tenant goes
+/// through [`escape_object_path_segment`], as it does in
+/// [`crate::blockbuilder::object_key`], so a compacted block sits under the
+/// same tenant segment as its inputs.
+pub(crate) fn compacted_key(job: &CompactionJob) -> String {
+    let tenant = escape_object_path_segment(&job.tenant);
+    let level = job.output_level;
+    let min_ts = job.min_ts;
+    let max_ts = job.max_ts;
+    format!(
+        "{BLOCK_OBJECT_PREFIX}/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
+        input_key_fingerprint(&job.input_keys)
+    )
+}
+
+pub(crate) fn remap_partitions(
+    batch: &RecordBatch,
+    partition_map: &BTreeMap<u64, u64>,
+) -> Result<RecordBatch, ProfilesError> {
+    let partition_idx = batch
+        .schema()
+        .column_with_name(PCOL_STACKTRACE_PARTITION)
+        .ok_or_else(|| {
+            ProfilesError::Block(format!("missing `{PCOL_STACKTRACE_PARTITION}` column"))
+        })?
+        .0;
+    let partitions = batch.column(partition_idx).as_primitive::<UInt64Type>();
+    let remapped = UInt64Array::from_iter_values((0..batch.num_rows()).map(|row| {
+        let partition = partitions.value(row);
+        partition_map.get(&partition).copied().unwrap_or(partition)
+    }));
+    let mut columns = batch.columns().to_vec();
+    columns[partition_idx] = Arc::new(remapped) as ArrayRef;
+    RecordBatch::try_new(batch.schema(), columns)
+        .map_err(|err| ProfilesError::Block(err.to_string()))
+}
+
+pub(crate) fn source_partitions(index: &ProfileIndex, block_key: &str) -> Vec<u64> {
+    let mut partitions = index.stacktrace_partitions(block_key);
+    if partitions.is_empty() {
+        return vec![STACKTRACE_PARTITION];
+    }
+    // Sort + dedup so the dense local re-basing in `destination_partitions` is
+    // deterministic regardless of the order the index recorded partitions in.
+    partitions.sort_unstable();
+    partitions.dedup();
+    partitions
+}

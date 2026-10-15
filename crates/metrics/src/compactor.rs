@@ -56,6 +56,10 @@ use crate::{
     wire::{GnssFix, UnixNanos},
 };
 
+fn block_decl(kind: MetricBlockKind) -> Option<krabka_blockstore::BlockSchema> {
+    (kind == MetricBlockKind::ClockReadings).then(crate::clock_reading_decl)
+}
+
 #[cfg(test)]
 #[path = "../../blockstore/tests/support/flaky_put_store.rs"]
 mod flaky_put_store;
@@ -133,6 +137,19 @@ mod tests {
             anchored.should_flush(&config, now + Duration::from_secs(10)),
             "the deadline follows the oldest record"
         );
+    }
+
+    #[test]
+    fn only_clock_blocks_have_a_signal_specific_declaration() {
+        check!(super::block_decl(super::MetricBlockKind::ClockReadings).is_some());
+        for kind in [
+            super::MetricBlockKind::Float,
+            super::MetricBlockKind::NativeHistograms,
+            super::MetricBlockKind::Exemplars,
+            super::MetricBlockKind::Metadata,
+        ] {
+            check!(super::block_decl(kind).is_none(), "kind: {kind:?}");
+        }
     }
 
     #[test]
@@ -3001,119 +3018,46 @@ overrides:
 }
 
 mod clock_columns;
-mod clock_reading_row;
 mod compact_metric_blocks_once;
 mod compact_wal_records;
-mod compacted_block_request;
-mod compacted_block_write;
-mod compacted_metric_object_key;
-mod compaction_batch_result;
-mod compaction_batch_span;
 mod compaction_buffer;
-mod compaction_clock;
-mod compaction_commit_error;
-mod compaction_consumer_commit;
-mod compaction_consumer_commit_error;
-mod compaction_consumer_commit_mut;
-mod compaction_consumer_committer;
-mod compaction_consumer_poll;
-mod compaction_consumer_poll_error;
-mod compaction_consumer_record_error;
 mod compaction_index;
-mod compaction_index_error;
-mod compaction_index_key;
 mod compaction_index_listing;
 mod compaction_index_manifest;
-mod compaction_index_sink;
-mod compaction_loop_config;
-mod compaction_loop_context;
-mod compaction_loop_result;
-mod compaction_manifest_error;
-mod compaction_object_key;
-mod compaction_object_plan;
-mod compaction_object_plan_for_rows;
-mod compaction_object_prefix;
-mod compaction_offset_committer;
-mod compaction_partition_object_key;
-mod compaction_partition_object_plan;
-mod compaction_partition_offset;
-mod compaction_poll_error;
-mod compaction_poll_result;
-mod compaction_retention_error;
+mod object_planning;
 mod compaction_retention_phase;
 mod compaction_retention_stats;
-mod compaction_series_labels;
-mod compaction_wal_record;
-mod compaction_wal_records_from_consumer_records;
-mod compaction_window_error;
-mod compaction_window_result;
-mod compaction_write_error;
+mod compaction_types;
+pub use compaction_types::*;
 mod consumer;
-mod consumer_build_error;
-mod deduplicate_series_timestamp_runs;
-mod default_flush_max_age;
-mod default_flush_max_rows;
 mod deferred_block_deletions;
 mod durable_compaction_consumer;
-mod encode_clock_reading_rows;
-mod encode_exemplar_rows;
-mod encode_metadata_rows;
-mod encode_tenant_batches;
+mod encode_rows;
 mod enforce_compaction_retention;
 mod exemplar_row;
-mod float_row;
-mod flush_buffer;
-mod flush_buffer_with_consumer;
-mod list_compaction_index;
-mod list_compaction_index_objects;
-mod list_compaction_manifests;
+mod compaction_readers;
 mod materialize_metric_erasure_requests;
 mod merge_metric_blocks;
-mod metadata_row;
-mod metric_block_kind;
-mod metric_compaction_error;
-mod metric_compaction_job;
-mod metric_compaction_pass;
-mod metrics_compactor_build_error;
 mod metrics_compactor_config;
-mod metrics_compactor_config_error;
-mod metrics_compactor_runtime;
-mod native_histogram_row;
 mod object_store_compaction_index_sink;
 mod plan_metric_compactions;
-mod poll_compaction_wal_records;
-mod poll_compactor_consumer_once;
-mod poll_compactor_once;
 mod process_compaction_partition_window;
+mod compactor_polling;
+mod compaction_flush;
+mod write_compaction_windows;
 mod process_compaction_record_batch;
 mod process_compaction_record_batch_with_consumer;
-mod read_compaction_manifests;
-mod record_compaction_batch;
 mod run_compactor_consumer_loop;
 mod run_compactor_consumer_loop_with_clock;
 mod run_compactor_loop;
 mod run_compactor_loop_with_clock;
 mod series_labels_for_kind;
-mod system_compaction_clock;
-mod tenant_batches;
-mod tenant_compaction_rows;
-mod validate_non_empty;
 mod write_compacted_block;
-mod write_compacted_tenant_blocks;
-mod write_compacted_tenant_blocks_with_partition;
-mod write_compacted_tenant_partition_blocks;
-mod write_compaction_batch_windows;
-mod write_compaction_partition_window;
+mod write_tenant_blocks;
 
 use clock_columns::ClockColumns;
-pub use clock_reading_row::ClockReadingRow;
 pub use compact_metric_blocks_once::compact_metric_blocks_once;
 pub use compact_wal_records::compact_wal_records;
-use compacted_block_request::CompactedBlockRequest;
-pub use compacted_block_write::CompactedBlockWrite;
-use compacted_metric_object_key::compacted_metric_object_key;
-pub use compaction_batch_result::CompactionBatchResult;
-use compaction_batch_span::compaction_batch_span;
 use compaction_buffer::CompactionBuffer;
 
 fn take_due_compaction_buffer(
@@ -3134,101 +3078,88 @@ fn append_compaction_records_until_due<Clock: CompactionClock + ?Sized>(
     buffer.extend(records, now);
     take_due_compaction_buffer(buffer, config, now)
 }
-pub use compaction_clock::CompactionClock;
-pub use compaction_commit_error::CompactionCommitError;
-pub use compaction_consumer_commit::CompactionConsumerCommit;
-pub use compaction_consumer_commit_error::CompactionConsumerCommitError;
-pub use compaction_consumer_commit_mut::CompactionConsumerCommitMut;
-pub use compaction_consumer_committer::CompactionConsumerCommitter;
-pub use compaction_consumer_poll::CompactionConsumerPoll;
-pub use compaction_consumer_poll_error::CompactionConsumerPollError;
-pub use compaction_consumer_record_error::CompactionConsumerRecordError;
 pub use compaction_index::CompactionIndex;
-pub use compaction_index_error::CompactionIndexError;
 #[cfg_attr(test, mutants::skip)]
-pub(crate) use compaction_index_key::compaction_index_key;
 pub use compaction_index_listing::CompactionIndexListing;
 pub use compaction_index_manifest::CompactionIndexManifest;
-pub use compaction_index_sink::CompactionIndexSink;
-pub use compaction_loop_config::CompactionLoopConfig;
-pub use compaction_loop_context::CompactionLoopContext;
-pub use compaction_loop_result::CompactionLoopResult;
-pub use compaction_manifest_error::CompactionManifestError;
-pub use compaction_object_key::compaction_object_key;
-pub use compaction_object_plan::CompactionObjectPlan;
+pub use object_planning::{
+    CompactionObjectPlan, compaction_object_key, compaction_object_plan_for_rows,
+    compaction_partition_object_key,
+};
+use object_planning::compacted_metric_object_key;
 #[cfg_attr(test, mutants::skip)]
-pub use compaction_object_plan::compaction_object_plan;
-pub use compaction_object_plan_for_rows::compaction_object_plan_for_rows;
-use compaction_object_prefix::COMPACTION_OBJECT_PREFIX;
-pub use compaction_offset_committer::CompactionOffsetCommitter;
-pub use compaction_partition_object_key::compaction_partition_object_key;
+pub use object_planning::compaction_object_plan;
 #[cfg_attr(test, mutants::skip)]
-pub use compaction_partition_object_plan::compaction_partition_object_plan;
-pub use compaction_partition_offset::CompactionPartitionOffset;
-pub use compaction_poll_error::CompactionPollError;
-pub use compaction_poll_result::CompactionPollResult;
-pub use compaction_retention_error::CompactionRetentionError;
+pub use object_planning::compaction_partition_object_plan;
 pub use compaction_retention_phase::CompactionRetentionPhase;
 pub use compaction_retention_stats::CompactionRetentionStats;
-pub use compaction_series_labels::CompactionSeriesLabels;
-pub use compaction_wal_record::CompactionWalRecord;
-pub use compaction_wal_records_from_consumer_records::compaction_wal_records_from_consumer_records;
-pub use compaction_window_error::CompactionWindowError;
-pub use compaction_window_result::CompactionWindowResult;
-pub use compaction_write_error::CompactionWriteError;
 pub use consumer::WalAssignmentConsumer;
-use consumer_build_error::consumer_build_error;
-use deduplicate_series_timestamp_runs::deduplicate_series_timestamp_runs;
-pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
-pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;
 pub use deferred_block_deletions::DeferredBlockDeletions;
 pub use durable_compaction_consumer::DurableCompactionConsumer;
-use encode_clock_reading_rows::encode_clock_reading_rows;
-pub use encode_exemplar_rows::encode_exemplar_rows;
-pub use encode_metadata_rows::encode_metadata_rows;
-pub use encode_tenant_batches::encode_tenant_batches;
+pub use encode_rows::{encode_exemplar_rows, encode_metadata_rows, encode_tenant_batches};
 pub use enforce_compaction_retention::enforce_compaction_retention;
 pub use exemplar_row::ExemplarRow;
 use exemplar_row::exemplar_row;
-pub use float_row::FloatRow;
-use flush_buffer::flush_buffer;
-use flush_buffer_with_consumer::flush_buffer_with_consumer;
-pub use list_compaction_index::list_compaction_index;
-use list_compaction_index_objects::list_compaction_index_objects;
-pub use list_compaction_manifests::list_compaction_manifests;
+pub use compaction_readers::{list_compaction_index, list_compaction_manifests};
 use materialize_metric_erasure_requests::materialize_metric_erasure_requests;
 use merge_metric_blocks::merge_metric_blocks;
-pub use metadata_row::MetadataRow;
-pub use metric_block_kind::MetricBlockKind;
-pub use metric_compaction_error::MetricCompactionError;
-pub use metric_compaction_job::MetricCompactionJob;
-pub use metric_compaction_pass::MetricCompactionPass;
-pub use metrics_compactor_build_error::MetricsCompactorBuildError;
 pub use metrics_compactor_config::MetricsCompactorConfig;
-pub use metrics_compactor_config_error::MetricsCompactorConfigError;
-pub use metrics_compactor_runtime::MetricsCompactorRuntime;
-pub use native_histogram_row::NativeHistogramRow;
 pub use object_store_compaction_index_sink::ObjectStoreCompactionIndexSink;
 pub use plan_metric_compactions::plan_metric_compactions;
-pub(crate) use poll_compaction_wal_records::poll_compaction_wal_records;
-pub use poll_compactor_consumer_once::poll_compactor_consumer_once;
-pub use poll_compactor_once::poll_compactor_once;
 pub use process_compaction_partition_window::process_compaction_partition_window;
 pub use process_compaction_record_batch::process_compaction_record_batch;
 use process_compaction_record_batch_with_consumer::process_compaction_record_batch_with_consumer;
-use read_compaction_manifests::read_compaction_manifests;
 pub use run_compactor_consumer_loop::run_compactor_consumer_loop;
 pub use run_compactor_consumer_loop_with_clock::run_compactor_consumer_loop_with_clock;
 pub use run_compactor_loop::run_compactor_loop;
 pub use run_compactor_loop_with_clock::run_compactor_loop_with_clock;
 pub(crate) use series_labels_for_kind::series_labels_for_kind;
-pub use system_compaction_clock::SystemCompactionClock;
-pub use tenant_batches::TenantBatches;
-pub use tenant_compaction_rows::TenantCompactionRows;
-use validate_non_empty::validate_non_empty;
 use write_compacted_block::write_compacted_block;
-pub use write_compacted_tenant_blocks::write_compacted_tenant_blocks;
-use write_compacted_tenant_blocks_with_partition::write_compacted_tenant_blocks_with_partition;
-pub use write_compacted_tenant_partition_blocks::write_compacted_tenant_partition_blocks;
-use write_compaction_batch_windows::write_compaction_batch_windows;
-use write_compaction_partition_window::write_compaction_partition_window;
+pub use write_tenant_blocks::{
+    write_compacted_tenant_blocks, write_compacted_tenant_partition_blocks,
+};
+use write_tenant_blocks::write_compacted_tenant_blocks_with_partition;
+
+pub(crate) const COMPACTION_OBJECT_PREFIX: &str = "metrics";
+
+/// Default maximum age the oldest buffered WAL record may reach before a flush.
+pub const DEFAULT_FLUSH_MAX_AGE: Time = minutes(1);
+
+/// Default number of buffered WAL records that triggers a compaction flush.
+pub const DEFAULT_FLUSH_MAX_ROWS: usize = 50_000;
+
+// cargo-mutants: suffix conversion is covered by object-plan and manifest tests.
+#[cfg_attr(test, mutants::skip)]
+pub(crate) fn compaction_index_key(block_key: &str) -> String {
+    block_key.strip_suffix(".parquet").map_or_else(
+        || format!("{block_key}.index"),
+        |prefix| format!("{prefix}.index"),
+    )
+}
+
+pub(crate) fn consumer_build_error(error: &ConsumerError) -> MetricsCompactorBuildError {
+    MetricsCompactorBuildError::Consumer(error.to_string())
+}
+
+pub(crate) fn validate_non_empty(
+    field: &'static str,
+    value: &str,
+) -> Result<(), MetricsCompactorConfigError> {
+    if value.is_empty() {
+        Err(MetricsCompactorConfigError::Empty { field })
+    } else {
+        Ok(())
+    }
+}
+
+pub use compactor_polling::{
+    compaction_wal_records_from_consumer_records, poll_compactor_consumer_once,
+    poll_compactor_once,
+};
+pub(crate) use compactor_polling::{compaction_batch_span, poll_compaction_wal_records};
+
+use compaction_flush::{flush_buffer, flush_buffer_with_consumer};
+
+pub(crate) use write_compaction_windows::{
+    write_compaction_batch_windows, write_compaction_partition_window,
+};

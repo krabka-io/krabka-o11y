@@ -19,7 +19,7 @@ use krabka_units::{
     secs,
 };
 use object_store::ObjectStore;
-pub(crate) use tag_catalog::TagCatalog;
+pub(crate) use tags::TagCatalog;
 use tokio::{sync::Mutex, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
@@ -219,58 +219,118 @@ mod tests {
         );
     }
 }
-
-mod attr_value_string;
-mod block_build_options;
-mod block_builder_config;
 mod build_blocks;
-mod build_blocks_with_options;
-mod build_blocks_with_prefix;
-mod build_blocks_with_promoted_attrs;
-mod collect_tags;
-mod consumer;
-mod decode_consumer_records;
-mod default_flush_max_age;
-mod default_flush_max_records;
-mod flush_accumulator;
-mod flush_and_commit;
-mod flush_partition_windows;
+mod flush;
 mod group_by_trace;
-mod object_key;
-mod partition_window;
-mod prefixed_object_key;
 mod run;
-mod set_remote_parent_from_records;
-mod tag_catalog;
-mod tenants_in_records;
-mod trace_block_object_prefix;
-mod traceparent_header;
-mod wal_consumer_commit;
-mod wal_consumer_poll;
-
-pub(crate) use attr_value_string::attr_value_string;
-use block_build_options::BlockBuildOptions;
-pub use block_builder_config::BlockBuilderConfig;
-pub use build_blocks::build_blocks;
-use build_blocks_with_options::build_blocks_with_options;
-pub use build_blocks_with_prefix::build_blocks_with_prefix;
-pub use build_blocks_with_promoted_attrs::build_blocks_with_promoted_attrs;
-use collect_tags::collect_tags;
-pub use consumer::BlockBuilderConsumer;
-pub use decode_consumer_records::decode_consumer_records;
-pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
-pub use default_flush_max_records::DEFAULT_FLUSH_MAX_RECORDS;
-pub use flush_accumulator::FlushAccumulator;
-use flush_and_commit::flush_and_commit;
-pub use flush_partition_windows::flush_partition_windows;
+mod settings;
+mod tags;
+mod wal_consumer;
+use build_blocks::build_blocks_with_options;
+pub use build_blocks::{build_blocks_with_prefix, build_blocks_with_promoted_attrs};
+use flush::flush_and_commit;
+pub use flush::{FlushAccumulator, PartitionWindow, flush_partition_windows};
 pub use group_by_trace::{TraceIdentity, group_by_trace, group_by_trace_in_record_order};
-pub use object_key::object_key;
-pub use partition_window::PartitionWindow;
-pub use prefixed_object_key::prefixed_object_key;
 pub use run::run;
-use set_remote_parent_from_records::set_remote_parent_from_records;
-use tenants_in_records::tenants_in_records;
-pub use trace_block_object_prefix::TRACE_BLOCK_OBJECT_PREFIX;
-use traceparent_header::TRACEPARENT_HEADER;
-pub use wal_consumer_commit::WalConsumerCommit;
-pub use wal_consumer_poll::WalConsumerPoll;
+pub use settings::{BlockBuilderConfig, DEFAULT_FLUSH_MAX_AGE, TRACE_BLOCK_OBJECT_PREFIX};
+pub(crate) use settings::BlockBuildOptions;
+use tags::collect_tags;
+pub use wal_consumer::{
+    BlockBuilderConsumer, WalConsumerCommit, WalConsumerPoll, decode_consumer_records,
+};
+
+/// Default number of buffered span records that triggers a flush.
+pub const DEFAULT_FLUSH_MAX_RECORDS: usize = 50_000;
+
+/// W3C trace-context header key that the distributor's ingest span puts on WAL
+/// records. The consume side uses it to continue the same distributed trace.
+pub(crate) const TRACEPARENT_HEADER: &str = "traceparent";
+
+pub(crate) fn attr_value_string(value: &AttrValue) -> String {
+    match value {
+        AttrValue::Str(value) => value.clone(),
+        AttrValue::Int(value) => value.to_string(),
+        AttrValue::Double(value) => value.to_string(),
+        AttrValue::Bool(value) => value.to_string(),
+        AttrValue::Bytes(value) => hex::encode(value),
+        AttrValue::Array(_) | AttrValue::Unsupported(_) => value.otlp_json().to_string(),
+    }
+}
+
+/// Apply an optional object-store prefix to a raw traces object key.
+#[must_use]
+pub fn prefixed_object_key(prefix: &str, key: &str) -> String {
+    let prefix = prefix.trim_matches('/');
+    let key = key.trim_start_matches('/');
+    if prefix.is_empty() {
+        key.to_string()
+    } else {
+        format!("{prefix}/{key}")
+    }
+}
+
+pub(crate) fn tenants_in_records(records: &[SpanRecord]) -> BTreeSet<String> {
+    records.iter().map(|record| record.tenant.clone()).collect()
+}
+
+/// Build and write one span block for `tenant` from the supplied WAL records.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub async fn build_blocks(
+    writer: &BlockWriter,
+    index: &mut TraceIndex,
+    tenant: &str,
+    partition: i32,
+    records: &[SpanRecord],
+    offset_range: OffsetRange,
+) -> Result<Vec<BlockMeta>, TracesError> {
+    build_blocks_with_promoted_attrs(writer, index, tenant, partition, records, offset_range, &[])
+        .await
+}
+
+/// Deterministic object key for one block-builder flush window.
+///
+/// The tenant is one path segment, escaped with
+/// [`krabka_blockstore::escape_object_path_segment`]. A tenant id can hold
+/// characters that `object_store` rewrites, so the raw name is not always the
+/// segment the store lists.
+#[must_use]
+pub fn object_key(
+    tenant: &str,
+    partition: i32,
+    min_offset: MinOffset,
+    max_offset: MaxOffset,
+    window_start_ns: WindowStartNs,
+) -> String {
+    let tenant = escape_object_path_segment(tenant);
+    format!(
+        "{TRACE_BLOCK_OBJECT_PREFIX}/{tenant}/{partition:05}/\
+         {min_offset:020}-{max_offset:020}-{window_start_ns}.parquet",
+        min_offset = min_offset.0,
+        max_offset = max_offset.0,
+        window_start_ns = window_start_ns.0,
+    )
+}
+
+/// Make `span` a child of the distributed trace carried on any consumed
+/// record's `traceparent` header.
+///
+/// This uses the first record that carries such a header. It does nothing when
+/// no record carries one, for example when an unsampled ingest request produced
+/// the records.
+pub(crate) fn set_remote_parent_from_records(span: &tracing::Span, records: &[ConsumerRecord]) {
+    let Some(record) = records
+        .iter()
+        .find(|record| record.headers.iter().any(|h| h.key == TRACEPARENT_HEADER))
+    else {
+        return;
+    };
+    krabka_telemetry::propagation::set_remote_parent(
+        span,
+        record
+            .headers
+            .iter()
+            .map(|h| (h.key.as_str(), h.value.as_deref().unwrap_or(&[][..]))),
+    );
+}

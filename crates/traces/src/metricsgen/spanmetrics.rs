@@ -12,6 +12,69 @@ use crate::metricsgen::{
     servicegraph::RecordOutcome,
 };
 
+
+#[derive(Clone, Debug)]
+pub(crate) struct DimEntry {
+    pub(crate) calls: f64,
+    pub(crate) size_total: f64,
+    pub(crate) latency: LatencyHistogram,
+    pub(crate) exemplars: Vec<Exemplar>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LatencyHistogram {
+    pub(crate) bucket_edges_ns: Vec<f64>,
+    pub(crate) bucket_counts: Vec<f64>,
+    pub(crate) sum_ns: f64,
+    pub(crate) count: f64,
+}
+
+impl LatencyHistogram {
+    pub(crate) fn new(edges_ns: &[f64]) -> Self {
+        Self {
+            bucket_edges_ns: edges_ns.to_vec(),
+            bucket_counts: vec![0.0; edges_ns.len() + 1],
+            sum_ns: 0.0,
+            count: 0.0,
+        }
+    }
+
+    pub(crate) fn observe_weighted(&mut self, value_ns: f64, weight: f64) {
+        let idx = self
+            .bucket_edges_ns
+            .iter()
+            .position(|&edge| value_ns <= edge)
+            .unwrap_or(self.bucket_edges_ns.len());
+        self.bucket_counts[idx] += weight;
+        self.sum_ns += value_ns * weight;
+        self.count += weight;
+    }
+
+    pub(crate) fn cumulative_seconds(&self) -> HistogramSummary {
+        let mut cumulative = 0.0;
+        let buckets = self
+            .bucket_edges_ns
+            .iter()
+            .enumerate()
+            .map(|indexed_edge| {
+                let i = indexed_edge.0;
+                let edge_ns = indexed_edge.1;
+                cumulative += self.bucket_counts[i];
+                HistogramBucket {
+                    upper_bound: *edge_ns / NS_PER_SEC,
+                    cumulative_count: cumulative,
+                }
+            })
+            .collect();
+
+        HistogramSummary {
+            buckets,
+            sum: self.sum_ns / NS_PER_SEC,
+            count: self.count,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -685,23 +748,36 @@ mod tests {
     }
 }
 
-mod dim_entry;
 pub(crate) mod dim_key;
 mod dimension_labels;
-mod duration_as_f64;
-mod latency_histogram;
-mod ns_per_sec;
-mod span_kind_dim;
 mod span_metrics_registry;
-mod status_dim;
 
-use dim_entry::DimEntry;
 use dim_key::{DimKey, dim_key, prometheus_label_name, span_allowed, span_multiplier};
 pub use dimension_labels::dimension_labels;
 use dimension_labels::red_dimension_pairs;
-use duration_as_f64::duration_as_f64;
-use latency_histogram::LatencyHistogram;
-use ns_per_sec::NS_PER_SEC;
-use span_kind_dim::span_kind_dim;
 pub use span_metrics_registry::SpanMetricsRegistry;
-use status_dim::status_dim;
+
+pub(crate) const NS_PER_SEC: f64 = 1_000_000_000.0;
+
+pub(crate) fn duration_as_f64(duration_ns: i64) -> f64 {
+    duration_ns.max(0).to_f64().unwrap_or(f64::MAX)
+}
+
+pub(crate) fn span_kind_dim(kind: SpanKind) -> &'static str {
+    match kind {
+        SpanKind::Unspecified => "SPAN_KIND_UNSPECIFIED",
+        SpanKind::Internal => "SPAN_KIND_INTERNAL",
+        SpanKind::Server => "SPAN_KIND_SERVER",
+        SpanKind::Client => "SPAN_KIND_CLIENT",
+        SpanKind::Producer => "SPAN_KIND_PRODUCER",
+        SpanKind::Consumer => "SPAN_KIND_CONSUMER",
+    }
+}
+
+pub(crate) fn status_dim(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::Unset => "STATUS_CODE_UNSET",
+        StatusCode::Ok => "STATUS_CODE_OK",
+        StatusCode::Error => "STATUS_CODE_ERROR",
+    }
+}

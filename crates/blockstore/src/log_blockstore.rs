@@ -1403,126 +1403,51 @@ mod tests {
         }
     }
 }
-
-mod anchored_regex_pattern;
 mod append_len_prefixed;
-mod batch_to_rows;
 mod block_descriptor;
 mod block_index;
 mod block_key;
-mod block_path;
-mod block_store_error;
-mod collect_tenant_log_index_shard_ranges;
-mod delete_tenant_log_index_shard_from_object_store;
-mod encode_log_block;
-mod filter_references_only_pushdown_columns;
-mod head_log_block_within_cap;
-mod head_log_blocks_within_cap;
 mod label_index;
 mod label_predicate;
 mod labels;
-mod list_tenant_log_index_shard_ranges_from_object_store;
-mod list_tenant_log_index_shard_ranges_overlapping_query_from_object_store;
-mod log_block_object_path;
-mod log_block_object_store_url;
-mod log_block_schema;
+mod log_listing;
 mod log_block_table_provider;
-mod log_block_table_source;
 mod log_index_manifest;
-mod log_index_manifest_object_path;
-mod log_index_manifest_path;
-mod log_index_manifest_relative_path;
-mod log_index_manifest_version;
 mod log_index_shard_catalog;
-mod log_listing_options;
 mod log_row;
-mod log_tenant_index_manifest_object_path;
-mod log_tenant_index_shard_catalog_object_path;
-mod log_tenant_index_shard_list_offset_object_path;
-mod log_tenant_index_shard_list_offset_start_ns;
-mod log_tenant_index_shard_manifest_object_path;
-mod log_tenant_index_shards_object_prefix;
-mod manifest_series;
 mod match_op;
-mod object_store_log_listing_table;
-mod parse_log_tenant_index_shard_range_from_object_path;
-mod planned_log_listing_table;
-mod read_log_block;
-mod read_log_block_from_object_store;
-mod read_log_block_from_reader;
-mod read_log_index_manifest;
-mod read_log_index_manifest_from_object_store;
-mod read_tenant_log_index_manifest_from_object_store;
-mod read_tenant_log_index_shard_from_object_store;
-mod read_tenant_log_index_shard_ranges_from_object_store;
-mod read_tenant_log_index_shard_ranges_or_empty_from_object_store;
-mod read_tenant_log_index_shards_from_object_store;
-mod register_log_blocks;
-mod register_log_blocks_from_object_store;
-mod rows_to_batch;
+mod manifest_io;
+mod read_io;
+mod row_codec;
+mod write_io;
+mod paths;
 mod series_fingerprint;
 mod structured_metadata;
-mod structured_metadata_array;
-mod structured_metadata_type;
-mod structured_metadata_value;
 mod time_range;
-mod validate_planned_blocks;
-mod validate_rows;
 
 fn sort_log_rows(rows: &mut [LogRow]) {
     rows.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
 }
-mod write_log_block;
-mod write_log_block_to_object_store;
-mod write_log_index_manifest;
-mod write_log_index_manifest_to_object_store;
-mod write_tenant_log_index_manifest_to_object_store;
-mod write_tenant_log_index_shard_catalog_to_object_store;
-mod write_tenant_log_index_shard_to_object_store;
-mod write_tenant_log_index_shards_to_object_store;
-
-use anchored_regex_pattern::anchored_regex_pattern;
 use append_len_prefixed::append_len_prefixed;
-use batch_to_rows::batch_to_rows;
 pub use block_descriptor::BlockDescriptor;
 pub use block_index::BlockIndex;
 pub use block_key::BlockKey;
-pub use block_path::block_path;
-pub use block_store_error::BlockStoreError;
-use collect_tenant_log_index_shard_ranges::collect_tenant_log_index_shard_ranges;
-pub use delete_tenant_log_index_shard_from_object_store::delete_tenant_log_index_shard_from_object_store;
-use encode_log_block::encode_log_block;
-use filter_references_only_pushdown_columns::filter_references_only_pushdown_columns;
-use head_log_block_within_cap::head_log_block_within_cap;
-use head_log_blocks_within_cap::head_log_blocks_within_cap;
 pub use label_index::{LabelIndex, TenantSeries};
 pub use label_predicate::LabelPredicate;
 pub use labels::{Labels, labels};
-pub use list_tenant_log_index_shard_ranges_from_object_store::list_tenant_log_index_shard_ranges_from_object_store;
-pub use list_tenant_log_index_shard_ranges_overlapping_query_from_object_store::list_tenant_log_index_shard_ranges_overlapping_query_from_object_store;
-pub use log_block_object_path::log_block_object_path;
-use log_block_object_store_url::next_log_block_object_store_url;
-use log_block_schema::log_block_schema;
 pub use log_block_table_provider::LogBlockTableProvider;
-use log_block_table_source::LogBlockTableSource;
+use log_listing::{log_listing_options, object_store_log_listing_table, planned_log_listing_table};
 use log_index_manifest::LogIndexManifest;
 pub use log_index_manifest::LogIndexes;
-pub use log_index_manifest_object_path::log_index_manifest_object_path;
-pub use log_index_manifest_path::log_index_manifest_path;
-use log_index_manifest_relative_path::LOG_INDEX_MANIFEST_RELATIVE_PATH;
-use log_index_manifest_version::LOG_INDEX_MANIFEST_VERSION;
 use log_index_shard_catalog::LogIndexShardCatalog;
-use log_listing_options::log_listing_options;
 pub use log_row::LogRow;
-pub use log_tenant_index_manifest_object_path::log_tenant_index_manifest_object_path;
-pub use log_tenant_index_shard_catalog_object_path::log_tenant_index_shard_catalog_object_path;
-pub use log_tenant_index_shard_list_offset_object_path::log_tenant_index_shard_list_offset_object_path;
-pub use log_tenant_index_shard_list_offset_start_ns::log_tenant_index_shard_list_offset_start_ns;
-pub use log_tenant_index_shard_manifest_object_path::log_tenant_index_shard_manifest_object_path;
-pub use log_tenant_index_shards_object_prefix::log_tenant_index_shards_object_prefix;
-use manifest_series::ManifestSeries;
 pub use match_op::{LabelValueLookup, MatchOp};
-use object_store_log_listing_table::object_store_log_listing_table;
+pub use manifest_io::{read_log_index_manifest_from_object_store, read_tenant_log_index_manifest_from_object_store, write_log_index_manifest, write_log_index_manifest_to_object_store, write_tenant_log_index_manifest_to_object_store};
+pub use read_io::{list_tenant_log_index_shard_ranges_from_object_store, list_tenant_log_index_shard_ranges_overlapping_query_from_object_store, read_log_block, read_log_block_from_object_store, read_tenant_log_index_shard_from_object_store, read_tenant_log_index_shard_ranges_from_object_store, read_tenant_log_index_shard_ranges_or_empty_from_object_store, read_tenant_log_index_shards_from_object_store};
+pub(crate) use read_io::head_log_blocks_within_cap;
+use read_io::{log_snapshot_error, read_log_index_shard_snapshot_base};
+use row_codec::{batch_to_rows, encode_log_block, rows_to_batch, validate_rows};
+pub use write_io::{delete_tenant_log_index_shard_from_object_store, register_log_blocks, register_log_blocks_from_object_store, update_tenant_log_index_shard_to_object_store, write_log_block, write_log_block_to_object_store, write_tenant_log_index_shard_catalog_to_object_store, write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store};
 
 fn log_listing_table_from_paths(
     table_paths: Vec<ListingTableUrl>,
@@ -1533,39 +1458,177 @@ fn log_listing_table_from_paths(
         .with_schema(schema);
     Ok(ListingTable::try_new(config)?)
 }
-use parse_log_tenant_index_shard_range_from_object_path::parse_log_tenant_index_shard_range_from_object_path;
-use planned_log_listing_table::planned_log_listing_table;
-pub use read_log_block::read_log_block;
-pub use read_log_block_from_object_store::read_log_block_from_object_store;
-use read_log_block_from_reader::read_log_block_from_reader;
-pub use read_log_index_manifest::read_log_index_manifest;
-pub use read_log_index_manifest_from_object_store::read_log_index_manifest_from_object_store;
-pub use read_tenant_log_index_manifest_from_object_store::read_tenant_log_index_manifest_from_object_store;
-pub use read_tenant_log_index_shard_from_object_store::read_tenant_log_index_shard_from_object_store;
-use read_tenant_log_index_shard_from_object_store::{
-    log_snapshot_error, read_log_index_shard_snapshot_base,
-};
-pub use read_tenant_log_index_shard_ranges_from_object_store::read_tenant_log_index_shard_ranges_from_object_store;
-pub use read_tenant_log_index_shard_ranges_or_empty_from_object_store::read_tenant_log_index_shard_ranges_or_empty_from_object_store;
-pub use read_tenant_log_index_shards_from_object_store::read_tenant_log_index_shards_from_object_store;
-pub use register_log_blocks::register_log_blocks;
-pub use register_log_blocks_from_object_store::register_log_blocks_from_object_store;
-use rows_to_batch::rows_to_batch;
+pub use paths::{block_path, log_tenant_index_shard_list_offset_object_path, log_tenant_index_shard_manifest_object_path};
+use paths::parse_log_tenant_index_shard_range_from_object_path;
 pub use series_fingerprint::{SeriesFingerprint, series_fingerprint};
 pub use structured_metadata::StructuredMetadata;
-use structured_metadata_array::structured_metadata_array;
-use structured_metadata_type::structured_metadata_type;
-use structured_metadata_value::structured_metadata_value;
+use structured_metadata::{structured_metadata_array, structured_metadata_type, structured_metadata_value};
 pub use time_range::TimeRange;
-use validate_planned_blocks::validate_planned_blocks;
-use validate_rows::validate_rows;
-pub use write_log_block::write_log_block;
-pub use write_log_block_to_object_store::write_log_block_to_object_store;
-pub use write_log_index_manifest::write_log_index_manifest;
-pub use write_log_index_manifest_to_object_store::write_log_index_manifest_to_object_store;
-pub use write_tenant_log_index_manifest_to_object_store::write_tenant_log_index_manifest_to_object_store;
-pub use write_tenant_log_index_shard_catalog_to_object_store::write_tenant_log_index_shard_catalog_to_object_store;
-pub use write_tenant_log_index_shard_to_object_store::{
-    update_tenant_log_index_shard_to_object_store, write_tenant_log_index_shard_to_object_store,
-};
-pub use write_tenant_log_index_shards_to_object_store::write_tenant_log_index_shards_to_object_store;
+
+#[derive(Debug, Error)]
+pub enum BlockStoreError {
+    #[error(transparent)]
+    Arrow(#[from] ArrowError),
+    #[error(transparent)]
+    DataFusion(#[from] DataFusionError),
+    #[error("no log blocks were supplied for DataFusion scan")]
+    EmptyBlockScan,
+    #[error("invalid regex `{pattern}`: {source}")]
+    InvalidRegex {
+        pattern: String,
+        source: regex::Error,
+    },
+    #[error("invalid block column `{column}`: expected {expected}")]
+    InvalidBlockColumn {
+        column: &'static str,
+        expected: &'static str,
+    },
+    #[error("invalid time range: start {start_ns} is after end {end_ns}")]
+    InvalidTimeRange { start_ns: i64, end_ns: i64 },
+    #[error("invalid log index manifest version {actual}; expected {expected}")]
+    InvalidManifestVersion { actual: u32, expected: u32 },
+    #[error("unsupported log block format: {0}")]
+    UnsupportedBlockFormat(String),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("log block `{object_key}` is {size_bytes} bytes, exceeds cap of {max_bytes} bytes")]
+    LogBlockTooLarge {
+        object_key: String,
+        size_bytes: u64,
+        max_bytes: u64,
+    },
+    #[error("log index manifest fingerprint mismatch: expected {expected}, got {actual}")]
+    ManifestFingerprintMismatch {
+        expected: SeriesFingerprint,
+        actual: SeriesFingerprint,
+    },
+    #[error("block path is not UTF-8: {path:?}")]
+    NonUtf8BlockPath { path: PathBuf },
+    #[error(transparent)]
+    ObjectStore(#[from] object_store::Error),
+    #[error(transparent)]
+    Parquet(#[from] ParquetError),
+    #[error("row timestamp {timestamp_ns} is outside block time range {start_ns}-{end_ns}")]
+    RowOutsideBlockTimeRange {
+        timestamp_ns: i64,
+        start_ns: i64,
+        end_ns: i64,
+    },
+}
+
+/// Where a [`LogBlockTableProvider`]'s planned blocks live.
+#[derive(Debug)]
+pub(crate) enum LogBlockTableSource {
+    Local(Box<ListingTable>),
+    ObjectStore {
+        store: Arc<dyn ObjectStore>,
+        object_store_url: ObjectStoreUrl,
+        block_paths: Vec<ObjectPath>,
+        listing_table: Box<ListingTable>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ManifestSeries {
+    pub(crate) tenant: String,
+    pub(crate) fingerprint: SeriesFingerprint,
+    pub(crate) labels: Labels,
+}
+
+pub(crate) const LOG_INDEX_MANIFEST_RELATIVE_PATH: &str = "index/logs/manifest.json";
+
+pub(crate) const LOG_INDEX_MANIFEST_VERSION: u32 = 1;
+
+pub(crate) fn anchored_regex_pattern(pattern: &str) -> String {
+    format!("^(?:{pattern})$")
+}
+
+pub(crate) fn filter_references_only_pushdown_columns(filter: &Expr) -> bool {
+    let columns = filter.column_refs();
+    !columns.is_empty()
+        && columns.iter().all(|column| {
+            matches!(
+                column.name.as_str(),
+                "series_fingerprint" | "timestamp_ns" | "line"
+            )
+        })
+}
+
+#[must_use]
+pub fn log_block_object_path(prefix: &ObjectPath, key: &BlockKey) -> ObjectPath {
+    key.object_key()
+        .split('/')
+        .fold(prefix.clone(), ObjectPath::join)
+}
+
+pub(crate) fn log_block_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("series_fingerprint", DataType::UInt64, false),
+        Field::new("timestamp_ns", DataType::Int64, false),
+        Field::new("line", DataType::Utf8, false),
+        Field::new("structured_metadata", structured_metadata_type(), false),
+    ]))
+}
+
+#[must_use]
+pub fn log_index_manifest_object_path(prefix: &ObjectPath) -> ObjectPath {
+    LOG_INDEX_MANIFEST_RELATIVE_PATH
+        .split('/')
+        .fold(prefix.clone(), ObjectPath::join)
+}
+
+#[must_use]
+pub fn log_index_manifest_path(root: impl AsRef<Path>) -> PathBuf {
+    root.as_ref().join(LOG_INDEX_MANIFEST_RELATIVE_PATH)
+}
+
+#[must_use]
+pub fn log_tenant_index_manifest_object_path(prefix: &ObjectPath, tenant: &str) -> ObjectPath {
+    log_index_manifest_object_path(
+        &prefix
+            .clone()
+            .join(format!("tenant={}", escape_object_path_segment(tenant))),
+    )
+}
+
+#[must_use]
+pub fn log_tenant_index_shard_catalog_object_path(prefix: &ObjectPath, tenant: &str) -> ObjectPath {
+    log_tenant_index_shards_object_prefix(prefix, tenant).join("manifest.json")
+}
+
+#[must_use]
+pub fn log_tenant_index_shard_list_offset_start_ns(query_range: TimeRange) -> i64 {
+    let query_width_ns = query_range
+        .end_ns
+        .saturating_sub(query_range.start_ns)
+        .max(1);
+    query_range.start_ns.saturating_sub(query_width_ns)
+}
+
+#[must_use]
+pub fn log_tenant_index_shards_object_prefix(prefix: &ObjectPath, tenant: &str) -> ObjectPath {
+    prefix
+        .clone()
+        .join(format!("tenant={}", escape_object_path_segment(tenant)))
+        .join("index")
+        .join("logs")
+        .join("shards")
+}
+
+#[instrument(level = "debug", skip_all, err)]
+/// # Errors
+/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+pub fn read_log_index_manifest(root: impl AsRef<Path>) -> Result<LogIndexes, BlockStoreError> {
+    let manifest: LogIndexManifest =
+        serde_json::from_reader(File::open(log_index_manifest_path(root))?)?;
+    manifest.into_indexes()
+}
+
+pub(crate) fn validate_planned_blocks(blocks: &[BlockDescriptor]) -> Result<(), BlockStoreError> {
+    if blocks.is_empty() {
+        return Err(BlockStoreError::EmptyBlockScan);
+    }
+    Ok(())
+}

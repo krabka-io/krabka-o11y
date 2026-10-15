@@ -1,7 +1,7 @@
 use super::{
     ConnectError, ConnectQueryRequest, ConnectResponse, ProfileStore, connect_error,
     merge_profile_type_selector, parse_label_selector, parse_render_query,
-    parse_render_query::ParsedRenderQuery, pb,
+    render_params::ParsedRenderQuery, pb,
 };
 
 pub(crate) async fn analyze_query_inner<S>(

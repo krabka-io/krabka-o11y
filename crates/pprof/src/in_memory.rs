@@ -15,6 +15,26 @@ use crate::{
     symbol_db::SymbolDb,
 };
 
+pub(crate) enum CompiledMatcher<'a> {
+    Literal(&'a LabelMatcher),
+    Regex(&'a LabelMatcher, Regex),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SampleRow {
+    pub(crate) profile_type: String,
+    pub(crate) fingerprint: u64,
+    pub(crate) labels: Vec<crate::ProfileLabel>,
+    pub(crate) partition: u64,
+    pub(crate) stacktrace_id: u32,
+    pub(crate) value: i64,
+    pub(crate) total_value: i64,
+    pub(crate) span_id: Option<u64>,
+    pub(crate) trace_id: Option<Vec<u8>>,
+    pub(crate) wal_sample_ids: Vec<Vec<u8>>,
+    pub(crate) timestamp_ms: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProfileIdentity<'a> {
     pub tenant: &'a str,
@@ -438,21 +458,52 @@ mod tests {
         );
     }
 }
-
-mod compile_matchers;
-mod compiled_matcher;
 mod encode_rows;
 mod fingerprint_labels;
 mod in_memory_profile_store;
-mod label_value;
-mod row_matches;
-mod sample_row;
-
-use compile_matchers::compile_matchers;
-use compiled_matcher::CompiledMatcher;
 use encode_rows::encode_rows;
 use fingerprint_labels::{fingerprint_labels, queried_series_fingerprint};
 pub use in_memory_profile_store::{InMemoryProfileStore, SampleAssociations, SampleProvenance};
-use label_value::label_value;
-use row_matches::row_matches;
-use sample_row::SampleRow;
+
+pub(crate) fn label_value<'a>(row: &'a SampleRow, name: &str) -> Option<&'a str> {
+    row.labels
+        .iter()
+        .find(|label| label.name == name)
+        .map(|label| label.value.as_str())
+}
+
+pub(crate) fn compile_matchers(
+    matchers: &[LabelMatcher],
+) -> Result<Vec<CompiledMatcher<'_>>, ProfileError> {
+    matchers
+        .iter()
+        .map(|matcher| match matcher.op {
+            MatchOp::Eq | MatchOp::Neq => Ok(CompiledMatcher::Literal(matcher)),
+            MatchOp::Re | MatchOp::Nre => Regex::new(&format!("^(?:{})$", matcher.value))
+                .map(|regex| CompiledMatcher::Regex(matcher, regex))
+                .map_err(|err| ProfileError::Plan(format!("bad matcher regex: {err}"))),
+        })
+        .collect()
+}
+
+pub(crate) fn row_matches(row: &SampleRow, matchers: &[CompiledMatcher<'_>]) -> bool {
+    matchers.iter().all(|matcher| match matcher {
+        CompiledMatcher::Literal(matcher) => {
+            let value = label_value(row, &matcher.name);
+            match matcher.op {
+                MatchOp::Eq => value.is_some_and(|value| value == matcher.value),
+                MatchOp::Neq => value.is_none_or(|value| value != matcher.value),
+                MatchOp::Re | MatchOp::Nre => unreachable!("regex matchers are compiled"),
+            }
+        }
+        CompiledMatcher::Regex(matcher, regex) => {
+            let regex_matched =
+                label_value(row, &matcher.name).is_some_and(|value| regex.is_match(value));
+            match matcher.op {
+                MatchOp::Re => regex_matched,
+                MatchOp::Nre => !regex_matched,
+                MatchOp::Eq | MatchOp::Neq => unreachable!("literal matchers are not compiled"),
+            }
+        }
+    })
+}

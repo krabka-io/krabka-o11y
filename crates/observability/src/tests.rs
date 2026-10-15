@@ -194,9 +194,22 @@ pub(crate) mod prelude {
     }
 }
 
+/// A one-line `{app="api"}` record under `tenant`, at timestamp 1.
+pub(crate) fn api_record_for_test(tenant: &str) -> prelude::WalLogRecord {
+    let mut labels = prelude::BTreeMap::new();
+    labels.insert("app".to_string(), "api".to_string());
+    prelude::WalLogRecord {
+        tenant: tenant.to_string(),
+        labels,
+        timestamp_ns: 1,
+        line: "line".to_string(),
+        structured_metadata: prelude::BTreeMap::new(),
+        position: None,
+    }
+}
+
 mod acl_quota_and_buffers;
 mod alerts_and_params;
-mod api_record_for_test;
 mod broker_access;
 mod cache_post_and_rules;
 mod compaction_and_query_limits;

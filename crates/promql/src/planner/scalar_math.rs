@@ -183,21 +183,39 @@ mod tests {
 }
 
 mod build_leaf_batch;
-mod is_metadata_label;
-mod labeled_value;
-mod leaf_schema;
-mod metadata_labels;
 mod plan_scalar_math;
-mod sample_time_column;
 mod scalar_math_plan;
-mod value_column;
 
 use build_leaf_batch::build_leaf_batch;
-use is_metadata_label::is_metadata_label;
-pub use labeled_value::LabeledValue;
-use leaf_schema::leaf_schema;
-use metadata_labels::METADATA_LABELS;
 pub use plan_scalar_math::plan_scalar_math;
-pub use sample_time_column::SAMPLE_TIME_COLUMN;
 pub use scalar_math_plan::ScalarMathPlan;
-pub use value_column::VALUE_COLUMN;
+
+/// One already-evaluated inner instant-vector sample.
+pub struct LabeledValue {
+    pub labels: Labels,
+    pub ts_ms: i64,
+    pub value: f64,
+}
+
+/// Result-metadata labels dropped by every scalar-math function.
+pub(crate) const METADATA_LABELS: [&str; 2] = ["__type__", "__unit__"];
+
+/// Leaf-batch column that carries the per-series sample timestamp.
+pub const SAMPLE_TIME_COLUMN: &str = "sample_timestamp";
+
+/// Leaf-batch and projection column that carries the per-series float value.
+pub const VALUE_COLUMN: &str = "value";
+
+pub(crate) fn leaf_schema(label_names: &[String]) -> Arc<Schema> {
+    let mut fields = Vec::with_capacity(label_names.len() + 2);
+    for name in label_names {
+        fields.push(Field::new(name, DataType::Binary, true));
+    }
+    fields.push(Field::new(VALUE_COLUMN, DataType::Float64, true));
+    fields.push(Field::new(SAMPLE_TIME_COLUMN, DataType::Int64, false));
+    Arc::new(Schema::new(fields))
+}
+
+pub(crate) fn is_metadata_label(name: &str) -> bool {
+    METADATA_LABELS.contains(&name)
+}

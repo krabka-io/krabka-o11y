@@ -1424,26 +1424,160 @@ mod tests {
     }
 }
 
-mod decode_profile_shard;
-mod encode_profile_shard;
-mod label_profile_type;
-mod max_profile_index_snapshot_bytes;
-mod profile_block_fingerprint;
-mod profile_index_shard_width;
 mod profile_index_type;
-mod profile_shard;
 mod profile_shard_format;
-mod render_series_labels;
-mod tenant_profile_extras;
 
-use decode_profile_shard::decode_profile_shard;
-use encode_profile_shard::encode_profile_shard;
-pub use label_profile_type::LABEL_PROFILE_TYPE;
-pub use max_profile_index_snapshot_bytes::MAX_PROFILE_INDEX_SNAPSHOT_BYTES;
-use profile_block_fingerprint::profile_block_fingerprint;
-use profile_index_shard_width::PROFILE_INDEX_SHARD_WIDTH;
 pub use profile_index_type::ProfileIndex;
-use profile_shard::ProfileShard;
 use profile_shard_format::{PROFILE_SHARD_FORMAT_VERSION, PROFILE_SHARD_MAGIC};
-use render_series_labels::render_series_labels;
-use tenant_profile_extras::TenantProfileExtras;
+
+/// Maximum byte size of one profile-index object accepted by a load.
+pub const MAX_PROFILE_INDEX_SNAPSHOT_BYTES: ByteSize = mebibytes(256);
+
+/// Width of one profile-index shard, in milliseconds.
+pub(crate) const PROFILE_INDEX_SHARD_WIDTH: i64 = 24 * 60 * 60 * 1_000;
+
+/// One grid slot of a published profile index, in memory.
+#[derive(Default)]
+pub(crate) struct ProfileShard {
+    pub(crate) index: Index,
+    /// `object key -> stacktrace partitions`, for the blocks in this shard.
+    pub(crate) partitions: BTreeMap<String, Vec<u64>>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub(crate) struct TenantProfileExtras {
+    pub(crate) profile_types: BTreeMap<String, BTreeSet<SeriesFingerprint>>,
+}
+
+/// Reserved label carrying the 5-part profile type string.
+pub const LABEL_PROFILE_TYPE: &str = "__profile_type__";
+
+/// Fingerprint of the profile-block record a writer holds.
+///
+/// A pending removal pins itself to this, so replaying the removal against a
+/// merge base cannot drop a *different* block that has since been written under
+/// the same object key. Records are only ever compared inside one process, so
+/// the hasher does not have to be stable across builds or hosts; it only has to
+/// be a function of everything the record says. The fields are named one by one
+/// rather than hashing [`BlockMeta`] wholesale, so a field added there is a
+/// deliberate choice here rather than a silent change of identity.
+pub(crate) fn profile_block_fingerprint(meta: &BlockMeta, partitions: &[u64]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    meta.tenant.hash(&mut hasher);
+    meta.object_key.hash(&mut hasher);
+    meta.min_ts.hash(&mut hasher);
+    meta.max_ts.hash(&mut hasher);
+    meta.row_count.hash(&mut hasher);
+    meta.fingerprints.hash(&mut hasher);
+    meta.level.hash(&mut hasher);
+    partitions.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Renders a series' labels as `name="value"`, comma separated, for an error
+/// that has to say which series it is talking about.
+///
+/// A fingerprint alone does not identify a series to anyone reading a log:
+/// it is a hash, and the writer that produced the series is the one who needs
+/// to recognise it. The label set is what they wrote.
+pub(crate) fn render_series_labels(labels: &Labels) -> String {
+    labels
+        .iter()
+        .map(|pair| format!("{}={:?}", pair.name, pair.value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Encodes one tenant's slot of a profile index as a shard payload.
+///
+/// The bulk is the shared index's own compact shard encoding, embedded whole
+/// rather than reimplemented: the block records, the series and the postings
+/// mean the same thing here as on the metrics path, and a second encoding of
+/// them would be a second thing to keep correct. What is appended is the part
+/// the shared index has no room for, the per-block stacktrace partitions.
+pub(crate) fn encode_profile_shard(tenant: &str, shard: &ProfileShard) -> Vec<u8> {
+    let inner = shard.index.encode_tenant_as_shard(tenant);
+
+    let mut out = Vec::with_capacity(inner.len() + 64);
+    out.extend_from_slice(&PROFILE_SHARD_MAGIC);
+    out.push(PROFILE_SHARD_FORMAT_VERSION);
+    push_len(&mut out, inner.len());
+    out.extend_from_slice(&inner);
+
+    push_len(&mut out, shard.partitions.len());
+    for object_key in shard.partitions.keys() {
+        let partitions = &shard.partitions[object_key];
+        push_len(&mut out, object_key.len());
+        out.extend_from_slice(object_key.as_bytes());
+        push_len(&mut out, partitions.len());
+        for partition in partitions {
+            push_uvarint(&mut out, *partition);
+        }
+    }
+    out
+}
+
+/// Decodes one shard payload into the tenant it names and its slot of the
+/// index.
+///
+/// Every length is checked against the bytes that remain, so a truncated or
+/// scrambled object fails here rather than producing an index that answers
+/// queries wrongly. `object_key` names the object in the error.
+///
+/// # Errors
+/// Returns [`BlockStoreError::InvalidBlock`] when the bytes are not a profile
+/// shard of the current format version, or when they end early.
+pub(crate) fn decode_profile_shard(object_key: &str, bytes: &[u8]) -> Result<ProfileShard> {
+    decode(object_key, bytes).map_err(|error| match error {
+        BlockStoreError::InvalidBlock(message) if !message.contains(object_key) => {
+            BlockStoreError::InvalidBlock(format!("profile index shard `{object_key}`: {message}"))
+        }
+        other => other,
+    })
+}
+
+fn decode(object_key: &str, bytes: &[u8]) -> Result<ProfileShard> {
+    let mut reader = ByteReader::new(bytes);
+    if reader.take(PROFILE_SHARD_MAGIC.len(), "the magic")? != PROFILE_SHARD_MAGIC {
+        return Err(BlockStoreError::InvalidBlock(
+            "is not a profile index shard".to_string(),
+        ));
+    }
+    let version = reader.u8("the format version")?;
+    if version != PROFILE_SHARD_FORMAT_VERSION {
+        return Err(BlockStoreError::InvalidBlock(format!(
+            "is format version {version}, expected {PROFILE_SHARD_FORMAT_VERSION}"
+        )));
+    }
+
+    let inner_len = reader.count("the embedded index shard")?;
+    let inner = reader.take(inner_len, "the embedded index shard")?;
+    let index = decode_index_shard(object_key, inner)?;
+    let _tenant = index
+        .tenant_names()
+        .next()
+        .ok_or_else(|| {
+            BlockStoreError::InvalidBlock("embeds an index shard with no tenant".to_string())
+        })?
+        .clone();
+
+    let partition_count = reader.count("stacktrace partition entries")?;
+    let mut partitions: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    for _ in 0..partition_count {
+        let key = reader.string("a partitioned block object key")?;
+        let count = reader.count("stacktrace partitions of a block")?;
+        let mut values = Vec::new();
+        for _ in 0..count {
+            values.push(reader.uvarint("a stacktrace partition")?);
+        }
+        partitions.insert(key, values);
+    }
+
+    if !reader.is_exhausted() {
+        return Err(BlockStoreError::InvalidBlock(
+            "has bytes after the end of the shard".to_string(),
+        ));
+    }
+
+    Ok(ProfileShard { index, partitions })
+}

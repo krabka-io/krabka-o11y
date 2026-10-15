@@ -1,5 +1,6 @@
+use super::bucket_helpers::ClassicBucketGroups;
 use super::{
-    BTreeMap, ClassicBucket, ClassicBucketGroups, InstantSample, NativeHistogram, Result,
+    BTreeMap, ClassicBucket, InstantSample, NativeHistogram, Result,
     SampleValue, find_mixed_histogram_keys, group_classic_bucket_sample, labels_key,
     labels_without_metric_name, record_metric_name,
 };

@@ -19,8 +19,31 @@ mod tests {
     }
 }
 
-mod promql_error;
-mod result;
+/// Errors the `PromQL` engine raises.
+#[derive(Debug, thiserror::Error)]
+pub enum PromqlError {
+    #[error("parse error: {0}")]
+    Parse(String),
+    #[error("plan error: {0}")]
+    Plan(String),
+    #[error("execution error: {0}")]
+    Exec(String),
+    #[error("store error: {0}")]
+    Store(String),
+    #[error("query frontend overloaded; retry after {retry_after_seconds}s")]
+    Overloaded { retry_after_seconds: u64 },
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+    /// A per-tenant query limit rejected the evaluation.
+    #[error("{0}")]
+    Limit(#[from] krabka_metrics::LimitError),
+}
 
-pub use promql_error::PromqlError;
-pub use result::Result;
+impl From<datafusion::error::DataFusionError> for PromqlError {
+    fn from(error: datafusion::error::DataFusionError) -> Self {
+        Self::Exec(error.to_string())
+    }
+}
+
+/// Internal convenience alias.
+pub type Result<T> = std::result::Result<T, PromqlError>;

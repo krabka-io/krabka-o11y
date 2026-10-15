@@ -6,22 +6,9 @@ use crate::{
     TsdbStats, test_support::tenant_id,
 };
 
-mod cardinality_methods_merge_cold_and_hot_series;
-mod created_timestamp_survives_cold_and_hot_merge;
-mod duplicate_samples_keep_hot_values;
-mod exemplars_merges_cold_and_hot_records;
-mod histograms_in_either_store_are_found;
-mod instant_query_uses_hot_sample_newer_than_compacted_sample;
-mod label_names_merges_cold_and_hot_series_metadata;
-mod label_values_merges_cold_and_hot_series_metadata;
-mod labels;
-mod metadata_merges_cold_and_hot_records;
-mod min_present_time_preserves_legitimate_zero_min_time;
-mod range_query_counts_sample_present_in_both_stores_once;
-mod tsdb_blocks_merges_cold_and_hot_blocks;
-mod tsdb_stats_ignore_empty_side_min_time;
-mod tsdb_stats_merge_cold_and_hot_counts;
 
+mod data_merge_cases;
+mod metadata_merge_cases;
 use labels::labels;
 
 #[derive(bon::Builder)]
@@ -83,3 +70,7 @@ fn up_sample(timestamp_ms: i64, value: f64) -> MergedFloatSample {
         .value(value)
         .build()
 }
+
+mod support;
+pub(crate) use support::labels;
+pub(crate) use support::min_present_time_preserves_legitimate_zero_min_time;

@@ -18,6 +18,7 @@ use krabka_units::{
     convert::{ByteSizeExt, TimeExt as _},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
 // Trace-by-id v2 edge model.
@@ -31,8 +32,483 @@ use serde::{Deserialize, Serialize};
 // status / events / links / nanos) without re-stating its full shape.
 // ---------------------------------------------------------------------------
 
+/// OTLP `AnyValue`, holding the variants `TraceQL` surfaces.
+///
+/// Tempo emits `intValue` as a string and groups multi-valued attributes under
+/// `arrayValue`. That matches the querier's `attr_value_json` and
+/// `attr_values_json`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum AnyValueJson {
+    #[serde(rename = "stringValue")]
+    StringValue(String),
+    #[serde(rename = "intValue")]
+    IntValue(String),
+    #[serde(rename = "doubleValue")]
+    DoubleValue(#[serde(with = "double_json")] f64),
+    #[serde(rename = "boolValue")]
+    BoolValue(bool),
+    #[serde(rename = "arrayValue")]
+    ArrayValue(ArrayValueJson),
+    #[serde(untagged)]
+    Unsupported(serde_json::Value),
+}
+
+impl From<&AttrValue> for AnyValueJson {
+    fn from(v: &AttrValue) -> Self {
+        match v {
+            AttrValue::Unsupported(value) => AnyValueJson::Unsupported(
+                serde_json::from_str(value).expect("opaque attribute contains AnyValue JSON"),
+            ),
+            AttrValue::Array(values) => AnyValueJson::ArrayValue(ArrayValueJson {
+                values: values.iter().map(AnyValueJson::from).collect(),
+            }),
+            AttrValue::Str(s) => AnyValueJson::StringValue(s.clone()),
+            AttrValue::Int(i) => AnyValueJson::IntValue(i.to_string()),
+            AttrValue::Float(f) => AnyValueJson::DoubleValue(*f),
+            AttrValue::Bool(b) => AnyValueJson::BoolValue(*b),
+        }
+    }
+}
+
+mod double_json {
+    use serde::{Deserialize, Deserializer, de::Error as _};
+
+    pub(super) use crate::float_json::serialize_proto as serialize;
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Number(value) => value
+                .as_f64()
+                .ok_or_else(|| D::Error::custom("invalid double")),
+            serde_json::Value::String(value) => match value.as_str() {
+                "NaN" => Ok(f64::NAN),
+                "Infinity" => Ok(f64::INFINITY),
+                "-Infinity" => Ok(f64::NEG_INFINITY),
+                _ => Err(D::Error::custom("invalid protoJSON double token")),
+            },
+            _ => Err(D::Error::custom("invalid protoJSON double")),
+        }
+    }
+}
+
 #[cfg(test)]
-mod tests {
+mod any_value_json_tests {
+    use super::{AnyValueJson, ArrayValueJson};
+
+    #[yare::parameterized(
+        nan = { f64::NAN, "NaN" },
+        positive_infinity = { f64::INFINITY, "Infinity" },
+        negative_infinity = { f64::NEG_INFINITY, "-Infinity" },
+    )]
+    fn nonfinite_doubles_roundtrip_through_scalar_and_array_frontend_values(
+        number: f64,
+        text: &str,
+    ) {
+        let scalar = AnyValueJson::DoubleValue(number);
+        let encoded = serde_json::to_value(&scalar).unwrap();
+        assert2::assert!(encoded == serde_json::json!({"doubleValue":text}));
+        let decoded: AnyValueJson = serde_json::from_value(encoded).unwrap();
+        let AnyValueJson::DoubleValue(actual) = decoded else {
+            panic!("double discriminator lost")
+        };
+        assert2::assert!(
+            actual.to_bits() == number.to_bits() || actual.is_nan() && number.is_nan()
+        );
+        let array = AnyValueJson::ArrayValue(ArrayValueJson {
+            values: vec![scalar],
+        });
+        let encoded = serde_json::to_value(&array).unwrap();
+        let decoded: AnyValueJson = serde_json::from_value(encoded.clone()).unwrap();
+        assert2::assert!(serde_json::to_value(decoded).unwrap() == encoded);
+    }
+}
+
+/// OTLP `ArrayValue` body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ArrayValueJson {
+    #[serde(default)]
+    pub values: Vec<AnyValueJson>,
+}
+
+impl From<&AnyValueJson> for AttrValue {
+    fn from(v: &AnyValueJson) -> Self {
+        match v {
+            AnyValueJson::Unsupported(value) => AttrValue::Unsupported(value.to_string()),
+            AnyValueJson::StringValue(s) => AttrValue::Str(s.clone()),
+            AnyValueJson::IntValue(i) => AttrValue::Int(i.parse().unwrap_or(0)),
+            AnyValueJson::DoubleValue(f) => AttrValue::Float(*f),
+            AnyValueJson::BoolValue(b) => AttrValue::Bool(*b),
+            AnyValueJson::ArrayValue(array) => {
+                AttrValue::Array(array.values.iter().map(AttrValue::from).collect())
+            }
+        }
+    }
+}
+
+/// Deserialize a `u64` that the querier may encode as a JSON number **or** a
+/// string. Tempo encodes some accounting counters as strings.
+pub(crate) fn de_u64_lenient<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize as _;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrStr {
+        Num(u64),
+        Str(String),
+    }
+
+    match NumOrStr::deserialize(deserializer)? {
+        NumOrStr::Num(n) => Ok(n),
+        NumOrStr::Str(s) => Ok(s.parse().unwrap_or(0)),
+    }
+}
+
+/// OTLP key/value attribute form. It matches the querier's `attrs_json`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct KeyValueJson {
+    pub key: String,
+    pub value: AnyValueJson,
+}
+
+/// The job-accounting `metrics{}` block. It is additive over completed jobs.
+///
+/// The Slice 5 querier populates only `total_blocks`, `inspected_traces` and
+/// `inspected_bytes` today. The frontend owns `total_jobs`, `completed_jobs`
+/// and `inspected_spans`. It seeds them from the plan and sums them across
+/// jobs. All six fields serialize, so the merged body carries the full
+/// accounting block.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Metrics {
+    #[serde(default, deserialize_with = "de_u64_lenient")]
+    pub total_jobs: u64,
+    #[serde(default, deserialize_with = "de_u64_lenient")]
+    pub completed_jobs: u64,
+    #[serde(default, deserialize_with = "de_u64_lenient")]
+    pub total_blocks: u64,
+    #[serde(default, deserialize_with = "de_u64_lenient")]
+    pub inspected_traces: u64,
+    #[serde(default, deserialize_with = "de_u64_lenient")]
+    pub inspected_bytes: u64,
+    #[serde(default, deserialize_with = "de_u64_lenient")]
+    pub inspected_spans: u64,
+}
+
+impl Metrics {
+    /// Fold another job's accounting into this one, as a field-wise saturating
+    /// sum.
+    pub fn add(&mut self, other: &Metrics) {
+        self.total_jobs = self.total_jobs.saturating_add(other.total_jobs);
+        self.completed_jobs = self.completed_jobs.saturating_add(other.completed_jobs);
+        self.total_blocks = self.total_blocks.saturating_add(other.total_blocks);
+        self.inspected_traces = self.inspected_traces.saturating_add(other.inspected_traces);
+        self.inspected_bytes = self.inspected_bytes.saturating_add(other.inspected_bytes);
+        self.inspected_spans = self.inspected_spans.saturating_add(other.inspected_spans);
+    }
+}
+
+/// One OTLP span.
+///
+/// This type extracts `span_id` for dedup and keeps the whole span in `rest`,
+/// so serialization re-emits the querier's exact span shape.
+///
+/// GAP5 is confirmed correct and is not a bug. The by-id span key is `spanId`,
+/// **base64**-encoded. That is the standard OTLP protobuf-JSON byte-field
+/// encoding the querier's `trace_json` emits. Search results (`SpanJson`)
+/// instead key on `spanID` in **hex**, which is Tempo's search shape.
+///
+/// The two are different Tempo response formats, and each pipeline is
+/// internally consistent: by-id is base64 end-to-end and search is hex
+/// end-to-end. The respective dedup keys therefore never mix encodings. No
+/// conversion is needed here, and none would be correct.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OtlpSpanJson {
+    #[serde(rename = "spanId", default)]
+    pub span_id: String,
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
+}
+
+/// One OTLP `ResourceSpans` group.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceSpansJson {
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub resource: serde_json::Value,
+    #[serde(default)]
+    pub scope_spans: Vec<ScopeSpansJson>,
+}
+
+/// One OTLP `ScopeSpans` group.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeSpansJson {
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub scope: serde_json::Value,
+    #[serde(default)]
+    pub spans: Vec<OtlpSpanJson>,
+}
+
+/// The `/api/search` response: the matched traces plus the job-accounting
+/// metrics, and whatever the search could not reach.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SearchResponseJson {
+    #[serde(default)]
+    pub traces: Vec<TraceJson>,
+    #[serde(default)]
+    pub metrics: Metrics,
+    /// What this answer is missing, one line per cause.
+    ///
+    /// A fan-out that drops a querier's share and returns 200 has answered a
+    /// query with a fraction of the data and said nothing, which is the thing
+    /// this milestone exists to stop. The field follows the same shape the
+    /// Loki responses use for a skipped block: absent when there is nothing to
+    /// say, so an answer that reached everything is byte-identical to what
+    /// Tempo returns and Grafana parses unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// A single matched span, with string-encoded nanos and OTLP-KV attributes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpanJson {
+    #[serde(rename = "spanID")]
+    pub span_id: String,
+    pub start_time_unix_nano: String,
+    /// Nanos, **string-encoded**. This is a Tempo quirk, so the field mirrors
+    /// the wire form verbatim rather than holding a `Time`. The projections on
+    /// either side of it convert.
+    pub duration_nanos: String,
+    #[serde(default)]
+    pub attributes: Vec<KeyValueJson>,
+}
+
+impl From<&SpanRef> for SpanJson {
+    fn from(s: &SpanRef) -> Self {
+        SpanJson {
+            span_id: hex8(&s.span_id),
+            start_time_unix_nano: s.start_time_unix_nano.to_string(),
+            duration_nanos: s.duration.nanos_i64().to_string(),
+            attributes: s
+                .attributes
+                .iter()
+                .map(|attribute| KeyValueJson {
+                    key: attribute.key.clone(),
+                    value: AnyValueJson::from(&attribute.value),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<&SpanJson> for SpanRef {
+    fn from(s: &SpanJson) -> Self {
+        SpanRef {
+            span_id: parse_hex8(&s.span_id),
+            parent_span_id: None,
+            name: String::new(),
+            kind: 0,
+            nested_set_left: 0,
+            nested_set_right: 0,
+            nested_set_parent: 0,
+            start_time_unix_nano: s.start_time_unix_nano.parse().unwrap_or(0),
+            duration: Time::from_nanos(s.duration_nanos.parse().unwrap_or(0)),
+            status_code: 0,
+            status_message: String::new(),
+            instrumentation_name: String::new(),
+            instrumentation_version: String::new(),
+            resource_attributes: Vec::new(),
+            attributes: attributes_from_json(&s.attributes),
+            events: Vec::new(),
+            links: Vec::new(),
+        }
+    }
+}
+
+/// A spanSet: the spans this trace matched plus the matched count.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpanSetJson {
+    #[serde(default)]
+    pub spans: Vec<SpanJson>,
+    #[serde(default)]
+    pub matched: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<KeyValueJson>,
+}
+
+impl SpanSetJson {
+    /// A spanSet that matched exactly `spans`, with no spanSet attributes.
+    #[must_use]
+    pub fn of_matched_spans(spans: Vec<SpanJson>) -> Self {
+        SpanSetJson {
+            matched: u32::try_from(spans.len()).unwrap_or(u32::MAX),
+            spans,
+            attributes: Vec::new(),
+        }
+    }
+}
+
+impl From<&SpanSet> for SpanSetJson {
+    fn from(ss: &SpanSet) -> Self {
+        SpanSetJson {
+            spans: ss.spans.iter().map(SpanJson::from).collect(),
+            matched: ss.matched,
+            attributes: {
+                let mut grouped = BTreeMap::<String, Vec<AnyValueJson>>::new();
+                for attribute in &ss.attributes {
+                    grouped
+                        .entry(attribute.key.clone())
+                        .or_default()
+                        .push(AnyValueJson::from(&attribute.value));
+                }
+                grouped
+                    .into_iter()
+                    .map(|mut entry| {
+                        let value = if entry.1.len() == 1 {
+                            entry.1.remove(0)
+                        } else {
+                            AnyValueJson::ArrayValue(ArrayValueJson { values: entry.1 })
+                        };
+                        KeyValueJson {
+                            key: entry.0,
+                            value,
+                        }
+                    })
+                    .collect()
+            },
+        }
+    }
+}
+
+/// The querier's v2 by-id response body.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TraceByIdResponseJson {
+    #[serde(default)]
+    pub trace: TraceEnvelopeJson,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+impl TraceByIdResponseJson {
+    /// Total spans across all resource/scope groups.
+    #[must_use]
+    pub fn span_count(&self) -> usize {
+        self.trace
+            .resource_spans
+            .iter()
+            .flat_map(|rs| rs.scope_spans.iter())
+            .map(|ss| ss.spans.len())
+            .sum()
+    }
+
+    /// Cheap size estimate of the assembled trace: the serialized length.
+    #[must_use]
+    pub fn approx_size(&self) -> ByteSize {
+        serde_json::to_vec(&self.trace).map_or(<ByteSize as ByteSizeExt>::ZERO, |v| {
+            ByteSize::from_bytes(u64::try_from(v.len()).unwrap_or(u64::MAX))
+        })
+    }
+
+    /// True when this body carries no spans. A querier that did not hold the
+    /// trace returns an empty or `None` body, which this type models as no
+    /// resourceSpans.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.span_count() == 0
+    }
+}
+
+/// The `trace` envelope: the OTLP `resourceSpans` array.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceEnvelopeJson {
+    #[serde(default)]
+    pub resource_spans: Vec<ResourceSpansJson>,
+}
+
+impl TraceEnvelopeJson {
+    /// An envelope that holds `spans` under one resource and one scope, both
+    /// left unset.
+    #[must_use]
+    pub fn of_unscoped_spans(spans: Vec<OtlpSpanJson>) -> Self {
+        TraceEnvelopeJson {
+            resource_spans: vec![ResourceSpansJson {
+                resource: serde_json::Value::Null,
+                scope_spans: vec![ScopeSpansJson {
+                    scope: serde_json::Value::Null,
+                    spans,
+                }],
+            }],
+        }
+    }
+}
+
+/// One matched trace in the search response.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceJson {
+    #[serde(rename = "traceID")]
+    pub trace_id: String,
+    #[serde(default)]
+    pub root_service_name: String,
+    #[serde(default)]
+    pub root_trace_name: String,
+    /// Nanos since epoch, **string-encoded**. This is a Tempo quirk.
+    pub start_time_unix_nano: String,
+    /// How long the trace ran.
+    ///
+    /// This renders as `durationMs`, a whole-millisecond integer, which is the
+    /// encoding Tempo's search response uses.
+    ///
+    /// The value is truncated rather than rounded, because Tempo
+    /// integer-divides its nanosecond duration. A report of one millisecond
+    /// more than Tempo gives for the same span would show up as a diff in the
+    /// differential suite.
+    #[serde(
+        rename = "durationMs",
+        default,
+        with = "krabka_units::serde_units::numeric::millis_i64_trunc"
+    )]
+    pub duration: Time,
+    #[serde(default)]
+    pub span_sets: Vec<SpanSetJson>,
+}
+
+impl From<&TraceResult> for TraceJson {
+    fn from(t: &TraceResult) -> Self {
+        TraceJson {
+            trace_id: hex16(&t.trace_id),
+            root_service_name: t.root_service_name.clone(),
+            root_trace_name: t.root_trace_name.clone(),
+            start_time_unix_nano: t.start_time_unix_nano.to_string(),
+            duration: t.duration,
+            span_sets: t.span_sets.iter().map(SpanSetJson::from).collect(),
+        }
+    }
+}
+
+impl From<&TraceJson> for TraceResult {
+    fn from(t: &TraceJson) -> Self {
+        TraceResult {
+            trace_id: parse_hex16(&t.trace_id),
+            root_service_name: t.root_service_name.clone(),
+            root_trace_name: t.root_trace_name.clone(),
+            start_time_unix_nano: t.start_time_unix_nano.parse().unwrap_or(0),
+            duration: t.duration,
+            span_sets: t.span_sets.iter().map(SpanSet::from).collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod search_response_json_tests {
     use krabka_units::{millis, nanos};
 
     use super::*;
@@ -261,51 +737,49 @@ mod tests {
     }
 }
 
-mod any_value_json;
-mod array_value_json;
-mod attr_value;
-mod de_u64_lenient;
-mod hex16;
-mod hex8;
-mod key_value_json;
-mod metrics;
-mod otlp_span_json;
-mod parse_hex16;
-mod parse_hex8;
-mod resource_spans_json;
-mod scope_spans_json;
-mod search_response_json;
-mod span_json;
-mod span_ref;
-mod span_set;
-mod span_set_json;
 
-fn attributes_from_json(values: &[key_value_json::KeyValueJson]) -> Vec<Attribute> {
+fn attributes_from_json(values: &[KeyValueJson]) -> Vec<Attribute> {
     values
         .iter()
         .map(|kv| Attribute::new(kv.key.clone(), AttrValue::from(&kv.value)))
         .collect()
 }
-mod trace_by_id_response_json;
-mod trace_envelope_json;
-mod trace_json;
-mod trace_result;
 
-pub use any_value_json::AnyValueJson;
-pub use array_value_json::ArrayValueJson;
-use de_u64_lenient::de_u64_lenient;
-pub use hex8::hex8;
-pub use hex16::hex16;
-pub use key_value_json::KeyValueJson;
-pub use metrics::Metrics;
-pub use otlp_span_json::OtlpSpanJson;
-pub use parse_hex8::parse_hex8;
-pub use parse_hex16::parse_hex16;
-pub use resource_spans_json::ResourceSpansJson;
-pub use scope_spans_json::ScopeSpansJson;
-pub use search_response_json::SearchResponseJson;
-pub use span_json::SpanJson;
-pub use span_set_json::SpanSetJson;
-pub use trace_by_id_response_json::TraceByIdResponseJson;
-pub use trace_envelope_json::TraceEnvelopeJson;
-pub use trace_json::TraceJson;
+
+/// Lowercase hex for a 16-byte trace id.
+#[must_use]
+pub fn hex16(id: &[u8; 16]) -> String {
+    hex::encode(id)
+}
+
+/// Lowercase hex for an 8-byte span id.
+#[must_use]
+pub fn hex8(id: &[u8; 8]) -> String {
+    hex::encode(id)
+}
+
+/// Parse a lowercase-hex 16-byte trace id, the lossless inverse of [`crate::frontend::hex16`].
+#[must_use]
+pub fn parse_hex16(s: &str) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    let _ = hex::decode_to_slice(s, &mut out);
+    out
+}
+
+/// Parse a lowercase-hex 8-byte span id, the lossless inverse of [`crate::frontend::hex8`].
+#[must_use]
+pub fn parse_hex8(s: &str) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let _ = hex::decode_to_slice(s, &mut out);
+    out
+}
+
+impl From<&SpanSetJson> for SpanSet {
+    fn from(ss: &SpanSetJson) -> Self {
+        SpanSet {
+            spans: ss.spans.iter().map(SpanRef::from).collect(),
+            matched: ss.matched,
+            attributes: attributes_from_json(&ss.attributes),
+        }
+    }
+}

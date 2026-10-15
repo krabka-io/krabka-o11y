@@ -245,17 +245,61 @@ mod tests {
 }
 
 mod collect_and_remap;
-mod max_option;
-mod min_option;
-mod remap_partitions;
-mod sorted_union;
 mod union_profile_store;
 mod union_symbols;
 
 use collect_and_remap::{collect_and_remap, filter_hot_samples};
-use max_option::max_option;
-use min_option::min_option;
-use remap_partitions::remap_partitions;
-use sorted_union::sorted_union;
 pub use union_profile_store::UnionProfileStore;
 use union_symbols::UnionSymbols;
+
+pub(crate) fn max_option(left: Option<i64>, right: Option<i64>) -> Option<i64> {
+    match left {
+        Some(left_value) => match right {
+            Some(right_value) => Some(left_value.max(right_value)),
+            None => Some(left_value),
+        },
+        None => right,
+    }
+}
+
+pub(crate) fn min_option(left: Option<i64>, right: Option<i64>) -> Option<i64> {
+    match left {
+        Some(left_value) => match right {
+            Some(right_value) => Some(left_value.min(right_value)),
+            None => Some(left_value),
+        },
+        None => right,
+    }
+}
+
+pub(crate) fn sorted_union<const N: usize>(values: [Vec<String>; N]) -> Vec<String> {
+    values
+        .into_iter()
+        .flatten()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub(crate) fn remap_partitions(
+    batch: &RecordBatch,
+    partition_base: u64,
+) -> Result<RecordBatch, ProfileError> {
+    let partition_idx = batch
+        .schema()
+        .column_with_name(PCOL_STACKTRACE_PARTITION)
+        .ok_or_else(|| {
+            ProfileError::Store(format!(
+                "samples table missing {PCOL_STACKTRACE_PARTITION} column"
+            ))
+        })?
+        .0;
+    let partitions = batch.column(partition_idx).as_primitive::<UInt64Type>();
+    let remapped = UInt64Array::from_iter_values(
+        (0..batch.num_rows()).map(|row| partition_base | partitions.value(row)),
+    );
+    let mut columns = batch.columns().to_vec();
+    columns[partition_idx] = Arc::new(remapped) as ArrayRef;
+    RecordBatch::try_new(batch.schema(), columns)
+        .map_err(|err| ProfileError::Store(err.to_string()))
+}

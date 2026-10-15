@@ -3868,217 +3868,122 @@ overrides:
     }
 }
 
-mod analyze_query_handler;
+mod connect_handlers;
 mod analyze_query_inner;
 mod apply_go_pgo;
 mod async_stacktrace_query;
 mod authorized_http_tenant;
 mod bucket_exemplars;
-mod connect_error;
-mod default_heatmap_time_buckets_max;
-mod default_heatmap_value_buckets;
-mod default_store;
 mod deserialize_group_by;
-mod diff_handler;
 mod diff_inner;
-mod dot_escape;
+mod error_responses;
+mod exemplar_helpers;
 mod escape_quoted;
 mod flame_graph;
 mod flame_graph_diff;
-mod flamebearer_diff_json;
 mod flamebearer_json;
-mod flamebearer_metadata;
 mod flamegraph_dot;
-mod frames_match_call_sites;
-mod get_profile_stats_handler;
 mod get_profile_stats_inner;
-mod heatmap_exemplar_request;
 mod heatmap_from_points;
-mod heatmap_individual_exemplars_from_scan;
 mod heatmap_series;
-mod heatmap_slot_timestamp;
-mod heatmap_slots_millis;
-mod heatmap_span_exemplars_by_series;
-mod heatmap_span_exemplars_from_scan;
-mod heatmap_time_buckets;
-mod heatmap_y_mins;
-mod individual_exemplars_from_scan;
-mod individual_exemplars_from_totals;
-mod individual_profile;
-mod is_internal_label;
-mod label_matcher_value_escape;
-mod label_names_handler;
 mod label_names_inner;
 mod label_pairs;
-mod label_values_handler;
 mod label_values_inner;
-mod limit;
 mod merge_label_matcher;
 mod merge_profile_id_selector;
-mod merge_profile_type_selector;
 mod metadata_range;
 mod metadata_scope;
-mod normalize_render_unix_time;
-mod parse_matchers;
-mod parse_render_offset;
-mod parse_render_query;
-mod parse_render_time_param;
-mod parse_span_selectors;
-mod parse_trace_selectors;
+mod parse_selectors;
 mod post_only_querier;
 mod pprof_dot;
-mod profile_error_response;
-mod profile_id_label;
-mod profile_types_handler;
 mod profile_types_inner;
 mod pyroscope_query_architecture;
 mod querier_request_parts;
 mod querier_state;
-mod query_execution;
-mod query_param_i64;
-mod query_param_render_time;
-mod query_range;
-mod query_target;
-mod reject_negative_render_time;
-mod render_diff_handler;
+mod query_types;
+mod query_params;
 mod render_diff_inner;
-mod render_handler;
 mod render_inner;
+mod render_handlers;
+mod render_params;
 mod render_query;
 mod router;
-mod select_heatmap_handler;
+use render_params::{parse_render_offset, parse_render_query, parse_render_time_param};
 mod select_heatmap_inner;
-mod select_merge_profile_handler;
 mod select_merge_profile_inner;
-mod select_merge_span_profile_handler;
 mod select_merge_span_profile_inner;
-mod select_merge_stacktraces_handler;
 mod select_merge_stacktraces_inner;
-mod select_series_handler;
 mod select_series_inner;
-mod series_exemplar_query;
-mod series_handler;
 mod series_inner;
-mod series_key;
 mod serve;
 mod serve_supervised;
-mod span_exemplars_by_series;
-mod span_exemplars_from_scan;
-mod span_exemplars_from_totals;
-mod span_heatmap_points_from_scan;
-mod span_heatmap_request;
-mod stack_trace_call_sites;
-mod tenant_connect_error;
-mod tenant_denied_connect_error;
-mod tenant_error_response;
 mod tenant_services;
 mod timed_query;
 mod timed_query_response;
-mod types_label_pairs;
-mod unix_now_ms;
 mod utf8_label_names;
 
-use analyze_query_handler::analyze_query_handler;
 use analyze_query_inner::analyze_query_inner;
 use apply_go_pgo::apply_go_pgo;
 pub use async_stacktrace_query::AsyncQueryPolicy;
 use async_stacktrace_query::async_stacktrace_query;
 use authorized_http_tenant::authorized_http_tenant;
 use bucket_exemplars::{BucketExemplars, ExemplarRow, ExemplarSource, bucket_exemplars};
-use connect_error::connect_error;
-use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;
-use default_heatmap_value_buckets::DEFAULT_HEATMAP_VALUE_BUCKETS;
-pub use default_store::DefaultStore;
+pub type DefaultStore = InMemoryProfileStore;
 use deserialize_group_by::deserialize_group_by;
-use diff_handler::diff_handler;
+use error_responses::{connect_error, profile_error_response, tenant_error_response};
 use diff_inner::diff_inner;
-use dot_escape::dot_escape;
 use escape_quoted::{TabEscape, escape_quoted};
-use flamebearer_diff_json::flamebearer_diff_json;
-use flamebearer_json::flamebearer_json;
-use flamebearer_metadata::flamebearer_metadata;
+use flamebearer_json::{flamebearer_diff_json, flamebearer_json, flamebearer_metadata};
 use flamegraph_dot::flamegraph_dot;
-use frames_match_call_sites::frames_match_call_sites;
-use get_profile_stats_handler::get_profile_stats_handler;
 use get_profile_stats_inner::get_profile_stats_inner;
-use heatmap_exemplar_request::HeatmapExemplarRequest;
 use heatmap_from_points::heatmap_from_points;
-use heatmap_individual_exemplars_from_scan::heatmap_individual_exemplars_from_scan;
-use heatmap_slot_timestamp::heatmap_slot_timestamp;
-use heatmap_slots_millis::HeatmapSlotsMillis;
-use heatmap_span_exemplars_by_series::HeatmapSpanExemplarsBySeries;
-use heatmap_span_exemplars_from_scan::heatmap_span_exemplars_from_scan;
-use heatmap_time_buckets::heatmap_time_buckets;
-use heatmap_y_mins::heatmap_y_mins;
-use individual_exemplars_from_scan::individual_exemplars_from_scan;
-use individual_exemplars_from_totals::individual_exemplars_from_totals;
-use individual_profile::IndividualProfile;
-use is_internal_label::is_internal_label;
-use label_matcher_value_escape::label_matcher_value_escape;
-use label_names_handler::label_names_handler;
+use exemplar_helpers::{
+    heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan, heatmap_time_buckets,
+    heatmap_y_mins, individual_exemplars_from_scan, individual_exemplars_from_totals,
+    span_exemplars_from_scan, span_exemplars_from_totals, span_heatmap_points_from_scan,
+};
 use label_names_inner::label_names_inner;
-use label_pairs::label_pairs;
-use label_values_handler::label_values_handler;
+use label_pairs::{label_pairs, types_label_pairs};
 use label_values_inner::label_values_inner;
-use limit::limit;
-use merge_label_matcher::merge_label_matcher;
+use merge_label_matcher::{merge_label_matcher, merge_profile_type_selector};
 use merge_profile_id_selector::merge_profile_id_selector;
-use merge_profile_type_selector::merge_profile_type_selector;
 use metadata_range::MetadataRange;
 use metadata_scope::{MetadataRequest, MetadataScope, metadata_scope, metadata_scope_for_request};
-use normalize_render_unix_time::normalize_render_unix_time;
-use parse_matchers::parse_matchers;
-use parse_render_offset::parse_render_offset;
-use parse_render_query::parse_render_query;
-use parse_render_time_param::parse_render_time_param;
-use parse_span_selectors::parse_span_selectors;
-use parse_trace_selectors::parse_trace_selectors;
+use parse_selectors::{parse_span_selectors, parse_trace_selectors, stack_trace_call_sites};
 use post_only_querier::post_only_querier;
 use pprof_dot::pprof_dot;
-use profile_error_response::profile_error_response;
-use profile_id_label::PROFILE_ID_LABEL;
-use profile_types_handler::profile_types_handler;
 use profile_types_inner::profile_types_inner;
 pub use pyroscope_query_architecture::PyroscopeQueryArchitecture;
 use querier_request_parts::QuerierRequestParts;
 pub use querier_state::QuerierState;
-use query_execution::QueryExecution;
-use query_param_i64::{QueryParameter, query_param_i64};
-use query_param_render_time::query_param_render_time;
-pub(crate) use query_range::QueryRange;
-use query_target::QueryTarget;
-use reject_negative_render_time::reject_negative_render_time;
-use render_diff_handler::render_diff_handler;
+use query_params::{
+    QueryParameter, query_param_i64, query_param_render_time, reject_negative_render_time,
+};
+use query_types::{
+    HeatmapExemplarRequest, HeatmapSlotsMillis, HeatmapSpanExemplarsBySeries,
+    IndividualProfile, QueryExecution, QueryTarget, SeriesExemplarQuery,
+    SpanExemplarsBySeries, SpanHeatmapRequest, heatmap_slot_timestamp,
+};
+pub(crate) use query_types::{QueryRange, SeriesKey};
 use render_diff_inner::render_diff_inner;
-use render_handler::render_handler;
 use render_inner::render_inner;
+use render_handlers::{render_diff_handler, render_handler};
 use render_query::RenderQuery;
 pub use router::router;
-use select_heatmap_handler::select_heatmap_handler;
 use select_heatmap_inner::select_heatmap_inner;
-use select_merge_profile_handler::select_merge_profile_handler;
 use select_merge_profile_inner::select_merge_profile_inner;
-use select_merge_span_profile_handler::select_merge_span_profile_handler;
 use select_merge_span_profile_inner::select_merge_span_profile_inner;
-use select_merge_stacktraces_handler::select_merge_stacktraces_handler;
 use select_merge_stacktraces_inner::select_merge_stacktraces_inner;
-use select_series_handler::select_series_handler;
 use select_series_inner::select_series_inner;
-use series_exemplar_query::SeriesExemplarQuery;
-use series_handler::series_handler;
+use connect_handlers::{
+    analyze_query_handler, diff_handler, get_profile_stats_handler, label_names_handler,
+    label_values_handler, profile_types_handler, select_heatmap_handler,
+    select_merge_profile_handler, select_merge_span_profile_handler,
+    select_merge_stacktraces_handler, select_series_handler, series_handler,
+};
 use series_inner::series_inner;
-use series_key::SeriesKey;
 pub use serve::serve;
 pub use serve_supervised::serve_supervised;
-use span_exemplars_by_series::SpanExemplarsBySeries;
-use span_exemplars_from_scan::span_exemplars_from_scan;
-use span_exemplars_from_totals::span_exemplars_from_totals;
-use span_heatmap_points_from_scan::span_heatmap_points_from_scan;
-use span_heatmap_request::SpanHeatmapRequest;
-use stack_trace_call_sites::stack_trace_call_sites;
-use tenant_connect_error::tenant_connect_error;
-use tenant_denied_connect_error::tenant_denied_connect_error;
-use tenant_error_response::tenant_error_response;
 use tenant_services::{
     delete_debuginfo_handler, delete_recording_rule_handler, delete_settings_handler,
     diff_adhoc_handler, feature_flags_handler, get_adhoc_handler, get_recording_rule_handler,
@@ -4088,6 +3993,88 @@ use tenant_services::{
 };
 use timed_query::{timed_connect_query, timed_query};
 use timed_query_response::timed_query_response;
-use types_label_pairs::types_label_pairs;
-use unix_now_ms::unix_now_ms;
 use utf8_label_names::{client_allows_utf8_label_names, is_legacy_label_name};
+
+pub(crate) const DEFAULT_HEATMAP_TIME_BUCKETS_MAX: usize = 4096;
+
+pub(crate) const DEFAULT_HEATMAP_VALUE_BUCKETS: usize = 20;
+
+pub(crate) const PROFILE_ID_LABEL: &str = "__profile_id__";
+
+pub(crate) fn dot_escape(value: &str) -> String {
+    escape_quoted(value, TabEscape::Literal)
+}
+
+pub(crate) fn frames_match_call_sites(
+    frames: &[krabka_pprof::Frame],
+    call_sites: &[String],
+) -> bool {
+    krabka_pprof::stack_matches_call_sites(frames, call_sites)
+}
+
+/// Labels that Krabka stores internally for span and exemplar lookups.
+///
+/// Pyroscope does not expose these labels through the label-enumeration APIs
+/// `LabelNames` and `LabelValues`, or through series counting. Krabka attaches
+/// `__profile_id__` to each profile, so a report of it would leak per-profile
+/// cardinality that real Pyroscope never reports.
+pub(crate) fn is_internal_label(name: &str) -> bool {
+    name == PROFILE_ID_LABEL
+}
+
+pub(crate) fn label_matcher_value_escape(value: &str) -> String {
+    escape_quoted(value, TabEscape::Escaped)
+}
+
+pub(crate) fn limit(limit: Option<i64>) -> usize {
+    limit
+        .and_then(|limit| usize::try_from(limit).ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(usize::MAX)
+}
+
+pub(crate) fn normalize_render_unix_time(value: i64) -> i64 {
+    if value.abs() < 10_000_000_000 {
+        value.saturating_mul(1000)
+    } else {
+        value
+    }
+}
+
+pub(crate) fn parse_matchers(
+    matchers: &[String],
+) -> Result<Vec<krabka_blockstore::LabelMatcher>, ProfileError> {
+    let mut out = Vec::new();
+    for matcher in matchers {
+        out.extend(parse_label_selector(matcher)?);
+    }
+    Ok(out)
+}
+
+/// Maps a tenant that does not resolve to the Connect error the querier sends.
+///
+/// Pyroscope with multi-tenancy off does not read `X-Scope-OrgID`, so it has
+/// no rejection to match here. Krabka isolates blocks and queries by tenant, so
+/// it rejects a malformed name. The code is `invalid_argument`, because the
+/// fault is in the request. The message is the text that Grafana's `dskit`
+/// sends for the same header.
+pub(crate) fn tenant_connect_error(error: &TenantResolveError) -> ConnectError {
+    ConnectError::new(Code::InvalidArgument, error.to_string())
+}
+
+/// Maps a tenant that the principal of the request may not use to the Connect error the querier sends.
+///
+/// The code is `permission_denied`, which Connect sends with status 403. That
+/// is the status of the plain HTTP routes for the same denial. The message is
+/// the text of the denial. It names the principal and the tenant, and not the
+/// tenants that the principal may use.
+pub(crate) fn tenant_denied_connect_error(denied: &TenantDenied) -> ConnectError {
+    ConnectError::new(Code::PermissionDenied, denied.to_string())
+}
+
+pub(crate) fn unix_now_ms() -> i64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}

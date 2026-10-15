@@ -89,6 +89,11 @@ mod tests {
 }
 
 mod pprof_profile;
-mod profile;
 
 pub use pprof_profile::{PprofProfile, SampleType};
+
+impl From<PprofProfile> for crate::proto::Profile {
+    fn from(profile: PprofProfile) -> Self {
+        profile.inner
+    }
+}
