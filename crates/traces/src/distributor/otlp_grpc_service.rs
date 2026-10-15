@@ -39,10 +39,11 @@ impl TraceService for OtlpGrpcService {
     }
 }
 
-
 use tonic::service::Routes;
 
-use super::{GrpcReceiver, ReceiverEndpoint, RunningServer, TraceServiceServer, serve_grpc_receiver};
+use super::{
+    GrpcReceiver, ReceiverEndpoint, RunningServer, TraceServiceServer, serve_grpc_receiver,
+};
 
 /// Serve the OTLP/gRPC trace receiver until cancelled, returning the bound
 /// address and the server's handle.

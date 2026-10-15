@@ -1,8 +1,7 @@
-use super::registration::NestedSelectorTable;
 use super::{
-    COL_SPAN_ID, COL_TRACE_ID, Pipeline, PlannedSpanset, PlannerContext,
-    Result, SpanStore, SpansetExpr, TraceqlError, pipeline_to_sql,
-    register_nested_selector_tables, scan_options_with_pipeline_projections, selector,
+    COL_SPAN_ID, COL_TRACE_ID, Pipeline, PlannedSpanset, PlannerContext, Result, SpanStore,
+    SpansetExpr, TraceqlError, pipeline_to_sql, register_nested_selector_tables,
+    registration::NestedSelectorTable, scan_options_with_pipeline_projections, selector,
     structural_base_op, structural_is_negated, structural_is_union, structural_predicate_sql,
 };
 
@@ -94,7 +93,8 @@ pub(crate) async fn plan_spanset_sql<S: SpanStore>(
     let sampling_factor = sampled.scale;
     let mut selectors = Vec::new();
     super::registration::collect_field_selectors(root, &mut selectors);
-    super::registration::register_field_comparison_columns(&scan.ctx, &span_table, &selectors).await?;
+    super::registration::register_field_comparison_columns(&scan.ctx, &span_table, &selectors)
+        .await?;
     let inspected = scan.inspected;
     let nested_tables = register_nested_selector_tables(store, ctx, &scan.ctx, root).await?;
     let spanset_sql = spanset_to_sql(root, &selector::ident(&span_table), &nested_tables)?;

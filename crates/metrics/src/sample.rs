@@ -8,11 +8,11 @@ use arrow::{
 };
 
 use crate::{
+    append_optional_i64,
     arrow_codec::{decode_rows_with_identity, require_non_null, typed_column},
     histogram::HistogramCodecError,
     numeric_sample_columns::encode_numeric_sample_columns,
     schema::{COL_FINGERPRINT, COL_NH_START_TS, COL_TIMESTAMP, float_sample_schema},
-    append_optional_i64,
 };
 
 #[cfg(test)]

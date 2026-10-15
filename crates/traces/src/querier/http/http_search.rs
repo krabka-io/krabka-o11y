@@ -1,7 +1,6 @@
+use krabka_traceql::{collect_event_values, collect_link_values, collect_span_field_values};
+
 use super::*;
-use krabka_traceql::collect_span_field_values;
-use krabka_traceql::collect_event_values;
-use krabka_traceql::collect_link_values;
 
 pub(crate) fn add_intrinsic_tags(
     mut tags: Vec<ScopedTag>,

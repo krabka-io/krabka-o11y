@@ -1,11 +1,10 @@
 //! Nested-set interval assignment for one trace's span forest.
 
-use super::Span;
-
 use std::borrow::Borrow;
 
 use krabka_blockstore::{CycleSpans, SpanNode};
 
+use super::Span;
 
 /// Assign modified pre-order traversal intervals to spans of one trace.
 ///

@@ -1,5 +1,4 @@
-use axum::{extract::FromRequestParts, http::request::Parts};
-use axum::response::IntoResponse;
+use axum::{extract::FromRequestParts, http::request::Parts, response::IntoResponse};
 
 use super::{
     loki_yaml_mapping, prometheus_alerts_response, prometheus_rule_groups_response, serde_yaml_key,
@@ -16,7 +15,6 @@ use crate::{
     },
     authorized_tenant, current_unix_time_ns, json, json_response, text_response,
 };
-
 
 fn prometheus_ruler_success(data: &Value) -> Response {
     json_response(
@@ -43,7 +41,6 @@ fn status_html_page(title: &str, body: &str) -> Response {
         )
         .expect("status page headers are valid")
 }
-
 
 fn deleted_rule_response(
     state: &QuerierState,
@@ -317,20 +314,18 @@ pub(crate) async fn delete_loki_rule_group(
             format!("{}/{}", path.namespace, path.group_name),
         ),
     ];
-    let Some(snapshot) =
-        snapshot_after_rule_removal(&state, tenant.as_str(), |namespaces| {
-            let Some(groups) = namespaces.get_mut(&path.namespace) else {
-                return false;
-            };
-            if groups.remove(&path.group_name).is_none() {
-                return false;
-            }
-            if groups.is_empty() {
-                namespaces.remove(&path.namespace);
-            }
-            true
-        })
-    else {
+    let Some(snapshot) = snapshot_after_rule_removal(&state, tenant.as_str(), |namespaces| {
+        let Some(groups) = namespaces.get_mut(&path.namespace) else {
+            return false;
+        };
+        if groups.remove(&path.group_name).is_none() {
+            return false;
+        }
+        if groups.is_empty() {
+            namespaces.remove(&path.namespace);
+        }
+        true
+    }) else {
         return Ok(text_response(
             StatusCode::NOT_FOUND,
             "group does not exist\n",
@@ -362,11 +357,9 @@ pub(crate) async fn delete_loki_rule_namespace(
         resource(RESOURCE_TENANT, tenant.as_str()),
         resource(RESOURCE_RULE_NAMESPACE, namespace.as_str()),
     ];
-    let Some(snapshot) =
-        snapshot_after_rule_removal(&state, tenant.as_str(), |namespaces| {
-            namespaces.remove(&namespace).is_some()
-        })
-    else {
+    let Some(snapshot) = snapshot_after_rule_removal(&state, tenant.as_str(), |namespaces| {
+        namespaces.remove(&namespace).is_some()
+    }) else {
         return Ok(text_response(
             StatusCode::NOT_FOUND,
             "no rule groups found\n",
@@ -480,9 +473,7 @@ pub(crate) async fn prometheus_alerts(
         filters: _,
         evaluation_time,
         namespaces,
-    } = match prometheus_ruler_request(&state, &security, &headers, raw_query.as_deref())
-        .await
-    {
+    } = match prometheus_ruler_request(&state, &security, &headers, raw_query.as_deref()).await {
         Ok(request) => request,
         Err(response) => return *response,
     };
@@ -581,9 +572,7 @@ pub(crate) async fn prometheus_rules(
         filters,
         evaluation_time,
         namespaces,
-    } = match prometheus_ruler_request(&state, &security, &headers, raw_query.as_deref())
-        .await
-    {
+    } = match prometheus_ruler_request(&state, &security, &headers, raw_query.as_deref()).await {
         Ok(request) => request,
         Err(response) => return *response,
     };

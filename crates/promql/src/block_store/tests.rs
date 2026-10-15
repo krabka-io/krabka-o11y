@@ -30,9 +30,9 @@ mod manifest_store;
 mod memory_block_store_fixture;
 mod request_counts;
 
-mod missing_block_cases;
 mod exemplar_cases;
 mod metadata_sidecar_cases;
+mod missing_block_cases;
 mod query_scan_cases;
 use counting_object_store::CountingObjectStore;
 use deleted_api_block_store::deleted_api_block_store;
@@ -96,8 +96,6 @@ pub(crate) fn compaction_rows_for_series(
 }
 
 mod support;
-pub(crate) use support::exemplar_batch;
-pub(crate) use support::expected_stats;
-pub(crate) use support::instant_up_query;
-pub(crate) use support::sidecar_manifest;
-pub(crate) use support::write_float_block;
+pub(crate) use support::{
+    exemplar_batch, expected_stats, instant_up_query, sidecar_manifest, write_float_block,
+};

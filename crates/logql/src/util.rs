@@ -148,9 +148,6 @@ pub(crate) fn read_quoted_body(input: &str, pos: &mut usize) -> Result<String, Q
     Err(QuotedBodyError::Unterminated)
 }
 
-
-
-
 pub(crate) fn decode_quoted_escape(escaped: char) -> char {
     match escaped {
         'n' => '\n',
@@ -235,7 +232,6 @@ pub(crate) fn parse_bytes_literal(value: &str) -> Option<ByteSize> {
     let multiplier = bytes_unit_multiplier(&value[unit_start..])?;
     Some(ByteSize::from_bytes_f64(amount * multiplier))
 }
-
 
 /// Returns the value of one ASCII hex digit, in either case.
 ///

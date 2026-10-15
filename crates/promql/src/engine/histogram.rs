@@ -459,50 +459,48 @@ mod tests {
     }
 }
 
-mod bucket_helpers;
-mod fractions;
-mod quantiles;
 mod add_compatible_native_histogram;
 mod add_custom_histogram;
 mod add_exponential_histogram;
 mod almost_equal;
 mod apply_histogram_accessor;
 mod apply_histogram_reduction;
+mod bucket_helpers;
 mod detect_reset_bucket_counts;
+mod fractions;
 mod histogram_accumulator;
 mod native_histogram_detect_reset;
 mod native_histogram_stdvar;
+mod quantiles;
 mod reconcile_native_histogram_layouts;
 mod template_histogram;
 mod trim_native_histogram;
-pub(crate) use template_histogram::template_histogram_value;
-
-pub(super) use bucket_helpers::{
-    NormalizedClassicBuckets, ZeroCountAtThreshold, find_mixed_histogram_keys,
-    group_classic_bucket_sample, normalized_classic_histogram_buckets,
-    zero_count_at_threshold,
-};
-pub(crate) use bucket_helpers::{for_each_spanned_histogram_count, spanned_histogram_counts, standard_histogram_bound};
-use bucket_helpers::{
-    add_bucket_maps, append_native_spanned_buckets, native_histogram_buckets,
-};
-pub(super) use fractions::apply_histogram_fraction;
-use fractions::{classic_histogram_fraction, native_histogram_fraction};
-pub(super) use quantiles::apply_histogram_quantile;
-#[cfg(feature = "experimental-functions")]
-pub(super) use quantiles::apply_histogram_quantiles;
-use quantiles::{classic_histogram_quantile, format_quantile_label, native_histogram_quantile};
 pub(crate) use add_compatible_native_histogram::add_compatible_native_histogram;
 use add_custom_histogram::add_custom_histogram;
 use add_exponential_histogram::add_exponential_histogram;
 use almost_equal::almost_equal;
 pub(super) use apply_histogram_accessor::apply_histogram_accessor;
 pub(super) use apply_histogram_reduction::{HistogramReducers, apply_histogram_reduction};
+pub(super) use bucket_helpers::{
+    NormalizedClassicBuckets, ZeroCountAtThreshold, find_mixed_histogram_keys,
+    group_classic_bucket_sample, normalized_classic_histogram_buckets, zero_count_at_threshold,
+};
+use bucket_helpers::{add_bucket_maps, append_native_spanned_buckets, native_histogram_buckets};
+pub(crate) use bucket_helpers::{
+    for_each_spanned_histogram_count, spanned_histogram_counts, standard_histogram_bound,
+};
 use detect_reset_bucket_counts::detect_reset_bucket_counts;
+pub(super) use fractions::apply_histogram_fraction;
+use fractions::{classic_histogram_fraction, native_histogram_fraction};
 pub(super) use histogram_accumulator::HistogramAccumulator;
 pub(crate) use krabka_metrics::compact_spanned_histogram_counts;
 pub(super) use native_histogram_detect_reset::native_histogram_detect_reset;
 use native_histogram_stdvar::native_histogram_stdvar;
+pub(super) use quantiles::apply_histogram_quantile;
+#[cfg(feature = "experimental-functions")]
+pub(super) use quantiles::apply_histogram_quantiles;
+use quantiles::{classic_histogram_quantile, format_quantile_label, native_histogram_quantile};
+pub(crate) use template_histogram::template_histogram_value;
 
 fn observed_histogram_count(
     walked_count: f64,

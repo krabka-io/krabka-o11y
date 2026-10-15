@@ -29,20 +29,20 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use assert2::{assert, check};
-    use krabka_blockstore::{BlockIndex, Labels, MatchOp};
+    use krabka_blockstore::{BlockIndex, Labels, MatchOp, OffsetRange};
     use krabka_pprof::{
         DebuginfodConfig, EngineOpts, FlameEngine, ProfileIdentity, ProfileLabel,
         StacktraceIdentity,
     };
     use krabka_units::{mebibytes, millis, secs};
-    use object_store::{ObjectStore, memory::InMemory};
-    use std::time::Duration;
-
-    use krabka_blockstore::OffsetRange;
-    use object_store::throttle::{ThrottleConfig, ThrottledStore};
+    use object_store::{
+        ObjectStore,
+        memory::InMemory,
+        throttle::{ThrottleConfig, ThrottledStore},
+    };
 
     use crate::hot_store::WalTailProfileStore;
 

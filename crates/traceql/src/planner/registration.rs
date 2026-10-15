@@ -2,11 +2,12 @@ use arrow::{
     array::BooleanArray,
     datatypes::{DataType, Field, Schema},
 };
-use crate::{ast::field_comparison_column, engine::field_comparison_column_values};
+
 use super::{
     Arc, FieldExpr, MemTable, PlannerContext, RecordBatch, Result, SessionContext, SpanStore,
     SpansetExpr, collect_nested_selectors, collect_table, selector,
 };
+use crate::{ast::field_comparison_column, engine::field_comparison_column_values};
 
 pub(crate) fn register_batches(
     ctx: &SessionContext,

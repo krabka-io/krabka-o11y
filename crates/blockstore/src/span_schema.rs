@@ -177,7 +177,11 @@ pub fn span_block_schema_with_promoted_attrs(promoted_attrs: &[PromotedSpanAttr]
         ),
         Field::new(SCOL_ATTR_VALUE, list_list_of(DataType::Utf8), true),
         Field::new(SCOL_ATTR_VALUE_INT, list_list_of(DataType::Int64), true),
-        Field::new(SCOL_ATTR_VALUE_DOUBLE, list_list_of(DataType::Float64), true),
+        Field::new(
+            SCOL_ATTR_VALUE_DOUBLE,
+            list_list_of(DataType::Float64),
+            true,
+        ),
         Field::new(SCOL_ATTR_VALUE_BOOL, list_list_of(DataType::Boolean), true),
         Field::new(
             "attr_value_unsupported",

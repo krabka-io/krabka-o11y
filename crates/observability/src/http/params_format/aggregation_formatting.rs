@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
-use crate::http::params_format::ParsedValueAt;
-use crate::http::params_format::QuotedTextScanner;
+
+use crate::http::params_format::{ParsedValueAt, QuotedTextScanner};
 
 mod apply_approx_metric_selection;
 pub(crate) use apply_approx_metric_selection::apply_approx_metric_selection;

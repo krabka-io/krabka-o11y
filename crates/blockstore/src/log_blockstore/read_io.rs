@@ -240,7 +240,6 @@ pub async fn read_tenant_log_index_shards_from_object_store(
     })
 }
 
-
 pub(crate) async fn collect_tenant_log_index_shard_ranges(
     shard_prefix: ObjectPath,
     mut stream: futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>,
@@ -266,7 +265,6 @@ pub(crate) async fn collect_tenant_log_index_shard_ranges(
     Ok(ranges)
 }
 
-
 /// `head`s one planned block and rejects it above `max_bytes`.
 ///
 /// The object store reports a raw `u64`, so this is the one place that lifts a
@@ -287,7 +285,6 @@ pub(crate) async fn head_log_block_within_cap(
     }
     Ok(())
 }
-
 
 use super::{BlockStoreError, ByteSize, ObjectPath, ObjectStore};
 
@@ -324,7 +321,6 @@ pub(crate) async fn head_log_blocks_within_cap(
     Ok(())
 }
 
-
 #[instrument(level = "debug", skip_all, fields(tenant = %tenant), err)]
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
@@ -341,7 +337,6 @@ pub async fn list_tenant_log_index_shard_ranges_from_object_store(
     )
     .await
 }
-
 
 #[instrument(
     level = "debug",

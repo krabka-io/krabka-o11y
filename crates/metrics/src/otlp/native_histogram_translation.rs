@@ -1,7 +1,6 @@
 use super::*;
 use crate::SpannedHistogramCounts;
 
-
 /// Converts one OTLP exponential histogram point to a native histogram
 /// sample.
 /// # Errors

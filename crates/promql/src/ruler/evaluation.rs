@@ -19,14 +19,11 @@ pub(super) struct RulerGroupRef<'a> {
     pub(super) group: &'a serde_yaml::Value,
 }
 
-
-
 mod workflows;
-pub use workflows::evaluate_ruler_rule_group;
-pub use workflows::evaluate_ruler_rule_set;
-pub use workflows::evaluate_and_persist_ruler_rule_group;
 pub use workflows::{
-    RulerRuleSetEvaluationRequest, evaluate_and_persist_ruler_rule_set,
-    evaluate_and_persist_ruler_rule_set_with_report,
+    RulerRuleSetEvaluationRequest, evaluate_and_persist_ruler_rule_group,
+    evaluate_and_persist_ruler_rule_set,
+    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
+    evaluate_and_persist_ruler_rule_set_with_report, evaluate_ruler_rule_group,
+    evaluate_ruler_rule_set,
 };
-pub use workflows::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report;

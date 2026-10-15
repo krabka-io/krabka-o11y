@@ -44,12 +44,12 @@ fn assert_common_repeated_fields<Params: CommonRepeatedParams>(parse: impl Fn(&s
 }
 
 mod detected_field_types_merge_to_what_still_describes_both {
-use crate::tests::prelude::DetectedFieldType as Type;
-use super::*;
+    use super::*;
+    use crate::tests::prelude::DetectedFieldType as Type;
 
-/// Two sightings of the same field can disagree about its type, and the
-/// merge picks what still describes both.
-#[yare::parameterized(
+    /// Two sightings of the same field can disagree about its type, and the
+    /// merge picks what still describes both.
+    #[yare::parameterized(
     boolean_boolean = { Type::Boolean, Type::Boolean, Type::Boolean },
     boolean_int = { Type::Boolean, Type::Int, Type::String },
     boolean_float = { Type::Boolean, Type::Float, Type::Float },
@@ -87,15 +87,19 @@ use super::*;
     string_bytes = { Type::String, Type::Bytes, Type::String },
     string_string = { Type::String, Type::String, Type::String },
 )]
-fn detected_field_types_merge_to_what_still_describes_both(left: Type, right: Type, want: Type) {
-    check!(left.merge(right) == want, "{left:?} with {right:?}");
-}
+    fn detected_field_types_merge_to_what_still_describes_both(
+        left: Type,
+        right: Type,
+        want: Type,
+    ) {
+        check!(left.merge(right) == want, "{left:?} with {right:?}");
+    }
 }
 mod duration_unit_ratios {
-use super::*;
+    use super::*;
 
-/// The parser's unit scale is a chain of powers and calendar units.
-#[yare::parameterized(
+    /// The parser's unit scale is a chain of powers and calendar units.
+    #[yare::parameterized(
     nanosecond_to_microsecond = { "ns", "us", 1_000_i128 },
     microsecond_to_millisecond = { "us", "ms", 1_000_i128 },
     millisecond_to_second = { "ms", "s", 1_000_i128 },
@@ -105,14 +109,14 @@ use super::*;
     day_to_week = { "d", "w", 7_i128 },
     day_to_year = { "d", "y", 365_i128 },
 )]
-fn duration_unit_ratios_match_expected_scale(smaller: &str, larger: &str, ratio: i128) {
-    let nanoseconds = |name| {
-        crate::tests::prelude::prometheus_duration_unit(name)
-            .expect("known unit")
-            .nanoseconds
-    };
-    check!(nanoseconds(larger) == ratio * nanoseconds(smaller));
-}
+    fn duration_unit_ratios_match_expected_scale(smaller: &str, larger: &str, ratio: i128) {
+        let nanoseconds = |name| {
+            crate::tests::prelude::prometheus_duration_unit(name)
+                .expect("known unit")
+                .nanoseconds
+        };
+        check!(nanoseconds(larger) == ratio * nanoseconds(smaller));
+    }
 }
 /// The detected-fields parser carries the same first-wins contract.
 #[test]

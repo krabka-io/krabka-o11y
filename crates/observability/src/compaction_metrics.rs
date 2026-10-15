@@ -39,9 +39,7 @@ mod tests;
 
 mod compaction_metrics_bundle;
 
-pub use self::{
-    compaction_metrics_bundle::CompactionMetrics,
-};
+pub use self::compaction_metrics_bundle::CompactionMetrics;
 
 /// The `status` label the compaction-run counter carries.
 ///

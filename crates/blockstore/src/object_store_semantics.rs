@@ -22,7 +22,6 @@ use object_store::{
 use tracing::instrument;
 use url::Url;
 
-
 /// Runs the startup probe that fits `access`.
 ///
 /// [`ObjectStoreAccess::ReadWrite`] runs [`verify_object_store_semantics`]

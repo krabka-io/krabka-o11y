@@ -81,4 +81,3 @@ pub(crate) struct TrieFrame {
     pub(crate) key: Vec<u8>,
     pub(crate) remaining: usize,
 }
-

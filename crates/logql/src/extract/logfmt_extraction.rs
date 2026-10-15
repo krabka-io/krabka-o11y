@@ -43,7 +43,6 @@ impl LogfmtExtraction {
     }
 }
 
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogfmtParserConfig {
     pub(crate) extractions: Vec<LogfmtExtraction>,

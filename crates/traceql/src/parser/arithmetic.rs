@@ -1,4 +1,4 @@
-use super::{Result, TraceqlError, ArithmeticOperands, Value, arithmetic_type_error, i64_to_f64};
+use super::{ArithmeticOperands, Result, TraceqlError, Value, arithmetic_type_error, i64_to_f64};
 
 // Value Div
 pub(crate) fn value_div(lhs: Value, rhs: Value) -> Result<Value> {

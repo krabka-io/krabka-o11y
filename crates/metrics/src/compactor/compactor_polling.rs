@@ -1,6 +1,10 @@
+use krabka_observability::{
+    KafkaWalHeader,
+    persisted_format::{PersistedHeader, validate_persisted_format},
+    set_remote_parent_from_kafka_headers,
+};
+
 use super::*;
-use krabka_observability::{KafkaWalHeader, set_remote_parent_from_kafka_headers};
-use krabka_observability::persisted_format::{PersistedHeader, validate_persisted_format};
 
 /// Converts polled consumer records from the metrics WAL topic into compactor
 /// inputs.
@@ -130,7 +134,6 @@ where
         batch,
     })
 }
-
 
 /// Builds the per-poll-batch `metrics_compaction` consumer span and joins it to
 /// the producer trace on a WAL record's `traceparent` header, if there is one.

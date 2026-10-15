@@ -7,7 +7,6 @@ pub struct PartitionWindow {
     pub records: Vec<SpanRecord>,
 }
 
-
 /// Accumulates decoded [`PartitionWindow`]s across several WAL polls, so the
 /// block-builder can flush one larger block per partition instead of a tiny
 /// block per poll.
@@ -115,7 +114,6 @@ impl FlushAccumulator {
     }
 }
 
-
 /// Flush decoded partition windows and durably save the trace index.
 ///
 /// This function returns the number of span blocks it durably wrote. The caller
@@ -160,7 +158,6 @@ pub async fn flush_partition_windows(
         .map_err(|err| TracesError::Block(err.to_string()))
 }
 
-
 /// Flush the accumulated buffer to durable blocks, then commit WAL offsets.
 ///
 /// This drains the accumulator first, so a flush error leaves nothing
@@ -196,4 +193,3 @@ where
     }
     consumer.commit_sync().await
 }
-

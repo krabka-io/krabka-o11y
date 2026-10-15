@@ -51,7 +51,6 @@ impl JsonExtraction {
     }
 }
 
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonParserConfig {
     pub(crate) extractions: Vec<JsonExtraction>,

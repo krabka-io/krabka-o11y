@@ -51,7 +51,6 @@ fn loki_parquet_value_response(
     loki_parquet_batch_response(&batch)
 }
 
-
 fn update_loki_stream_values(value: &mut Value, mut update_values: impl FnMut(&mut Vec<Value>)) {
     let Some(streams) = value
         .pointer_mut("/data/result")
@@ -434,7 +433,6 @@ mod tests {
 
 use std::collections::HashSet;
 
-
 /// Applies a log query's `options` to a `streams` response, keeping only
 /// entries before `end_exclusive` when it is set.
 pub(crate) fn apply_loki_stream_options(
@@ -649,7 +647,6 @@ pub(crate) enum LokiStreamEncoding {
 
 use serde::{Serialize, Serializer, ser::SerializeSeq as _};
 
-
 /// One entry of a Loki `streams` result, with its labels kept apart by origin.
 ///
 /// Loki's default JSON encoding serialises an entry as the two-element array
@@ -798,7 +795,6 @@ pub(crate) fn loki_streams_parquet_response(value: &Value) -> Result<Response, H
 }
 
 use std::fmt::{self, Display, Formatter};
-
 
 /// A numeric timestamp until encoding, or an unchanged noncanonical string.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

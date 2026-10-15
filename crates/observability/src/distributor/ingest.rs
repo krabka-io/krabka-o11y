@@ -1,4 +1,3 @@
-use crate::service_metrics::IngestPushMeasurement;
 use std::io::Read as _;
 
 use axum::response::IntoResponse;
@@ -12,8 +11,8 @@ use crate::{
     StatusCode, TenantId, Value, WalLogRecord, is_loki_json_content_type, is_protobuf_content_type,
     loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
     normalize_otlp_logs, normalize_otlp_proto_logs, quote_logql_string, server_security::Principal,
+    service_metrics::IngestPushMeasurement,
 };
-
 
 fn loki_json_push_unclosed_object_error(context: &str, bigger_context: &str) -> String {
     format!(
@@ -35,7 +34,6 @@ fn validate_typed_loki_values(
     }
     Ok(())
 }
-
 
 pub(crate) fn encode_otlp_status_message(message: &str) -> Vec<u8> {
     let message = message.trim_end_matches('\n').as_bytes();

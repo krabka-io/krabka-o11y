@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use krabka_traceql::{MetricLabel, TraceMetricLabelType, TraceMetricSeries};
-use super::*;
 
+use super::*;
 
 /// One TraceQL-metrics label as Tempo's protojson `commonv1.KeyValue`, which is
 /// `{"key": k, "value": {"stringValue": v}}`.

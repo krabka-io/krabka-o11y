@@ -261,13 +261,13 @@ mod tests {
 mod live_store;
 mod run;
 mod values;
+use krabka_traceql::bytes_to_hex;
+pub use live_store::LiveStore;
+pub use run::run;
 use values::{
     INTRINSIC_TAGS, collect_event_values, collect_link_values, collect_span_intrinsic_value,
     collect_trace_intrinsic_values, event_ref, order_spans, span_ref,
 };
-use krabka_traceql::bytes_to_hex;
-pub use live_store::LiveStore;
-pub use run::run;
 
 use crate::span::typed_value_parts::typed_value_parts;
 

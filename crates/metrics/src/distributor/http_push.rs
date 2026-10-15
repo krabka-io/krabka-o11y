@@ -3,11 +3,10 @@ use std::io::Read as _;
 use axum::http::header::CONTENT_ENCODING;
 use flate2::read::GzDecoder;
 use krabka_units::convert::ByteSizeExt as _;
-use super::*;
-use crate::wire::WireError;
 use prost::Message as _;
 
-
+use super::*;
+use crate::wire::WireError;
 
 super::ingest_push_handler!(
     clocks_push,
@@ -181,7 +180,6 @@ pub(crate) async fn otlp_push_inner(
         partial_success,
     })
 }
-
 
 super::ingest_push_handler!(push, push_inner, super::respond_ingest_request);
 

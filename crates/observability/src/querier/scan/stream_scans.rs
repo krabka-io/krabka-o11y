@@ -1,8 +1,9 @@
 use std::{
+    borrow::Borrow,
     cmp::Reverse,
     collections::{BinaryHeap, HashSet},
 };
-use std::borrow::Borrow;
+
 use super::registered_local_log_session;
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeMap, BlockDescriptor, CompactionFrontier, FsPath, LabelIndex,
@@ -12,8 +13,6 @@ use crate::{
     append_matching_hot_log_record, append_matching_log_batches, apply_distinct_to_streams,
     loki_streams_response, loki_streams_response_with_warnings, sort_loki_stream_values,
 };
-
-
 
 /// How many cold blocks a scan fetches at once when nothing configures it.
 ///
@@ -187,13 +186,7 @@ pub(crate) async fn collect_object_store_stream_log_batches(
     block: &BlockDescriptor,
     plan: &StreamPlan,
 ) -> Result<Vec<RecordBatch>, QueryError> {
-    super::collect_object_store_log_batches(
-        store,
-        prefix,
-        block,
-        &stream_plan_scan_sql(plan),
-    )
-    .await
+    super::collect_object_store_log_batches(store, prefix, block, &stream_plan_scan_sql(plan)).await
 }
 
 pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontier<

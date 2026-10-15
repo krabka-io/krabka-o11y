@@ -1,11 +1,10 @@
 use super::{
     ParseError, ParsedTemplateValue, TemplateControlExpression, TemplatePart, TemplateWith,
-    ensure_template_parenthesized_token, ensure_template_quoted_token,
-    is_template_comment_action, parse_template_action, parse_template_control_body,
-    parse_template_else_body, parse_template_parenthesized_token,
-    parse_template_quoted_token, template_parse_error, trim_template_body_end,
+    ensure_template_parenthesized_token, ensure_template_quoted_token, is_template_comment_action,
+    parse_template_action, parse_template_control_body, parse_template_else_body,
+    parse_template_parenthesized_token, parse_template_quoted_token, template_parse_error,
+    template_quote_scanner::TemplateQuoteScanner, trim_template_body_end,
 };
-use super::template_quote_scanner::TemplateQuoteScanner;
 
 // Find Template Control Action
 pub(crate) struct FoundTemplateControlAction<'a> {

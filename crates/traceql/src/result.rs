@@ -477,7 +477,6 @@ pub struct TraceMetricsResponse {
     pub series: Vec<TraceMetricSeries>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use assert2::assert;

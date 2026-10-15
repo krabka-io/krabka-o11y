@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::duration_terms::duration_terms_ms;
-
 use super::{Line, Result, parse_error};
+use crate::duration_terms::duration_terms_ms;
 
 pub(crate) fn parse_optional_histogram_f64(
     fields: &BTreeMap<&str, &str>,

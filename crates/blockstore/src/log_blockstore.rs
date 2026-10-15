@@ -1410,20 +1410,20 @@ mod block_key;
 mod label_index;
 mod label_predicate;
 mod labels;
-mod log_listing;
 mod log_block_table_provider;
 mod log_index_manifest;
 mod log_index_shard_catalog;
+mod log_listing;
 mod log_row;
-mod match_op;
 mod manifest_io;
+mod match_op;
+mod paths;
 mod read_io;
 mod row_codec;
-mod write_io;
-mod paths;
 mod series_fingerprint;
 mod structured_metadata;
 mod time_range;
+mod write_io;
 
 fn sort_log_rows(rows: &mut [LogRow]) {
     rows.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
@@ -1436,18 +1436,35 @@ pub use label_index::{LabelIndex, TenantSeries};
 pub use label_predicate::LabelPredicate;
 pub use labels::{Labels, labels};
 pub use log_block_table_provider::LogBlockTableProvider;
-use log_listing::{log_listing_options, object_store_log_listing_table, planned_log_listing_table};
 use log_index_manifest::LogIndexManifest;
 pub use log_index_manifest::LogIndexes;
 use log_index_shard_catalog::LogIndexShardCatalog;
+use log_listing::{log_listing_options, object_store_log_listing_table, planned_log_listing_table};
 pub use log_row::LogRow;
+pub use manifest_io::{
+    read_log_index_manifest_from_object_store, read_tenant_log_index_manifest_from_object_store,
+    write_log_index_manifest, write_log_index_manifest_to_object_store,
+    write_tenant_log_index_manifest_to_object_store,
+};
 pub use match_op::{LabelValueLookup, MatchOp};
-pub use manifest_io::{read_log_index_manifest_from_object_store, read_tenant_log_index_manifest_from_object_store, write_log_index_manifest, write_log_index_manifest_to_object_store, write_tenant_log_index_manifest_to_object_store};
-pub use read_io::{list_tenant_log_index_shard_ranges_from_object_store, list_tenant_log_index_shard_ranges_overlapping_query_from_object_store, read_log_block, read_log_block_from_object_store, read_tenant_log_index_shard_from_object_store, read_tenant_log_index_shard_ranges_from_object_store, read_tenant_log_index_shard_ranges_or_empty_from_object_store, read_tenant_log_index_shards_from_object_store};
 pub(crate) use read_io::head_log_blocks_within_cap;
+pub use read_io::{
+    list_tenant_log_index_shard_ranges_from_object_store,
+    list_tenant_log_index_shard_ranges_overlapping_query_from_object_store, read_log_block,
+    read_log_block_from_object_store, read_tenant_log_index_shard_from_object_store,
+    read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shard_ranges_or_empty_from_object_store,
+    read_tenant_log_index_shards_from_object_store,
+};
 use read_io::{log_snapshot_error, read_log_index_shard_snapshot_base};
 use row_codec::{batch_to_rows, encode_log_block, rows_to_batch, validate_rows};
-pub use write_io::{delete_tenant_log_index_shard_from_object_store, register_log_blocks, register_log_blocks_from_object_store, update_tenant_log_index_shard_to_object_store, write_log_block, write_log_block_to_object_store, write_tenant_log_index_shard_catalog_to_object_store, write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store};
+pub use write_io::{
+    delete_tenant_log_index_shard_from_object_store, register_log_blocks,
+    register_log_blocks_from_object_store, update_tenant_log_index_shard_to_object_store,
+    write_log_block, write_log_block_to_object_store,
+    write_tenant_log_index_shard_catalog_to_object_store,
+    write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store,
+};
 
 fn log_listing_table_from_paths(
     table_paths: Vec<ListingTableUrl>,
@@ -1458,11 +1475,16 @@ fn log_listing_table_from_paths(
         .with_schema(schema);
     Ok(ListingTable::try_new(config)?)
 }
-pub use paths::{block_path, log_tenant_index_shard_list_offset_object_path, log_tenant_index_shard_manifest_object_path};
 use paths::parse_log_tenant_index_shard_range_from_object_path;
+pub use paths::{
+    block_path, log_tenant_index_shard_list_offset_object_path,
+    log_tenant_index_shard_manifest_object_path,
+};
 pub use series_fingerprint::{SeriesFingerprint, series_fingerprint};
 pub use structured_metadata::StructuredMetadata;
-use structured_metadata::{structured_metadata_array, structured_metadata_type, structured_metadata_value};
+use structured_metadata::{
+    structured_metadata_array, structured_metadata_type, structured_metadata_value,
+};
 pub use time_range::TimeRange;
 
 #[derive(Debug, Error)]

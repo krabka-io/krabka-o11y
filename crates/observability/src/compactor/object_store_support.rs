@@ -1,12 +1,14 @@
-use krabka_blockstore::{ConditionalUpdateRequirement, MeteredObjectStore, ObjectStoreAccess, ObjectStoreMetrics, verify_object_store_access};
+use krabka_blockstore::{
+    ConditionalUpdateRequirement, MeteredObjectStore, ObjectStoreAccess, ObjectStoreMetrics,
+    verify_object_store_access,
+};
+
 use crate::{
     Arc, CompactionFrontierRefreshSource, ConfiguredObjectStore, LocalFileSystem,
     LogDeleteRequestStoreError, ObjectPath, ObjectStore, ServiceConfig, ServiceConfigError,
     SharedCompactionFrontier, SharedLogDeleteRequests, Url, parse_url_opts,
     querier_object_store_prefix, shared_compaction_frontier_from_object_store,
 };
-
-
 
 pub(crate) fn compactor_delete_requests_for_config(
     config: &ServiceConfig,
@@ -19,7 +21,6 @@ pub(crate) fn compactor_delete_requests_for_config(
 }
 
 #[cfg_attr(test, mutants::skip)]
-
 
 /// Builds the logs object store, wrapped so every request it serves is counted
 /// in `metrics`.

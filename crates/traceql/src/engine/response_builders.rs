@@ -1,14 +1,23 @@
-use super::{
-    BTreeMap, CompareSpec, HashSet, MetricsRange, RecordBatch, Result, SpanIdentity,
-    Time, TraceMetricsResponse, TraceqlError, accumulate_compare_counts, apply_metric_filter,
-    apply_rank, build_compare_series, metric_exemplar, metric_label_key, metric_labels,
-    metric_log2_bucket_value, metric_numeric_value, metric_series_for_group, metric_filter,
-    rank_limit, sample_exemplar_rows, span_start_column,
-    metrics::{ExemplarBuckets, ExemplarRange, MetricBucket, MetricExemplarPolicy, MetricFunction,
-        MetricGrid, MetricLabels, MetricPlan}, sample_exemplar_rows::ExemplarRow,
-};
-use crate::{ast::Pipeline, ids::{DurationNanos, UnixNano}, result::{MetricLabel, TraceMetricSeries}};
 use krabka_units::convert::TimeExt as _;
+
+use super::{
+    BTreeMap, CompareSpec, HashSet, MetricsRange, RecordBatch, Result, SpanIdentity, Time,
+    TraceMetricsResponse, TraceqlError, accumulate_compare_counts, apply_metric_filter, apply_rank,
+    build_compare_series, metric_exemplar, metric_filter, metric_label_key, metric_labels,
+    metric_log2_bucket_value, metric_numeric_value, metric_series_for_group,
+    metrics::{
+        ExemplarBuckets, ExemplarRange, MetricBucket, MetricExemplarPolicy, MetricFunction,
+        MetricGrid, MetricLabels, MetricPlan,
+    },
+    rank_limit, sample_exemplar_rows,
+    sample_exemplar_rows::ExemplarRow,
+    span_start_column,
+};
+use crate::{
+    ast::Pipeline,
+    ids::{DurationNanos, UnixNano},
+    result::{MetricLabel, TraceMetricSeries},
+};
 
 // Assemble Compare Response
 pub(crate) fn assemble_compare_response(
@@ -223,11 +232,8 @@ pub(crate) fn assemble_metrics_response(
         metric.function,
         MetricFunction::HistogramOverTime | MetricFunction::QuantileOverTime
     ) {
-        let mut admission = ExemplarBuckets::new(
-            metric_policy.max_exemplars_per_series,
-            start_ns.0,
-            end_ns.0,
-        );
+        let mut admission =
+            ExemplarBuckets::new(metric_policy.max_exemplars_per_series, start_ns.0, end_ns.0);
         for series in &mut series {
             series
                 .exemplars
@@ -263,15 +269,13 @@ pub(crate) fn assemble_metrics_response(
     Ok(TraceMetricsResponse { series })
 }
 
-
 use super::{
-    ByteSize, COL_DURATION, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION,
-    COL_KIND, COL_NAME, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID,
-    COL_ROOT_SERVICE_NAME, COL_ROOT_SPAN_NAME, COL_SPAN_ID, COL_START, COL_STATUS_CODE,
-    COL_STATUS_MESSAGE, COL_TRACE_DURATION, COL_TRACE_ID, COL_TRACE_START, SearchResponse,
-    SpanRef, SpanSet, TraceResult, deduplicate_search_spans,
-    fixed_16, fixed_8, i32_value, i64_value, optional_fixed_8, row_attrs, string_value,
-    u64_from_i64,
+    ByteSize, COL_DURATION, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, COL_KIND,
+    COL_NAME, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID, COL_ROOT_SERVICE_NAME,
+    COL_ROOT_SPAN_NAME, COL_SPAN_ID, COL_START, COL_STATUS_CODE, COL_STATUS_MESSAGE,
+    COL_TRACE_DURATION, COL_TRACE_ID, COL_TRACE_START, SearchResponse, SpanRef, SpanSet,
+    TraceResult, deduplicate_search_spans, fixed_8, fixed_16, i32_value, i64_value,
+    optional_fixed_8, row_attrs, string_value, u64_from_i64,
 };
 pub(crate) fn assemble_search_response(
     batches: &[RecordBatch],
@@ -407,7 +411,6 @@ pub(crate) fn assemble_search_response(
         inspected,
     })
 }
-
 
 pub(crate) struct TraceAcc {
     pub(crate) root_service_name: String,

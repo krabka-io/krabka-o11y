@@ -25,7 +25,6 @@ use krabka_blockstore::{
 
 use crate::error::TracesError;
 
-
 /// The promoted attributes a merge of `batches` must carry.
 ///
 /// Compaction inputs need not agree: an operator can edit

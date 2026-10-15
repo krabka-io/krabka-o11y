@@ -83,5 +83,6 @@ fn assert_pending_rule_evaluation(pending: &RulerGroupEvaluation) {
 }
 
 mod support;
-pub(crate) use support::labels;
-pub(crate) use support::parse_duration_supports_all_units_and_compounds_and_rejects_bad_input;
+pub(crate) use support::{
+    labels, parse_duration_supports_all_units_and_compounds_and_rejects_bad_input,
+};

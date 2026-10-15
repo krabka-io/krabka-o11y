@@ -68,7 +68,6 @@ pub async fn serve_jaeger_compact_udp(
     }))
 }
 
-
 pub(crate) async fn handle_jaeger_compact_datagram(
     state: &DistributorState,
     body: &[u8],

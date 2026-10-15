@@ -140,8 +140,6 @@ mod tests {
     }
 }
 
-
-
 pub(crate) fn symbol_ref(table: &SymbolTable, index: u32) -> Result<String, WireError> {
     table
         .resolve(index)
@@ -187,7 +185,6 @@ pub(crate) fn metadata_type(value: i32) -> String {
     }
     .to_string()
 }
-
 
 use crate::wire::DecodedHistogramSample;
 

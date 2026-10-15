@@ -6,7 +6,6 @@ use crate::{
     TsdbStats, test_support::tenant_id,
 };
 
-
 mod data_merge_cases;
 mod metadata_merge_cases;
 use labels::labels;
@@ -72,5 +71,4 @@ fn up_sample(timestamp_ms: i64, value: f64) -> MergedFloatSample {
 }
 
 mod support;
-pub(crate) use support::labels;
-pub(crate) use support::min_present_time_preserves_legitimate_zero_min_time;
+pub(crate) use support::{labels, min_present_time_preserves_legitimate_zero_min_time};

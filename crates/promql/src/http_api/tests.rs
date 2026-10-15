@@ -82,7 +82,6 @@ mod ruler_api_cases;
 mod http_semantics;
 
 mod support;
-pub(crate) use support::annotation_query_uri;
-pub(crate) use support::annotation_store;
-pub(crate) use support::first_vector_sample;
-pub(crate) use support::two_series_store;
+pub(crate) use support::{
+    annotation_query_uri, annotation_store, first_vector_sample, two_series_store,
+};

@@ -2,12 +2,11 @@ use krabka_blockstore::update_tenant_log_index_shard_to_object_store;
 use krabka_units::convert::StdDurationExt;
 
 use crate::{
-    ActiveLogDeleteFilter,
-    ActiveLogDeleteFilterError, BTreeMap, BTreeSet, BlockDeletion, BlockDescriptor, BlockIndex,
-    BlockKey, BlockStoreError, CompactorRunError, Error, ErrorKind, FsPath, Instant,
-    KafkaWalRecord, LabelIndex, LogRow, LogWalConsumer, NonZeroUsize, ObjectPath, ObjectStore,
-    SharedLogDeleteRequests, Time, TimeExt, TimeRange, WalConsumerError, WalLogRecord, WalPosition,
-    active_log_delete_filters_from_requests, delete_blocks, is_deleted_log_entry,
+    ActiveLogDeleteFilter, ActiveLogDeleteFilterError, BTreeMap, BTreeSet, BlockDeletion,
+    BlockDescriptor, BlockIndex, BlockKey, BlockStoreError, CompactorRunError, Error, ErrorKind,
+    FsPath, Instant, KafkaWalRecord, LabelIndex, LogRow, LogWalConsumer, NonZeroUsize, ObjectPath,
+    ObjectStore, SharedLogDeleteRequests, Time, TimeExt, TimeRange, WalConsumerError, WalLogRecord,
+    WalPosition, active_log_delete_filters_from_requests, delete_blocks, is_deleted_log_entry,
     log_block_deletion, read_log_block, read_log_block_from_object_store, read_log_index_manifest,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
@@ -206,7 +205,6 @@ pub(crate) fn keep_log_rows_not_deleted(
 }
 
 #[cfg_attr(test, mutants::skip)]
-
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn materialize_delete_requests_in_existing_local_manifest_blocks(
     root: &FsPath,
@@ -263,7 +261,6 @@ pub(crate) fn materialize_delete_requests_in_existing_local_manifest_blocks(
 }
 
 #[cfg_attr(test, mutants::skip)]
-
 #[cfg_attr(test, mutants::skip)]
 pub(crate) async fn materialize_delete_requests_in_object_store_block_index(
     store: &dyn ObjectStore,

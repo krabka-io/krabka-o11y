@@ -35,7 +35,6 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
-
 /// Renders one YAML scalar the way the command line would have spelled it.
 ///
 /// The rendered text goes straight back through the argument's own

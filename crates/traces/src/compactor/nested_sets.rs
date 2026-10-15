@@ -1,6 +1,5 @@
-use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
-
 use super::*;
+use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
 
 pub(crate) struct Int32ColumnReplacement<'a> {
     pub(crate) name: &'a str,
@@ -23,7 +22,6 @@ pub(crate) fn replace_int32_columns(
     }
     RecordBatch::try_new(schema, columns).map_err(|err| TracesError::Block(err.to_string()))
 }
-
 
 pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, TracesError> {
     let BatchNestedSets {

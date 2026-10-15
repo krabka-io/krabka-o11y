@@ -38,10 +38,11 @@ impl CollectorService for JaegerGrpcService {
     }
 }
 
-
 use tonic::service::Routes;
 
-use super::{GrpcReceiver, ReceiverEndpoint, RunningServer, CollectorServiceServer, serve_grpc_receiver};
+use super::{
+    CollectorServiceServer, GrpcReceiver, ReceiverEndpoint, RunningServer, serve_grpc_receiver,
+};
 
 /// Serve the Jaeger API v2 gRPC trace receiver until cancelled, returning the
 /// bound address and the server's handle.

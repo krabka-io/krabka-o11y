@@ -212,7 +212,6 @@ pub(crate) mod test_support {
     }
 }
 
-
 #[derive(Clone, Default)]
 pub(super) struct JaegerBatch {
     pub(crate) process: JaegerProcess,
@@ -1030,11 +1029,11 @@ mod thrift_cursor;
 
 use binary_input::BinaryInput;
 use compact_input::CompactInput;
+pub(super) use thrift_cursor::wire_length;
 use thrift_cursor::{
     CollectionHeader, FieldHeader, MapHeader, check_collection_header, check_map_header,
     descend_skip_depth, read_utf8_binary,
 };
-pub(super) use thrift_cursor::wire_length;
 
 pub(crate) const BT_BINARY: u8 = 11;
 

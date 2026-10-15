@@ -1,6 +1,10 @@
 //! WAL-head consumer types and replay flow.
 
-use krabka_observability::{ReadinessGate, persisted_format::{PersistedFormatError, PersistedHeader, validate_persisted_format}, wal_consumer_metrics::WalConsumerMetrics};
+use krabka_observability::{
+    ReadinessGate,
+    persisted_format::{PersistedFormatError, PersistedHeader, validate_persisted_format},
+    wal_consumer_metrics::WalConsumerMetrics,
+};
 
 use super::*;
 

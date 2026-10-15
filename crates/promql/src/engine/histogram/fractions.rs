@@ -1,5 +1,6 @@
-use super::*;
 use std::num::FpCategory;
+
+use super::*;
 
 /// Applies `histogram_fraction(lower, upper, v)` to an instant vector `v`,
 /// with `bounds` holding `lower` and `upper`.

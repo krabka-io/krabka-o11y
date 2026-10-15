@@ -218,7 +218,6 @@ pub struct TracePartial {
     pub metrics: Metrics,
 }
 
-
 /// A programmable in-process backend for tests.
 ///
 /// It returns the next stubbed response, FIFO, and the last stub repeats if

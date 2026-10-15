@@ -1,79 +1,78 @@
 use super::*;
 
 mod histogram_cell_matches_get_over_a_pre_sliced_backing_array {
-use super::*;
+    use super::*;
 
-#[test]
-pub(crate) fn histogram_cell_matches_get_over_a_pre_sliced_backing_array() {
-    let rows = native_histogram_rows();
-    let batch = encode_native_histograms(&rows).unwrap();
-    let histograms = native_histogram_struct_array(&batch);
-    let sliced = histograms.slice(1, 2);
-    let range_array =
-        RangeArray::from_ranges(sliced, [RangeWindow::new(0, 1), RangeWindow::new(1, 1)]).unwrap();
+    #[test]
+    pub(crate) fn histogram_cell_matches_get_over_a_pre_sliced_backing_array() {
+        let rows = native_histogram_rows();
+        let batch = encode_native_histograms(&rows).unwrap();
+        let histograms = native_histogram_struct_array(&batch);
+        let sliced = histograms.slice(1, 2);
+        let range_array =
+            RangeArray::from_ranges(sliced, [RangeWindow::new(0, 1), RangeWindow::new(1, 1)])
+                .unwrap();
 
-    let via_get = range_array.get(0).unwrap();
-    let via_get = via_get.as_any().downcast_ref::<StructArray>().unwrap();
-    let via_get_batch = RecordBatch::from(via_get.clone());
-    let decoded = decode_native_histograms(&via_get_batch).unwrap();
-    let cell = range_array.histogram_cell(0).unwrap();
+        let via_get = range_array.get(0).unwrap();
+        let via_get = via_get.as_any().downcast_ref::<StructArray>().unwrap();
+        let via_get_batch = RecordBatch::from(via_get.clone());
+        let decoded = decode_native_histograms(&via_get_batch).unwrap();
+        let cell = range_array.histogram_cell(0).unwrap();
 
-    assert2::assert!(decoded == vec![rows[1].clone()]);
-    check!(cell.schema_slice() == [rows[1].hist.schema]);
-    check!(cell.count_slice() == [rows[1].hist.count]);
-    check!(cell.positive_counts(0) == Some(rows[1].hist.positive_counts.as_slice()));
-    check!(cell.negative_counts(0) == Some(rows[1].hist.negative_counts.as_slice()));
-}
-
+        assert2::assert!(decoded == vec![rows[1].clone()]);
+        check!(cell.schema_slice() == [rows[1].hist.schema]);
+        check!(cell.count_slice() == [rows[1].hist.count]);
+        check!(cell.positive_counts(0) == Some(rows[1].hist.positive_counts.as_slice()));
+        check!(cell.negative_counts(0) == Some(rows[1].hist.negative_counts.as_slice()));
+    }
 }
 
 mod histogram_cell_reads_native_histogram_windows {
-use super::*;
+    use super::*;
 
-#[test]
-pub(crate) fn histogram_cell_reads_native_histogram_windows() {
-    let rows = native_histogram_rows();
-    let batch = encode_native_histograms(&rows).unwrap();
-    let histograms = native_histogram_struct_array(&batch);
-    let range_array =
-        RangeArray::from_ranges(histograms, [RangeWindow::new(0, 2), RangeWindow::new(2, 1)])
-            .unwrap();
+    #[test]
+    pub(crate) fn histogram_cell_reads_native_histogram_windows() {
+        let rows = native_histogram_rows();
+        let batch = encode_native_histograms(&rows).unwrap();
+        let histograms = native_histogram_struct_array(&batch);
+        let range_array =
+            RangeArray::from_ranges(histograms, [RangeWindow::new(0, 2), RangeWindow::new(2, 1)])
+                .unwrap();
 
-    let first_cell = range_array.histogram_cell(0).unwrap();
-    check!(first_cell.len() == 2);
-    check!(!first_cell.is_empty());
-    check!(first_cell.schema_slice() == [2, -53]);
-    check!(first_cell.reset_hint_slice() == [ResetHint::No.as_i8(), ResetHint::Gauge.as_i8()]);
-    check!(first_cell.zero_threshold_slice() == [1e-128, 0.25]);
-    check!(first_cell.zero_count_slice() == [3.0, 0.5]);
-    check!(first_cell.count_slice() == [10.0, 4.0]);
-    check!(first_cell.sum_slice() == [42.5, 7.5]);
-    check!(first_cell.is_float(0) == Some(false));
-    check!(first_cell.is_float(1) == Some(true));
-    check!(first_cell.is_float(2).is_none());
+        let first_cell = range_array.histogram_cell(0).unwrap();
+        check!(first_cell.len() == 2);
+        check!(!first_cell.is_empty());
+        check!(first_cell.schema_slice() == [2, -53]);
+        check!(first_cell.reset_hint_slice() == [ResetHint::No.as_i8(), ResetHint::Gauge.as_i8()]);
+        check!(first_cell.zero_threshold_slice() == [1e-128, 0.25]);
+        check!(first_cell.zero_count_slice() == [3.0, 0.5]);
+        check!(first_cell.count_slice() == [10.0, 4.0]);
+        check!(first_cell.sum_slice() == [42.5, 7.5]);
+        check!(first_cell.is_float(0) == Some(false));
+        check!(first_cell.is_float(1) == Some(true));
+        check!(first_cell.is_float(2).is_none());
 
-    let first_positive_spans = first_cell.positive_spans(0).unwrap();
-    check!(first_positive_spans.offsets() == [0]);
-    check!(first_positive_spans.lengths() == [2]);
-    check!(first_cell.positive_counts(0) == Some(&[4.0, 6.0][..]));
-    let second_negative_spans = first_cell.negative_spans(1).unwrap();
-    check!(second_negative_spans.offsets() == [-1]);
-    check!(second_negative_spans.lengths() == [1]);
-    check!(first_cell.negative_counts(1) == Some(&[0.75][..]));
-    check!(first_cell.custom_values(0).is_none());
-    check!(first_cell.custom_values(1) == Some(&[0.5, 1.0, 2.0][..]));
-    check!(first_cell.start_timestamp_ms(0).is_none());
-    check!(first_cell.start_timestamp_ms(1) == Some(123));
+        let first_positive_spans = first_cell.positive_spans(0).unwrap();
+        check!(first_positive_spans.offsets() == [0]);
+        check!(first_positive_spans.lengths() == [2]);
+        check!(first_cell.positive_counts(0) == Some(&[4.0, 6.0][..]));
+        let second_negative_spans = first_cell.negative_spans(1).unwrap();
+        check!(second_negative_spans.offsets() == [-1]);
+        check!(second_negative_spans.lengths() == [1]);
+        check!(first_cell.negative_counts(1) == Some(&[0.75][..]));
+        check!(first_cell.custom_values(0).is_none());
+        check!(first_cell.custom_values(1) == Some(&[0.5, 1.0, 2.0][..]));
+        check!(first_cell.start_timestamp_ms(0).is_none());
+        check!(first_cell.start_timestamp_ms(1) == Some(123));
 
-    let second_cell = range_array.histogram_cell(1).unwrap();
-    check!(second_cell.len() == 1);
-    check!(second_cell.positive_spans(0).unwrap().is_empty());
-    check!(second_cell.positive_counts(0) == Some(&[][..]));
-    check!(range_array.histogram_cell(2).is_none());
-    check!(range_array.value_slice(0).is_none());
+        let second_cell = range_array.histogram_cell(1).unwrap();
+        check!(second_cell.len() == 1);
+        check!(second_cell.positive_spans(0).unwrap().is_empty());
+        check!(second_cell.positive_counts(0) == Some(&[][..]));
+        check!(range_array.histogram_cell(2).is_none());
+        check!(range_array.value_slice(0).is_none());
 
-    let decoded = decode_native_histograms(&batch).unwrap();
-    assert2::assert!(decoded == rows);
-}
-
+        let decoded = decode_native_histograms(&batch).unwrap();
+        assert2::assert!(decoded == rows);
+    }
 }

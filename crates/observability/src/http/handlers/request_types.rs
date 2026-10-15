@@ -1,6 +1,9 @@
-use axum::{extract::{FromRequest, FromRequestParts, Request}, response::IntoResponse};
-use super::{record_metadata_query, MetadataQuery};
+use axum::{
+    extract::{FromRequest, FromRequestParts, Request},
+    response::IntoResponse,
+};
 
+use super::{MetadataQuery, record_metadata_query};
 use crate::{
     BTreeSet, Bytes, HeaderMap, HttpQueryError, Instant, Path, QuerierState, QueryKind, RawQuery,
     RequestSecurity, Response, State, StatusCode, Value, execute_detected_field_values_query,

@@ -1,4 +1,3 @@
-use crate::querier::metric_eval::MetricOperandValues;
 use num_traits::FromPrimitive as _;
 
 use crate::{
@@ -7,6 +6,7 @@ use crate::{
     include_metric_group_labels, json, metric_scalar_arithmetic_value,
     metric_scalar_comparison_matches, metric_series_labels, metric_vector_group_modifier,
     metric_vector_matching_key, parse_decimal_seconds_timestamp, parse_metric_sample_value,
+    querier::metric_eval::MetricOperandValues,
 };
 
 /// Keeps left-hand result series accepted by `keep`, paired with a matching
@@ -260,7 +260,6 @@ pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
 
 // The series and result walks every vector-to-vector binary operator shares.
 // Each operator supplies only what it does to one pair of samples.
-
 
 /// The left and right sample of one binary operation.
 #[derive(Clone, Copy)]

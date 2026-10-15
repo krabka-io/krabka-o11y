@@ -67,11 +67,11 @@ pub(crate) fn status_bytes_response(
         .expect("the HTTP response builds")
 }
 
-mod http_params;
-mod http_json;
-mod http_search;
-mod http_routes;
 mod http_helpers;
+mod http_json;
+mod http_params;
+mod http_routes;
+mod http_search;
 #[cfg(test)]
 mod tests {
 
@@ -4118,135 +4118,61 @@ pub(crate) fn tag_filter<'a>(
 pub(super) use http_params::accepts_media_type;
 mod trace_by_id;
 
-use http_search::add_intrinsic_tags;
-use http_routes::AppState;
-use attribute_values::attr_value_json;
-use http_json::attr_values_json;
-use http_json::attrs_json;
-use http_params::base64;
-use http_routes::buildinfo;
-use http_search::collect_span_intrinsic_values;
-use http_search::collect_trace_intrinsic_values;
-use http_params::decode_trace_id;
-use http_search::dedup_attrs;
-use http_params::default_query_range_step_ns;
-use http_params::duration_param;
-use http_routes::echo;
-use http_json::EVENT_TAGS;
-use http_json::event_unix_nano;
-use http_json::events_json;
-use http_params::exact_tag_value_filter;
+use attribute_values::{attr_value_json, otlp_value};
 use exemplar_selection::{ExemplarSelection, exemplar_selection};
-use http_params::field_matches_tag;
-use http_params::filter_metrics_exemplars;
-use http_params::filter_search_duration;
-use http_params::filter_tag_values;
 use group_attrs::group_attrs;
-use http_search::group_by_instrumentation;
-pub use http_routes::HttpConfig;
+use http_helpers::{overrides, trace_by_id_v1};
+use http_json::{
+    EVENT_TAGS, INSTRUMENTATION_TAGS, InstrumentationKey, LINK_TAGS, OtlpTracesData, ResourceAttrs,
+    ResourceSpanGroup, TraceByIdResponse, attr_values_json, attrs_json, event_unix_nano,
+    events_json, instrumentation_attributes, instrumentation_scope_json, links_json, otlp_attrs,
+    otlp_event, otlp_link, otlp_scope_spans, otlp_span, otlp_status, otlp_values,
+    resource_span_groups, scope_spans_json, span_attributes, span_end_unix_nano, span_kind_json,
+    span_resource_attributes, span_status_json, trace_by_id_response_protobuf, trace_duration,
+    trace_json, trace_protobuf, trace_resource_attributes, trace_span_json, trace_traces_data,
+    traceql_query_error_response, traceql_tag_field, typed_traceql_value,
+};
+use http_params::{
+    base64, decode_trace_id, default_query_range_step_ns, duration_param, exact_tag_value_filter,
+    field_matches_tag, filter_metrics_exemplars, filter_search_duration, filter_tag_values,
+    is_match_all_query, optional_seconds_param, optional_usize_param, parse_step_to_ns,
+    q_filter_limit, required_time_range, scan_options_param, scope_param, step_param,
+    tempo_tag_alias, wants_protobuf,
+};
+pub(crate) use http_params::{
+    optional_time_bounds, parse_duration_component_ns, parse_go_duration_ns, parse_seconds_to_ns,
+    query_param, request_tenant, required_seconds_param, tag_scope_name, wants_json,
+};
+use http_routes::{
+    AppState, QuerierRequest, buildinfo, echo, limit_error_response, metrics_query_param,
+    query_instant, query_range, query_range_inner, router_with_state,
+};
+pub use http_routes::{HttpConfig, router, router_with_config, router_with_config_and_metrics};
+use http_search::{
+    add_intrinsic_tags, collect_span_intrinsic_values, collect_trace_intrinsic_values, dedup_attrs,
+    group_by_instrumentation, matching_traces, merge_static_scope, scoped_tags_from_traces, search,
+    search_inner, search_query, search_stream, search_tag_values, search_tag_values_json,
+    search_tag_values_v2, search_tag_values_v2_json, search_tags, search_tags_json, search_tags_v2,
+    search_tags_v2_json, tag_values_from_traces, tags_to_traceql, timed_tag_values,
+};
 pub(crate) use instant_metric_bounds::instant_metric_bounds;
 pub(crate) use instant_metrics_response::{InstantMetricSample, instant_metrics_response};
-use http_json::instrumentation_attributes;
 use instrumentation_groups::{InstrumentationGroup, InstrumentationGroups};
-use http_json::InstrumentationKey;
-use http_json::instrumentation_scope_json;
-use http_json::INSTRUMENTATION_TAGS;
-use http_params::is_match_all_query;
 use krabka_traceql::{key_is_safe_attribute, typed_value_parts};
-use http_routes::limit_error_response;
-use http_json::LINK_TAGS;
-use http_json::links_json;
-use http_search::matching_traces;
-use http_search::merge_static_scope;
-use metrics_json::{metric_label_json, metric_prom_labels};
-use http_routes::metrics_query_param;
-pub(crate) use metrics_request::{MetricsRequest, TenantRequest, metrics_request};
-use http_params::optional_seconds_param;
-pub(crate) use http_params::optional_time_bounds;
-use http_params::optional_usize_param;
-use http_json::otlp_attrs;
-use http_json::otlp_event;
-use http_json::otlp_link;
-use http_json::otlp_scope_spans;
-use http_json::otlp_span;
-use http_json::otlp_status;
-use http_json::OtlpTracesData;
-use metrics_json::metric_value_json;
-use attribute_values::otlp_value;
-use http_json::otlp_values;
-use http_helpers::overrides;
-pub(crate) use http_params::parse_duration_component_ns;
-pub(crate) use http_params::parse_go_duration_ns;
 pub(crate) use logfmt::{parse_logfmt_tags, parse_logfmt_value};
-pub(crate) use http_params::parse_seconds_to_ns;
-use http_params::parse_step_to_ns;
-use http_params::q_filter_limit;
-use http_routes::QuerierRequest;
-use http_routes::query_instant;
-pub(crate) use http_params::query_param;
-use http_routes::query_range;
-use http_routes::query_range_inner;
-pub(crate) use http_params::request_tenant;
-pub(crate) use http_params::required_seconds_param;
-use http_params::required_time_range;
-use http_json::ResourceAttrs;
-use http_json::ResourceSpanGroup;
-use http_json::resource_span_groups;
-pub use http_routes::router;
-pub use http_routes::router_with_config;
-pub use http_routes::router_with_config_and_metrics;
-use http_routes::router_with_state;
-use http_params::scan_options_param;
-use http_params::scope_param;
-use http_json::scope_spans_json;
-use http_search::scoped_tags_from_traces;
-use http_search::search;
-use http_search::search_inner;
+use metrics_json::{
+    metric_label_json, metric_prom_labels, metric_value_json, trace_metrics_instant_json,
+    trace_metrics_json,
+};
+pub(crate) use metrics_request::{MetricsRequest, TenantRequest, metrics_request};
 use search_json::search_json;
-use http_search::search_query;
 use search_span_json::search_span_json;
-use http_search::search_stream;
-use http_search::search_tag_values;
 use tag_endpoints::{TagFilter, TagValuesRequest, search_tag_values_inner, search_tags_inner};
-use http_search::search_tag_values_json;
-use http_search::search_tag_values_v2;
-use http_search::search_tag_values_v2_json;
-use http_search::search_tags;
-use http_search::search_tags_json;
-use http_search::search_tags_v2;
-use http_search::search_tags_v2_json;
-use http_json::span_attributes;
-use http_json::span_end_unix_nano;
-use http_json::span_kind_json;
-use http_json::span_resource_attributes;
-use http_json::span_status_json;
-use http_params::step_param;
-pub(crate) use http_params::tag_scope_name;
-use http_search::tag_values_from_traces;
-use http_search::tags_to_traceql;
-use http_params::tempo_tag_alias;
 pub(crate) use tenant_and_bounds::{TenantTimeBounds, tenant_and_bounds};
-use http_search::timed_tag_values;
-use trace_by_id::trace_by_id;
-use trace_by_id::{TraceByIdRequest, TraceEncoding, trace_by_id_inner};
-use http_json::TraceByIdResponse;
-use http_json::trace_by_id_response_protobuf;
-use http_helpers::trace_by_id_v1;
-use http_json::trace_duration;
-use http_json::trace_json;
-use metrics_json::{trace_metrics_instant_json, trace_metrics_json};
-use http_json::trace_protobuf;
-use http_json::trace_resource_attributes;
-use http_json::trace_span_json;
-use http_json::trace_traces_data;
-use http_json::traceql_query_error_response;
-use http_json::traceql_tag_field;
-use http_json::typed_traceql_value;
-pub(crate) use http_params::wants_json;
-use http_params::wants_protobuf;
+use trace_by_id::{TraceByIdRequest, TraceEncoding, trace_by_id, trace_by_id_inner};
 
 use super::{INTRINSIC_TAGS, tag_scope_from_name};
 
 mod tempo_metric_bounds;
-use tempo_metric_bounds::tempo_metric_bounds;
 use http_routes::metrics_operation_name;
+use tempo_metric_bounds::tempo_metric_bounds;

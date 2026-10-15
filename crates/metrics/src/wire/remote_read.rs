@@ -15,7 +15,6 @@ mod tests {
     use assert2::{assert, check};
     use krabka_blockstore::{Labels, MatchOp};
 
-
     use super::*;
     use crate::wire::{
         pb::v1::{self, label_matcher},
@@ -278,7 +277,6 @@ mod tests {
 }
 
 #[cfg_attr(test, mutants::skip)]
-
 // cargo-mutants: covered by remote_read decode round-trip and snappy limit tests.
 #[cfg_attr(test, mutants::skip)]
 /// # Errors
@@ -332,13 +330,10 @@ pub fn negotiate_read_response_type(accepted: &[i32]) -> Result<v1::ResponseType
         .ok_or_else(|| RemoteReadError::UnsupportedResponseTypes(accepted.to_vec()))
 }
 
-
 /// Default decompressed-body cap for a `remote_read` request when the caller
 /// supplies no cap. It mirrors the distributor's ingest default, so a single
 /// `read` request cannot decompress to an unbounded allocation.
 pub const DEFAULT_MAX_READ_DECOMPRESSED: ByteSize = mebibytes(32);
-
-
 
 pub fn encode_chunked_read_frames(
     response: impl Into<crate::wire::remote_read_pb::v1::ReadResponse>,
@@ -554,7 +549,6 @@ fn put_varbit_uint(bits: &mut BitStream, value: u64) {
         bits.write_bits(value, 64);
     }
 }
-
 
 fn fits_unsigned(value: u64, width: u32) -> bool {
     value.leading_zeros() >= 64 - width

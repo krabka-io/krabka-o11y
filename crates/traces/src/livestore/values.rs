@@ -23,7 +23,6 @@ pub(crate) const INTRINSIC_TAGS: &[&str] = &[
     "trace:rootService",
 ];
 
-
 pub(crate) fn collect_event_values(
     span: &Span,
     tag: &str,
@@ -59,7 +58,6 @@ pub(crate) fn collect_event_values(
     }
 }
 
-
 pub(crate) fn collect_link_values(
     span: &Span,
     tag: &str,
@@ -90,7 +88,6 @@ pub(crate) fn collect_link_values(
         }
     }
 }
-
 
 pub(crate) fn collect_span_intrinsic_value(
     span: &Span,
@@ -151,7 +148,6 @@ pub(crate) fn collect_span_intrinsic_value(
     }
 }
 
-
 pub(crate) fn collect_trace_intrinsic_values(
     spans: &[&Span],
     tag: &str,
@@ -187,7 +183,6 @@ pub(crate) fn collect_trace_intrinsic_values(
     }
 }
 
-
 pub(crate) fn event_ref(span: &Span, event: &EventRecord) -> krabka_traceql::EventRef {
     krabka_traceql::EventRef {
         time_since_start: Time::from_nanos(event.time_unix_nano.saturating_sub(span.start_ns)),
@@ -195,7 +190,6 @@ pub(crate) fn event_ref(span: &Span, event: &EventRecord) -> krabka_traceql::Eve
         attributes: traceql_attributes(&event.attrs),
     }
 }
-
 
 pub(crate) fn order_spans(spans: &mut [impl Borrow<Span>]) {
     spans.sort_by(|left, right| {
@@ -206,7 +200,6 @@ pub(crate) fn order_spans(spans: &mut [impl Borrow<Span>]) {
             .then_with(|| left.span_id.cmp(&right.span_id))
     });
 }
-
 
 pub(crate) fn span_ref(span: &Span, nested: nested_set::NestedSet) -> krabka_traceql::SpanRef {
     krabka_traceql::SpanRef {

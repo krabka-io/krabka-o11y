@@ -100,7 +100,6 @@ pub(crate) async fn build_blocks_with_options(
     Ok(vec![meta])
 }
 
-
 /// Build and write one span block, with an object-store prefix on its key.
 ///
 /// # Errors
@@ -128,7 +127,6 @@ pub async fn build_blocks_with_prefix(
     )
     .await
 }
-
 
 ///
 /// # Errors

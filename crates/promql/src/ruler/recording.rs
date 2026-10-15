@@ -11,8 +11,6 @@ use crate::{
     MetricStore, PromqlEngine, PromqlError, PromqlLabels as Labels, QueryResult, SampleValue,
 };
 
-
-
 pub(crate) fn recording_labels(
     mut labels: Labels,
     record_name: &str,
@@ -30,6 +28,7 @@ pub(crate) fn recording_labels(
 }
 
 mod operations;
-pub use operations::evaluate_recording_rule;
-pub use operations::evaluate_and_append_recording_rule;
-pub use operations::evaluate_and_append_recording_rule_group;
+pub use operations::{
+    evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
+    evaluate_recording_rule,
+};

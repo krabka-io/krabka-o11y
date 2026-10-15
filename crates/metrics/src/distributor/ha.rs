@@ -241,8 +241,6 @@ mod tests {
     }
 }
 
-
-
 /// Pure HA election decision against an elected view that is already locked. A
 /// caller that holds the tracker lock can decide and commit atomically. A
 /// lock-free caller goes through [`ha_election_at_with_timeout`].

@@ -1,6 +1,9 @@
 //! In-memory `MetricStore` used by conformance and engine tests.
 
-use std::{collections::{BTreeMap, HashMap}, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::NativeHistogram;

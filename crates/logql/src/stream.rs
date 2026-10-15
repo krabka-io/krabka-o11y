@@ -193,7 +193,6 @@ pub(crate) fn selected_json_value_to_string(value: &RawValue) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{

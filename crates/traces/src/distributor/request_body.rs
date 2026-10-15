@@ -2,7 +2,6 @@ use super::*;
 
 pub(crate) const CONTENT_ENCODING: &str = "content-encoding";
 
-
 pub(crate) fn decode_body(
     headers: &HeaderMap,
     body: &[u8],
@@ -32,7 +31,6 @@ pub(crate) fn decode_body(
     }
     Ok(decoded)
 }
-
 
 pub(crate) fn require_content_type(
     headers: &HeaderMap,

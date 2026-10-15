@@ -170,9 +170,9 @@ mod tests {
 pub(crate) mod byte_selector_expr;
 pub(crate) mod byte_string_expr;
 mod consume_number_duration;
+mod duration_conversion;
 mod duration_expr_context;
 mod duration_expr_parser;
-mod duration_conversion;
 mod extended_modifier_at;
 mod extended_selector_expr;
 mod extended_selector_modifier;
@@ -205,6 +205,7 @@ mod top_level_colon;
 mod wrap_extended_selectors;
 
 use consume_number_duration::consume_number_duration;
+use duration_conversion::{duration_unit_seconds, ms_to_seconds, seconds_to_duration_literal};
 pub use duration_expr_context::DurationExprContext;
 use duration_expr_parser::DurationExprParser;
 use extended_modifier_at::extended_modifier_at;
@@ -224,7 +225,6 @@ pub use parse_promql_with_duration_context::parse_promql_with_duration_context;
 pub use query_ast_codec::{format_promql_query, serialize_promql_query};
 use quoted_copy::QuotedCopy;
 pub use range_window_grid::RangeWindowGrid;
-use duration_conversion::{duration_unit_seconds, ms_to_seconds, seconds_to_duration_literal};
 use skip_literal_or_comment::skip_literal_or_comment;
 use starts_offset_keyword::starts_offset_keyword;
 pub use step_grid::StepGrid;

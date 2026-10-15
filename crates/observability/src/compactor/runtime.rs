@@ -1,7 +1,6 @@
-use tracing::Instrument;
 use krabka_blockstore::ObjectStoreMetrics;
+use tracing::Instrument;
 
-use crate::compactor::{prepare_compactor_wal_inputs, CompactorRunComponents};
 use crate::{
     Arc, BTreeMap, BlockDescriptor, BlockStoreError, BufferedLogHotTail, CancellationToken,
     CompactionError, CompactionFrontierStoreError, CompactorRunError, Instant, JoinHandle,
@@ -12,7 +11,10 @@ use crate::{
     Time, TimeExt, UNIX_EPOCH, WalPosition, active_log_delete_filters_from_requests,
     active_log_delete_tenants, build_compactor_configured_object_store,
     compact_wal_records_to_object_store_with_delete_filters_and_index_output,
-    compaction_metrics::CompactionMetrics, compactor::frontier::CompactionWriteOptions,
+    compaction_metrics::CompactionMetrics,
+    compactor::{
+        CompactorRunComponents, frontier::CompactionWriteOptions, prepare_compactor_wal_inputs,
+    },
     compactor_object_store, decode_kafka_wal_record_envelope, limits_provider_for_config,
     materialize_delete_requests_in_existing_object_store_blocks,
     poll_accumulated_log_compaction_records, read_compaction_frontier_from_object_store, sleep,

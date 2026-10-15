@@ -1,21 +1,22 @@
-use super::*;
-use krabka_observability::compaction_schedule::CompactionSchedule;
-use std::future::IntoFuture as _;
-use krabka_observability::RoleKind;
-use krabka_observability::server_security::ServerListener;
-use krabka_observability::server_security::serve_router;
-use krabka_traces::frontend::HttpQuerier;
-use krabka_traces::frontend::MembershipView;
-use krabka_traces::frontend::QuerierScheme;
-use krabka_units::{ByteSize, convert::{ByteSizeExt as _, TimeExt as _}};
-use tokio::net::TcpListener;
-use krabka_observability::RoleReadiness;
-use krabka_observability::wal_group_assignment::WalRebalanceListener;
-use krabka_observability::SupervisedTasks;
-use krabka_units::fmt::Human as _;
-use std::time::SystemTime;
+use std::{future::IntoFuture as _, time::SystemTime};
+
 use krabka_blockstore::DEFAULT_BLOCK_SWEEP_GRACE;
 use krabka_client_consumer::IsolationLevel;
+use krabka_observability::{
+    RoleKind, RoleReadiness, SupervisedTasks,
+    compaction_schedule::CompactionSchedule,
+    server_security::{ServerListener, serve_router},
+    wal_group_assignment::WalRebalanceListener,
+};
+use krabka_traces::frontend::{HttpQuerier, MembershipView, QuerierScheme};
+use krabka_units::{
+    ByteSize,
+    convert::{ByteSizeExt as _, TimeExt as _},
+    fmt::Human as _,
+};
+use tokio::net::TcpListener;
+
+use super::*;
 
 /// Runs compaction passes on `--compaction-interval` until `shutdown` fires.
 ///
@@ -115,9 +116,7 @@ pub(crate) async fn run_all_query_frontend(
         security.internal_client(),
     )?;
     let membership = MembershipView::fixed(cfg.querier_addrs.clone());
-    let app = build_query_frontend_app(
-        backend, catalog, cfg, membership, readiness,
-    );
+    let app = build_query_frontend_app(backend, catalog, cfg, membership, readiness);
     let listener = ServerListener::bind(listener, security)?;
     let bound = listener.local_addr();
     tracing::info!(%bound, %querier_addr, "traces all-in-one Tempo API listening");

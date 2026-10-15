@@ -83,7 +83,6 @@ impl FourColdApiBlocks {
     }
 }
 
-
 fn insert_api_series(
     labels_index: &mut LabelIndex,
     tenant: &str,
@@ -98,275 +97,277 @@ fn insert_api_series(
 
 mod object_store_stream_query_batches_cold_block_reads;
 mod querier_state_with_request_tenant_index_caches_shard_indexes_for_repeated_range {
-use assert2::assert;
+    use assert2::assert;
 
-use super::*;
+    use super::*;
 
-#[tokio::test]
-pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes_for_repeated_range()
- {
-    let store = RecordingObjectStore::new();
-    let prefix = ObjectPath::from("observability/logs");
-    let tenant = "tenant-a";
-    let query_range = TimeRange::new(0, 100).unwrap();
-    let mut labels_index = LabelIndex::default();
-    let api = insert_api_series(&mut labels_index, tenant);
-    let mut block_index = BlockIndex::default();
-    let shard_range = TimeRange::new(10, 19).unwrap();
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new(tenant, 0, 42, 43, shard_range),
-        BTreeSet::from([api]),
-    ));
-    let state = querier_state_over_index_shards(
-        &store,
-        TenantIndexShards {
-            prefix: &prefix,
-            tenant,
-            shard_ranges: &[shard_range],
-            labels_index: &labels_index,
-            block_index: &block_index,
-        },
-    )
-    .await;
+    #[tokio::test]
+    pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes_for_repeated_range()
+     {
+        let store = RecordingObjectStore::new();
+        let prefix = ObjectPath::from("observability/logs");
+        let tenant = "tenant-a";
+        let query_range = TimeRange::new(0, 100).unwrap();
+        let mut labels_index = LabelIndex::default();
+        let api = insert_api_series(&mut labels_index, tenant);
+        let mut block_index = BlockIndex::default();
+        let shard_range = TimeRange::new(10, 19).unwrap();
+        block_index.insert(BlockDescriptor::new(
+            BlockKey::new(tenant, 0, 42, 43, shard_range),
+            BTreeSet::from([api]),
+        ));
+        let state = querier_state_over_index_shards(
+            &store,
+            TenantIndexShards {
+                prefix: &prefix,
+                tenant,
+                shard_ranges: &[shard_range],
+                labels_index: &labels_index,
+                block_index: &block_index,
+            },
+        )
+        .await;
 
-    let first = state
-        .with_request_tenant_index(tenant, query_range)
-        .await
-        .unwrap();
-    let second = state
-        .with_request_tenant_index(tenant, query_range)
-        .await
-        .unwrap();
-
-    assert!(
-        first.label_index.as_ref() == &labels_index && first.block_index.as_ref() == &block_index
-    );
-    assert!(
-        second.label_index.as_ref() == &labels_index && second.block_index.as_ref() == &block_index
-    );
-
-    // A moving window misses the merged-request cache but still uses the same
-    // tenant-filtered shard. It must retain the complete immutable snapshot.
-    let moving = state
-        .with_request_tenant_index(tenant, TimeRange::new(5, 105).unwrap())
-        .await
-        .unwrap();
-    assert!(Arc::ptr_eq(&first.label_index, &moving.label_index));
-    assert!(Arc::ptr_eq(&first.block_index, &moving.block_index));
-    state.dynamic_index_cache.clear();
-    assert!(moving.label_index.as_ref() == &labels_index);
-    assert!(moving.block_index.as_ref() == &block_index);
-
-    let list_count = shard_prefix_list_count(&store, &prefix, tenant);
-    let shard_get_count = shard_snapshot_get_count(
-        &store,
-        TenantIndexShard {
-            prefix: &prefix,
-            tenant,
-            shard_range,
-        },
-    );
-
-    assert!(list_count == 1, "shard prefix should be listed once");
-    assert!(
-        shard_get_count == 1,
-        "shard snapshot should be fetched once"
-    );
-}
-}
-mod querier_state_with_request_tenant_index_lists_shards_from_query_window_offset {
-use assert2::assert;
-
-use super::*;
-
-#[tokio::test]
-pub(crate) async fn querier_state_lists_full_shard_prefix_and_filters_before_fetch() {
-    let store = RecordingObjectStore::new();
-    let prefix = ObjectPath::from("observability/logs");
-    let tenant = "tenant-a";
-    let query_start = 1_700_000_000_000_000_000;
-    let query_end = query_start + 300_000_000_000;
-    let query_range = TimeRange::new(query_start, query_end).unwrap();
-    let old_shard_range =
-        TimeRange::new(query_start - 600_000_000_000, query_start - 599_000_000_000).unwrap();
-    let matching_shard_range = TimeRange::new(query_start + 10, query_start + 20).unwrap();
-
-    let mut labels_index = LabelIndex::default();
-    let api = insert_api_series(&mut labels_index, tenant);
-    let mut block_index = BlockIndex::default();
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new(tenant, 0, 40, 41, old_shard_range),
-        BTreeSet::from([api]),
-    ));
-    let matching_block = BlockDescriptor::new(
-        BlockKey::new(tenant, 0, 42, 43, matching_shard_range),
-        BTreeSet::from([api]),
-    );
-    block_index.insert(matching_block.clone());
-    let state = querier_state_over_index_shards(
-        &store,
-        TenantIndexShards {
-            prefix: &prefix,
-            tenant,
-            shard_ranges: &[old_shard_range, matching_shard_range],
-            labels_index: &labels_index,
-            block_index: &block_index,
-        },
-    )
-    .await;
-
-    let state = state
-        .with_request_tenant_index(tenant, query_range)
-        .await
-        .unwrap();
-
-    let mut expected_blocks = BlockIndex::default();
-    expected_blocks.insert(matching_block);
-    assert!(
-        state.label_index.as_ref() == &labels_index
-            && state.block_index.as_ref() == &expected_blocks
-    );
-
-    let [old_shard_gets, matching_shard_gets] =
-        [old_shard_range, matching_shard_range].map(|shard_range| {
-            shard_snapshot_get_count(
-                &store,
-                TenantIndexShard {
-                    prefix: &prefix,
-                    tenant,
-                    shard_range,
-                },
-            )
-        });
-    assert!(old_shard_gets == 0);
-    assert!(matching_shard_gets == 1);
-    assert!(
-        shard_prefix_list_count(&store, &prefix, tenant) == 1,
-        "list the complete tenant prefix once"
-    );
-    assert!(
-        store.list_offsets().is_empty(),
-        "no offset can prove overlap coverage"
-    );
-}
-}
-mod querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges {
-use krabka_units::prelude::TimeExt as _;
-
-use super::*;
-
-#[tokio::test]
-pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges()
-{
-    let store = RecordingObjectStore::new();
-    let prefix = ObjectPath::from("observability/logs");
-    let tenant = "tenant-a";
-    let first_query_range = TimeRange::new(0, 100).unwrap();
-    let moving_query_range = TimeRange::new(5, 105).unwrap();
-    let shard_range_a = TimeRange::new(10, 19).unwrap();
-    let shard_range_b = TimeRange::new(80, 89).unwrap();
-
-    let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series(
-        tenant,
-        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]),
-    );
-    let worker = labels_index.insert_series(
-        tenant,
-        krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "worker")]),
-    );
-    let mut block_index = BlockIndex::default();
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new(tenant, 0, 42, 43, shard_range_a),
-        BTreeSet::from([api]),
-    ));
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new(tenant, 0, 44, 45, shard_range_b),
-        BTreeSet::from([worker]),
-    ));
-    let state = querier_state_over_index_shards(
-        &store,
-        TenantIndexShards {
-            prefix: &prefix,
-            tenant,
-            shard_ranges: &[shard_range_a, shard_range_b],
-            labels_index: &labels_index,
-            block_index: &block_index,
-        },
-    )
-    .await;
-
-    let first = state
-        .with_request_tenant_index(tenant, first_query_range)
-        .await
-        .unwrap();
-    let second = state
-        .with_request_tenant_index(tenant, moving_query_range)
-        .await
-        .unwrap();
-
-    for state in [&first, &second] {
-        check!(
-            state.label_index.as_ref() == &labels_index
-                && state.block_index.as_ref() == &block_index
-        );
-    }
-
-    // A rolling query never repeats its exact cache key. Expired merged
-    // snapshots must disappear when a later request admits a new window.
-    for start in 6..10 {
-        let expired = std::time::Instant::now()
-            .checked_sub(secs(6).to_std())
-            .unwrap();
-        for entry in state
-            .dynamic_index_cache
-            .entries
-            .lock()
-            .unwrap()
-            .values_mut()
-        {
-            entry.loaded_at = expired;
-        }
-        let moving = state
-            .with_request_tenant_index(tenant, TimeRange::new(start, start + 100).unwrap())
+        let first = state
+            .with_request_tenant_index(tenant, query_range)
             .await
             .unwrap();
-        check!(moving.block_index.blocks().len() == 2);
+        let second = state
+            .with_request_tenant_index(tenant, query_range)
+            .await
+            .unwrap();
+
+        assert!(
+            first.label_index.as_ref() == &labels_index
+                && first.block_index.as_ref() == &block_index
+        );
+        assert!(
+            second.label_index.as_ref() == &labels_index
+                && second.block_index.as_ref() == &block_index
+        );
+
+        // A moving window misses the merged-request cache but still uses the same
+        // tenant-filtered shard. It must retain the complete immutable snapshot.
+        let moving = state
+            .with_request_tenant_index(tenant, TimeRange::new(5, 105).unwrap())
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&first.label_index, &moving.label_index));
+        assert!(Arc::ptr_eq(&first.block_index, &moving.block_index));
+        state.dynamic_index_cache.clear();
+        assert!(moving.label_index.as_ref() == &labels_index);
+        assert!(moving.block_index.as_ref() == &block_index);
+
+        let list_count = shard_prefix_list_count(&store, &prefix, tenant);
+        let shard_get_count = shard_snapshot_get_count(
+            &store,
+            TenantIndexShard {
+                prefix: &prefix,
+                tenant,
+                shard_range,
+            },
+        );
+
+        assert!(list_count == 1, "shard prefix should be listed once");
+        assert!(
+            shard_get_count == 1,
+            "shard snapshot should be fetched once"
+        );
+    }
+}
+mod querier_state_with_request_tenant_index_lists_shards_from_query_window_offset {
+    use assert2::assert;
+
+    use super::*;
+
+    #[tokio::test]
+    pub(crate) async fn querier_state_lists_full_shard_prefix_and_filters_before_fetch() {
+        let store = RecordingObjectStore::new();
+        let prefix = ObjectPath::from("observability/logs");
+        let tenant = "tenant-a";
+        let query_start = 1_700_000_000_000_000_000;
+        let query_end = query_start + 300_000_000_000;
+        let query_range = TimeRange::new(query_start, query_end).unwrap();
+        let old_shard_range =
+            TimeRange::new(query_start - 600_000_000_000, query_start - 599_000_000_000).unwrap();
+        let matching_shard_range = TimeRange::new(query_start + 10, query_start + 20).unwrap();
+
+        let mut labels_index = LabelIndex::default();
+        let api = insert_api_series(&mut labels_index, tenant);
+        let mut block_index = BlockIndex::default();
+        block_index.insert(BlockDescriptor::new(
+            BlockKey::new(tenant, 0, 40, 41, old_shard_range),
+            BTreeSet::from([api]),
+        ));
+        let matching_block = BlockDescriptor::new(
+            BlockKey::new(tenant, 0, 42, 43, matching_shard_range),
+            BTreeSet::from([api]),
+        );
+        block_index.insert(matching_block.clone());
+        let state = querier_state_over_index_shards(
+            &store,
+            TenantIndexShards {
+                prefix: &prefix,
+                tenant,
+                shard_ranges: &[old_shard_range, matching_shard_range],
+                labels_index: &labels_index,
+                block_index: &block_index,
+            },
+        )
+        .await;
+
+        let state = state
+            .with_request_tenant_index(tenant, query_range)
+            .await
+            .unwrap();
+
+        let mut expected_blocks = BlockIndex::default();
+        expected_blocks.insert(matching_block);
+        assert!(
+            state.label_index.as_ref() == &labels_index
+                && state.block_index.as_ref() == &expected_blocks
+        );
+
+        let [old_shard_gets, matching_shard_gets] =
+            [old_shard_range, matching_shard_range].map(|shard_range| {
+                shard_snapshot_get_count(
+                    &store,
+                    TenantIndexShard {
+                        prefix: &prefix,
+                        tenant,
+                        shard_range,
+                    },
+                )
+            });
+        assert!(old_shard_gets == 0);
+        assert!(matching_shard_gets == 1);
+        assert!(
+            shard_prefix_list_count(&store, &prefix, tenant) == 1,
+            "list the complete tenant prefix once"
+        );
+        assert!(
+            store.list_offsets().is_empty(),
+            "no offset can prove overlap coverage"
+        );
+    }
+}
+mod querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges {
+    use krabka_units::prelude::TimeExt as _;
+
+    use super::*;
+
+    #[tokio::test]
+    pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges()
+     {
+        let store = RecordingObjectStore::new();
+        let prefix = ObjectPath::from("observability/logs");
+        let tenant = "tenant-a";
+        let first_query_range = TimeRange::new(0, 100).unwrap();
+        let moving_query_range = TimeRange::new(5, 105).unwrap();
+        let shard_range_a = TimeRange::new(10, 19).unwrap();
+        let shard_range_b = TimeRange::new(80, 89).unwrap();
+
+        let mut labels_index = LabelIndex::default();
+        let api = labels_index.insert_series(
+            tenant,
+            krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]),
+        );
+        let worker = labels_index.insert_series(
+            tenant,
+            krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "worker")]),
+        );
+        let mut block_index = BlockIndex::default();
+        block_index.insert(BlockDescriptor::new(
+            BlockKey::new(tenant, 0, 42, 43, shard_range_a),
+            BTreeSet::from([api]),
+        ));
+        block_index.insert(BlockDescriptor::new(
+            BlockKey::new(tenant, 0, 44, 45, shard_range_b),
+            BTreeSet::from([worker]),
+        ));
+        let state = querier_state_over_index_shards(
+            &store,
+            TenantIndexShards {
+                prefix: &prefix,
+                tenant,
+                shard_ranges: &[shard_range_a, shard_range_b],
+                labels_index: &labels_index,
+                block_index: &block_index,
+            },
+        )
+        .await;
+
+        let first = state
+            .with_request_tenant_index(tenant, first_query_range)
+            .await
+            .unwrap();
+        let second = state
+            .with_request_tenant_index(tenant, moving_query_range)
+            .await
+            .unwrap();
+
+        for state in [&first, &second] {
+            check!(
+                state.label_index.as_ref() == &labels_index
+                    && state.block_index.as_ref() == &block_index
+            );
+        }
+
+        // A rolling query never repeats its exact cache key. Expired merged
+        // snapshots must disappear when a later request admits a new window.
+        for start in 6..10 {
+            let expired = std::time::Instant::now()
+                .checked_sub(secs(6).to_std())
+                .unwrap();
+            for entry in state
+                .dynamic_index_cache
+                .entries
+                .lock()
+                .unwrap()
+                .values_mut()
+            {
+                entry.loaded_at = expired;
+            }
+            let moving = state
+                .with_request_tenant_index(tenant, TimeRange::new(start, start + 100).unwrap())
+                .await
+                .unwrap();
+            check!(moving.block_index.blocks().len() == 2);
+            check!(
+                moving.label_index.label_values(tenant, "app")
+                    == BTreeSet::from(["api".to_string(), "worker".to_string()])
+            );
+            check!(state.dynamic_index_cache.entries.lock().unwrap().len() == 1);
+        }
+        check!(first.block_index.blocks().len() == 2);
         check!(
-            moving.label_index.label_values(tenant, "app")
+            first.label_index.label_values(tenant, "app")
                 == BTreeSet::from(["api".to_string(), "worker".to_string()])
         );
-        check!(state.dynamic_index_cache.entries.lock().unwrap().len() == 1);
+
+        let list_count = shard_prefix_list_count(&store, &prefix, tenant);
+        let [shard_get_count_a, shard_get_count_b] =
+            [shard_range_a, shard_range_b].map(|shard_range| {
+                shard_snapshot_get_count(
+                    &store,
+                    TenantIndexShard {
+                        prefix: &prefix,
+                        tenant,
+                        shard_range,
+                    },
+                )
+            });
+
+        check!(list_count == 1, "shard prefix should be listed once");
+        check!(
+            shard_get_count_a == 1,
+            "shard snapshot A should be fetched once"
+        );
+        check!(
+            shard_get_count_b == 1,
+            "shard snapshot B should be fetched once"
+        );
     }
-    check!(first.block_index.blocks().len() == 2);
-    check!(
-        first.label_index.label_values(tenant, "app")
-            == BTreeSet::from(["api".to_string(), "worker".to_string()])
-    );
-
-    let list_count = shard_prefix_list_count(&store, &prefix, tenant);
-    let [shard_get_count_a, shard_get_count_b] =
-        [shard_range_a, shard_range_b].map(|shard_range| {
-            shard_snapshot_get_count(
-                &store,
-                TenantIndexShard {
-                    prefix: &prefix,
-                    tenant,
-                    shard_range,
-                },
-            )
-        });
-
-    check!(list_count == 1, "shard prefix should be listed once");
-    check!(
-        shard_get_count_a == 1,
-        "shard snapshot A should be fetched once"
-    );
-    check!(
-        shard_get_count_b == 1,
-        "shard snapshot B should be fetched once"
-    );
-}
 }
 mod tenant_index_shards;
 

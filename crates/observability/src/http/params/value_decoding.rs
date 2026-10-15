@@ -1,5 +1,5 @@
-use krabka_units::convert::TimeExt;
 use krabka_logql::hex_digit_value;
+use krabka_units::convert::TimeExt;
 
 use crate::{
     HeaderMap, HttpQueryError, QuerierState, QueryParams, RequestSecurity, SystemTime,

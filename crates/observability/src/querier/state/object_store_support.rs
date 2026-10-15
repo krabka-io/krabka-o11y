@@ -4,8 +4,6 @@ use crate::{
     build_querier_state_with_object_store_prefix,
 };
 
-
-
 pub(crate) fn effective_object_store_prefix(
     base: Option<&ObjectPath>,
     index_prefix: &str,

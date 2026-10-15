@@ -316,7 +316,6 @@ pub(crate) fn aggregate_rank_expr_sql(agg: &Aggregate) -> Result<String> {
     }
 }
 
-
 // Structural Base Op
 pub(crate) fn structural_base_op(op: StructuralOp) -> StructuralOp {
     match op {
@@ -427,7 +426,6 @@ pub(crate) fn is_search_preserving_pipeline_stage(stage: &Pipeline) -> bool {
             )
     )
 }
-
 
 // Aggregate Expr Sql
 pub(crate) fn aggregate_expr_sql(agg: &Aggregate) -> Result<String> {
@@ -563,7 +561,6 @@ pub(crate) fn collect_nested_selectors(expr: &SpansetExpr, out: &mut Vec<FieldEx
 pub(crate) async fn collect_table(ctx: &SessionContext, table: &str) -> Result<Vec<RecordBatch>> {
     Ok(ctx.table(table).await?.collect().await?)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1874,15 +1871,14 @@ mod tests {
     }
 }
 
+mod grouped_sql;
 pub(crate) mod nested_projection_matcher;
+mod pipeline_sql;
 mod plan_query;
 mod planned_spanset;
 mod planner_context;
 mod registration;
 mod spanset_sql;
-mod grouped_sql;
-mod pipeline_sql;
-
 
 fn aggregate_filter_query_any_sql(
     spanset_sql: &str,
@@ -1898,17 +1894,18 @@ fn aggregate_filter_query_any_sql(
          SELECT matched.* FROM matched JOIN passing ON matched.{trace} = passing.{trace}"
     ))
 }
+use grouped_sql::{grouped_aggregate_sql, grouped_no_filter_by, grouped_pipeline_sql};
 use nested_projection_matcher::nested_projection_matcher;
+use pipeline_sql::{
+    pipeline_nested_projection_matchers, pipeline_to_sql, scan_options_with_pipeline_projections,
+};
 pub(crate) use plan_query::plan_query;
 pub(crate) use planned_spanset::PlannedSpanset;
-use spanset_sql::{plan_spanset_sql, spanset_to_sql};
+pub(crate) use planner_context::PlannerContext;
 use registration::{
     register_batches, register_field_comparison_columns, register_nested_selector_tables,
 };
-use grouped_sql::{grouped_aggregate_sql, grouped_no_filter_by, grouped_pipeline_sql};
-use pipeline_sql::{pipeline_nested_projection_matchers, pipeline_to_sql, scan_options_with_pipeline_projections};
-pub(crate) use planner_context::PlannerContext;
-
+use spanset_sql::{plan_spanset_sql, spanset_to_sql};
 
 mod apply_expression_pipeline;
 

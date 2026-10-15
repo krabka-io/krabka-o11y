@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// The counter-reset hint of the sample at `index` in a histogram chunk.
 ///
 /// This matches Prometheus `counterResetHint`: a gauge chunk marks every

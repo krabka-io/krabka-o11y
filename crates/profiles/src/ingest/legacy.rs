@@ -1454,9 +1454,9 @@ use speedscope_to_pprof::speedscope_to_pprof;
 use split_app_labels::split_app_labels;
 use stacks_to_pprof::stacks_to_pprof;
 use tree_to_pprof::tree_to_pprof;
-use types::{JfrLabels, LabelsSnapshot, SampleTypeConfig, TrieFrame};
-pub use types::{IngestFormat, IngestQuery, LegacyDecodeLimits};
 use trie_to_pprof::trie_to_pprof;
+pub use types::{IngestFormat, IngestQuery, LegacyDecodeLimits};
+use types::{JfrLabels, LabelsSnapshot, SampleTypeConfig, TrieFrame};
 use urldecode::urldecode;
 
 use super::intern_profile_string;

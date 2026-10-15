@@ -529,8 +529,8 @@ mod tests {
 mod block_builder_config;
 mod build_block;
 mod consumer_record_accumulator;
-mod run_with_config;
 mod record_writer;
+mod run_with_config;
 
 pub use block_builder_config::BlockBuilderConfig;
 pub use build_block::build_block;

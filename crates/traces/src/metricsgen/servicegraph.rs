@@ -13,7 +13,6 @@ use crate::metricsgen::{
     series::{HistogramBucket, Series, SeriesSample, sorted_labels},
 };
 
-
 /// Tempo service-graph connection classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConnectionType {

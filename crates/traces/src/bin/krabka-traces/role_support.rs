@@ -1,10 +1,9 @@
-use super::*;
-use krabka_observability::RoleReadiness;
 use std::collections::BTreeMap;
-use krabka_observability::RoleKind;
+
+use krabka_observability::{CancellationToken, ReadinessGate, RoleKind, RoleReadiness};
 use tokio::net::TcpListener;
-use krabka_observability::ReadinessGate;
-use krabka_observability::CancellationToken;
+
+use super::*;
 
 /// The five things every role of `--target all` needs, and one of each.
 ///

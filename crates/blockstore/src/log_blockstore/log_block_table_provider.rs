@@ -185,7 +185,6 @@ impl TableProvider for LogBlockTableProvider {
     }
 }
 
-
 /// Hands out the `DataFusion` object-store URL for one planned scan.
 ///
 /// A [`LogBlockTableProvider`] built over an object store holds an

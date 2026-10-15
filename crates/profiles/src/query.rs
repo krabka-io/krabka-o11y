@@ -3868,17 +3868,17 @@ overrides:
     }
 }
 
-mod connect_handlers;
 mod analyze_query_inner;
 mod apply_go_pgo;
 mod async_stacktrace_query;
 mod authorized_http_tenant;
 mod bucket_exemplars;
+mod connect_handlers;
 mod deserialize_group_by;
 mod diff_inner;
 mod error_responses;
-mod exemplar_helpers;
 mod escape_quoted;
+mod exemplar_helpers;
 mod flame_graph;
 mod flame_graph_diff;
 mod flamebearer_json;
@@ -3900,11 +3900,11 @@ mod profile_types_inner;
 mod pyroscope_query_architecture;
 mod querier_request_parts;
 mod querier_state;
-mod query_types;
 mod query_params;
+mod query_types;
 mod render_diff_inner;
-mod render_inner;
 mod render_handlers;
+mod render_inner;
 mod render_params;
 mod render_query;
 mod router;
@@ -3929,19 +3929,25 @@ use async_stacktrace_query::async_stacktrace_query;
 use authorized_http_tenant::authorized_http_tenant;
 use bucket_exemplars::{BucketExemplars, ExemplarRow, ExemplarSource, bucket_exemplars};
 pub type DefaultStore = InMemoryProfileStore;
+use connect_handlers::{
+    analyze_query_handler, diff_handler, get_profile_stats_handler, label_names_handler,
+    label_values_handler, profile_types_handler, select_heatmap_handler,
+    select_merge_profile_handler, select_merge_span_profile_handler,
+    select_merge_stacktraces_handler, select_series_handler, series_handler,
+};
 use deserialize_group_by::deserialize_group_by;
-use error_responses::{connect_error, profile_error_response, tenant_error_response};
 use diff_inner::diff_inner;
+use error_responses::{connect_error, profile_error_response, tenant_error_response};
 use escape_quoted::{TabEscape, escape_quoted};
-use flamebearer_json::{flamebearer_diff_json, flamebearer_json, flamebearer_metadata};
-use flamegraph_dot::flamegraph_dot;
-use get_profile_stats_inner::get_profile_stats_inner;
-use heatmap_from_points::heatmap_from_points;
 use exemplar_helpers::{
     heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan, heatmap_time_buckets,
     heatmap_y_mins, individual_exemplars_from_scan, individual_exemplars_from_totals,
     span_exemplars_from_scan, span_exemplars_from_totals, span_heatmap_points_from_scan,
 };
+use flamebearer_json::{flamebearer_diff_json, flamebearer_json, flamebearer_metadata};
+use flamegraph_dot::flamegraph_dot;
+use get_profile_stats_inner::get_profile_stats_inner;
+use heatmap_from_points::heatmap_from_points;
 use label_names_inner::label_names_inner;
 use label_pairs::{label_pairs, types_label_pairs};
 use label_values_inner::label_values_inner;
@@ -3960,14 +3966,14 @@ use query_params::{
     QueryParameter, query_param_i64, query_param_render_time, reject_negative_render_time,
 };
 use query_types::{
-    HeatmapExemplarRequest, HeatmapSlotsMillis, HeatmapSpanExemplarsBySeries,
-    IndividualProfile, QueryExecution, QueryTarget, SeriesExemplarQuery,
-    SpanExemplarsBySeries, SpanHeatmapRequest, heatmap_slot_timestamp,
+    HeatmapExemplarRequest, HeatmapSlotsMillis, HeatmapSpanExemplarsBySeries, IndividualProfile,
+    QueryExecution, QueryTarget, SeriesExemplarQuery, SpanExemplarsBySeries, SpanHeatmapRequest,
+    heatmap_slot_timestamp,
 };
 pub(crate) use query_types::{QueryRange, SeriesKey};
 use render_diff_inner::render_diff_inner;
-use render_inner::render_inner;
 use render_handlers::{render_diff_handler, render_handler};
+use render_inner::render_inner;
 use render_query::RenderQuery;
 pub use router::router;
 use select_heatmap_inner::select_heatmap_inner;
@@ -3975,12 +3981,6 @@ use select_merge_profile_inner::select_merge_profile_inner;
 use select_merge_span_profile_inner::select_merge_span_profile_inner;
 use select_merge_stacktraces_inner::select_merge_stacktraces_inner;
 use select_series_inner::select_series_inner;
-use connect_handlers::{
-    analyze_query_handler, diff_handler, get_profile_stats_handler, label_names_handler,
-    label_values_handler, profile_types_handler, select_heatmap_handler,
-    select_merge_profile_handler, select_merge_span_profile_handler,
-    select_merge_stacktraces_handler, select_series_handler, series_handler,
-};
 use series_inner::series_inner;
 pub use serve::serve;
 pub use serve_supervised::serve_supervised;

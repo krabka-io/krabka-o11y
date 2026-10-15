@@ -1,7 +1,5 @@
 //! `TraceQL` abstract syntax tree.
 
-
-
 // Intrinsic
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// A field supplied by the trace data model rather than an attribute map.
@@ -540,7 +538,6 @@ pub enum StructuralOp {
     UnionParent,
     UnionSibling,
 }
-
 
 // The full expression is the key: do not hash and risk aliasing two predicates.
 pub(crate) fn field_comparison_column(expr: &FieldExpr) -> String {

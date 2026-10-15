@@ -1,5 +1,4 @@
 use super::{Result, TraceqlError};
-
 use crate::next_duration_part;
 
 // Parse Duration Component Nanos

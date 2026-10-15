@@ -1,5 +1,6 @@
+use krabka_pprof::{TimestampTotalPoint, call_site_profile_totals, timestamp_total_points};
+
 use super::*;
-use krabka_pprof::{call_site_profile_totals, timestamp_total_points, TimestampTotalPoint};
 
 pub(crate) async fn individual_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,

@@ -10,7 +10,8 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use super::{ApiError, PrometheusApiState};
 use crate::{
     MetricStore, PromqlError, PromqlMatcher as LabelMatcher, QueryResult,
-    engine::{label_matcher_sets, range_resolution_exceeds_limit}, parse_promql,
+    engine::{label_matcher_sets, range_resolution_exceeds_limit},
+    parse_promql,
 };
 mod parse_cardinality_params;
 mod parse_discovery_params;

@@ -1,6 +1,5 @@
 use super::*;
-use crate::FloatSampleRow;
-use crate::numeric_sample_columns::encode_numeric_sample_columns;
+use crate::{FloatSampleRow, numeric_sample_columns::encode_numeric_sample_columns};
 
 /// Encodes sorted clock rows into a block against
 /// [`clock_reading_schema`](crate::schema::clock_reading_schema).

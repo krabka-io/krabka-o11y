@@ -1,5 +1,4 @@
 use super::*;
-
 use crate::index_snapshot::{
     DEFAULT_INDEX_SNAPSHOT_RETAIN, list_index_snapshot_objects, prune_old_index_snapshots,
     snapshot_key_for_generation,
@@ -344,7 +343,6 @@ pub async fn write_tenant_log_index_shards_to_object_store(
     write_tenant_log_index_shard_catalog_to_object_store(store, prefix, tenant, shard_ranges).await
 }
 
-
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
 pub fn register_log_blocks(
@@ -357,7 +355,6 @@ pub fn register_log_blocks(
     ctx.register_table(table_name, table)?;
     Ok(())
 }
-
 
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.

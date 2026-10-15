@@ -1,5 +1,6 @@
-use super::*;
 use krabka_client_consumer::IsolationLevel;
+
+use super::*;
 
 #[tracing::instrument(
     level = "info",

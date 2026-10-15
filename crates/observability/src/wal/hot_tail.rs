@@ -1,5 +1,3 @@
-use crate::persisted_format::{PersistedFormatError, PersistedHeader, validate_persisted_format};
-use crate::wal_produce::wal_record_headers;
 use krabka_client_core::ClientSecurity;
 use krabka_units::convert::TimeExt;
 
@@ -10,7 +8,10 @@ use crate::{
     Producer, ProducerError, ProducerHeader, ProducerRecord, SharedCompactionFrontier, Time,
     WalConsumerError, WalLogRecord, WalPosition, WalRecordDecodeError, WalSinkError, async_trait,
     decode_native_kafka_log_record, has_native_kafka_log_headers, hot_tail_bucket_key, minutes,
-    series_fingerprint, sleep, wal_consumer_metrics::WalConsumerMetrics,
+    persisted_format::{PersistedFormatError, PersistedHeader, validate_persisted_format},
+    series_fingerprint, sleep,
+    wal_consumer_metrics::WalConsumerMetrics,
+    wal_produce::wal_record_headers,
 };
 
 mod buffered_log_hot_tail;
@@ -131,7 +132,6 @@ pub fn decode_kafka_wal_record_envelope(
 }
 
 #[cfg_attr(test, mutants::skip)]
-
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn spawn_log_hot_tail_poller(
     consumer: Arc<tokio::sync::Mutex<Box<dyn LogWalConsumer>>>,

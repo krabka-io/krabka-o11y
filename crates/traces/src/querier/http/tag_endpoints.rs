@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// Renders the scoped tags; this is where the v1 and v2 endpoints differ.
 pub(crate) type TagsRender = fn(Vec<ScopedTag>, Option<TagScope>) -> Value;
 

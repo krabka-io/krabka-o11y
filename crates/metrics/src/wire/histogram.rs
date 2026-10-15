@@ -789,7 +789,6 @@ pub(crate) fn validated_native_histogram(
     Ok(histogram)
 }
 
-
 /// The absolute bucket counts for one side of a histogram.
 ///
 /// A float histogram states them outright. An integer histogram states them as

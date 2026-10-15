@@ -5,7 +5,6 @@ pub(crate) struct BlockBuildOptions<'a> {
     pub(crate) promoted_attrs: &'a [PromotedSpanAttr],
 }
 
-
 /// Runtime settings for the block-builder loop.
 #[derive(Clone, Debug)]
 pub struct BlockBuilderConfig {
@@ -24,7 +23,6 @@ pub struct BlockBuilderConfig {
     pub index_snapshot_retain: IndexSnapshotRetain,
 }
 
-
 /// Default maximum age of the oldest buffered span record before a flush.
 ///
 /// In a cold-only deployment, such as the demo, there is no querier live tier.
@@ -37,7 +35,6 @@ pub struct BlockBuilderConfig {
 /// querier live tier can raise this age to batch more aggressively at no
 /// freshness cost.
 pub const DEFAULT_FLUSH_MAX_AGE: Time = secs(10);
-
 
 /// The one object-store prefix every traces block is written under.
 ///
@@ -53,4 +50,3 @@ pub const DEFAULT_FLUSH_MAX_AGE: Time = secs(10);
 /// deployment's own object-key prefix. See
 /// [`prefixed_object_key`](super::prefixed_object_key).
 pub const TRACE_BLOCK_OBJECT_PREFIX: &str = "traces";
-

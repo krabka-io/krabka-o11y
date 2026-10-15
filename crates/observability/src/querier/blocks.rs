@@ -3,7 +3,6 @@ use crate::{
     read_log_block_from_object_store,
 };
 
-
 /// Reads one planned block, or reports that the block object is gone.
 ///
 /// Returns `Ok(None)` when the object is absent, and `Ok(Some(rows))` when it

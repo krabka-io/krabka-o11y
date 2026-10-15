@@ -10,7 +10,6 @@ use crate::span::{
     AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode, WireSpanStatus,
 };
 
-
 /// Decode OTLP `TracesData` into internal spans.
 ///
 /// # Errors

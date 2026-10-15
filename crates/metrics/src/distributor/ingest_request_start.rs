@@ -3,12 +3,9 @@ use std::future::Future;
 use tracing::Instrument as _;
 
 use super::{
-    WAL_TOPIC,
     BodyBytes, ByteSize, ByteSizeExt as _, DistributorState, HeaderMap, IngestRequest,
-    IntoResponse, Principal,
-    PushError, PushOutcome, RequestOutcome, Response, StdDurationExt as _, TenantAccessError,
-    TenantId, Time,
-    authorized_tenant_from_headers,
+    IntoResponse, Principal, PushError, PushOutcome, RequestOutcome, Response, StdDurationExt as _,
+    TenantAccessError, TenantId, Time, WAL_TOPIC, authorized_tenant_from_headers,
 };
 
 /// What an ingest handler knows before it decodes a request: when the request
@@ -77,7 +74,6 @@ impl IngestRequestStart {
     }
 }
 
-
 /// Builds the per-request ingest span. This function declares
 /// `krabka.ingest.series` empty, and `push_inner` records it after it decodes
 /// the request body.
@@ -97,7 +93,6 @@ pub(crate) fn ingest_span(tenant: Option<&TenantId>, body_size: ByteSize) -> tra
         krabka.ingest.bytes = body_size.bytes_u64(),
     )
 }
-
 
 /// Records an ingest request outcome on the distributor metrics bundle, if one
 /// is configured. `body_size` is the compressed request-body length. `items` is

@@ -15,11 +15,9 @@ use clap::Parser as _;
 use krabka_observability::RoleReadiness;
 use tokio::sync::oneshot;
 
-use self::{
-    compaction_passes::{
-        COMPACTION_INTERVAL, assert_role_stops_after_cancel, assert_stage_drains_with_its_loop,
-        cancel_ready_role_after_two_passes,
-    },
+use self::compaction_passes::{
+    COMPACTION_INTERVAL, assert_role_stops_after_cancel, assert_stage_drains_with_its_loop,
+    cancel_ready_role_after_two_passes,
 };
 use super::{CancellationToken, Cli, ServiceMetrics, SharedObjectStore, run_compactor};
 

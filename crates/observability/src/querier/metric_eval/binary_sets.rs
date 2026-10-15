@@ -1,7 +1,5 @@
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
-use crate::querier::scan::{MetricEvaluationRange, MetricRangeScanRequest};
-
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeSet, ColdBlockScan, ComparisonOp, HttpQueryError, Labels,
     MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp, MetricValue,
@@ -12,6 +10,7 @@ use crate::{
     execute_metric_query_range_with_hot_tail_frontier_and_deletes, format_metric_value,
     hot_tail_snapshot, json, json_object_to_labels, matching_metric_binary_sample,
     metric_binary_sample_timestamps_match, parse_metric_sample_value,
+    querier::scan::{MetricEvaluationRange, MetricRangeScanRequest},
 };
 
 fn apply_scalar_to_series(

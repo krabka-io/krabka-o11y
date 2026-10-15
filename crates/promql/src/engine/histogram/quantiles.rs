@@ -1,5 +1,6 @@
-use super::*;
 use std::num::FpCategory;
+
+use super::*;
 
 /// Prometheus. Both the `__name__` and `le` labels are dropped from every output
 /// series. Classic output samples carry `time_ms`; native ones keep the source

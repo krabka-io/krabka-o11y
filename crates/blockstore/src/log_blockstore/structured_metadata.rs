@@ -1,4 +1,7 @@
-use super::{Arc, BlockStoreError, BTreeMap, DataType, Field, Fields, LogRow, MapArray, MapBuilder, StringBuilder};
+use super::{
+    Arc, BTreeMap, BlockStoreError, DataType, Field, Fields, LogRow, MapArray, MapBuilder,
+    StringBuilder,
+};
 
 pub type StructuredMetadata = BTreeMap<String, String>;
 

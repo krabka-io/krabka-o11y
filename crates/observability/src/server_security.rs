@@ -87,8 +87,8 @@
 use std::path::Path;
 
 mod admin_denied;
-mod authenticator;
 mod authentication;
+mod authenticator;
 mod authorize_admin;
 mod authorize_tenant;
 mod client_auth;
@@ -102,10 +102,9 @@ mod grpc_incoming;
 mod internal_client;
 mod listener_mode;
 mod load_security_config;
-mod tls_accept;
 mod no_security_events;
-mod pem;
 mod peer_addr;
+mod pem;
 mod presented_credential;
 mod principal;
 mod security_event_sink;
@@ -122,6 +121,7 @@ mod tenant_denied;
 mod tenant_grant;
 #[cfg(test)]
 mod tests;
+mod tls_accept;
 mod token_digest;
 mod unauthenticated_routes;
 mod unauthorized_response;
@@ -211,7 +211,7 @@ fn read_file(path: &Path) -> Result<Vec<u8>, ServerSecurityError> {
 /// Why a request failed authentication, as a category that never holds the credential.
 ///
 /// The 401 response is the same for every reason. Only a
-/// [`SecurityEvents`](SecurityEvents) implementation sees the reason.
+/// [`SecurityEvents`] implementation sees the reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AuthFailureReason {
     /// The request sent no `Authorization` header, and its connection has no

@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// How a trace-by-id endpoint encodes a found trace as protobuf.
 pub(crate) type TraceProtobuf = fn(&TraceSpans, usize) -> Result<Vec<u8>, prost::EncodeError>;
 

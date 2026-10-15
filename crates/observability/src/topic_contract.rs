@@ -67,15 +67,15 @@
 //! the Kafka default is `delete`, and assuming otherwise is the silent loss
 //! this module exists to stop.
 
-use krabka_client_admin::{AdminClient, ConfigResource, DescribeConfigsResults, TopicMetadata};
-use krabka_client_core::ClientSecurity;
-
 use std::collections::BTreeMap;
+
 use derive_more::Display;
-use krabka_client_admin::AdminError;
-use thiserror::Error;
-use krabka_client_admin::CreateTopicSpec;
+use krabka_client_admin::{
+    AdminClient, AdminError, ConfigResource, CreateTopicSpec, DescribeConfigsResults, TopicMetadata,
+};
+use krabka_client_core::ClientSecurity;
 use krabka_units::{Time, convert::TimeExt as _, minutes};
+use thiserror::Error;
 
 #[cfg(test)]
 mod tests;

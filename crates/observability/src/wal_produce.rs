@@ -50,8 +50,9 @@ use std::{collections::VecDeque, future::Future, num::NonZeroUsize};
 
 use axum::body::Bytes;
 use krabka_client_producer::Header as ProducerHeader;
-use crate::persisted_format::{PERSISTED_FORMAT_HEADER, PERSISTED_FORMAT_VERSION};
 use prometheus_client::{metrics::counter::Counter, registry::Registry};
+
+use crate::persisted_format::{PERSISTED_FORMAT_HEADER, PERSISTED_FORMAT_VERSION};
 
 #[cfg(test)]
 mod tests;
@@ -243,7 +244,7 @@ where
 ///
 /// This is the batch append for a sink with no produce pipeline: it awaits
 /// `append` for each record in order and stops at the first failure.
-/// [`write_batch_pipelined`](write_batch_pipelined) is the windowed
+/// [`write_batch_pipelined`] is the windowed
 /// form for a sink that can keep several sends in flight.
 ///
 /// # Errors

@@ -33,49 +33,51 @@ use crate::{
 };
 
 mod bit_reader;
-mod byte_reader;
-mod chunk_types;
-mod chunk_segments;
 mod block_reader;
 mod block_types;
-mod xor_chunk;
+mod byte_reader;
+mod chunk_segments;
+mod chunk_types;
 mod histogram_chunks;
 mod import_commit;
 mod publish_tsdb_import;
+mod publish_types;
 mod read_import_json;
 mod tombstones;
 mod tsdb_block_sha256;
 mod tsdb_import_error;
 mod tsdb_import_keys;
 mod tsdb_import_limits;
-mod publish_types;
 mod tsdb_publish_error;
+mod xor_chunk;
 
 pub(crate) use self::tsdb_import_keys::TsdbImportKeys;
 use self::{
     bit_reader::BitReader,
-    xor_chunk::{decode_xor_chunk, XorState},
-    histogram_chunks::{decode_float_histogram_chunk, decode_histogram_chunk},
     byte_reader::ByteReader,
     chunk_segments::ChunkSegments,
+    chunk_types::{
+        ChunkEncoding, ChunkError, ChunkMeta, ChunkSamples, TimestampedFloatSample,
+        TimestampedHistogramSample,
+    },
+    histogram_chunks::{decode_float_histogram_chunk, decode_histogram_chunk},
     import_commit::ImportCommit,
     read_import_json::read_import_json,
     tombstones::Tombstones,
-};
-use self::chunk_types::{
-    ChunkEncoding, ChunkError, ChunkMeta, ChunkSamples, TimestampedFloatSample,
-    TimestampedHistogramSample,
+    xor_chunk::{XorState, decode_xor_chunk},
 };
 pub use self::{
-    publish_tsdb_import::publish_tsdb_import, tsdb_block_sha256::tsdb_block_sha256,
-    tsdb_import_error::TsdbImportError, tsdb_import_limits::TsdbImportLimits,
+    block_reader::decode_tsdb_block,
+    block_types::{DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportStats},
+    publish_tsdb_import::publish_tsdb_import,
+    publish_types::{
+        TsdbImportBinding, TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportTarget,
+    },
+    tsdb_block_sha256::tsdb_block_sha256,
+    tsdb_import_error::TsdbImportError,
+    tsdb_import_limits::TsdbImportLimits,
     tsdb_publish_error::TsdbPublishError,
 };
-pub use self::block_types::{DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportStats};
-pub use self::publish_types::{
-    TsdbImportBinding, TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportTarget,
-};
-pub use self::block_reader::decode_tsdb_block;
 
 /// The bit pattern Prometheus writes for a stale marker.
 const STALE_NAN_BITS: u64 = 0x7ff0_0000_0000_0002;

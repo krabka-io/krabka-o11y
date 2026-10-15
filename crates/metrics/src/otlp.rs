@@ -2553,34 +2553,36 @@ mod tests {
     }
 }
 
-mod native_histogram_translation;
 mod attribute_translation;
-mod decoders;
 mod decode_otlp_inner;
+mod decoders;
 mod delta_state;
-mod resource_metrics;
 mod exemplars;
-mod histogram_translators;
 mod histogram_family;
 mod histogram_points;
 mod histogram_scope;
+mod histogram_translators;
 mod max_sample_timestamp_ms;
 mod metric_metadata;
-mod metric_series;
 mod metric_names;
+mod metric_series;
+mod native_histogram_translation;
 mod otlp_error;
+mod resource_metrics;
 mod scalar_translators;
 mod translation_strategy;
 
-pub use decoders::{decode_otlp, decode_otlp_stateful, decode_otlp_stateful_bytes};
+use attribute_translation::{
+    attribute_value, insert_attributes, instrumentation_scope_attributes, labels,
+    promoted_resource_attributes, scope_attributes,
+};
 use decode_otlp_inner::decode_otlp_inner_partial;
 pub(crate) use decode_otlp_inner::{OtlpDecodeOptions, PartialOtlpDecode, decode_otlp_inner};
 pub(crate) use decoders::decode_otlp_stateful_bytes_partial;
+pub use decoders::{decode_otlp, decode_otlp_stateful, decode_otlp_stateful_bytes};
 pub use delta_state::{DeltaAccumulator, TenantDeltaAccumulators};
 use delta_state::{accumulate_delta_float_series, delta_key};
-use resource_metrics::{reject_far_future_points, resource_metrics_timestamp_ms};
 use exemplars::{ExemplarPolicy, exemplar, exemplar_belongs_to_bucket, exemplars_for_bucket};
-pub use native_histogram_translation::exponential_histogram_to_native;
 use histogram_family::HistogramFamily;
 use histogram_points::decode_histogram_points;
 use histogram_scope::HistogramScope;
@@ -2589,25 +2591,23 @@ use histogram_translators::{
 };
 pub(crate) use max_sample_timestamp_ms::MAX_SAMPLE_TIMESTAMP_MS;
 use metric_metadata::metric_metadata;
-use metric_series::metric_series;
 pub use metric_names::normalize_name;
-pub use otlp_error::OtlpError;
-use scalar_translators::{
-    ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries, append_count_and_sum,
-    delta_sum_series, gauge_series, scalar_series, sum_series, summary_point_series,
-    summary_series,
+use metric_names::{
+    prometheus_base_unit_suffix, prometheus_unit_suffix, strip_ucum_annotations,
+    translated_metric_name,
 };
-use attribute_translation::{
-    attribute_value, insert_attributes, instrumentation_scope_attributes, labels,
-    promoted_resource_attributes, scope_attributes,
-};
+use metric_series::metric_series;
+pub use native_histogram_translation::exponential_histogram_to_native;
 use native_histogram_translation::{
     add_compatible_native_histogram, add_spanned_histogram_counts, downscaled_spans,
     spanned_histogram_counts,
 };
-use metric_names::{
-    prometheus_base_unit_suffix, prometheus_unit_suffix, strip_ucum_annotations,
-    translated_metric_name,
+pub use otlp_error::OtlpError;
+use resource_metrics::{reject_far_future_points, resource_metrics_timestamp_ms};
+use scalar_translators::{
+    ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries, append_count_and_sum,
+    delta_sum_series, gauge_series, scalar_series, sum_series, summary_point_series,
+    summary_series,
 };
 pub use translation_strategy::TranslationStrategy;
 

@@ -251,7 +251,6 @@ pub fn partition_key(tenant: &str, fp: u64) -> Bytes {
     Bytes::from(bytes)
 }
 
-
 /// One clock confidence reading, plus the stamp the ingester wrote on it.
 ///
 /// The host reports the reading. The ingester stamps [`Self::ingest_unix_nanos`]

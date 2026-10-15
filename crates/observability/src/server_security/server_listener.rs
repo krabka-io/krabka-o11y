@@ -8,7 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     PeerAddr, ServerSecurity, ServerSecurityError, ServerStream,
-    listener_mode::ListenerMode, tls_accept::{handle_accept_error, run_tls_accept_loop},
+    listener_mode::ListenerMode,
+    tls_accept::{handle_accept_error, run_tls_accept_loop},
     warn_about_posture::warn_about_posture,
 };
 

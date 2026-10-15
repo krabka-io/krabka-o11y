@@ -1,14 +1,13 @@
 use super::{
-    Arc, BTreeMap, BlockStoreError, BlockWriter, ByteSize, COL_FINGERPRINT, COL_TIMESTAMP,
-    CompactionIndexManifest, CompactionIndexSink, CompactionObjectPlan, CompactionSeriesLabels,
-    MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, MetricCompactionError, MetricCompactionJob,
-    ObjectStore, RecordBatch, SortedMerge, SummaryColumns, compacted_metric_object_key, compaction_index_key,
-    open_block_stream, series_block_schema,
+    Arc, BTreeMap, BlockStoreError, BlockWriter, BooleanArray, ByteSize, COL_FINGERPRINT,
+    COL_TIMESTAMP, CompactionIndexManifest, CompactionIndexSink, CompactionObjectPlan,
+    CompactionSeriesLabels, Int64Array, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS,
+    MetricCompactionError, MetricCompactionJob, ObjectStore, RecordBatch, SortedMerge,
+    SummaryColumns, UInt64Array, compacted_metric_object_key, compaction_index_key,
+    filter_record_batch, open_block_stream, series_block_schema, typed_column,
     versioned_compaction_key,
 };
-use crate::arrow_codec::SampleIdentity;
-use crate::clock_reading_decl;
-use super::{BooleanArray, Int64Array, UInt64Array, filter_record_batch, typed_column};
+use crate::{arrow_codec::SampleIdentity, clock_reading_decl};
 
 /// Merges the blocks one job names into a single block, and publishes its
 /// manifest.
@@ -164,7 +163,6 @@ where
     index_sink.write_manifest(&manifest).await?;
     Ok(manifest)
 }
-
 
 /// Drops the rows of `batch` that repeat the `(fingerprint, timestamp)` of the
 /// row before them.

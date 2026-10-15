@@ -27,8 +27,6 @@ use crate::{
     },
 };
 
-
-
 /// `router`, with `audit` in the extensions of every request that it serves.
 ///
 /// Call it on the finished router. A route that is merged in later does not

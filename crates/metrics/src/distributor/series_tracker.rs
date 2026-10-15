@@ -141,7 +141,6 @@ impl SeriesTracker {
     }
 }
 
-
 /// Everything the series tracker keeps under its one lock.
 #[derive(Debug)]
 pub(crate) struct SeriesTrackerState {
@@ -198,7 +197,6 @@ impl TenantSeries {
             .retain(|_, activity| now.duration_since(activity.last_seen) < idle_timeout);
     }
 }
-
 
 /// What the distributor remembers about one series of one tenant.
 #[derive(Clone, Copy, Debug)]

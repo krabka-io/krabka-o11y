@@ -1,5 +1,6 @@
-use super::*;
 use num_traits::ToPrimitive;
+
+use super::*;
 
 pub(crate) fn add_nested_intrinsic_columns(
     batches: Vec<RecordBatch>,
@@ -258,7 +259,6 @@ pub(crate) fn filter_batches_by_matchers(
         })
         .collect()
 }
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct SpanIdentity {

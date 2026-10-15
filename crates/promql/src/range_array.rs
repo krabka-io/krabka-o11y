@@ -35,13 +35,13 @@ use krabka_metrics::{
     COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD,
 };
 
-#[cfg(test)]
-mod tests;
 mod histogram_columns;
 mod histogram_span_view;
 mod histogram_view;
 mod list_offsets;
 mod range_array_type;
+#[cfg(test)]
+mod tests;
 use histogram_columns::HistogramColumns;
 pub use histogram_span_view::HistogramSpanView;
 pub use histogram_view::HistogramView;

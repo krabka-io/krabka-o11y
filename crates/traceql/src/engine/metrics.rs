@@ -1,21 +1,20 @@
+use krabka_units::convert::TimeExt as _;
+
 use super::{
-    ATTR_PREFIX, Aggregate, Array, AsArray, AttrValue, BTreeMap, COL_CHILD_COUNT,
-    COL_DURATION, COL_EVENT_NAME, COL_EVENT_TIME_SINCE_START, COL_INSTRUMENTATION_NAME,
+    ATTR_PREFIX, Aggregate, Array, AsArray, AttrValue, BTreeMap, COL_CHILD_COUNT, COL_DURATION,
+    COL_EVENT_NAME, COL_EVENT_TIME_SINCE_START, COL_INSTRUMENTATION_NAME,
     COL_INSTRUMENTATION_VERSION, COL_KIND, COL_LINK_SPAN_ID, COL_LINK_TRACE_ID, COL_NAME,
     COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID, COL_ROOT_SERVICE_NAME,
     COL_ROOT_SPAN_NAME, COL_SPAN_ID, COL_STATUS_CODE, COL_STATUS_MESSAGE, COL_TRACE_DURATION,
     COL_TRACE_ID, CompareSpec, DataType, DurationNanos, EVENT_ATTR_PREFIX, Field, FieldExpr,
     INSTRUMENTATION_ATTR_PREFIX, Intrinsic, LINK_ATTR_PREFIX, MetricLabel, MetricPoint, Pipeline,
-    Query, RankLimit, RecordBatch, Result, Scope, SpanMatcher, SpansetExpr, Time, TraceMetricExemplar,
-    TraceMetricSeries,
-    TraceMetricLabelType, TraceqlError, UnixNano, bytes_to_hex, compare_row,
-    compare_row_attr_values, f64_from_i64, f64_from_u64,
-    f64_from_usize, fixed_16, i32_value, i64_value, is_inert_metric_stage,
-    kind_enum_name, nested_projection_matcher, quantile_label, rank_stage_limit,
-    status_enum_name,
+    Query, RankLimit, RecordBatch, Result, Scope, SpanMatcher, SpansetExpr, Time,
+    TraceMetricExemplar, TraceMetricLabelType, TraceMetricSeries, TraceqlError, UnixNano,
+    bytes_to_hex, compare_row, compare_row_attr_values, f64_from_i64, f64_from_u64, f64_from_usize,
+    fixed_16, i32_value, i64_value, is_inert_metric_stage, kind_enum_name,
+    nested_projection_matcher, quantile_label, rank_stage_limit, status_enum_name,
     string_array_value, unsupported_metric_pipeline,
 };
-use krabka_units::convert::TimeExt as _;
 
 // Metric Bucket
 #[derive(Clone, Default)]
@@ -1350,7 +1349,6 @@ pub(crate) fn apply_metric_filter(
         .collect()
 }
 
-
 pub(crate) fn histogram_points(
     buckets: &[MetricBucket],
     start_ns: i64,
@@ -1368,7 +1366,6 @@ pub(crate) fn histogram_points(
         })
         .collect()
 }
-
 
 pub(crate) fn histogram_series_for_group(
     labels: MetricLabels,
@@ -1409,7 +1406,6 @@ pub(crate) fn histogram_series_for_group(
         .collect()
 }
 
-
 /// Builds a bare `count_over_time()` `MetricPlan`: no grouping, no stages, no
 /// sampling, and no `compare()` stage.
 pub(crate) fn count_over_time_plan() -> MetricPlan {
@@ -1429,7 +1425,6 @@ pub(crate) fn count_over_time_plan() -> MetricPlan {
     }
 }
 
-
 pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
     if matches!(pipeline, Pipeline::TopK(0) | Pipeline::BottomK(0)) {
         return Err(TraceqlError::Plan(
@@ -1443,7 +1438,6 @@ pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
     })
 }
 
-
 #[derive(Clone, Copy)]
 pub(crate) struct MetricsRange {
     pub(crate) scan_start: UnixNano,
@@ -1452,7 +1446,6 @@ pub(crate) struct MetricsRange {
     pub(crate) step: DurationNanos,
     pub(crate) instant: bool,
 }
-
 
 pub(crate) fn usize_from_integer_f64(value: f64) -> Result<usize> {
     // No finiteness clause: `fract()` of an infinity or a NaN is NaN, and

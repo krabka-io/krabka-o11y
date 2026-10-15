@@ -112,15 +112,23 @@ pub(super) fn authorize_config_tenant(
     authorized_tenant_from_headers(headers, principal).map_err(IntoResponse::into_response)
 }
 mod alerts;
-mod endpoints;
 mod config_ops;
+mod endpoints;
 mod json_builders;
 mod ruler_config_rules;
 mod tenant_ruler_rules;
 pub(super) use alerts::alerts;
-pub(super) use endpoints::{delete_ruler_config_group, delete_ruler_config_namespace, ruler_config_group, rules, set_ruler_config_group};
-use config_ops::{parse_rules_params, parse_yaml_duration, record_ruler_config_change, store_ruler_config_group};
-use json_builders::{labels_map_json, prometheus_alerts_for_rule_json, prometheus_rule_groups_json, prometheus_rule_json, prometheus_rules_json};
+use config_ops::{
+    parse_rules_params, parse_yaml_duration, record_ruler_config_change, store_ruler_config_group,
+};
+pub(super) use endpoints::{
+    delete_ruler_config_group, delete_ruler_config_namespace, ruler_config_group, rules,
+    set_ruler_config_group,
+};
+use json_builders::{
+    labels_map_json, prometheus_alerts_for_rule_json, prometheus_rule_groups_json,
+    prometheus_rule_json, prometheus_rules_json,
+};
 pub(super) use ruler_config_rules::ruler_config_rules;
 pub(super) use tenant_ruler_rules::tenant_ruler_rules;
 

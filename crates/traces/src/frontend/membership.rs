@@ -46,7 +46,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::frontend::{QuerierScheme, backend::BackendError, http_backend::internal_http_client};
 
-
 /// One consistent view of the querier pool, taken at an instant.
 ///
 /// A query plans, fans out and merges against a single snapshot. Planning
@@ -531,7 +530,6 @@ pub async fn refresh_membership(
     .await
 }
 
-
 /// Reads a querier's `/ready`, the endpoint every Krabka role already serves.
 ///
 /// `krabka_observability::RoleReadiness` answers 200 when every registered
@@ -608,7 +606,6 @@ pub(super) fn pending_gates(body: &str) -> String {
         named.to_string()
     }
 }
-
 
 /// The readiness gate a query-frontend holds while at least one querier can
 /// answer.

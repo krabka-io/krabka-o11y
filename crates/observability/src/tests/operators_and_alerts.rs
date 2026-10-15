@@ -1,6 +1,4 @@
-
 use crate::tests::prelude::{MetricScalarArithmeticOp, check};
-
 
 /// `split_leading_vector_group_modifier` peels a `group_left`/`group_right`
 /// off the front of a vector-match clause, with or without a label list.

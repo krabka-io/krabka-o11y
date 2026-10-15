@@ -1,10 +1,12 @@
 use krabka_observability::{
-    CancellationToken, CriticalTaskError, SupervisedTasks,
-    compaction_schedule::CompactionSchedule,
+    CancellationToken, CriticalTaskError, SupervisedTasks, compaction_schedule::CompactionSchedule,
 };
 use krabka_units::{Time, convert::TimeExt as _, fmt::Human as _};
+
 use super::*;
-use crate::{DeferredBlockDeletions, MetricCompactionError, MetricCompactionPass, compact_metric_blocks_once};
+use crate::{
+    DeferredBlockDeletions, MetricCompactionError, MetricCompactionPass, compact_metric_blocks_once,
+};
 
 /// Runs compaction passes on `--compactor-interval` until `shutdown` fires.
 ///

@@ -1,5 +1,6 @@
-use super::*;
 use krabka_traceql::next_duration_part;
+
+use super::*;
 
 pub(crate) fn accepts_media_type(headers: &HeaderMap, media_types: &[&str]) -> bool {
     headers

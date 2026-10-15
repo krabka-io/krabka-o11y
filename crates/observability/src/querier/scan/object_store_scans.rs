@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
+
 pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest};
-use super::{execute_metric_range_scan_with_deletes, MetricRangeScanSource};
+use super::{MetricRangeScanSource, execute_metric_range_scan_with_deletes};
 use crate::{
     Arc, LabelIndex, MetricQuery, NonZeroUsize, ObjectPath, ObjectStore, QueryError, QueryHotTail,
     StreamPlan, Value, WalLogRecord,

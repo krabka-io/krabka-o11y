@@ -1,6 +1,6 @@
-pub(crate) use super::record_matching::append_matching_log_row;
 use num_traits::{FromPrimitive as _, ToPrimitive};
 
+pub(crate) use super::record_matching::append_matching_log_row;
 use crate::{
     ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, LokiStreamEntry, METRIC_DECIMAL_SCALE,
     MetricValue, Ordering, Quantile, QueryError, QueryRow, Rational, StreamPlan, TimeRange,

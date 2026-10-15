@@ -2,21 +2,21 @@
 use super::*;
 
 pub(crate) mod labels {
-use super::*;
+    use super::*;
 
-pub(crate) fn labels(metric: &str, job: &str) -> Labels {
-    let mut labels = Labels::new();
-    labels.insert("__name__", metric);
-    labels.insert("job", job);
-    labels
-}
+    pub(crate) fn labels(metric: &str, job: &str) -> Labels {
+        let mut labels = Labels::new();
+        labels.insert("__name__", metric);
+        labels.insert("job", job);
+        labels
+    }
 }
 
 pub(crate) mod parse_duration_supports_all_units_and_compounds_and_rejects_bad_input {
-use super::*;
-use crate::ruler::parse_duration;
+    use super::*;
+    use crate::ruler::parse_duration;
 
-#[yare::parameterized(
+    #[yare::parameterized(
     compound = { "1h30m", Some(millis(5_400_000)) },
     milliseconds = { "100ms", Some(millis(100)) },
     seconds = { "5s", Some(secs(5)) },
@@ -28,11 +28,10 @@ use crate::ruler::parse_duration;
     unknown_unit = { "5x", None },
     invalid = { "abc", None },
 )]
-pub(crate) fn parse_duration_supports_all_units_and_compounds_and_rejects_bad_input(
-    input: &str,
-    want: Option<Time>,
-) {
-    assert2::assert!(parse_duration(input).ok() == want);
+    pub(crate) fn parse_duration_supports_all_units_and_compounds_and_rejects_bad_input(
+        input: &str,
+        want: Option<Time>,
+    ) {
+        assert2::assert!(parse_duration(input).ok() == want);
+    }
 }
-}
-

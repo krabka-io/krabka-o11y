@@ -1,5 +1,6 @@
-use super::*;
 use prost::Message as _;
+
+use super::*;
 
 /// Translates OTLP metrics into the common ingest representation.
 /// # Errors

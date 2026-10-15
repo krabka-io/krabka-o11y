@@ -45,8 +45,8 @@ pub(crate) fn alerting_rules(
 
 mod operations;
 pub(crate) use operations::evaluate_alerting_rule_with_state_and_sink;
-pub use operations::evaluate_and_dispatch_alerting_rule;
-pub use operations::evaluate_and_dispatch_alerting_rule_with_state;
-pub use operations::evaluate_and_dispatch_alerting_rule_group;
-pub use operations::evaluate_and_persist_alerting_rule_with_state;
-pub use operations::evaluate_and_persist_alerting_rule_group;
+pub use operations::{
+    evaluate_and_dispatch_alerting_rule, evaluate_and_dispatch_alerting_rule_group,
+    evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,
+    evaluate_and_persist_alerting_rule_with_state,
+};

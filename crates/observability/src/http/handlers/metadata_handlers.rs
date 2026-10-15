@@ -1,23 +1,23 @@
 use std::future::Future;
-use super::{record_metadata_query, MetadataQuery};
 
 use axum::response::IntoResponse;
 
+use super::{MetadataQuery, record_metadata_query};
 use crate::{
-    Bytes, LogqlExpr, HeaderMap, HttpQueryError, Instant, LabelValuesRequest, LokiStreamEncoding, Path,
-    PostedQueryRequest, QuerierState, QueryKind, QueryParams, RawQuery, RequestSecurity, Response,
-    SeriesParams, State, StatusCode, TenantErrorSurface, TenantId, Value, VolumeKind,
+    Bytes, HeaderMap, HttpQueryError, Instant, LabelValuesRequest, LogqlExpr, LokiStreamEncoding,
+    Path, PostedQueryRequest, QuerierState, QueryKind, QueryParams, RawQuery, RequestSecurity,
+    Response, SeriesParams, State, StatusCode, TenantErrorSurface, TenantId, Value, VolumeKind,
     WebSocketUpgrade, add_loki_encoding_flags, add_loki_query_stats, authorized_tenants,
-    execute_http_query_for_tenant_inner, execute_index_shards_query,
     execute_api_prom_label_names_query, execute_api_prom_series_query,
-    execute_http_query_for_tenant, execute_index_stats_query, execute_index_volume_query,
-    execute_label_values_query, execute_series_query, json, json_response, loki_encoding_flags,
+    execute_http_query_for_tenant, execute_http_query_for_tenant_inner, execute_index_shards_query,
+    execute_index_stats_query, execute_index_volume_query, execute_label_values_query,
+    execute_series_query, json, json_response, loki_encoding_flags,
     loki_instant_scalar_or_vector_response, loki_parquet_response, loki_range_vector_response,
     loki_stream_encoding_for_headers, loki_success_value, merge_loki_query_response,
-    parse_logql_expr, parse_posted_series_params, parse_query, parse_query_params, parse_series_params,
-    prepare_http_tail, reject_signed_vector_function_literal, resolved_range_step,
-    scalar_vector_expression_result, send_tail_stream, text_response, time_range,
-    validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
+    parse_logql_expr, parse_posted_series_params, parse_query, parse_query_params,
+    parse_series_params, prepare_http_tail, reject_signed_vector_function_literal,
+    resolved_range_step, scalar_vector_expression_result, send_tail_stream, text_response,
+    time_range, validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
     wants_loki_parquet,
 };
 

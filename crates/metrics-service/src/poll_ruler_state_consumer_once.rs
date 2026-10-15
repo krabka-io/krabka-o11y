@@ -1,7 +1,7 @@
 use super::{
     MetricStore, PrometheusApiState, RulerStateConsumerError, Time, WalHeadConsumerCommit,
-    WalHeadConsumerPoll, WalHeadReplayResult,
-    finish_wal_consumer_replay, poll_checked_replay_records, replay_ruler_state_records,
+    WalHeadConsumerPoll, WalHeadReplayResult, finish_wal_consumer_replay,
+    poll_checked_replay_records, replay_ruler_state_records,
 };
 
 #[tracing::instrument(

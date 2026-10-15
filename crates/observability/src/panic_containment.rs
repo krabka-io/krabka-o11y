@@ -30,10 +30,10 @@
 
 use std::{any::Any, panic::AssertUnwindSafe};
 
+use axum::{extract::Request, middleware::Next};
 use futures_util::FutureExt as _;
 
 use crate::{Response, Router, StatusCode};
-use axum::{extract::Request, middleware::Next};
 
 mod panic_safe_shared;
 #[cfg(test)]
@@ -68,9 +68,7 @@ pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
-
 use futures_util::FutureExt as _;
-
 
 /// Runs the rest of the stack and answers 500 if it panics.
 ///

@@ -1,12 +1,12 @@
-use super::*;
-use axum::http::StatusCode;
-use krabka_observability::service_metrics::QueryRequest;
-use krabka_observability::service_metrics::RequestOutcome;
+use axum::{
+    extract::FromRequestParts,
+    http::{StatusCode, request::Parts},
+};
+use krabka_observability::service_metrics::{QueryRequest, RequestOutcome};
+use krabka_traceql::{Aggregate, Pipeline};
 use krabka_units::convert::StdDurationExt as _;
-use krabka_traceql::Aggregate;
-use krabka_traceql::Pipeline;
-use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
+
+use super::*;
 use crate::tempo_query_routes::tempo_query_routes;
 
 pub(crate) struct AppState<S: SpanStore> {

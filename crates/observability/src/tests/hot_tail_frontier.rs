@@ -5,11 +5,10 @@ use crate::tests::prelude::{
     CompactionFrontier, InMemoryWalSink, LabelIndex, Labels, LogCompactionIndexOutput, LogHotTail,
     LogWalSink, ObjectPath, ObjectStore, Offset, PartitionIndex, QuerierState,
     RecordingObjectStore, ScalarVectorExpressionResult, SharedCompactionFrontier, TimeRange,
-    WalLogRecord, WalPosition, check, json,
-    loki_instant_scalar_or_vector_response, loki_json_timestamp_value_parse_error, minutes,
-    parse_detected_labels_params, read_tenant_log_index_shard_ranges_from_object_store,
-    refresh_compaction_frontier_and_prune, write_compaction_frontier_to_object_store,
-    write_tenant_compaction_indexes_to_object_store,
+    WalLogRecord, WalPosition, check, json, loki_instant_scalar_or_vector_response,
+    loki_json_timestamp_value_parse_error, minutes, parse_detected_labels_params,
+    read_tenant_log_index_shard_ranges_from_object_store, refresh_compaction_frontier_and_prune,
+    write_compaction_frontier_to_object_store, write_tenant_compaction_indexes_to_object_store,
 };
 
 /// Brute-force oracle: the records a full linear scan keeps for an inclusive window.
@@ -41,111 +40,111 @@ pub(crate) fn hot_tail_test_record(timestamp_ns: i64, app: &str) -> WalLogRecord
 // --- FIX B1 tests ---
 
 mod a_cancelled_frontier_refresher_joins_cleanly_through_its_handle {
-use assert2::assert;
-use krabka_units::millis;
-use tokio_util::sync::CancellationToken;
+    use assert2::assert;
+    use krabka_units::millis;
+    use tokio_util::sync::CancellationToken;
 
-use super::*;
-use crate::compactor::runtime::spawn_compaction_frontier_refresher;
+    use super::*;
+    use crate::compactor::runtime::spawn_compaction_frontier_refresher;
 
-/// Shutdown is not a failure.
-///
-/// A supervisor that treats every exit of this task as fatal would fail the
-/// process on every clean stop, so the handle has to distinguish the two: a
-/// cancelled refresher returns, and its handle joins with `Ok`.
-#[tokio::test]
-async fn a_cancelled_frontier_refresher_joins_cleanly_through_its_handle() {
-    let token = CancellationToken::new();
-    let handle = spawn_compaction_frontier_refresher(
-        Arc::new(object_store::memory::InMemory::new()),
-        ObjectPath::default(),
-        SharedCompactionFrontier::default(),
-        BufferedLogHotTail::default(),
-        token.clone(),
-        millis(50),
-    );
+    /// Shutdown is not a failure.
+    ///
+    /// A supervisor that treats every exit of this task as fatal would fail the
+    /// process on every clean stop, so the handle has to distinguish the two: a
+    /// cancelled refresher returns, and its handle joins with `Ok`.
+    #[tokio::test]
+    async fn a_cancelled_frontier_refresher_joins_cleanly_through_its_handle() {
+        let token = CancellationToken::new();
+        let handle = spawn_compaction_frontier_refresher(
+            Arc::new(object_store::memory::InMemory::new()),
+            ObjectPath::default(),
+            SharedCompactionFrontier::default(),
+            BufferedLogHotTail::default(),
+            token.clone(),
+            millis(50),
+        );
 
-    assert!(!handle.is_finished());
-    token.cancel();
+        assert!(!handle.is_finished());
+        token.cancel();
 
-    let joined = tokio::time::timeout(millis(2_000).to_std(), handle)
-        .await
-        .expect("a cancelled refresher returns, so its handle resolves");
-    assert!(let Ok(()) = joined);
-}
+        let joined = tokio::time::timeout(millis(2_000).to_std(), handle)
+            .await
+            .expect("a cancelled refresher returns, so its handle resolves");
+        assert!(let Ok(()) = joined);
+    }
 }
 mod appending_log_index_shard_does_not_rewrite_historical_shards_or_full_manifest;
 mod compaction_frontier_refresh_prunes_hot_tail_from_object_store;
 mod shared_snapshots_survive_pruning_and_reach_http_queries;
 mod the_frontier_refresher_hands_back_a_handle_that_carries_its_panic {
-use assert2::assert;
-use krabka_units::millis;
-use tokio_util::sync::CancellationToken;
+    use assert2::assert;
+    use krabka_units::millis;
+    use tokio_util::sync::CancellationToken;
 
-use super::*;
-use crate::compactor::runtime::spawn_compaction_frontier_refresher;
+    use super::*;
+    use crate::compactor::runtime::spawn_compaction_frontier_refresher;
 
-/// An object store that dies when the frontier is read.
-///
-/// A refresh that returns an error is not the case under test: the loop logs
-/// that and carries on. What ends the task without a word is a panic, and a
-/// store that panics on `get` is the shortest way to one.
-#[derive(Debug)]
-struct PanicOnGetStore {
-    inner: object_store::memory::InMemory,
-}
-
-impl std::fmt::Display for PanicOnGetStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PanicOnGetStore")
+    /// An object store that dies when the frontier is read.
+    ///
+    /// A refresh that returns an error is not the case under test: the loop logs
+    /// that and carries on. What ends the task without a word is a panic, and a
+    /// store that panics on `get` is the shortest way to one.
+    #[derive(Debug)]
+    struct PanicOnGetStore {
+        inner: object_store::memory::InMemory,
     }
-}
 
-krabka_blockstore::delegate_object_store! {
-    PanicOnGetStore => inner;
-    forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
-
-    async fn get_opts(
-        &self,
-        _location: &object_store::path::Path,
-        _options: object_store::GetOptions,
-    ) -> object_store::Result<object_store::GetResult> {
-        panic!("the frontier object could not be read");
+    impl std::fmt::Display for PanicOnGetStore {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("PanicOnGetStore")
+        }
     }
-}
 
-/// The refresher's death reaches its caller.
-///
-/// The task honours cancellation, so shutdown always looked fine, and that is
-/// what hid this: a panic inside the loop ended the refresher, the querier
-/// carried on answering from the frontier it last read, and nothing anywhere
-/// said the frontier had stopped moving. The handle is what makes that
-/// observable, so the function has to give it back and the caller has to be
-/// able to join it.
-#[tokio::test]
-async fn the_frontier_refresher_hands_back_a_handle_that_carries_its_panic() {
-    let token = CancellationToken::new();
-    let handle = spawn_compaction_frontier_refresher(
-        Arc::new(PanicOnGetStore {
-            inner: object_store::memory::InMemory::new(),
-        }),
-        ObjectPath::default(),
-        SharedCompactionFrontier::default(),
-        BufferedLogHotTail::default(),
-        token.clone(),
-        millis(1),
-    );
+    krabka_blockstore::delegate_object_store! {
+        PanicOnGetStore => inner;
+        forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
 
-    let joined = tokio::time::timeout(millis(2_000).to_std(), handle)
-        .await
-        .expect("a panicking refresher ends, so its handle resolves");
+        async fn get_opts(
+            &self,
+            _location: &object_store::path::Path,
+            _options: object_store::GetOptions,
+        ) -> object_store::Result<object_store::GetResult> {
+            panic!("the frontier object could not be read");
+        }
+    }
 
-    let error = joined.expect_err("the refresher panicked, so the join must not succeed");
-    assert!(error.is_panic());
-    // Cancellation was never asked for: the task ended on its own, which is
-    // exactly what a supervisor must be able to tell apart from shutdown.
-    assert!(!token.is_cancelled());
-}
+    /// The refresher's death reaches its caller.
+    ///
+    /// The task honours cancellation, so shutdown always looked fine, and that is
+    /// what hid this: a panic inside the loop ended the refresher, the querier
+    /// carried on answering from the frontier it last read, and nothing anywhere
+    /// said the frontier had stopped moving. The handle is what makes that
+    /// observable, so the function has to give it back and the caller has to be
+    /// able to join it.
+    #[tokio::test]
+    async fn the_frontier_refresher_hands_back_a_handle_that_carries_its_panic() {
+        let token = CancellationToken::new();
+        let handle = spawn_compaction_frontier_refresher(
+            Arc::new(PanicOnGetStore {
+                inner: object_store::memory::InMemory::new(),
+            }),
+            ObjectPath::default(),
+            SharedCompactionFrontier::default(),
+            BufferedLogHotTail::default(),
+            token.clone(),
+            millis(1),
+        );
+
+        let joined = tokio::time::timeout(millis(2_000).to_std(), handle)
+            .await
+            .expect("a panicking refresher ends, so its handle resolves");
+
+        let error = joined.expect_err("the refresher panicked, so the join must not succeed");
+        assert!(error.is_panic());
+        // Cancellation was never asked for: the task ended on its own, which is
+        // exactly what a supervisor must be able to tell apart from shutdown.
+        assert!(!token.is_cancelled());
+    }
 }
 mod the_shard_catalog_lists_each_compacted_range_exactly_once;
 

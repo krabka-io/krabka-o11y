@@ -7,7 +7,6 @@ use serde::Deserialize;
 use super::WireError;
 use crate::span::{AttrValue, KeyValue, Span, SpanKind, StatusCode, WireSpanStatus};
 
-
 /// Decode a Zipkin v2 JSON span array.
 ///
 /// # Errors
@@ -275,8 +274,6 @@ mod tests {
         assert2::assert!(decode_zipkin(bad.as_bytes()).is_err());
     }
 }
-
-
 
 pub(crate) fn hex_fixed<const N: usize>(hex: &str) -> Result<[u8; N], WireError> {
     if hex.is_empty() || !hex.len().is_multiple_of(2) || hex.len() > N * 2 {

@@ -1,4 +1,7 @@
-use promql_parser::parser::{Expr, LabelModifier, token::{T_AVG, T_BOTTOMK, T_COUNT, T_STDDEV, T_STDVAR, T_SUM, T_TOPK, TokenType}};
+use promql_parser::parser::{
+    Expr, LabelModifier,
+    token::{T_AVG, T_BOTTOMK, T_COUNT, T_STDDEV, T_STDVAR, T_SUM, T_TOPK, TokenType},
+};
 
 use super::{
     MomentReduction, RankReduction, aggregate_k, expr_contains_aggregate,

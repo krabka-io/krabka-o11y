@@ -18,7 +18,6 @@ impl TagCatalog<'_> {
     }
 }
 
-
 pub(crate) fn collect_tags(
     spans: &[Span],
     tag_names: &mut BTreeSet<String>,
@@ -63,4 +62,3 @@ pub(crate) fn collect_tags(
         }
     }
 }
-

@@ -11,7 +11,6 @@ use crate::tests::prelude::{
     validate_ingest_body_limit,
 };
 
-
 /// The buffer answers a range query through its bucket index, and nothing
 /// had exercised that path. The index is a granularity, not a filter: the
 /// exact bound is applied within the buckets it scans, so what has to hold

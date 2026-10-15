@@ -1,10 +1,9 @@
 use krabka_observability::CancellationToken;
 
-use super::role_runners::{run_block_builder, run_compactor, run_distributor};
-
 use super::{
     Cli, ClientSecurity, RoleReadiness, ServerSecurity, ServiceMetrics, Target, WriterConfig,
     require_role_topics,
+    role_runners::{run_block_builder, run_compactor, run_distributor},
 };
 
 /// Runs one writer role with the caller's readiness and shutdown controls.

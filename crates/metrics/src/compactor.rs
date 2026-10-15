@@ -3024,27 +3024,26 @@ mod compaction_buffer;
 mod compaction_index;
 mod compaction_index_listing;
 mod compaction_index_manifest;
-mod object_planning;
 mod compaction_retention_phase;
 mod compaction_retention_stats;
 mod compaction_types;
+mod object_planning;
 pub use compaction_types::*;
+mod compaction_flush;
+mod compaction_readers;
+mod compactor_polling;
 mod consumer;
 mod deferred_block_deletions;
 mod durable_compaction_consumer;
 mod encode_rows;
 mod enforce_compaction_retention;
 mod exemplar_row;
-mod compaction_readers;
 mod materialize_metric_erasure_requests;
 mod merge_metric_blocks;
 mod metrics_compactor_config;
 mod object_store_compaction_index_sink;
 mod plan_metric_compactions;
 mod process_compaction_partition_window;
-mod compactor_polling;
-mod compaction_flush;
-mod write_compaction_windows;
 mod process_compaction_record_batch;
 mod process_compaction_record_batch_with_consumer;
 mod run_compactor_consumer_loop;
@@ -3053,6 +3052,7 @@ mod run_compactor_loop;
 mod run_compactor_loop_with_clock;
 mod series_labels_for_kind;
 mod write_compacted_block;
+mod write_compaction_windows;
 mod write_tenant_blocks;
 
 use clock_columns::ClockColumns;
@@ -3082,15 +3082,7 @@ pub use compaction_index::CompactionIndex;
 #[cfg_attr(test, mutants::skip)]
 pub use compaction_index_listing::CompactionIndexListing;
 pub use compaction_index_manifest::CompactionIndexManifest;
-pub use object_planning::{
-    CompactionObjectPlan, compaction_object_key, compaction_object_plan_for_rows,
-    compaction_partition_object_key,
-};
-use object_planning::compacted_metric_object_key;
-#[cfg_attr(test, mutants::skip)]
-pub use object_planning::compaction_object_plan;
-#[cfg_attr(test, mutants::skip)]
-pub use object_planning::compaction_partition_object_plan;
+pub use compaction_readers::{list_compaction_index, list_compaction_manifests};
 pub use compaction_retention_phase::CompactionRetentionPhase;
 pub use compaction_retention_stats::CompactionRetentionStats;
 pub use consumer::WalAssignmentConsumer;
@@ -3100,10 +3092,18 @@ pub use encode_rows::{encode_exemplar_rows, encode_metadata_rows, encode_tenant_
 pub use enforce_compaction_retention::enforce_compaction_retention;
 pub use exemplar_row::ExemplarRow;
 use exemplar_row::exemplar_row;
-pub use compaction_readers::{list_compaction_index, list_compaction_manifests};
 use materialize_metric_erasure_requests::materialize_metric_erasure_requests;
 use merge_metric_blocks::merge_metric_blocks;
 pub use metrics_compactor_config::MetricsCompactorConfig;
+use object_planning::compacted_metric_object_key;
+#[cfg_attr(test, mutants::skip)]
+pub use object_planning::compaction_object_plan;
+#[cfg_attr(test, mutants::skip)]
+pub use object_planning::compaction_partition_object_plan;
+pub use object_planning::{
+    CompactionObjectPlan, compaction_object_key, compaction_object_plan_for_rows,
+    compaction_partition_object_key,
+};
 pub use object_store_compaction_index_sink::ObjectStoreCompactionIndexSink;
 pub use plan_metric_compactions::plan_metric_compactions;
 pub use process_compaction_partition_window::process_compaction_partition_window;
@@ -3115,10 +3115,10 @@ pub use run_compactor_loop::run_compactor_loop;
 pub use run_compactor_loop_with_clock::run_compactor_loop_with_clock;
 pub(crate) use series_labels_for_kind::series_labels_for_kind;
 use write_compacted_block::write_compacted_block;
+use write_tenant_blocks::write_compacted_tenant_blocks_with_partition;
 pub use write_tenant_blocks::{
     write_compacted_tenant_blocks, write_compacted_tenant_partition_blocks,
 };
-use write_tenant_blocks::write_compacted_tenant_blocks_with_partition;
 
 pub(crate) const COMPACTION_OBJECT_PREFIX: &str = "metrics";
 
@@ -3152,14 +3152,11 @@ pub(crate) fn validate_non_empty(
     }
 }
 
-pub use compactor_polling::{
-    compaction_wal_records_from_consumer_records, poll_compactor_consumer_once,
-    poll_compactor_once,
-};
-pub(crate) use compactor_polling::{compaction_batch_span, poll_compaction_wal_records};
-
 use compaction_flush::{flush_buffer, flush_buffer_with_consumer};
-
+pub(crate) use compactor_polling::{compaction_batch_span, poll_compaction_wal_records};
+pub use compactor_polling::{
+    compaction_wal_records_from_consumer_records, poll_compactor_consumer_once, poll_compactor_once,
+};
 pub(crate) use write_compaction_windows::{
     write_compaction_batch_windows, write_compaction_partition_window,
 };

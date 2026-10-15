@@ -8,7 +8,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-
 /// Wall-clock source in epoch nanoseconds.
 pub trait Clock: Send + Sync {
     fn now_ns(&self) -> i64;

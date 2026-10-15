@@ -1,6 +1,6 @@
-use crate::{BTreeMap, DistributorError, OtlpAnyValue, ProtoAnyValue, Value, proto_any_value};
-
 pub(crate) use krabka_blockstore::encode_lower_hex;
+
+use crate::{BTreeMap, DistributorError, OtlpAnyValue, ProtoAnyValue, Value, proto_any_value};
 
 pub(crate) fn metadata_value_to_string(value: &Value) -> String {
     match value {

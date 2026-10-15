@@ -1,8 +1,6 @@
 use arrow::{array::PrimitiveArray, datatypes::Int64Type};
 
-use super::{
-    Array, AsArray, COL_START, ListArray, RecordBatch, Result, TraceqlError,
-};
+use super::{Array, AsArray, COL_START, ListArray, RecordBatch, Result, TraceqlError};
 
 // Bytes To Hex
 /// Renders `bytes` as lowercase hex, two digits per byte.

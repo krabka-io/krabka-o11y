@@ -1730,8 +1730,8 @@ mod index_type;
 mod read_index_shard;
 mod resolve_selective;
 mod save_index_shards;
-mod shard_keys;
 mod shard_config;
+mod shard_keys;
 mod shard_loading;
 mod shard_planning;
 mod shard_wire;
@@ -1743,21 +1743,23 @@ pub(crate) use byte_reader::{
 pub(crate) use decode_index_shard::{decode_index_shard, dictionary_entry};
 pub use index_shard_range::IndexShardRange;
 pub use index_type::Index;
+use read_index_shard::read_index_shard;
+pub(crate) use read_index_shard::{CappedObject, capped_read_error, oversized_object_error};
 pub use shard_config::{
     DEFAULT_INDEX_SHARD_WIDTH, MAX_INDEX_SHARDS_PER_TENANT, MAX_INDEX_SNAPSHOT_BYTES,
 };
-pub use shard_keys::{index_shard_tenant_prefix, index_shards_prefix_for_key, index_unbound_series_object_key};
-pub(crate) use shard_wire::{
-    INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, push_dictionary_id,
-    push_len, push_shard_block_prefix, push_string, push_uvarint,
+pub use shard_keys::{
+    index_shard_tenant_prefix, index_shards_prefix_for_key, index_unbound_series_object_key,
 };
 pub(crate) use shard_keys::{parse_shard_bound_key, shard_bound_key};
 pub(crate) use shard_loading::{
     IndexShardObject, ParsedIndexShardLocation, load_index_shards, parse_index_shard_location,
 };
 use shard_planning::plan_tenant_index_shards;
-use read_index_shard::read_index_shard;
-pub(crate) use read_index_shard::{CappedObject, capped_read_error, oversized_object_error};
+pub(crate) use shard_wire::{
+    INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, push_dictionary_id, push_len,
+    push_shard_block_prefix, push_string, push_uvarint,
+};
 use tenant_index::TenantIndex;
 
 pub(crate) fn anchored_regex(pattern: &str) -> String {

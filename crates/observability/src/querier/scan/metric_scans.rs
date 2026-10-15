@@ -1,18 +1,19 @@
 use std::borrow::Borrow;
+
+pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest};
 use super::{MetricRangeScanSource, Value, execute_metric_range_scan_with_deletes};
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeMap, BlockDescriptor, ColdBlockScan, CompactionFrontier,
     FormattedMetricSeries, FsPath, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry,
     MetricQuery, MetricSamples, MetricWindow, ObjectPath, ObjectStore, QueryError, QueryHotTail,
-    RecordBatch, StreamPlan, TimeRange, WalLogRecord, apply_absent_over_time,
-    apply_distinct_to_streams, append_matching_hot_log_record, append_matching_hot_metric_record,
-    append_matching_log_row, default_block_fetch_concurrency,
+    RecordBatch, StreamPlan, TimeRange, WalLogRecord, append_matching_hot_log_record,
+    append_matching_hot_metric_record, append_matching_log_row, apply_absent_over_time,
+    apply_distinct_to_streams, default_block_fetch_concurrency,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
     for_each_query_row, format_metric_samples, json, loki_stream_results, metric_plan_scan_sql,
     sort_loki_stream_values,
 };
-pub(crate) use super::{MetricEvaluationRange, MetricRangeScanRequest};
 
 pub(crate) fn append_matching_log_batches(
     streams: &mut BTreeMap<Labels, Vec<LokiStreamEntry>>,
@@ -237,7 +238,6 @@ pub(crate) async fn collect_object_store_metric_log_batches(
     .await
 }
 
-
 pub(crate) async fn execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes<
     R: Borrow<WalLogRecord> + Sync,
 >(
@@ -345,7 +345,6 @@ pub async fn execute_metric_query_range_with_hot_tail_frontier(
     .await
 }
 
-
 pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_deletes<
     R: Borrow<WalLogRecord> + Sync,
 >(
@@ -355,7 +354,6 @@ pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_delete
     execute_metric_range_scan_with_deletes(MetricRangeScanSource::Local(root.as_ref()), request)
         .await
 }
-
 
 pub(crate) async fn execute_metric_query_with_hot_tail_frontier_and_deletes<
     R: Borrow<WalLogRecord> + Sync,
@@ -424,7 +422,6 @@ pub(crate) fn execute_tail_query_with_frontier_and_deletes(
 
     json!({ "streams": loki_stream_results(streams, encoding) })
 }
-
 
 /// The WAL hot tail of a metric range query, and what its records are
 /// matched and windowed against.

@@ -1,7 +1,8 @@
 //! Durable ruler state records, sinks, and consumer replay.
 
-use super::*;
 pub use krabka_observability::topic_contract::METRICS_RULER_STATE_TOPIC as RULER_STATE_TOPIC;
+
+use super::*;
 
 /// Applies a restored ruler group or alert record to the API state.
 pub fn apply_ruler_state_record<S: MetricStore>(

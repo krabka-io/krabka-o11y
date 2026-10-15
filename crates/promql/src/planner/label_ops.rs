@@ -274,7 +274,6 @@ mod tests {
     }
 }
 
-
 /// Returns the canonical `name=value\n…` rendering of a label set.
 ///
 /// This rendering is the sort tiebreak and the collision key. It matches the
@@ -401,7 +400,6 @@ pub(crate) fn set_label_value(
     labels.insert(name, value);
     labels
 }
-
 
 /// Sort order for the `sort` / `sort_desc` functions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

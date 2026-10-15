@@ -1,6 +1,6 @@
-use super::*;
 use krabka_observability::service_metrics::IngestPushMeasurement;
 
+use super::*;
 
 pub(crate) async fn otlp_push(request: PushRequest) -> Response {
     let PushRequest {
@@ -93,7 +93,6 @@ pub(crate) async fn jaeger_push(request: PushRequest) -> Response {
     })
     .await
 }
-
 
 pub(crate) fn is_jaeger_binary_thrift(headers: &HeaderMap) -> bool {
     headers

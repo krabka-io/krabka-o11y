@@ -64,6 +64,7 @@ mod object_store_operation;
 
 use self::metered_stream::MeteredStream;
 pub use self::{
-    metered_object_store::MeteredObjectStore, object_store_metrics::ObjectStoreMetrics,
+    metered_object_store::MeteredObjectStore,
+    object_store_metrics::ObjectStoreMetrics,
     object_store_operation::{ObjectStoreOperation, ObjectStoreOperationLabel},
 };

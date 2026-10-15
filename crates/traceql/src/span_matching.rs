@@ -15,7 +15,6 @@ use crate::{
     store::{MatchCmp, MatchScope, MatchValue, SpanMatcher},
 };
 
-
 fn matches_ordering(ordering: Option<std::cmp::Ordering>, op: MatchCmp) -> bool {
     match op {
         MatchCmp::Eq => ordering == Some(std::cmp::Ordering::Equal),
@@ -33,7 +32,6 @@ fn matches_ordering(ordering: Option<std::cmp::Ordering>, op: MatchCmp) -> bool 
         MatchCmp::Re | MatchCmp::Nre => false,
     }
 }
-
 
 pub(crate) fn nested_attribute_key_matches(key: &str, tag: &str, scope_prefix: &str) -> bool {
     key == tag || tag.strip_prefix(scope_prefix).is_some_and(|tag| key == tag)

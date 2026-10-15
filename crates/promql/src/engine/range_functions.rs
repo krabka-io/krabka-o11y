@@ -24,11 +24,11 @@ use crate::{
     result::{FloatSample, InstantSample, RangeSeries, SampleValue},
 };
 mod apply_outer_range_fn;
-mod extrapolation;
 mod boundary_value;
 mod compact_histogram_spans;
 mod count_step_transitions;
 mod extended_range_value;
+mod extrapolation;
 mod fold_over_time_extremum;
 mod instant_delta_histogram;
 mod instant_delta_sample_from_series;
@@ -47,16 +47,16 @@ mod range_histogram_sample;
 mod range_samples;
 mod regression_slope_and_intercept;
 pub(super) use apply_outer_range_fn::apply_outer_range_fn;
-use extrapolation::{
-    HistogramExtrapolation, extrapolate_histogram_delta, extrapolated_histogram_component,
-    extrapolated_rate, extrapolated_rate_with_starts,
-};
 use boundary_value::boundary_value;
 use compact_histogram_spans::compact_histogram_spans;
 use count_step_transitions::count_step_transitions;
 pub(super) use extended_range_value::{
     HistogramSample, extended_float_range_value, extended_histogram_range_value,
     interpolate_histogram,
+};
+use extrapolation::{
+    HistogramExtrapolation, extrapolate_histogram_delta, extrapolated_histogram_component,
+    extrapolated_rate, extrapolated_rate_with_starts,
 };
 use fold_over_time_extremum::fold_over_time_extremum;
 use instant_delta_histogram::instant_delta_histogram;
@@ -75,6 +75,7 @@ use range_function_sample_from_series::range_function_sample_from_series;
 use range_histogram_sample::range_histogram_sample;
 pub(super) use range_samples::range_samples;
 use regression_slope_and_intercept::regression_slope_and_intercept;
+
 use crate::functions::{extrapolate::start_timestamp_reset, over_time::over_time_variance};
 
 /// Which extremum `fold_over_time_extremum` tracks.

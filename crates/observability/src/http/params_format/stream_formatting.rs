@@ -1,15 +1,13 @@
 use krabka_units::convert::ByteSizeExt;
-use crate::http::params_format::{ParsedValueAt, QuotedTextScanner};
 
 use crate::{
     ByteSize, ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
     HttpQueryError, LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilterOp,
     LogfmtParserConfig, MatchOp, ParserStage, PipelineStage, QuerierState, StreamPlan, StreamQuery,
-    UnwrapConversion, format_vector_label_replace_function, parse_scalar_sample,
-    planned_block_bytes,
+    UnwrapConversion, format_vector_label_replace_function,
+    http::params_format::{ParsedValueAt, QuotedTextScanner},
+    parse_scalar_sample, planned_block_bytes,
 };
-
-
 
 pub(crate) fn quote_logql_string(value: &str) -> String {
     serde_json::to_string(value).expect("string serialization cannot fail")

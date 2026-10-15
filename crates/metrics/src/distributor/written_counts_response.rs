@@ -21,7 +21,6 @@ pub(crate) fn written_counts_response(status: StatusCode, counts: WrittenCounts)
     response
 }
 
-
 pub(crate) fn insert_written_header(headers: &mut HeaderMap, name: &'static str, value: u64) {
     headers.insert(
         name,

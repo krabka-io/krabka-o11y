@@ -99,8 +99,6 @@ mod tests {
     }
 }
 
-
-
 pub(crate) fn metadata_series_from_v1(metadata: pb::v1::MetricMetadata) -> DecodedSeries {
     let mut labels = Labels::new();
     labels.insert("__name__", metadata.metric_family_name.as_str());
@@ -131,7 +129,6 @@ pub(crate) fn metadata_type(value: i32) -> String {
     }
     .to_string()
 }
-
 
 use crate::wire::DecodedHistogramSample;
 
@@ -199,10 +196,7 @@ pub(crate) fn labels_from_v1(labels: &[pb::v1::Label]) -> Result<Labels, WireErr
                     label.name
                 )));
             }
-            Ok(LabelPair::new(
-                label.name.clone(),
-                label.value.clone(),
-            ))
+            Ok(LabelPair::new(label.name.clone(), label.value.clone()))
         })
         .collect()
 }

@@ -69,7 +69,6 @@ pub(crate) fn validate_exemplar_labels(exemplar: &DecodedExemplar) -> Result<(),
     Ok(())
 }
 
-
 pub(crate) fn header_list_includes(value: &str, expected: &str) -> bool {
     value
         .split(',')

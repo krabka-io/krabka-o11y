@@ -46,15 +46,13 @@ mod resource_types;
 #[cfg(test)]
 mod tests;
 
+use axum::body::Bytes;
 pub use krabka_audit::{
     AuditEndpoint, AuditError, AuditEvent, AuditOutcome, AuditPrincipal, AuditRecord,
     AuditResource, AuditSink, EpochMs, ProductInfo,
 };
-
-use axum::body::Bytes;
 use krabka_client_producer::{Header, ProducerRecord};
 use krabka_ids::PartitionIndex;
-use crate::server_security::Principal;
 
 pub use self::{
     audit_args::{
@@ -68,7 +66,9 @@ pub use self::{
         AUDIT_CHECKPOINT_EVERY_RECORDS, AUDIT_SPOOL_REPLAY_EVERY, AuditService, AuditServiceParts,
     },
     kafka_topic_audit_sink::{DEFAULT_AUDIT_WRITE_TIMEOUT, KafkaTopicAuditSink},
-    mechanisms::{mechanism_of, MECHANISM_BASIC, MECHANISM_BEARER, MECHANISM_MTLS, MECHANISM_NONE, MECHANISMS},
+    mechanisms::{
+        MECHANISM_BASIC, MECHANISM_BEARER, MECHANISM_MTLS, MECHANISM_NONE, MECHANISMS, mechanism_of,
+    },
     operations::{
         OPERATION_ADMIN_ACCESS, OPERATION_DELETE_REQUEST_CANCEL, OPERATION_DELETE_REQUEST_CREATE,
         OPERATION_INGESTER_FLUSH, OPERATION_INGESTER_PREPARE_SHUTDOWN_SET,
@@ -83,15 +83,16 @@ pub use self::{
         RESOURCE_WAL_TOPIC,
     },
 };
+use crate::server_security::Principal;
 
 /// An event for an operation that changes a tenant's data or the service
 /// itself, at `time`.
 ///
-/// `operation` is one of [`OPERATIONS`](OPERATIONS). Every resource
-/// type in `resources` is one of [`RESOURCE_TYPES`](RESOURCE_TYPES).
+/// `operation` is one of [`OPERATIONS`]. Every resource
+/// type in `resources` is one of [`RESOURCE_TYPES`].
 /// Use [`AuditOutcome::Failure`] when the service tried the operation and the
 /// operation failed. Record an authorization refusal with
-/// [`authorization_denied`](authorization_denied).
+/// [`authorization_denied`].
 #[must_use]
 pub fn admin_operation(
     principal: AuditPrincipal,
@@ -158,7 +159,7 @@ pub fn audit_producer_record(
 
 /// An event for an authentication attempt with `mechanism`, at `time`.
 ///
-/// `mechanism` is one of [`MECHANISMS`](MECHANISMS). `reason` tells
+/// `mechanism` is one of [`MECHANISMS`]. `reason` tells
 /// why a failed attempt failed. It should not contain the credentials.
 #[must_use]
 pub fn authentication(
@@ -184,8 +185,8 @@ pub fn authentication(
 ///
 /// Use it for a WAL topic ACL refusal and for a principal that may not use
 /// the tenant it names. `resource_type` is one of
-/// [`RESOURCE_TYPES`](RESOURCE_TYPES), and `operation` is one of
-/// [`OPERATIONS`](OPERATIONS).
+/// [`RESOURCE_TYPES`], and `operation` is one of
+/// [`OPERATIONS`].
 #[must_use]
 pub fn authorization_denied(
     principal: AuditPrincipal,
@@ -224,7 +225,7 @@ pub fn krabka_product(name: &str, version: &str) -> ProductInfo {
 
 /// The principal `name`, authenticated with `mechanism`.
 ///
-/// `mechanism` is one of [`MECHANISMS`](MECHANISMS).
+/// `mechanism` is one of [`MECHANISMS`].
 #[must_use]
 pub fn principal(name: impl Into<String>, mechanism: &'static str) -> AuditPrincipal {
     AuditPrincipal {
@@ -235,7 +236,7 @@ pub fn principal(name: impl Into<String>, mechanism: &'static str) -> AuditPrinc
 
 /// The resource `name` of the type `resource_type`.
 ///
-/// `resource_type` is one of [`RESOURCE_TYPES`](RESOURCE_TYPES).
+/// `resource_type` is one of [`RESOURCE_TYPES`].
 #[must_use]
 pub fn resource(resource_type: &'static str, name: impl Into<String>) -> AuditResource {
     AuditResource {

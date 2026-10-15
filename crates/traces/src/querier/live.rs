@@ -9,7 +9,7 @@ use arrow::{
 use krabka_blockstore::TENANT_HEADER;
 use krabka_observability::server_security::InternalClient;
 use krabka_traceql::{
-    AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
+    AttrValue, Attribute, EventRef, LinkRef, ScopedTag, SpanRef, TagCatalog, TagScope, TraceSpans,
     TraceqlError, TypedValue,
 };
 use krabka_units::{Time, convert::TimeExt as _};
@@ -21,9 +21,6 @@ use prost::Message as _;
 use reqwest::Url;
 
 use super::store::SharedTraceIndex;
-
-use krabka_traceql::Attribute;
-
 
 pub(crate) fn attr_value_from_otlp(value: &AnyValue) -> Option<AttrValue> {
     if let Some(OtlpValue::ArrayValue(array)) = value.value.as_ref()

@@ -68,8 +68,8 @@ mod evaluated_query_response;
 mod instant_query_params_from_form;
 mod query_dispatch;
 mod query_exemplars_inner;
-mod query_range_dispatch;
 mod query_params;
+mod query_range_dispatch;
 mod range_query_params_from_form;
 mod run_timed_query;
 

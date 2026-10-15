@@ -52,11 +52,11 @@ mod compactor_policy_from_cli;
 mod ingest_rate_bucket_cap;
 mod load_runtime_overrides;
 mod require_role_topics;
+mod role_runners;
 mod run;
 mod serve;
 mod spawn_retention_sweeper;
 mod target;
-mod role_runners;
 mod value_parsers;
 mod writer_config;
 

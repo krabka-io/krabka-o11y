@@ -1,7 +1,8 @@
-use super::*;
 use krabka_observability::persisted_format::{
     PERSISTED_FORMAT_HEADER, PERSISTED_FORMAT_VERSION, keyed_persisted_record,
 };
+
+use super::*;
 
 #[must_use]
 /// Builds a keyed producer record for a compacted topic.

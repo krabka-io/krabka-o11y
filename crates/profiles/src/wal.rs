@@ -1,18 +1,17 @@
 //! Profiles WAL topic record contract.
 
 use bytes::Bytes;
-use krabka_client_consumer::ConsumerRecord;
 use krabka_blockstore::{LabelPair, Labels};
+use krabka_client_consumer::ConsumerRecord;
+/// The profiles WAL topic name. The name, partition count, and retention
+/// window are maintained together in the shared topic contract.
+pub use krabka_observability::topic_contract::PROFILES_WAL_TOPIC;
 use serde::{Deserialize, Serialize};
 use serde_wincode::SerdeCompat;
 use sha2::{Digest, Sha256};
 use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
 
 use crate::error::ProfilesError;
-
-/// The profiles WAL topic name. The name, partition count, and retention
-/// window are maintained together in the shared topic contract.
-pub use krabka_observability::topic_contract::PROFILES_WAL_TOPIC;
 
 /// A wire-compatible boolean flag that [`WalMapping`] uses.
 #[repr(transparent)]

@@ -2,7 +2,6 @@
 
 use arrow::record_batch::RecordBatch;
 use datafusion::{catalog::MemTable, common::Result};
-
 pub use krabka_blockstore::{
     COL_FINGERPRINT, COL_TIMESTAMP, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
     PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, PCOL_WAL_SAMPLE_IDS,

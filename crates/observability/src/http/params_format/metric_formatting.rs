@@ -1,15 +1,15 @@
-use super::{split_vector_comparison_query, QuotedTextScanner};
+use super::{QuotedTextScanner, split_vector_comparison_query};
 use crate::{
-    http::params_format::split_vector_binary_query,
     ComparisonOp, ComparisonResult, MetricQuery, MetricScalarArithmeticOp, RangeAggregation,
     VectorComparisonText, format_label_replace_arguments, format_loki_duration_ns,
     format_loki_offset_duration_ns, format_metric_vector_arithmetic_expression,
     format_metric_vector_binary_expression, format_quantile, format_range_aggregation_name,
     format_scalar_vector_expression, format_stream_query, format_vector_aggregation_query,
     format_vector_comparison_text, format_vector_function_text, format_vector_grouping,
-    format_vector_label_replace_function, parse_logql_string_argument,
-    parse_metric_label_replace_query, parse_metric_query, parse_metric_scalar_arithmetic_query,
-    parse_metric_scalar_comparison_query, parse_scalar_sample, split_logql_function_arguments,
+    format_vector_label_replace_function, http::params_format::split_vector_binary_query,
+    parse_logql_string_argument, parse_metric_label_replace_query, parse_metric_query,
+    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
+    parse_scalar_sample, split_logql_function_arguments,
 };
 
 pub(crate) fn format_metric_scalar_arithmetic_operator(
@@ -316,7 +316,6 @@ pub(crate) fn format_metric_and_vector_operands(
     None
 }
 
-
 pub(crate) fn format_metric_vector_comparison_expression(query: &str) -> Option<String> {
     let split = split_vector_comparison_query(query)?;
     let left_text = split.left;
@@ -337,7 +336,6 @@ pub(crate) fn format_metric_vector_comparison_expression(query: &str) -> Option<
         right: &operands.right,
     }))
 }
-
 
 pub(crate) fn format_metric_vector_set_expression(query: &str) -> Option<String> {
     let split = split_vector_binary_query(query, split_top_level_set_query)?;

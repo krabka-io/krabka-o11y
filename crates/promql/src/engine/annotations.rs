@@ -20,10 +20,9 @@ mod histogram_quantile_forced_monotonicity_info;
 mod range_sort_warnings;
 
 pub(super) use annotation_source::{ANNOTATION_SOURCE, with_source_position};
+pub(super) use counter_info::{TypeAndUnitLabels, emit_metric_might_not_be_counter_info};
 pub(super) use histogram_quantile_forced_monotonicity_info::emit_histogram_quantile_forced_monotonicity_info;
-pub(super) use counter_info::emit_metric_might_not_be_counter_info;
 pub(super) use range_sort_warnings::emit_range_sort_warnings;
-pub(super) use counter_info::TypeAndUnitLabels;
 
 /// Records a `PromQL info:`-class annotation for the current query.
 ///

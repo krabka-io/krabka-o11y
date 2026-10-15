@@ -24,8 +24,8 @@ mod unlabeled_matrix;
 mod warning_executor;
 
 mod execution_cases;
-mod range_planning_cases;
 mod range_merge_cases;
+mod range_planning_cases;
 use cached_up_matrix::{FloatPoint, one_sample_matrix, up_api_matrix, up_range_query};
 use concurrency_probe_executor::ConcurrencyProbeExecutor;
 use frontend_requests::{split_up_request, two_shard_instant_request};
@@ -84,6 +84,7 @@ async fn assert_ttl_hit_then_miss<
 mod cache_semantics;
 
 mod support;
-pub(crate) use support::native_histogram_with_positive_buckets;
-pub(crate) use support::range_query_plan_skips_unsupported_shards;
-pub(crate) use support::recording_executor;
+pub(crate) use support::{
+    native_histogram_with_positive_buckets, range_query_plan_skips_unsupported_shards,
+    recording_executor,
+};

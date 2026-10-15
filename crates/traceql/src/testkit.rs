@@ -545,25 +545,25 @@ expect_series_count: 1
 
 mod case;
 mod case_result;
+mod corpus;
 mod engine;
 mod report;
 mod root_span_columns;
-mod run_corpus_file;
-mod corpus;
 mod run_cases;
+mod run_corpus_file;
 mod run_metrics_case;
 pub(crate) mod span;
 
 use case::Case;
 pub use case_result::CaseResult;
+use corpus::parse_cases;
+pub use corpus::run_corpus_dir;
 pub use engine::engine;
 pub use report::Report;
 pub use root_span_columns::{RootSpanRow, root_span_columns};
+use run_cases::{run_search_case, run_trace_by_id_case};
 pub use run_corpus_file::{run_and_print_corpus_file, run_corpus_file};
 use run_metrics_case::run_metrics_case;
-use run_cases::{run_search_case, run_trace_by_id_case};
-use corpus::parse_cases;
-pub use corpus::run_corpus_dir;
 use span::SpanFixture;
 
 pub(crate) fn file_name(path: &Path) -> String {

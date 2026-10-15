@@ -1,9 +1,9 @@
 use super::{
     ATTR_PREFIX, Array, AsArray, AttrValue, Attribute, BLOCK_ATTR_KEYS, BLOCK_ATTR_VALUE,
     BLOCK_ATTR_VALUE_BOOL, BLOCK_ATTR_VALUE_DOUBLE, BLOCK_ATTR_VALUE_INT, DataType,
-    DisplayAttribute, ListArray, RecordBatch, Result, StringArray, TraceqlError,
-    block_row_attrs, bool_attr_values, f64_attr_values, i64_attr_values,
-    optional_list_column, string_array_value, string_attr_values,
+    DisplayAttribute, ListArray, RecordBatch, Result, StringArray, TraceqlError, block_row_attrs,
+    bool_attr_values, f64_attr_values, i64_attr_values, optional_list_column, string_array_value,
+    string_attr_values,
 };
 
 // Attr Value Display
@@ -250,7 +250,6 @@ pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<Attribute
     attrs.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(attrs)
 }
-
 
 pub(crate) fn push_scoped_attr(
     attrs: &mut Vec<DisplayAttribute>,

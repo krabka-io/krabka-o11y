@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use krabka_units::{Time, secs};
 use serde::{Deserialize, Serialize};
 
-
 /// Tempo-default latency histogram bucket edges, in nanoseconds.
 pub const DEFAULT_LATENCY_BUCKETS_NS: &[f64] = &[
     2_000_000.0,

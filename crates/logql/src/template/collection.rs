@@ -1,6 +1,5 @@
 use super::{
-    TemplateRuntimeValue, template_slice_array, template_slice_string,
-    template_value_is_collection,
+    TemplateRuntimeValue, template_slice_array, template_slice_string, template_value_is_collection,
 };
 
 pub(crate) struct TemplateCollectionFirstArgs<'a> {

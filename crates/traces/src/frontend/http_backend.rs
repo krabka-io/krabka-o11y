@@ -44,8 +44,7 @@ use crate::frontend::{
         HttpReadinessProbe, MembershipView, QUERIER_MEMBERSHIP_GATE, mark_querier_membership_gate,
         refresh_membership, run_membership_refresh,
     },
-    metrics_merge::MetricsResponseJson,
-    metrics_merge::{KeyValue, MetricSample, MetricSeries},
+    metrics_merge::{KeyValue, MetricSample, MetricSeries, MetricsResponseJson},
     wire::{Metrics, SearchResponseJson, TraceByIdResponseJson},
 };
 
@@ -68,7 +67,6 @@ impl QueryParam {
 use std::future::IntoFuture as _;
 
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
-
 
 /// Refuses a non-success querier response, then decodes its JSON body.
 ///
@@ -390,7 +388,6 @@ pub(crate) fn push_shard_params(params: &mut Vec<QueryParam>, shard: &JobShard) 
     }
 }
 
-
 /// The HTTP transport to one querier at a time.
 ///
 /// It holds no addresses of its own. Each request names the `host:port` the
@@ -639,7 +636,6 @@ mod metric_timestamp_tests {
         assert!(metric_timestamp(-500_000_000, true) == "-0.5");
     }
 }
-
 
 #[derive(Deserialize)]
 pub(super) struct InstantMetricsResponseJson {

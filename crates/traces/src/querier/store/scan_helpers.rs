@@ -1,5 +1,6 @@
-use super::*;
 use krabka_traceql::matcher_attributes_match;
+
+use super::*;
 
 /// One nanosecond past the newest `max_ts` across `tenant`'s indexed blocks,
 /// or 0 when the tenant has none.
@@ -139,7 +140,6 @@ pub(crate) fn trace_from_batches(
         spans,
     }))
 }
-
 
 pub(crate) fn intrinsic_matches(
     batch: &RecordBatch,

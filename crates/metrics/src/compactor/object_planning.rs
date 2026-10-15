@@ -127,7 +127,6 @@ pub fn compaction_partition_object_plan(
     }
 }
 
-
 /// Names the metric block a planned merge writes.
 ///
 /// The level is in the name because it is the first thing anyone reading a

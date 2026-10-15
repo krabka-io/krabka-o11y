@@ -1215,8 +1215,8 @@ mod process_security;
 mod profile_read_path;
 mod read_path_stage;
 mod require_role_topics;
-mod role_shutdown_token;
 mod role_config;
+mod role_shutdown_token;
 mod run;
 mod run_all;
 mod run_block_builder;
@@ -1237,7 +1237,6 @@ mod target;
 
 use all_stage::AllStage;
 use bind_all_stage_server::bind_all_stage_server;
-use role_config::{block_builder_config, compaction_policy_from_cli, debuginfod_config, load_profiles_limits_overrides_config};
 use block_builder_stage::block_builder_stage;
 use build_all_stages::build_all_stages;
 use build_distributor_state::build_distributor_state;
@@ -1260,6 +1259,10 @@ use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
 use read_path_stage::read_path_stage;
 use require_role_topics::require_role_topics;
+use role_config::{
+    block_builder_config, compaction_policy_from_cli, debuginfod_config,
+    load_profiles_limits_overrides_config,
+};
 use role_shutdown_token::role_shutdown_token;
 use run::run;
 use run_all::run_all;
@@ -1267,7 +1270,7 @@ use run_block_builder::run_block_builder;
 use run_compaction_pass::run_compaction_pass;
 use run_compactor::run_compactor;
 use run_distributor::run_distributor;
-use run_read_role::{ReadRole, ReadRoleInputs, run_query_frontend, run_querier, run_read_role};
+use run_read_role::{ReadRole, ReadRoleInputs, run_querier, run_query_frontend, run_read_role};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;

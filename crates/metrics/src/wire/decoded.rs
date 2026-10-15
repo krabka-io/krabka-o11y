@@ -119,7 +119,6 @@ mod tests {
     }
 }
 
-
 #[cfg_attr(test, mutants::skip)]
 #[cfg_attr(test, mutants::skip)]
 
@@ -194,7 +193,6 @@ pub(crate) fn snappy_block_decode_raw<E>(
     }
     Ok(out)
 }
-
 
 /// Exemplar decoded from a `remote_write` request.
 #[derive(Clone, Debug, PartialEq)]

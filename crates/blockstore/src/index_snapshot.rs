@@ -8,8 +8,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use krabka_o11y_verified::{bounded_shard_slots, shard_range};
 use futures::StreamExt as _;
+use krabka_o11y_verified::{bounded_shard_slots, shard_range};
 use krabka_units::{ByteSize, convert::ByteSizeExt, mebibytes};
 use object_store::{
     ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, UpdateVersion,
@@ -456,8 +456,7 @@ pub(crate) struct SnapshotContribution<'a> {
 }
 
 /// The shard that holds records whose spans cannot fit the bounded grid.
-pub(crate) const UNBOUNDED_SHARD_RANGE: IndexShardRange =
-    IndexShardRange::new(i64::MIN, i64::MAX);
+pub(crate) const UNBOUNDED_SHARD_RANGE: IndexShardRange = IndexShardRange::new(i64::MIN, i64::MAX);
 
 pub const DEFAULT_INDEX_SNAPSHOT_MAX: ByteSize = mebibytes(256);
 

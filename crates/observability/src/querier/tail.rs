@@ -1,4 +1,5 @@
 use axum::body::Bytes;
+
 use crate::{
     ActiveLogDeleteFilter, Arc, CompactionFrontier, CompactionFrontierSource, Duration, HeaderMap,
     HttpQueryError, LOKI_DEFAULT_TAIL_LIMIT, LogHotTail, LokiStreamEncoding, Message, QuerierState,

@@ -1,8 +1,8 @@
 use super::{
     Arc, BlockStore, EngineOpts, InMemoryMetricStore, MetricBlockStore, MetricStore,
-    MetricsServiceError, ObjectStore, PrometheusApiState, QueryFrontendOptions, RefreshingMetricBlockStore,
-    Router, Url, WalHead, load_compaction_manifests, prometheus_api_state_for_store,
-    prometheus_router,
+    MetricsServiceError, ObjectStore, PrometheusApiState, QueryFrontendOptions,
+    RefreshingMetricBlockStore, Router, Url, WalHead, load_compaction_manifests,
+    prometheus_api_state_for_store, prometheus_router,
 };
 
 ///

@@ -25,7 +25,6 @@ use crate::frontend::{
     wire::{Metrics, SearchResponseJson, SpanSetJson, TraceByIdResponseJson, TraceJson},
 };
 
-
 /// Merge search partials.
 ///
 /// This reunions by `traceID`, accumulates metrics, then applies `limit`
@@ -765,7 +764,6 @@ pub(crate) fn scope_key(scope: TagScope) -> &'static str {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct AssembledTrace {
     pub trace: Option<TraceByIdResponseJson>,
@@ -814,7 +812,6 @@ pub fn assemble_trace(partials: Vec<TracePartial>, max_trace: ByteSize) -> Assem
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct MergedTagNames {
     pub tags: Vec<ScopedTag>,
@@ -860,7 +857,6 @@ struct ScopedTagAccumulator {
     scope: TagScope,
     tags: BTreeSet<String>,
 }
-
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MergedTagValues {

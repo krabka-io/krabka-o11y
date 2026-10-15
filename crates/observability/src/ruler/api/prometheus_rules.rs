@@ -8,7 +8,6 @@ use crate::{
     parse_usize_query_param,
 };
 
-
 fn yaml_string_entries(fields: &serde_yaml::Mapping, name: &'static str) -> Vec<(String, String)> {
     fields
         .get(serde_yaml_key(name))
@@ -22,7 +21,6 @@ fn yaml_string_entries(fields: &serde_yaml::Mapping, name: &'static str) -> Vec<
                 .collect()
         })
 }
-
 
 pub(crate) fn loki_yaml_mapping(value: &serde_yaml::Value) -> Option<&serde_yaml::Mapping> {
     match value {

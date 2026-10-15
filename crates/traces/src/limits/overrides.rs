@@ -12,7 +12,6 @@ use thiserror::Error;
 
 use super::Limits;
 
-
 pub(crate) fn merge_limits(defaults: &Limits, partial: &PartialLimits) -> Limits {
     Limits {
         query_admission: defaults.query_admission.merge(partial.query_admission),

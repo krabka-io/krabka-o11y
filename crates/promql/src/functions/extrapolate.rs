@@ -232,7 +232,6 @@ mod tests {
     }
 }
 
-
 pub use rate_types::{InstantKind, RangeKind, extrapolated_rate};
 
 mod extrapolated_rate_with_starts;

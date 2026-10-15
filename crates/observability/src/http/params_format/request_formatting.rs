@@ -1,4 +1,5 @@
 use krabka_logql::{LogqlExpr, parse_logql_expr};
+
 use crate::http::params_format::split_vector_binary_query;
 
 pub(crate) struct SplitLeadingVectorMatchingModifier<'a> {
@@ -18,8 +19,8 @@ pub(crate) struct SplitLeadingVectorBinaryModifiers<'a> {
 }
 
 use crate::{
-    Bytes, ComparisonResult, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp, SeriesParams,
-    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_query_pair,
+    Bytes, ComparisonResult, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
+    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, SeriesParams, decode_query_pair,
     format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
     format_metric_and_vector_operands, format_metric_label_replace_query, format_metric_query,
     format_metric_scalar_arithmetic_expression, format_metric_scalar_arithmetic_operator,
@@ -30,9 +31,9 @@ use crate::{
     parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
     parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
     parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
-    parse_query, scalar_vector_expression_result, scalar_vector_plain_parse_error,
-    parse_series_params, split_query_param_pairs, split_top_level_arithmetic_query, split_top_level_comparison_query,
-    split_top_level_set_query,
+    parse_query, parse_series_params, scalar_vector_expression_result,
+    scalar_vector_plain_parse_error, split_query_param_pairs, split_top_level_arithmetic_query,
+    split_top_level_comparison_query, split_top_level_set_query,
 };
 
 pub(crate) fn validate_metric_binary_query_operands(

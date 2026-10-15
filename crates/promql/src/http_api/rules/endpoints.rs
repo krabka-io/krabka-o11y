@@ -1,6 +1,8 @@
-use super::*;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use std::collections::BTreeMap;
+
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+
+use super::*;
 
 pub(crate) async fn delete_ruler_config_group<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

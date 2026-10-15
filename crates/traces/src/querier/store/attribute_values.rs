@@ -268,8 +268,11 @@ pub(crate) fn link_values(batch: &RecordBatch, row: usize) -> Result<Vec<LinkRef
         out.push(LinkRef {
             trace_id: fixed_array_value::<16>(trace_ids, idx, SCOL_LINKS)?,
             span_id: fixed_array_value::<8>(span_ids, idx, SCOL_LINKS)?,
-            attributes: nested_typed_attrs(row_links, idx)?
-                .unwrap_or(nested_string_attrs(attr_keys, attr_values, idx)?),
+            attributes: nested_typed_attrs(row_links, idx)?.unwrap_or(nested_string_attrs(
+                attr_keys,
+                attr_values,
+                idx,
+            )?),
         });
     }
     Ok(out)
@@ -359,7 +362,6 @@ pub(crate) fn resource_matches(
         )?,
     })
 }
-
 
 pub(crate) fn event_values(batch: &RecordBatch, row: usize) -> Result<Vec<EventRef>, TraceqlError> {
     let Some(events) = optional_list_column(batch, SCOL_EVENTS)? else {
@@ -458,7 +460,6 @@ pub(super) fn nested_typed_attrs(
             .collect(),
     ))
 }
-
 
 /// The tag a tag-values request names, and the key the trace index holds it
 /// under.

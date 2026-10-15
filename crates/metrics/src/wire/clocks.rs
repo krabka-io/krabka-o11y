@@ -71,8 +71,6 @@ mod tests {
     }
 }
 
-
-
 /// Nanoseconds in one millisecond.
 pub(crate) const NANOS_PER_MILLI: i64 = 1_000_000;
 
@@ -130,7 +128,6 @@ pub(crate) fn sync_state(index: usize, value: i32) -> Result<ClockSyncState, Clo
         }),
     }
 }
-
 
 /// Where a clock gets its time.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

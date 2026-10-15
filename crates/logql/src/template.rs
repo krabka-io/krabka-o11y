@@ -304,7 +304,6 @@ pub(crate) fn parse_template_range(
     })
 }
 
-
 // Parsed Template Action
 pub(crate) struct ParsedTemplateAction<'a> {
     pub(crate) expression: &'a str,
@@ -388,7 +387,6 @@ pub(crate) struct TemplateWith {
     pub(crate) else_parts: Vec<TemplatePart>,
 }
 
-
 #[cfg(test)]
 mod tests {
 
@@ -464,7 +462,6 @@ mod tests {
     }
     use std::{cmp::Ordering, collections::BTreeMap};
 
-    use super::value_access::TemplateSliceBounds;
     use super::{
         LineFormat, ParsedTemplateToken, TemplatePart, TemplateRuntimeValue,
         ensure_template_parenthesized_token, ensure_template_quoted_token,
@@ -478,9 +475,9 @@ mod tests {
         parse_template_parts, parse_template_quoted_token, parse_template_timezone_offset,
         parse_variable_template_digits, push_template_unicode_escape, quoted_template_token_value,
         skip_leading_template_whitespace, substring_template_string, template_compare_values,
-        template_index_value, template_slice_bounds,
-        template_value_is_collection, tokenize_template_command, trim_template_body_end,
-        urldecode_template_string,
+        template_index_value, template_slice_bounds, template_value_is_collection,
+        tokenize_template_command, trim_template_body_end, urldecode_template_string,
+        value_access::TemplateSliceBounds,
     };
 
     #[test]
@@ -942,14 +939,13 @@ mod tests {
 
 mod control;
 use control::{
-    TemplateControlAction, find_template_control_action,
-    parse_template_with, split_template_pipeline, template_control_action,
-    tokenize_template_command,
+    TemplateControlAction, find_template_control_action, parse_template_with,
+    split_template_pipeline, template_control_action, tokenize_template_command,
 };
 mod value_access;
 use value_access::{
-    template_index_value, template_json_value_to_string,
-    template_slice_bounds, template_variable_path_value,
+    template_index_value, template_json_value_to_string, template_slice_bounds,
+    template_variable_path_value,
 };
 mod decode_quoted_fragment;
 
@@ -977,9 +973,9 @@ mod evaluate_template_byte_function;
 pub use evaluate_template_byte_function::go_string_equal_fold;
 mod evaluate_template_function;
 mod evaluate_template_value_function;
+mod float_format;
 mod format_template_bytes;
 mod format_template_duration_seconds;
-mod float_format;
 mod format_template_print;
 mod format_template_printf;
 mod line_format;
@@ -1014,14 +1010,15 @@ mod template_runtime_value;
 mod template_time;
 mod template_value;
 
+pub(crate) use collection::{evaluate_template_slice, template_collection_first_args};
 use decode_quoted_fragment::{decode_quoted_bytes, decode_quoted_fragment};
 use evaluate_common_string_function::evaluate_common_string_function;
 use evaluate_template_byte_function::{evaluate_template_byte_function, template_bytes_to_string};
 use evaluate_template_function::evaluate_template_function;
 use evaluate_template_value_function::evaluate_template_value_function;
+pub(crate) use float_format::{format_template_float, format_template_float_fold};
 use format_template_bytes::{format_template_bytes, parse_template_bytes};
 use format_template_duration_seconds::{format_template_duration_seconds, parse_template_duration};
-pub(crate) use float_format::{format_template_float, format_template_float_fold};
 use format_template_print::{format_template_print, format_template_print_bytes};
 pub use format_template_printf::quote_go_bytes;
 use format_template_printf::{format_template_printf, format_template_printf_bytes};
@@ -1039,7 +1036,6 @@ pub use prometheus_functions::{
     query_result::TemplateQueryResult,
 };
 use render_template_parts::render_template_parts;
-pub(crate) use collection::{evaluate_template_slice, template_collection_first_args};
 use template_command::TemplateCommand;
 use template_control_expression::TemplateControlExpression;
 use template_expression::TemplateExpression;
@@ -1809,7 +1805,6 @@ pub(crate) fn urlquery_template_string(value: &str) -> String {
     }
     encoded
 }
-
 
 pub(crate) fn is_template_function_name(name: &str) -> bool {
     prometheus_functions::is_name(name)

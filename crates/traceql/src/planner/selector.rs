@@ -213,7 +213,6 @@ pub(crate) fn matcher_from_field_expr(fe: &FieldExpr) -> Option<SpanMatcher> {
     }
 }
 
-
 // Plan Selector
 pub(crate) async fn plan_selector<S: SpanStore>(
     store: &S,
@@ -238,7 +237,8 @@ pub(crate) async fn plan_selector<S: SpanStore>(
             &ctx.scan_options,
         )
         .await?;
-    super::registration::register_field_comparison_columns(&scan.ctx, &scan.span_table, &[fe]).await?;
+    super::registration::register_field_comparison_columns(&scan.ctx, &scan.span_table, &[fe])
+        .await?;
     let inspected = scan.inspected;
     let parent_table = if needs_unfiltered_parent_table(fe) {
         register_unfiltered_parent_table(store, ctx, &scan.ctx).await?
@@ -358,7 +358,6 @@ pub(crate) fn selector_sql_with_parent_table(
         Ok(format!("SELECT * FROM {table} WHERE {predicate}"))
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1662,8 +1661,11 @@ mod tests {
     }
 }
 mod sql;
-use sql::{ColumnComparison, column_comparison_sql, field_expr_to_sql_qualified, parent_field_expr_to_sql_qualified};
 pub(crate) use sql::field_expr_to_sql;
+use sql::{
+    ColumnComparison, column_comparison_sql, field_expr_to_sql_qualified,
+    parent_field_expr_to_sql_qualified,
+};
 
 use crate::span_enum_codes::{kind_enum_value, status_enum_value};
 

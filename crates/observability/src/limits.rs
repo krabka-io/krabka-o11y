@@ -66,7 +66,7 @@ pub(crate) mod non_negative_byte_size {
         }
         Ok(value)
     }
-    }
+}
 pub(crate) mod non_negative_time {
     use serde::{Deserializer, de::Error as _};
 
@@ -95,7 +95,7 @@ pub(crate) mod non_negative_time {
         }
         Ok(value)
     }
-    }
+}
 pub(crate) mod option_non_negative_byte_size {
     use serde::{Deserializer, de::Error as _};
 
@@ -117,7 +117,7 @@ pub(crate) mod option_non_negative_byte_size {
         }
         Ok(value)
     }
-    }
+}
 pub(crate) mod option_non_negative_time {
     use serde::{Deserializer, de::Error as _};
 
@@ -133,7 +133,9 @@ pub(crate) mod option_non_negative_time {
     /// # Errors
     ///
     /// If the value is not a human time string, or names a negative extent.
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Time>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Time>, D::Error> {
         let value = serde_units::human::option_time::deserialize(deserializer)?;
         if value.is_some_and(|value| value < Time::ZERO) {
             return Err(D::Error::custom(
@@ -142,7 +144,7 @@ pub(crate) mod option_non_negative_time {
         }
         Ok(value)
     }
-    }
+}
 mod load_logs_limits_overrides_config;
 mod overrides_provider;
 pub(crate) use load_logs_limits_overrides_config::load_logs_limits_overrides_config;
@@ -592,30 +594,18 @@ pub(crate) struct PartialLimits {
         deserialize_with = "option_non_negative_byte_size::deserialize"
     )]
     pub(crate) max_label_value_length: Option<ByteSize>,
-    #[serde(
-        default,
-        deserialize_with = "option_non_negative_time::deserialize"
-    )]
+    #[serde(default, deserialize_with = "option_non_negative_time::deserialize")]
     pub(crate) reject_old_samples_max_age: Option<Time>,
-    #[serde(
-        default,
-        deserialize_with = "option_non_negative_time::deserialize"
-    )]
+    #[serde(default, deserialize_with = "option_non_negative_time::deserialize")]
     pub(crate) creation_grace_period: Option<Time>,
     #[serde(
         default,
         deserialize_with = "option_non_negative_byte_size::deserialize"
     )]
     pub(crate) max_ingest_body: Option<ByteSize>,
-    #[serde(
-        default,
-        deserialize_with = "option_non_negative_time::deserialize"
-    )]
+    #[serde(default, deserialize_with = "option_non_negative_time::deserialize")]
     pub(crate) max_query_length: Option<Time>,
-    #[serde(
-        default,
-        deserialize_with = "option_non_negative_time::deserialize"
-    )]
+    #[serde(default, deserialize_with = "option_non_negative_time::deserialize")]
     pub(crate) max_query_lookback: Option<Time>,
     #[serde(default)]
     pub(crate) max_entries_limit_per_query: Option<u64>,
@@ -635,15 +625,9 @@ pub(crate) struct PartialLimits {
         deserialize_with = "option_non_negative_byte_size::deserialize"
     )]
     pub(crate) max_query_string_bytes: Option<ByteSize>,
-    #[serde(
-        default,
-        deserialize_with = "option_non_negative_time::deserialize"
-    )]
+    #[serde(default, deserialize_with = "option_non_negative_time::deserialize")]
     pub(crate) max_query_range: Option<Time>,
-    #[serde(
-        default,
-        deserialize_with = "option_non_negative_time::deserialize"
-    )]
+    #[serde(default, deserialize_with = "option_non_negative_time::deserialize")]
     pub(crate) retention_period: Option<Time>,
 }
 

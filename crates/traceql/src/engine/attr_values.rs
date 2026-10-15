@@ -1,6 +1,6 @@
 use super::{
-    Array, BooleanArray, DictionaryArray, Float64Array, Int32Type, Int64Array,
-    LargeStringArray, ListArray, Result, StringArray, StringViewArray, TraceqlError,
+    Array, BooleanArray, DictionaryArray, Float64Array, Int32Type, Int64Array, LargeStringArray,
+    ListArray, Result, StringArray, StringViewArray, TraceqlError,
 };
 
 // Bool Attr Values

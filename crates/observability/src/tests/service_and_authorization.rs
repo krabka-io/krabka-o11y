@@ -3,19 +3,19 @@ use clap::Parser as _;
 use prost::Message as _;
 use tower::ServiceExt as _;
 
-use crate::tests::prelude::{
-    Arc, BTreeMap, BlockIndex, BrokerAccessPolicy, CONTENT_ENCODING, CONTENT_TYPE,
-    CancellationToken, ClientResourcePolicy, DeferredQueryAuthorizerConnect, Duration, HeaderMap,
-    LabelIndex, Limits, Mutex, ObjectStore, Principal, ProtoAnyValue,
-    ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord, QueryAuthorizationError, Role,
-    RoleReadiness, ServiceConfig, ServiceDependencies, StatusCode, TenantId,
-    UnavailableQueryAuthorizer, Url, Value, WalLogRecord, build_compactor_configured_object_store,
-    build_service_router_with_shutdown, check, json, normalize_otlp_http_logs, proto_any_value,
-    sleep, write_log_index_manifest,
-};
 use crate::{
     LogQueryAuthorizer as _,
     security_context::{MissingPrincipal, RequestSecurity, ServiceAudit},
+    tests::prelude::{
+        Arc, BTreeMap, BlockIndex, BrokerAccessPolicy, CONTENT_ENCODING, CONTENT_TYPE,
+        CancellationToken, ClientResourcePolicy, DeferredQueryAuthorizerConnect, Duration,
+        HeaderMap, LabelIndex, Limits, Mutex, ObjectStore, Principal, ProtoAnyValue,
+        ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord, QueryAuthorizationError,
+        Role, RoleReadiness, ServiceConfig, ServiceDependencies, StatusCode, TenantId,
+        UnavailableQueryAuthorizer, Url, Value, WalLogRecord,
+        build_compactor_configured_object_store, build_service_router_with_shutdown, check, json,
+        normalize_otlp_http_logs, proto_any_value, sleep, write_log_index_manifest,
+    },
 };
 
 mod recording_object_store;

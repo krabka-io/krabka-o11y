@@ -1,9 +1,9 @@
 use super::{
-    Aggregate, Field, Pipeline, Result, ScanOptions, SpanMatcher, aggregate_filter_query_any_sql,
-    aggregate_filter_sql_query, aggregate_projection_field, is_inert_pipeline_stage,
-    is_search_preserving_pipeline_stage, nested_projection_matcher, Scope,
+    Aggregate, Field, Pipeline, Result, ScanOptions, Scope, SpanMatcher,
+    aggregate_filter_query_any_sql, aggregate_filter_sql_query, aggregate_projection_field,
+    grouped_sql::grouped_pipeline_sql, is_inert_pipeline_stage,
+    is_search_preserving_pipeline_stage, nested_projection_matcher,
 };
-use super::grouped_sql::grouped_pipeline_sql;
 
 pub(crate) fn pipeline_nested_projection_matchers(pipeline: &[Pipeline]) -> Vec<SpanMatcher> {
     let mut out = Vec::new();
@@ -83,7 +83,6 @@ pub(crate) fn scan_options_with_pipeline_projections(
     }
     options
 }
-
 
 pub(crate) fn push_nested_projection_matcher(out: &mut Vec<SpanMatcher>, field: &Field) {
     if field.scope == Scope::Both {

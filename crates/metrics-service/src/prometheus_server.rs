@@ -1,8 +1,8 @@
-use super::{JoinHandle, Router, SocketAddr, in_memory_prometheus_router};
 use krabka_observability::server_security::{
     RouterServer, ServerSecurity, spawn_router_server_joinable,
 };
 
+use super::{JoinHandle, Router, SocketAddr, in_memory_prometheus_router};
 
 /// Serves the Prometheus API over an empty in-memory store at `addr`, until `shutdown` resolves.
 ///

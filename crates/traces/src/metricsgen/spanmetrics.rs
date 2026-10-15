@@ -12,7 +12,6 @@ use crate::metricsgen::{
     servicegraph::RecordOutcome,
 };
 
-
 #[derive(Clone, Debug)]
 pub(crate) struct DimEntry {
     pub(crate) calls: f64,

@@ -232,8 +232,8 @@ use flush::flush_and_commit;
 pub use flush::{FlushAccumulator, PartitionWindow, flush_partition_windows};
 pub use group_by_trace::{TraceIdentity, group_by_trace, group_by_trace_in_record_order};
 pub use run::run;
-pub use settings::{BlockBuilderConfig, DEFAULT_FLUSH_MAX_AGE, TRACE_BLOCK_OBJECT_PREFIX};
 pub(crate) use settings::BlockBuildOptions;
+pub use settings::{BlockBuilderConfig, DEFAULT_FLUSH_MAX_AGE, TRACE_BLOCK_OBJECT_PREFIX};
 use tags::collect_tags;
 pub use wal_consumer::{
     BlockBuilderConsumer, WalConsumerCommit, WalConsumerPoll, decode_consumer_records,

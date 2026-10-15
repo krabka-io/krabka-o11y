@@ -18,11 +18,9 @@ use krabka_profiles::limits::{Limits, OverridesProvider};
 use object_store::memory::InMemory;
 use tokio::sync::oneshot;
 
-use self::{
-    compaction_passes::{
-        COMPACTION_INTERVAL, assert_role_stops_after_cancel, assert_stage_drains_with_its_loop,
-        cancel_ready_role_after_two_passes,
-    },
+use self::compaction_passes::{
+    COMPACTION_INTERVAL, assert_role_stops_after_cancel, assert_stage_drains_with_its_loop,
+    cancel_ready_role_after_two_passes,
 };
 use super::{CancellationToken, Cli, ObjectStore, ServiceMetrics, compactor_stage, run_compactor};
 
@@ -94,13 +92,7 @@ async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
     let compaction = metrics.compaction.clone();
     let shutdown = CancellationToken::new();
     shutdown.cancel();
-    let outcome = run_compactor(
-        compactor_cli(),
-        metrics,
-        RoleReadiness::new(),
-        shutdown,
-    )
-    .await;
+    let outcome = run_compactor(compactor_cli(), metrics, RoleReadiness::new(), shutdown).await;
     compaction_passes::assert_stopped_without_a_pass(&outcome, &compaction);
 }
 

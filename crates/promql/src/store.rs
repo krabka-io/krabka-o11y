@@ -1,6 +1,9 @@
 //! Metric data access abstraction.
 
-use std::{collections::{BTreeMap, BTreeSet}, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use datafusion::prelude::SessionContext;
 use krabka_blockstore::SeriesFingerprint;

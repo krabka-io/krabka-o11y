@@ -4,8 +4,8 @@ use futures::StreamExt;
 use krabka_metrics::{CompactionIndexListing, CompactionIndexManifest};
 
 use super::{
-    Arc, BTreeMap, BTreeSet, MetricsServiceError, ObjectStore, ObjectStoreExt, Path, Time,
-    TimeExt, TryStreamExt,
+    Arc, BTreeMap, BTreeSet, MetricsServiceError, ObjectStore, ObjectStoreExt, Path, Time, TimeExt,
+    TryStreamExt,
 };
 
 ///

@@ -88,8 +88,6 @@ pub(crate) struct RankCandidate {
     pub(crate) value: f64,
 }
 
-
-
 /// Orders two rank candidates for a sharded `topk`/`bottomk` range query.
 ///
 /// The first key is the sample value. `Top` puts the highest value first, and

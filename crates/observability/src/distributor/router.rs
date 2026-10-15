@@ -1,15 +1,15 @@
 use axum::response::IntoResponse;
-use prost::Message as _;
 use krabka_units::convert::ByteSizeExt;
+use prost::Message as _;
 use tracing::Instrument;
 
 use crate::{
-    AllowAllIngestLimiter, Arc, ByteSize, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DRAINING_GATE, DistributorError, WalLogRecord,
-    Deserialize, Extension, HeaderMap, Instant, Labels, Limits, LogIngestLimiter, LogWalSink,
-    LogsService, LogsServiceServer, OverridesProvider, ProtoExportLogsServiceRequest,
+    AllowAllIngestLimiter, Arc, ByteSize, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DRAINING_GATE,
+    Deserialize, DistributorError, Extension, HeaderMap, Instant, Labels, Limits, LogIngestLimiter,
+    LogWalSink, LogsService, LogsServiceServer, OverridesProvider, ProtoExportLogsServiceRequest,
     ProtoExportLogsServiceResponse, ReadinessGate, RequestSecurity, Response, RoleReadiness,
     Router, ServiceMetrics, State, StatusCode, TenantErrorSurface, TenantId, Time, Value,
-    append_distributor_wal_records, build_info, distributor_error_to_grpc_status,
+    WalLogRecord, append_distributor_wal_records, build_info, distributor_error_to_grpc_status,
     flush_ingester_chunks, format_query, format_query_post, get, get_prepare_shutdown, grpc_tenant,
     log_level, log_level_post, measured_size, memberlist_status, normalize_loki_http_push,
     normalize_otlp_http_logs, normalize_otlp_proto_logs_for_tenant, otlp_http_error_response, post,
@@ -18,8 +18,6 @@ use crate::{
     set_prepare_shutdown, shutdown_ingester, tenant_error_response, tenant_header_value,
     unset_prepare_shutdown, validate_ingest_body_limit,
 };
-
-
 
 fn logs_ingest_span(tenant: &TenantId, body_size: ByteSize) -> tracing::Span {
     tracing::info_span!(

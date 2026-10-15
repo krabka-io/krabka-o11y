@@ -108,10 +108,10 @@ pub(crate) mod test_support {
     }
 }
 
+mod array_columns;
+mod attribute_values;
 mod batch_projection;
 mod nested_scan;
-mod attribute_values;
-mod array_columns;
 mod scan_helpers;
 #[cfg(test)]
 mod tests {
@@ -4115,73 +4115,42 @@ mod add_span_attr_columns;
 mod krabka_span_store;
 mod nested_projection;
 
-use batch_projection::add_nested_intrinsic_columns;
-use batch_projection::add_nested_intrinsic_columns_to_batch;
-use nested_projection::nested_intrinsic_rows;
 use add_span_attr_columns::add_span_attr_columns;
-use batch_projection::add_span_attr_columns_to_batch;
-use batch_projection::align_scan_batch_to_schema;
-use nested_scan::append_nested_attr;
-use nested_scan::append_nested_event;
-use nested_scan::append_nested_link;
-use attribute_values::AttrMatch;
-use attribute_values::attr_values_with_resource;
-use attribute_values::batch_attr_matches;
-use attribute_values::batch_attr_matches_with_resource;
-pub use scan_helpers::block_builder_frontier_ns;
-use batch_projection::block_span_schema;
-use batch_projection::deduplicate_scan_batches;
+use array_columns::{
+    ProjectedAttrColumn, fixed_array_value, insert_i32_value, insert_i64_value,
+    insert_string_value, int32_value, nullable_fixed_value, optional_list_column,
+    string_array_value, string_value, struct_fixed_field, struct_int64_field, struct_list_field,
+    struct_string_field,
+};
 pub(crate) use attribute_values::ColdAttributeTagNames;
-use attribute_values::collect_attribute_tag_names;
-use attribute_values::{RequestedTag, collect_attribute_tag_values};
-use attribute_values::collect_intrinsic_value;
-use attribute_values::event_values;
-use batch_projection::filter_batches_by_matchers;
-use array_columns::fixed_array_value;
-use array_columns::insert_i32_value;
-use array_columns::insert_i64_value;
-use array_columns::insert_string_value;
-use attribute_values::instrumentation_matches;
-use scan_helpers::INSTRUMENTATION_TAGS;
-use array_columns::int32_value;
-use scan_helpers::intrinsic_matches;
-use attribute_values::intrinsic_values_from_batches;
+use attribute_values::{
+    AttrMatch, RequestedTag, ResourceAttrs, attr_values_with_resource, batch_attr_matches,
+    batch_attr_matches_with_resource, collect_attribute_tag_names, collect_attribute_tag_values,
+    collect_intrinsic_value, event_values, instrumentation_matches, intrinsic_values_from_batches,
+    link_values, merge_dynamic_scope, merge_static_scope, resource_attr_values, resource_matches,
+};
+use batch_projection::{
+    add_nested_intrinsic_columns, add_nested_intrinsic_columns_to_batch,
+    add_span_attr_columns_to_batch, align_scan_batch_to_schema, block_span_schema,
+    deduplicate_scan_batches, filter_batches_by_matchers,
+};
 pub use krabka_span_store::KrabkaSpanStore;
 use krabka_traceql::{kind_enum_value, status_enum_value, typed_value_parts};
-use attribute_values::link_values;
-use nested_scan::matching_events_for_scan;
-use nested_scan::matching_links_for_scan;
-use attribute_values::merge_dynamic_scope;
-use attribute_values::merge_static_scope;
 use nested_projection::{
     NestedAttrColumn, NestedAttrColumnProjection, ScanInt32ColumnReplacement,
-    replace_scan_int32_columns,
+    nested_intrinsic_rows, replace_scan_int32_columns,
 };
-use nested_scan::nested_attr_columns;
-use nested_scan::NestedAttrScope;
-use nested_scan::nested_event_matchers_match;
-use nested_scan::nested_link_matchers_match;
-use nested_scan::nested_string_attrs;
-use array_columns::nullable_fixed_value;
-use array_columns::optional_list_column;
-use array_columns::ProjectedAttrColumn;
-use nested_scan::recompute_batch_nested_sets;
-use nested_scan::recompute_scan_nested_sets;
-use nested_scan::recompute_trace_nested_sets;
-use attribute_values::resource_attr_values;
-use attribute_values::ResourceAttrs;
-use attribute_values::resource_matches;
-use scan_helpers::row_matcher_matches;
-use scan_helpers::row_matches;
-use scan_helpers::SCOPE_ORDER;
-pub use scan_helpers::SharedTraceIndex;
-use array_columns::string_array_value;
-use array_columns::string_value;
-use array_columns::struct_fixed_field;
-use array_columns::struct_int64_field;
-use array_columns::struct_list_field;
-use array_columns::struct_string_field;
-use scan_helpers::trace_from_batches;
+use nested_scan::{
+    NestedAttrScope, append_nested_attr, append_nested_event, append_nested_link,
+    matching_events_for_scan, matching_links_for_scan, nested_attr_columns,
+    nested_event_matchers_match, nested_link_matchers_match, nested_string_attrs,
+    recompute_batch_nested_sets, recompute_scan_nested_sets, recompute_trace_nested_sets,
+};
+use scan_helpers::{
+    INSTRUMENTATION_TAGS, SCOPE_ORDER, intrinsic_matches, row_matcher_matches, row_matches,
+    trace_from_batches,
+};
+pub use scan_helpers::{SharedTraceIndex, block_builder_frontier_ns};
 
 use super::INTRINSIC_TAGS;
 

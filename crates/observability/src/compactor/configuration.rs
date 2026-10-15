@@ -2,13 +2,13 @@ use krabka_blockstore::{ObjectStoreAccess, ObjectStoreMetrics};
 use krabka_client_core::ClientSecurity;
 use krabka_units::convert::{StdDurationExt, TimeExt};
 
-use crate::compactor::{prepare_compactor_wal_inputs, CompactorRunComponents};
 use crate::{
     BlockDescriptor, BrokerAccessPolicy, BrokerBackedIngestLimiter, ClientResourcePolicy,
     ConfiguredObjectStore, DeferredQueryAuthorizerConnect, DeferredWalConsumerConnect,
     KafkaLogWalConsumer, KafkaLogWalSink, ObjectPath, ObjectStore, Role, ServiceConfig,
     ServiceConfigError, ServiceDependencies, ServiceRuntimeError, Time,
     advance_and_persist_compaction_frontier, build_configured_object_store,
+    compactor::{CompactorRunComponents, prepare_compactor_wal_inputs},
     effective_object_store_prefix, materialize_deletes_then_compact_next_kafka_wal_batch, sleep,
     wal_consumer_metrics::WalConsumerMetrics,
 };

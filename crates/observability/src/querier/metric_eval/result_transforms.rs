@@ -1,5 +1,3 @@
-use crate::querier::metric_eval::for_each_loki_result_metric;
-
 #[cfg(test)]
 use crate::{
     HttpQueryError, ParseError, QueryKind, TimeRange, add_loki_query_stats,
@@ -10,10 +8,8 @@ use crate::{
     MetricBinaryOperator, MetricQuery, MetricScalarArithmeticOp, MetricValue, MetricVectorMatching,
     Ordering, Value, VectorAggregationOp, apply_metric_binary_arithmetic_to_sample,
     apply_metric_binary_arithmetic_to_series_with_left_operand, apply_metric_binary_to_series,
-    parse_metric_sample_value,
+    parse_metric_sample_value, querier::metric_eval::for_each_loki_result_metric,
 };
-
-
 
 pub(crate) fn loki_vector_sample_value(sample: &Value) -> Option<MetricValue> {
     sample

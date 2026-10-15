@@ -52,13 +52,13 @@ use tracing::instrument;
 
 use crate::{
     BlockLevel, BlockStoreError, DEFAULT_BLOCK_READ_MAX, DEFAULT_BLOCK_SWEEP_GRACE,
-    DEFAULT_INDEX_SNAPSHOT_MAX, ErasureRequest, Labels, LogBlockIndex, LogBlockStoreError,
-    IndexShardRange, MERGE_READ_BATCH_ROWS, ProfileIndex, TimeRange, TraceIndex,
-    escape_object_path_segment,
-    index_shards_prefix_for_key,
+    DEFAULT_INDEX_SNAPSHOT_MAX, ErasureRequest, IndexShardRange, Labels, LogBlockIndex,
+    LogBlockStoreError, MERGE_READ_BATCH_ROWS, ProfileIndex, TimeRange, TraceIndex,
+    escape_object_path_segment, index_shards_prefix_for_key,
     index_snapshot::{
-        TenantSnapshotRangeRead, list_index_snapshot_objects, read_latest_snapshot_manifest, read_shard_payload,
-        shard_payload_content_hash, shard_payload_object_key, shard_payload_prefix_for_key,
+        TenantSnapshotRangeRead, list_index_snapshot_objects, read_latest_snapshot_manifest,
+        read_shard_payload, shard_payload_content_hash, shard_payload_object_key,
+        shard_payload_prefix_for_key,
     },
     index_snapshot_prefix_for_key, log_tenant_index_manifest_object_path,
     log_tenant_index_shard_manifest_object_path, open_block_stream,
@@ -96,7 +96,7 @@ use self::{
     audit_delete_state::audit_delete_state,
     audit_inventory::audit_inventory,
     audit_log_manifests::audit_log_manifests,
-        audit_snapshot_index::audit_snapshot_index,
+    audit_snapshot_index::audit_snapshot_index,
     check_block::check_block,
     classified_object::ClassifiedObject,
     classify_object_key::classify_object_key,
@@ -110,9 +110,8 @@ use self::{
 pub use self::{
     repair_log_entry::RepairLogEntry, repair_log_writer::RepairLogWriter,
     repair_options::RepairOptions, repair_report::RepairReport, repair_store::repair_store,
-    storage_audit_options::StorageAuditOptions,
-    storage_audit_report::StorageAuditReport, storage_finding_kind::StorageFindingKind,
-    storage_signal::StorageSignal,
+    storage_audit_options::StorageAuditOptions, storage_audit_report::StorageAuditReport,
+    storage_finding_kind::StorageFindingKind, storage_signal::StorageSignal,
 };
 
 /// What a block key says about the block.

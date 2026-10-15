@@ -1,6 +1,6 @@
 //! Build span block `RecordBatch` values from internal spans.
 
-use std::collections::HashMap;
+use std::{borrow::Borrow, collections::HashMap};
 
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
@@ -11,9 +11,6 @@ use krabka_units::prelude::*;
 
 use super::{AttrValue, KeyValue, Span, nested_set::assign_nested_set};
 use crate::error::TracesError;
-
-use std::borrow::Borrow;
-
 
 pub(crate) fn block_attr_value(value: &AttrValue) -> BlockAttrValue {
     match value {

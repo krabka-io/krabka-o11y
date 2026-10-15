@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use krabka_units::Time;
 use krabka_blockstore::{CycleSpans, SpanNode};
+use krabka_units::Time;
 
 use crate::result::{EventRef, LinkRef};
 
@@ -247,7 +247,6 @@ pub fn span_schema() -> SchemaRef {
     span_schema_with_attrs(&[])
 }
 
-
 /// One span's nested-set assignment, aligned by index with the input spans.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NestedSet {
@@ -265,7 +264,6 @@ impl From<krabka_blockstore::NestedSet> for NestedSet {
         }
     }
 }
-
 
 /// Assigns nested-set intervals to `spans`, aligned by index.
 ///
@@ -285,7 +283,6 @@ pub fn assign_nested_set(spans: &[InputSpan]) -> Vec<NestedSet> {
         .map(NestedSet::from)
         .collect()
 }
-
 
 #[derive(Clone, Debug)]
 pub struct AttributeColumn {

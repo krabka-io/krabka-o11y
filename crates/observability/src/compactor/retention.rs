@@ -15,26 +15,22 @@
 //! object. The reverse order leaves the index naming an object that is
 //! already deleted.
 
-use krabka_blockstore::LogIndexes;
-use crate::TenantLogIndexes;
-
 use krabka_blockstore::{
-    BlockDeletion, BlockLevel, BlockTimestampUnit, CompactionCandidate, RetentionWindows,
-    delete_blocks, list_tenant_log_index_shard_ranges_from_object_store, plan_expired_blocks,
-    unescape_object_path_segment, update_tenant_log_index_shard_to_object_store,
+    BlockDeletion, BlockLevel, BlockTimestampUnit, CompactionCandidate, LogIndexes,
+    RetentionWindows, delete_blocks, list_tenant_log_index_shard_ranges_from_object_store,
+    plan_expired_blocks, unescape_object_path_segment,
+    update_tenant_log_index_shard_to_object_store,
 };
 
 use crate::{
-    compaction_metrics::CompactionMetrics,
     BTreeMap, BTreeSet, BlockDescriptor, BlockIndex, BlockStoreError, CompactorRunError,
-    LabelIndex, ObjectPath, ObjectStore, TimeRange, insert_descriptor_labels,
+    LabelIndex, ObjectPath, ObjectStore, TenantLogIndexes, TimeRange,
+    compaction_metrics::CompactionMetrics, insert_descriptor_labels,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
     read_tenant_log_index_shard_ranges_or_empty_from_object_store,
     write_tenant_log_index_manifest_to_object_store,
 };
-
-
 
 /// The deletion record for one log block, named by its key under `prefix`.
 ///

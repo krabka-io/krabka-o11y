@@ -24,7 +24,6 @@ impl CompactionPassOutcome {
     }
 }
 
-
 /// Merge existing span blocks with a caller-supplied on-disk read limit.
 ///
 /// The inputs are each already in the declared `[trace_id, start_unix_nano]`
@@ -163,7 +162,6 @@ async fn write_complete_traces(
         .map_err(|err| TracesError::Block(err.to_string()))
 }
 
-
 /// Runs one compaction pass over the whole index.
 ///
 /// A pass plans and executes; it does not loop. Running it again picks up
@@ -211,4 +209,3 @@ pub async fn compact_once_with_policy(
     }
     Ok(outcome)
 }
-

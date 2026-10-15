@@ -4,8 +4,8 @@ use super::{
     info_label_selector::{
         normalize_info_selectors, normalize_start_timestamp, restore_info_selectors,
     },
-    normalize_duration_expressions, parse,
-    strip_extended_selector_modifiers, wrap_extended_selectors,
+    normalize_duration_expressions, parse, strip_extended_selector_modifiers,
+    wrap_extended_selectors,
 };
 
 /// Parses `PromQL` and first folds Prometheus duration expressions to fixed durations.

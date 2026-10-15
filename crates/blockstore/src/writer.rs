@@ -1042,8 +1042,8 @@ mod sort_key_check;
 mod summary_columns;
 
 use abort_on_part_failure_store::AbortOnPartFailureStore;
-pub use block_format::{BLOCK_ROW_GROUP_ROWS, BLOCK_ZSTD_LEVEL};
 pub(crate) use block_format::SORT_KEY_OPTIONS;
+pub use block_format::{BLOCK_ROW_GROUP_ROWS, BLOCK_ZSTD_LEVEL};
 pub use block_stream_writer::BlockStreamWriter;
 use block_summary::BlockSummary;
 #[cfg(test)]

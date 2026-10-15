@@ -25,9 +25,9 @@ use count_rows::{count_rows, count_up_float_rows};
 use float_record::{float_record, float_sample_row};
 use interned_series_labels::{SummaryLedger, SummaryLedgerEntry};
 use lbls::lbls;
-mod scan_queries;
-mod row_windows;
 mod query_sharding;
+mod row_windows;
+mod scan_queries;
 use store_with_float_and_hist_series::store_with_float_and_hist_series;
 
 use crate::testkit::count_two_sum_three_histogram;
@@ -184,6 +184,4 @@ pub(crate) fn push_up_sample(
 mod wal_batch_cases;
 
 mod support;
-pub(crate) use support::assert_query_shard_selects;
-pub(crate) use support::lbls;
-pub(crate) use support::store_with_float_and_hist_series;
+pub(crate) use support::{assert_query_shard_selects, lbls, store_with_float_and_hist_series};

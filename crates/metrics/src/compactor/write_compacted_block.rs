@@ -2,8 +2,7 @@ use krabka_blockstore::{BlockWriter, SummaryColumns};
 
 use super::{
     CompactedBlockRequest, CompactedBlockWrite, CompactionIndexManifest, CompactionIndexSink,
-    CompactionWriteError, block_decl, compaction_object_plan,
-    compaction_partition_object_plan,
+    CompactionWriteError, block_decl, compaction_object_plan, compaction_partition_object_plan,
 };
 
 pub(crate) async fn write_compacted_block<S>(

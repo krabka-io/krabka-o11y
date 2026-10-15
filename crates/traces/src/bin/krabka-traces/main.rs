@@ -60,9 +60,9 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 mod cli_options;
-mod role_support;
 mod role_builders;
 mod role_runners;
+mod role_support;
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -2571,74 +2571,48 @@ mod serve_role_router;
 // the static by attribute, so naming it here imports something nothing
 // reads -- which is a warning, not a link to the allocator.
 
-use role_support::AllRoleContext;
 use all_role_stage::{AllRoleStage, all_role_stage};
-use role_support::all_role_stages;
-use cli_options::apply_metrics_generator_cli_overrides;
-use role_support::BlockStoreGates;
-use role_builders::build_live_store_router;
-use role_builders::build_object_store;
-use role_builders::build_query_frontend_app;
-#[cfg(test)]
-use role_builders::build_querier_router;
 use build_querier_router_with_live::build_querier_router_with_live;
-#[cfg(test)]
-use role_builders::build_query_frontend_router;
-use role_builders::build_trace_index_catalog;
 use cli::Cli;
-use role_runners::compaction_loop;
-use cli_options::compaction_policy_from_cli;
-use role_builders::ConfiguredObjectStore;
+use cli_options::{
+    apply_metrics_generator_cli_overrides, compaction_policy_from_cli, engine_opts_from_cli,
+    f64_from_usize, frontend_config_from_cli, ingest_rate_from_cli, limits_from_cli,
+    live_i64_param, load_traces_limits_overrides_config, max_trace_size,
+    parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes,
+    parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64,
+    parse_positive_time_or_secs, parse_scan_concat_max, parse_time_or_legacy_i64, parse_unix_nano,
+    promoted_attrs_from_cli, u64_limit_from_usize,
+};
 use distributor_role::{DistributorRole, PrimaryListen};
-use cli_options::engine_opts_from_cli;
-use cli_options::f64_from_usize;
-use cli_options::frontend_config_from_cli;
-use role_builders::IndexedLiveSource;
-use cli_options::ingest_rate_from_cli;
 use krabka_observability::cli_value_parsers::{
     parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
     parse_min_two_usize, parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
 };
-use cli_options::limits_from_cli;
-use role_support::ListeningRole;
-use cli_options::live_i64_param;
 use live_span_batches::live_span_batches;
-use cli_options::load_traces_limits_overrides_config;
-use role_support::log_role_outcome;
-use cli_options::max_trace_size;
-use role_support::MetricsFlags;
 use now_unix_nanos::now_unix_nanos;
-use cli_options::parse_non_negative_time_or_secs;
-use cli_options::parse_non_negative_whole_byte_size_or_bytes;
-use cli_options::parse_positive_time_or_millis;
-use cli_options::parse_positive_time_or_nanos;
-use cli_options::parse_positive_time_or_nanos_f64;
-use cli_options::parse_positive_time_or_secs;
 use parse_promoted_attr::parse_promoted_attr;
 use parse_querier_addrs::parse_querier_addrs;
-use cli_options::parse_scan_concat_max;
-use cli_options::parse_time_or_legacy_i64;
-use cli_options::parse_unix_nano;
-use role_support::ProcessSecurity;
-use cli_options::promoted_attrs_from_cli;
-use role_support::require_internal_credential;
 use require_role_topics::require_role_topics;
+#[cfg(test)]
+use role_builders::build_querier_router;
+#[cfg(test)]
+use role_builders::build_query_frontend_router;
+use role_builders::{
+    ConfiguredObjectStore, IndexedLiveSource, SharedObjectStore, build_live_store_router,
+    build_object_store, build_query_frontend_app, build_trace_index_catalog,
+};
+use role_runners::{
+    compaction_loop, run_all_query_frontend, run_block_builder, run_compactor, run_compactor_once,
+    run_distributor, run_live_store, run_metrics_generator, run_query_frontend, wal_consumer,
+};
+use role_support::{
+    AllRoleContext, BlockStoreGates, ListeningRole, MetricsFlags, ProcessSecurity, Target,
+    all_role_stages, log_role_outcome, require_internal_credential,
+};
 use run::run;
 use run_all::run_all;
-use role_runners::run_all_query_frontend;
-use role_runners::run_block_builder;
-use role_runners::run_compactor;
-use role_runners::run_compactor_once;
-use role_runners::run_distributor;
-use role_runners::run_live_store;
-use role_runners::run_metrics_generator;
 use run_querier::run_querier;
-use role_runners::run_query_frontend;
 use serve_role_router::{RoleServer, serve_role_router};
-use role_builders::SharedObjectStore;
-use role_support::Target;
-use cli_options::u64_limit_from_usize;
-use role_runners::wal_consumer;
 
 #[tokio::main]
 async fn main() -> ExitCode {

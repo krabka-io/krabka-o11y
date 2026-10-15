@@ -22,7 +22,6 @@ pub fn clock_series(
     out
 }
 
-
 /// Builds the projected float series for one reading.
 pub(crate) fn clock_projection(
     reading: &DecodedClockReading,
@@ -148,7 +147,6 @@ pub(crate) fn clock_state_series(
     }
     out
 }
-
 
 /// The Prometheus encoding of a boolean: `1` when it holds, `0` otherwise.
 fn indicator(holds: bool) -> f64 {

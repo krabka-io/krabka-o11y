@@ -40,7 +40,6 @@ where
     usize::try_from(decoded).map_err(|_| WireError::Decode(out_of_range.into()))
 }
 
-
 /// A collection header as read from the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CollectionHeader {
@@ -109,7 +108,6 @@ pub(crate) fn check_map_header(
     }
     Ok(())
 }
-
 
 /// Decode a thrift string's bytes, which must be UTF-8.
 pub(crate) fn utf8_string(bytes: Vec<u8>) -> Result<String, WireError> {

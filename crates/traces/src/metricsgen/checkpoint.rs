@@ -162,8 +162,6 @@ mod tests {
     }
 }
 
-
-
 #[must_use]
 pub fn encode_checkpoint_key(tenant: &str, trace_id: &[u8; 16], edge_id: &[u8]) -> Bytes {
     let mut buf = BytesMut::new();

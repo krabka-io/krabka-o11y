@@ -2983,9 +2983,9 @@ mod mimir_block_upload;
 mod mimir_tenant_admin;
 mod poll_ruler_state_consumer_once;
 mod prometheus_api_state_for_store;
-mod promql_error;
 mod prometheus_routers;
 mod prometheus_server;
+mod promql_error;
 mod refreshing_metric_block_store;
 mod ruler_lease;
 mod run_fenced_ruler_evaluation_loop;
@@ -3005,10 +3005,10 @@ pub use evaluate_ruler_once::{
 pub use kafka_recording_rule_wal_sink::KafkaRecordingRuleWalSink;
 use keyed_producer_record::keyed_producer_record;
 mod alertmanager;
+use alertmanager::alertmanager_payload;
 pub use alertmanager::{
     AlertmanagerHttpSink, NoopAlertmanagerSink, QueuedAlertmanagerSink, RulerAlertmanagerSink,
 };
-use alertmanager::alertmanager_payload;
 mod bundled_rules;
 pub use bundled_rules::{
     BUNDLED_RULES_HOST, BundledRulesError, bundled_rules_address, install_bundled_rule_groups,
@@ -3016,9 +3016,9 @@ pub use bundled_rules::{
 mod ruler_state;
 pub use ruler_state::{
     KafkaRulerStateSink, PrometheusRulerStateSink, RULER_STATE_TOPIC, RulerStateConsumerError,
-    RulerStateFanoutSink, RulerStateReplayError, RulerStateWalRecord,
-    RulerStateWalRecordError, apply_ruler_state_record, replay_ruler_state_records,
-    ruler_state_compaction_key, run_ruler_state_consumer_loop,
+    RulerStateFanoutSink, RulerStateReplayError, RulerStateWalRecord, RulerStateWalRecordError,
+    apply_ruler_state_record, replay_ruler_state_records, ruler_state_compaction_key,
+    run_ruler_state_consumer_loop,
 };
 mod wal_head;
 pub use wal_head::{
@@ -3032,8 +3032,8 @@ use wal_head::{
     wal_record_max_timestamp_ms,
 };
 mod manifests;
-pub use manifests::{load_compaction_manifests, load_compaction_manifests_for_range};
 pub(crate) use manifests::ManifestTimeRange;
+pub use manifests::{load_compaction_manifests, load_compaction_manifests_for_range};
 use manifests::{
     load_compaction_manifests_filtered, load_compaction_manifests_filtered_with_cache,
     load_compaction_manifests_for_range_with_cache, normalize_refresh_range,
@@ -3042,6 +3042,16 @@ pub use metrics_service_error::MetricsServiceError;
 pub use mimir_tenant_admin::{MimirTenantAdminState, mimir_tenant_admin_router};
 pub use poll_ruler_state_consumer_once::poll_ruler_state_consumer_once;
 pub use prometheus_api_state_for_store::prometheus_api_state_for_store;
+pub use prometheus_routers::{
+    blockstore_prometheus_router, in_memory_prometheus_router, prometheus_router_for_store,
+    query_frontend_prometheus_router_for_store,
+    query_frontend_prometheus_router_for_store_with_cache, refreshing_blockstore_prometheus_router,
+    refreshing_blockstore_prometheus_router_with_hot_store,
+};
+pub use prometheus_server::{
+    JoinableRouterServer, serve_in_memory_prometheus, serve_prometheus_router,
+    serve_prometheus_router_joinable,
+};
 pub(crate) use refreshing_metric_block_store::MIMIR_TENANT_DELETION_PREFIX;
 pub use refreshing_metric_block_store::RefreshingMetricBlockStore;
 pub use ruler_lease::{RulerLeaseState, advance_ruler_lease};
@@ -3049,15 +3059,3 @@ pub use run_fenced_ruler_evaluation_loop::{RulerTopics, run_fenced_ruler_evaluat
 pub use run_ruler_evaluation_loop::run_ruler_evaluation_loop;
 use unix_ms_to_rfc3339::unix_ms_to_rfc3339;
 use unix_time_ms::unix_time_ms;
-
-pub use prometheus_routers::{
-    blockstore_prometheus_router, in_memory_prometheus_router, prometheus_router_for_store,
-    query_frontend_prometheus_router_for_store,
-    query_frontend_prometheus_router_for_store_with_cache,
-    refreshing_blockstore_prometheus_router,
-    refreshing_blockstore_prometheus_router_with_hot_store,
-};
-pub use prometheus_server::{
-    JoinableRouterServer, serve_in_memory_prometheus, serve_prometheus_router,
-    serve_prometheus_router_joinable,
-};

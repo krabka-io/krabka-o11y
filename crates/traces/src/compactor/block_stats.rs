@@ -33,7 +33,6 @@ pub(crate) fn push_trace_ids(
     Ok(())
 }
 
-
 /// What a compacted block's index entry needs, folded over the batches as they
 /// are written rather than taken from the finished block.
 ///
@@ -85,4 +84,3 @@ impl CompactedBlockStats {
         }
     }
 }
-

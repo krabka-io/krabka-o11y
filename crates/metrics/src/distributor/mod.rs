@@ -3,8 +3,6 @@
 
 pub mod ha;
 mod ha_election_types;
-pub use ha_election_types::*;
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -25,6 +23,7 @@ pub use ha::{
     DEFAULT_HA_FAILOVER_TIMEOUT, HA_TRACKER_TOPIC, HaDecision, HaElection, HaElectionRecord,
     HaTracker, ha_decision, ha_election, strip_replica_label,
 };
+pub use ha_election_types::*;
 use krabka_blockstore::{SeriesFingerprint, TenantId};
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
@@ -4110,24 +4109,23 @@ overrides:
     }
 }
 
-mod wal_ingest;
 mod clock_series;
-mod http_push;
-mod otlp_ingest;
-mod ha_election_consumer;
 mod consumer;
 mod decode_influx;
 mod decoded_series;
 mod distributor_state;
-mod ingest_gates;
 mod ha_election_compaction_key;
+mod ha_election_consumer;
+mod http_push;
 mod ingest_clock;
+mod ingest_gates;
 mod ingest_request_start;
 mod kafka_ha_election_sink;
 mod kafka_sink;
-mod producer_records;
 mod mimir_tenant_status;
+mod otlp_ingest;
 mod otlp_metrics_service;
+mod producer_records;
 mod push_error;
 mod push_success;
 mod router;
@@ -4136,35 +4134,39 @@ mod series_tracker;
 mod serve;
 mod status_from_push_error;
 mod validate;
+mod wal_ingest;
 mod wal_sink;
 mod written_counts_response;
 
 pub use clock_series::{CLOCK_READING_METRIC, clock_series};
 use clock_series::{clock_identity_labels, clock_projection, clock_state_series, projected_labels};
 use decode_influx::decode_influx;
-use http_push::decode_otlp_http_body;
 use decoded_series::{decoded_sample_count, decoded_series};
 pub use distributor_state::{
     DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED, DEFAULT_MAX_TRACKED_TENANTS, DistributorState,
 };
 pub use ha_election_compaction_key::ha_election_compaction_key;
-pub use ingest_clock::{IngestClock, SystemIngestClock};
+pub use ha_election_consumer::{
+    poll_ha_election_consumer_once, replay_ha_election_records, run_ha_election_consumer_loop,
+};
+use http_push::{
+    OtlpPushOutcome, clocks_push, clocks_push_inner, decode_otlp_http_body, influx_push,
+    influx_push_inner, otlp_push, otlp_push_inner, push, push_inner,
+};
 use ingest_clock::ingest_stamp;
+pub use ingest_clock::{IngestClock, SystemIngestClock};
 use ingest_gates::{
     enforce_and_record_active_series, enforce_creation_grace_period, enforce_ingest_limits,
     enforce_ingestion_rate, enforce_label_limits, enforce_out_of_order_window,
 };
 use ingest_request_start::{IngestRequestStart, ingest_span};
-use otlp_ingest::{decode_tenant_otlp, otlp_grpc_export_inner, otlp_translation_strategy};
-pub use otlp_ingest::otlp_metrics_service_server;
 pub use kafka_ha_election_sink::KafkaHaElectionSink;
 pub use kafka_sink::KafkaSink;
 use mimir_tenant_status::{all_user_stats, runtime_config, user_limits, user_stats};
+pub use otlp_ingest::otlp_metrics_service_server;
+use otlp_ingest::{decode_tenant_otlp, otlp_grpc_export_inner, otlp_translation_strategy};
 pub use otlp_metrics_service::{OtlpMetricsService, otlp_metrics_service};
-use http_push::{
-    OtlpPushOutcome, clocks_push, clocks_push_inner, influx_push, influx_push_inner, otlp_push,
-    otlp_push_inner, push, push_inner,
-};
+use producer_records::{TraceHeader, keyed_producer_record, wal_producer_record};
 use push_error::PushError;
 use push_success::{PushOutcome, PushSuccess, series_push_result};
 pub use router::router;
@@ -4177,13 +4179,7 @@ use validate::{
     MAX_EXEMPLAR_LABEL_CODEPOINTS, is_valid_label_name, require_otlp_protobuf_content_type,
     require_snappy_encoding, validate_exemplar_labels,
 };
-use producer_records::{TraceHeader, keyed_producer_record, wal_producer_record};
 use wal_ingest::{append_clock_readings, append_decoded_series, append_wal_records};
 pub use wal_ingest::{clock_wal_records, wal_records_from_series};
 pub use wal_sink::{ProduceError, WalBatchRecord, WalSink};
 use written_counts_response::written_counts_response;
-
-pub use ha_election_consumer::{
-    poll_ha_election_consumer_once, replay_ha_election_records,
-    run_ha_election_consumer_loop,
-};

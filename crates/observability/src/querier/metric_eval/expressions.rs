@@ -1,13 +1,14 @@
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
-use crate::querier::metric_eval::validation::VectorScalarExpressionParser;
 use crate::{
-    BTreeMap, TimeRange, Value, eval_times, json, loki_success_value,
-    unix_ns_string_to_loki_seconds, MetricScalarArithmeticOp, MetricVectorMatching, ComparisonOp,
-    MetricBinarySetOp, MetricVectorGroupModifier, parse_logql_string_argument, querier::metric_eval::validation::scalar_vector_query_is_vector,
-    split_logql_function_arguments, split_top_level_arithmetic_query, split_top_level_comparison_query, split_top_level_set_query,
-};
-use crate::{
+    BTreeMap, ComparisonOp, MetricBinarySetOp, MetricScalarArithmeticOp, MetricVectorGroupModifier,
+    MetricVectorMatching, TimeRange, Value, eval_times, json, loki_success_value,
+    parse_logql_string_argument,
+    querier::metric_eval::validation::{
+        VectorScalarExpressionParser, scalar_vector_query_is_vector,
+    },
+    split_logql_function_arguments, split_top_level_arithmetic_query,
+    split_top_level_comparison_query, split_top_level_set_query, unix_ns_string_to_loki_seconds,
 };
 
 struct ParsedBoolModifier<'a> {

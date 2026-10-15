@@ -9,7 +9,12 @@
 //! drive `MockQuerier` with `MockCatalog`, and production binds `HttpQuerier`
 //! with `TraceIndexCatalog`.
 
-use std::{convert::Infallible, pin::Pin, sync::Arc, task::{Context, Poll}};
+use std::{
+    convert::Infallible,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use axum::{
     Json, Router,
@@ -28,7 +33,7 @@ use opentelemetry_proto::tonic::{
     trace::v1::{ResourceSpans, ScopeSpans, Span, TracesData},
 };
 use prost::Message as _;
-use serde::{de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -38,7 +43,7 @@ use crate::{
         backend::{BackendError, QuerierBackend},
         job::BlockCatalog,
         merge::TraceStatus,
-        wire::{parse_hex16, SearchResponseJson, TraceByIdResponseJson},
+        wire::{SearchResponseJson, TraceByIdResponseJson, parse_hex16},
     },
     limits::overrides_api_response,
     readiness::tempo_readiness_routes,
@@ -72,14 +77,11 @@ fn query_time_range(bounds: &TenantTimeBounds) -> krabka_blockstore::TimeRange {
 
 // --- param helpers (mirror the querier's contract) --------------------------
 
-use axum::{extract::FromRequestParts, http::request::Parts};
-
-use crate::frontend::MetricsQueryWindow;
-
-use crate::tempo_query_routes::tempo_query_routes;
-
 use std::collections::BTreeSet;
 
+use axum::{extract::FromRequestParts, http::request::Parts};
+
+use crate::{frontend::MetricsQueryWindow, tempo_query_routes::tempo_query_routes};
 
 /// What every query-frontend read handler extracts from its request: the
 /// frontend, the authenticated principal, the headers, and the URI.
@@ -842,8 +844,6 @@ pub(crate) fn tags_to_traceql(tags: &str) -> Option<String> {
     (!parts.is_empty()).then(|| format!("{{ {} }}", parts.join(" && ")))
 }
 
-
-
 // Route variants, request parsing, and response encoders used by this surface.
 
 /// A zero-sized type the router names to pick one variant of `E` for a
@@ -916,7 +916,6 @@ impl RouteVariant<MetricsQueryKind> for InstantMetrics {
     const VARIANT: MetricsQueryKind = MetricsQueryKind::Instant;
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RequiredTimeBounds {
     pub(crate) start_ns: i64,
@@ -931,7 +930,6 @@ pub(crate) fn required_time_bounds(uri: &Uri) -> Result<RequiredTimeBounds, Stri
     }
     Ok(RequiredTimeBounds { start_ns, end_ns })
 }
-
 
 /// The tenant, the `TraceQL` query, and the time window a search names, or
 /// the response that rejects the search.
@@ -968,7 +966,6 @@ pub(crate) fn search_request(request: TenantRequest<'_>) -> Result<SearchRequest
     })
 }
 
-
 /// The NDJSON body of `/api/search/stream`: one cumulative response per line,
 /// or an `error` object for a shard that failed.
 pub(crate) fn ndjson_search_stream(
@@ -1004,7 +1001,6 @@ impl Stream for NdjsonSearchStream {
         Poll::Ready(Some(Ok(Bytes::from(line))))
     }
 }
-
 
 /// Tempo's v1 trace-by-id answer, for `/api/traces/{id}`.
 ///

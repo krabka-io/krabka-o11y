@@ -164,18 +164,18 @@ mod series_store;
 mod target_info_engine;
 mod zoned_queue_depth_engine;
 
-mod range_semantics;
-mod vector_semantics;
+mod binary_semantics;
+mod counter_functions;
 mod histogram_semantics;
 mod info_function_cases;
-mod instant_selection;
 mod instant_aggregation_cases;
 mod instant_function_cases;
-mod counter_functions;
-mod binary_semantics;
+mod instant_selection;
 mod planner_parity_core;
 mod planner_parity_ranges;
+mod range_semantics;
 mod scalar_semantics;
+mod vector_semantics;
 use api_series_engines::{api_latency_engine, late_jump_engine, requests_counter_engine};
 use assert_aggregate_nan_staleness::assert_aggregate_nan_staleness;
 use assert_filled_many_side::assert_filled_many_side;
@@ -420,19 +420,10 @@ mod aggregation_edge_cases;
 mod range_aggregation_edges;
 
 mod support;
-pub(crate) use support::assert_aggregate_nan_staleness;
-pub(crate) use support::assert_filled_many_side;
-pub(crate) use support::assert_minmax_nan_ignoring;
-pub(crate) use support::assert_one_unnamed_float;
-pub(crate) use support::assert_sparse_aggregate_excludes_no_value;
-pub(crate) use support::classic_bucket_store;
-pub(crate) use support::instant_experimental_functions_require_feature;
-pub(crate) use support::native_histogram;
-pub(crate) use support::query_results_match;
-pub(crate) use support::queue_depth_engine;
-pub(crate) use support::range_matrices_match;
-pub(crate) use support::range_query_routes_through_planner;
-pub(crate) use support::region_info_engine;
-pub(crate) use support::set_op_store;
-pub(crate) use support::short_lookback_up_engine;
-pub(crate) use support::sort_instant_result;
+pub(crate) use support::{
+    assert_aggregate_nan_staleness, assert_filled_many_side, assert_minmax_nan_ignoring,
+    assert_one_unnamed_float, assert_sparse_aggregate_excludes_no_value, classic_bucket_store,
+    instant_experimental_functions_require_feature, native_histogram, query_results_match,
+    queue_depth_engine, range_matrices_match, range_query_routes_through_planner,
+    region_info_engine, set_op_store, short_lookback_up_engine, sort_instant_result,
+};

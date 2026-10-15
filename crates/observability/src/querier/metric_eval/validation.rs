@@ -1,8 +1,9 @@
-use crate::querier::metric_eval::for_each_loki_result_metric;
-
-use crate::{HttpQueryError, ParseError, Regex, Value, json};
 use krabka_logql::MetricLabelJoin;
-use crate::{ScalarVectorExpressionResult, scalar_vector_expression_result};
+
+use crate::{
+    HttpQueryError, ParseError, Regex, ScalarVectorExpressionResult, Value, json,
+    querier::metric_eval::for_each_loki_result_metric, scalar_vector_expression_result,
+};
 
 mod vector_scalar_expression_parser;
 
@@ -102,7 +103,6 @@ pub(crate) fn unspaced_vector_set_operator_error(query: &str) -> Option<String> 
 }
 
 #[cfg(test)]
-
 #[cfg(test)]
 pub(crate) fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJoin) {
     apply_label_join_fields(

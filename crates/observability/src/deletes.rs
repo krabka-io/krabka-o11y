@@ -3,8 +3,6 @@ use crate::{
     PathBuf, Serialize, SharedLogDeleteRequests, StreamQuery, TimeRange,
 };
 
-
-
 impl SharedLogDeleteRequests {
     pub(crate) fn from_data_root(
         root: impl AsRef<FsPath>,
@@ -42,7 +40,6 @@ impl SharedLogDeleteRequests {
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 #[path = "deletes/shared_log_delete_requests/tests.rs"]

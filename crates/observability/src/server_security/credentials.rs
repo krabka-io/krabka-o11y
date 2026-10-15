@@ -5,12 +5,11 @@ use std::{
 };
 
 use krabka_blockstore::TenantId;
-use subtle::ConditionallySelectable;
 use serde::Deserialize;
+use subtle::ConditionallySelectable;
 
 use super::{
-    AuthFailureReason, ClientIdentity, CredentialsError, TenantGrant,
-    token_digest::TokenDigest,
+    AuthFailureReason, ClientIdentity, CredentialsError, TenantGrant, token_digest::TokenDigest,
 };
 
 struct TokenOwner {

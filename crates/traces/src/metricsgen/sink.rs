@@ -7,22 +7,18 @@ use std::{
 
 use async_trait::async_trait;
 use krabka_client_consumer::{Consumer, ConsumerRecord};
-use krabka_units::{ByteSize, Time, convert::ByteSizeExt as _, millis};
-use tokio::sync::Mutex as AsyncMutex;
-
-use crate::{
-    metricsgen::{contract::SpanRecord, series::SeriesPayload},
-    span::{AttrValue, KeyValue},
-    wal,
-};
-
 use krabka_observability::{
     ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
     wal_group_assignment::WalAssignmentWatch,
 };
+use krabka_units::{ByteSize, Time, convert::ByteSizeExt as _, millis};
+use tokio::sync::Mutex as AsyncMutex;
 
-use crate::metricsgen::SpanAttribute;
-
+use crate::{
+    metricsgen::{SpanAttribute, contract::SpanRecord, series::SeriesPayload},
+    span::{AttrValue, KeyValue},
+    wal,
+};
 
 /// Kafka-backed source for the traces WAL consumer group.
 pub struct KafkaSpanSource {

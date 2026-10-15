@@ -1,5 +1,6 @@
-use super::*;
 use krabka_observability::persisted_format::{PersistedHeader, validate_persisted_format};
+
+use super::*;
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.

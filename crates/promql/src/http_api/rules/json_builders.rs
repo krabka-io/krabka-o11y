@@ -1,5 +1,5 @@
-use crate::ruler::{alert_template_variables, expand_alert_label_map_async};
 use super::*;
+use crate::ruler::{alert_template_variables, expand_alert_label_map_async};
 
 pub(crate) fn labels_map_json(labels: &crate::PromqlLabels) -> Value {
     let mut values = super::Map::new();

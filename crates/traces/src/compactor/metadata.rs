@@ -4,13 +4,11 @@ pub(crate) trait MetadataValueArray: Array {
     fn string_value(&self, idx: usize) -> String;
 }
 
-
 impl MetadataValueArray for BooleanArray {
     fn string_value(&self, idx: usize) -> String {
         self.value(idx).to_string()
     }
 }
-
 
 impl MetadataValueArray for Float64Array {
     fn string_value(&self, idx: usize) -> String {
@@ -18,20 +16,17 @@ impl MetadataValueArray for Float64Array {
     }
 }
 
-
 impl MetadataValueArray for Int64Array {
     fn string_value(&self, idx: usize) -> String {
         self.value(idx).to_string()
     }
 }
 
-
 impl MetadataValueArray for StringArray {
     fn string_value(&self, idx: usize) -> String {
         self.value(idx).to_string()
     }
 }
-
 
 pub(crate) fn collect_nested_attrs(
     keys: &ListArray,
@@ -75,7 +70,6 @@ pub(crate) fn collect_nested_attrs(
     Ok(())
 }
 
-
 pub(crate) fn collect_attr_metadata(
     batch: &RecordBatch,
     tag_names: &mut BTreeSet<String>,
@@ -113,7 +107,6 @@ pub(crate) fn collect_attr_metadata(
     Ok(())
 }
 
-
 pub(crate) fn collect_event_metadata(
     batch: &RecordBatch,
     tag_names: &mut BTreeSet<String>,
@@ -145,7 +138,6 @@ pub(crate) fn collect_event_metadata(
         },
     )
 }
-
 
 /// Folds `batch`'s searchable tags into the sets a compacted block's index
 /// entry carries.
@@ -179,4 +171,3 @@ pub(crate) fn push_tag_metadata(
         tag_values,
     )
 }
-

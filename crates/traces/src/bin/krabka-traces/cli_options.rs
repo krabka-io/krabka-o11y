@@ -1,5 +1,6 @@
-use super::*;
 use std::path::Path;
+
+use super::*;
 
 pub(crate) fn apply_metrics_generator_cli_overrides(cfg: &mut MetricsGenConfig, cli: &Cli) {
     if let Some(interval) = cli.collection_interval {

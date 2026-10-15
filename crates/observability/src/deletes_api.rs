@@ -1,5 +1,3 @@
-use crate::http::params::query_parsing::decoded_query_param_pairs;
-
 use crate::{
     ActiveLogDeleteFilter, ActiveLogDeleteFilterError, BlockStoreError, Bytes,
     CompactorDeleteRequest, CompactorDeleteRequestResponse, CompactorDeleteState,
@@ -10,9 +8,10 @@ use crate::{
         AuditOutcome, OPERATION_DELETE_REQUEST_CANCEL, OPERATION_DELETE_REQUEST_CREATE,
         RESOURCE_DELETE_REQUEST, RESOURCE_TENANT, resource,
     },
-    current_unix_time_ns, decode_query_pair, form_body_query, json, json_response,
-    parse_decimal_seconds_timestamp, parse_loki_duration_query_param, parse_query,
-    resolve_single_tenant, tenant_header_value,
+    current_unix_time_ns, decode_query_pair, form_body_query,
+    http::params::query_parsing::decoded_query_param_pairs,
+    json, json_response, parse_decimal_seconds_timestamp, parse_loki_duration_query_param,
+    parse_query, resolve_single_tenant, tenant_header_value,
 };
 
 fn audit_delete_request_write<E>(

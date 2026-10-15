@@ -1,8 +1,8 @@
 use super::{
     Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, Principal, ProfileStore,
     QuerierState, Query, RenderQuery, Response, authorized_http_tenant, flamebearer_json,
-    flamegraph_dot, parse_render_query, render_params::ParsedRenderQuery,
-    parse_render_time_param, profile_error_response, unix_now_ms,
+    flamegraph_dot, parse_render_query, parse_render_time_param, profile_error_response,
+    render_params::ParsedRenderQuery, unix_now_ms,
 };
 
 pub(crate) async fn render_inner<S>(

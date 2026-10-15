@@ -1552,18 +1552,18 @@ overrides:
     }
 }
 
+mod connect_error;
 mod connect_ingest;
 mod distributor_state;
 mod enforce_and_reserve_max_series;
 mod enforce_ingestion_rate;
-mod connect_error;
 mod evict_one_tenant;
-mod id_normalization;
-mod ingest_span;
 mod export_handler;
 mod extract_symbols;
+mod id_normalization;
 mod ingest_handler;
 mod ingest_request_parts;
+mod ingest_span;
 mod ingestion_bucket_for_tenant;
 mod kafka_sink;
 mod otlp_http_handler;
@@ -1578,20 +1578,22 @@ mod serve;
 mod serve_supervised;
 mod wal_sink;
 
+use connect_error::{
+    INTERNAL_ERROR_MESSAGE, client_facing_message, connect_error, limit_connect_code,
+};
 use connect_ingest::{ConnectIngest, connect_ingest};
 pub use distributor_state::DistributorState;
 #[doc(hidden)]
 pub use distributor_state::{CumulativeProfileCache, CumulativeProfileKey};
 use enforce_and_reserve_max_series::enforce_and_reserve_max_series;
 use enforce_ingestion_rate::enforce_ingestion_rate;
-use connect_error::{INTERNAL_ERROR_MESSAGE, client_facing_message, connect_error, limit_connect_code};
 use evict_one_tenant::evict_one_tenant;
-use id_normalization::{normalize_optional_pprof_id, normalize_required_pprof_id, u32_from_i64};
-use ingest_span::{ingest_request_span, ingest_span_tenant};
 use export_handler::export_handler;
 use extract_symbols::extract_symbols;
+use id_normalization::{normalize_optional_pprof_id, normalize_required_pprof_id, u32_from_i64};
 use ingest_handler::ingest_handler;
 use ingest_request_parts::IngestRequestParts;
+use ingest_span::{ingest_request_span, ingest_span_tenant};
 use ingestion_bucket_for_tenant::ingestion_bucket_for_tenant;
 pub use kafka_sink::KafkaSink;
 use otlp_http_handler::otlp_http_handler;

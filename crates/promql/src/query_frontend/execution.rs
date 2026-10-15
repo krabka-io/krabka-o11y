@@ -1,11 +1,11 @@
-use promql_parser::parser::LabelModifier;
 use async_trait::async_trait;
 use krabka_blockstore::TenantId;
 use krabka_units::prelude::*;
+use promql_parser::parser::LabelModifier;
 
 use super::{
-    FrontendRangeQuery, FrontendRangeRequest, MomentReduction, RankReduction, QueryShardExecution,
-    QueryShardReducer,
+    FrontendRangeQuery, FrontendRangeRequest, MomentReduction, QueryShardExecution,
+    QueryShardReducer, RankReduction,
     cache::{RangeQueryCache, range_cache_key},
     merge::{
         divide_range_query_results, merge_range_query_results_with_reducer,
@@ -70,7 +70,6 @@ impl<S: MetricStore> RangeQueryExecutor for PromqlEngine<S> {
         .await
     }
 }
-
 
 pub(crate) async fn execute_moment_range_query_frontend<E, C>(
     executor: &E,

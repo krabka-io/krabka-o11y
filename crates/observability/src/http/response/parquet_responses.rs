@@ -242,8 +242,6 @@ pub(crate) fn populate_loki_query_scan_stats(
     stats["summary"]["totalLinesProcessed"] = json!(store_lines.saturating_add(ingester_lines));
 }
 
-
-
 #[derive(Clone, Copy)]
 pub(crate) struct MetricEvaluationWindow {
     pub(crate) range: TimeRange,
@@ -278,8 +276,6 @@ pub(crate) fn add_loki_query_stats_for_metric_plan_with_hot_tail<R: Borrow<WalLo
     value
 }
 
-
-
 pub(crate) fn add_loki_query_stats_for_stream_blocks_with_hot_tail<
     R: Borrow<WalLogRecord> + Sync,
 >(
@@ -300,8 +296,6 @@ pub(crate) fn add_loki_query_stats_for_stream_blocks_with_hot_tail<
     value
 }
 
-
-
 pub(crate) fn add_loki_query_stats_for_stream_plan_with_hot_tail<R: Borrow<WalLogRecord> + Sync>(
     value: Value,
     plan: &StreamPlan,
@@ -316,8 +310,6 @@ pub(crate) fn add_loki_query_stats_for_stream_plan_with_hot_tail<R: Borrow<WalLo
         frontier,
     )
 }
-
-
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct HotSampleKey {
@@ -398,7 +390,6 @@ use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
 };
-
 
 struct MatchedLine<'a> {
     labels: &'a Labels,

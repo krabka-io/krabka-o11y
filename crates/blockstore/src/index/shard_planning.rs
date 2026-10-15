@@ -1,6 +1,6 @@
-use super::*;
-
 use krabka_o11y_verified::shard_range;
+
+use super::*;
 
 /// The shard width to cut a tenant spanning `[min_ts, max_ts]` with.
 ///

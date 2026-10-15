@@ -14,8 +14,7 @@ use arrow::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    NativeHistogramRow,
-    append_optional_i64,
+    NativeHistogramRow, append_optional_i64,
     arrow_codec::{decode_rows_with_identity, require_non_null, schema_mismatch, typed_column},
     numeric_sample_columns::encode_numeric_sample_columns,
     schema::{
@@ -353,7 +352,6 @@ pub(crate) fn validate_span_count_consistency(
     }
 }
 
-
 /// Encodes `(fingerprint, timestamp, NativeHistogram)` rows into a
 /// `RecordBatch` that matches [`native_histogram_schema`].
 /// # Errors
@@ -494,7 +492,6 @@ pub fn decode_native_histograms(
         })
     })
 }
-
 
 /// A run of populated buckets.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

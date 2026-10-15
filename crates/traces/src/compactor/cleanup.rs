@@ -1,5 +1,6 @@
-use super::*;
 use object_store::path::Path;
+
+use super::*;
 
 /// Drops every block that has fallen outside its tenant's retention window,
 /// and returns the blocks it dropped.
@@ -46,7 +47,6 @@ pub fn expire_trace_blocks(
     expired
 }
 
-
 /// Deletes the span block objects that the trace index does not name.
 ///
 /// A block no index names is unreachable: no query can find it and no
@@ -90,4 +90,3 @@ pub async fn sweep_orphaned_trace_blocks(
     );
     reconcile_orphans(store, &prefix, &live_keys, grace, now).await
 }
-

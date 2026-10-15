@@ -1,11 +1,14 @@
-use axum::{body::Body, http::StatusCode, response::{IntoResponse, Response}};
+use axum::{
+    body::Body,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use krabka_observability::service_metrics::IngestPushMeasurement;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceResponse;
 use prost::Message as _;
 
 use super::{
-    DistributorState, LimitError, Span, TenantId, TracesError, produce_spans,
-    tempo_error_response,
+    DistributorState, LimitError, Span, TenantId, TracesError, produce_spans, tempo_error_response,
 };
 
 pub(crate) fn error_response(err: &TracesError) -> Response {

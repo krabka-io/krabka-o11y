@@ -5,9 +5,10 @@ use crate::{
     AclEntry, AclEntryFilter, AclOperation, AdminClient, AdminError, Arc, AtomicBool,
     AtomicOrdering, BTreeMap, ByteRate, ByteSize, ByteSizeExt, CancellationToken,
     ClientResourcePolicy, IngestLimitError, Instant, KafkaWalRecord, Mutex, NonZeroUsize,
-    PatternType, PermissionType, QueryAuthorizationError, ReadinessGate, ResourceType, ServiceConfig,
-    ServiceConfigError, TenantId, Time, WalConsumerError, WalLogRecord, WalPosition, WalSinkError,
-    async_trait, measured_size, server_security::Principal,
+    PatternType, PermissionType, QueryAuthorizationError, ReadinessGate, ResourceType,
+    ServiceConfig, ServiceConfigError, TenantId, Time, WalConsumerError, WalLogRecord, WalPosition,
+    WalSinkError, async_trait, measured_size,
+    server_security::Principal,
     wal_client_security::with_client_security,
     wal_produce::{WalBatchError, write_batch_serially},
 };

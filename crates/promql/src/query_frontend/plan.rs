@@ -15,7 +15,9 @@ use super::{
     FrontendRangeQuery, MomentReduction, QueryFrontendOptions, QueryShard, QueryShardExecution,
     QueryShardReducer, RankReduction,
 };
-use crate::{PromqlError, engine::range_resolution_exceeds_limit, format_promql_expr, parse_promql};
+use crate::{
+    PromqlError, engine::range_resolution_exceeds_limit, format_promql_expr, parse_promql,
+};
 mod partial_queries;
 use partial_queries::{avg_partial_queries, moment_partial_queries, rank_reduction};
 
@@ -151,7 +153,6 @@ pub(crate) fn query_shard_execution(query: &str) -> Result<QueryShardExecution, 
     Ok(QueryShardExecution::Merge(expr_shard_reducer(&expr)))
 }
 
-
 /// Rejects a range query whose resolution exceeds the per-timeseries point cap.
 ///
 /// The check matches Prometheus's unconditional front-gate:
@@ -174,7 +175,6 @@ pub(crate) fn check_range_resolution(
     }
     Ok(())
 }
-
 
 pub(crate) fn push_sharded_subqueries(
     subqueries: &mut Vec<FrontendRangeQuery>,
@@ -208,7 +208,6 @@ pub(crate) fn push_sharded_subqueries(
         });
     }
 }
-
 
 struct OpenSplitRange {
     window: i64,
@@ -321,7 +320,6 @@ pub fn plan_range_query(
     Ok(subqueries)
 }
 
-
 pub(crate) fn expr_supports_frontend_sharding(expr: &Expr) -> bool {
     match expr {
         Expr::Aggregate(aggregate) => {
@@ -351,7 +349,6 @@ pub(crate) fn expr_supports_frontend_sharding(expr: &Expr) -> bool {
         | Expr::Extension(_) => true,
     }
 }
-
 
 pub(crate) fn query_with_shard_selector(
     query: &str,

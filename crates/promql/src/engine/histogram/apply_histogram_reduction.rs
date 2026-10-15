@@ -1,8 +1,7 @@
-use super::bucket_helpers::ClassicBucketGroups;
 use super::{
-    BTreeMap, ClassicBucket, InstantSample, NativeHistogram, Result,
-    SampleValue, find_mixed_histogram_keys, group_classic_bucket_sample, labels_key,
-    labels_without_metric_name, record_metric_name,
+    BTreeMap, ClassicBucket, InstantSample, NativeHistogram, Result, SampleValue,
+    bucket_helpers::ClassicBucketGroups, find_mixed_histogram_keys, group_classic_bucket_sample,
+    labels_key, labels_without_metric_name, record_metric_name,
 };
 
 /// How [`apply_histogram_reduction`] folds each histogram to a float.

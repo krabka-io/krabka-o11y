@@ -74,7 +74,6 @@ mod rate_bucket {
     }
 }
 
-
 pub struct QueryEnforcer;
 
 impl QueryEnforcer {

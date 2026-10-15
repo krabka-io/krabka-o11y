@@ -45,7 +45,6 @@ pub(crate) fn rendezvous_score(addr: &str, key: &str) -> u64 {
     hash ^ (hash >> 31)
 }
 
-
 /// Place every planned shard on a ready querier.
 ///
 /// The two shard kinds are not the same problem, and conflating them is what
@@ -202,8 +201,6 @@ mod tests {
         }
     }
 }
-
-
 
 /// The ready querier that owns `key`, for work that is not shard-planned.
 ///

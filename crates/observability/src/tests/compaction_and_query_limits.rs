@@ -20,127 +20,129 @@ use crate::tests::prelude::{
 };
 
 mod a_compaction_batch_is_reparented_into_the_producers_trace {
-use super::*;
+    use super::*;
 
-mod recording_trace_subscriber {
-    use opentelemetry::trace::TracerProvider as _;
-    use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
-    use tracing_subscriber::prelude::*;
+    mod recording_trace_subscriber {
+        use opentelemetry::trace::TracerProvider as _;
+        use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+        use tracing_subscriber::prelude::*;
 
-    pub fn with_recording_trace<T>(name: &'static str, operation: impl FnOnce() -> T) -> T {
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
-        let provider = SdkTracerProvider::builder()
-            .with_sampler(Sampler::AlwaysOn)
-            .build();
-        let tracer = provider.tracer(name);
-        let subscriber = tracing_subscriber::registry()
-            .with(tracing_opentelemetry::layer().with_tracer(tracer));
-        tracing::subscriber::with_default(subscriber, operation)
+        pub fn with_recording_trace<T>(name: &'static str, operation: impl FnOnce() -> T) -> T {
+            opentelemetry::global::set_text_map_propagator(
+                opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+            );
+            let provider = SdkTracerProvider::builder()
+                .with_sampler(Sampler::AlwaysOn)
+                .build();
+            let tracer = provider.tracer(name);
+            let subscriber = tracing_subscriber::registry()
+                .with(tracing_opentelemetry::layer().with_tracer(tracer));
+            tracing::subscriber::with_default(subscriber, operation)
+        }
+    }
+
+    /// The compaction span belongs to the producer's trace, taken from the
+    /// first record that actually carries a `traceparent`. A record without
+    /// one sits first on purpose: selecting it instead extracts no context and
+    /// leaves the batch in a trace of its own.
+    #[test]
+    pub(crate) fn a_compaction_batch_is_reparented_into_the_producers_trace() {
+        use opentelemetry::trace::{TraceContextExt as _, TraceId};
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+
+        recording_trace_subscriber::with_recording_trace("observability-compaction-test", || {
+            let record = |key: &str, value: &str| KafkaWalRecord {
+                value: Vec::new(),
+                partition: PartitionIndex(0),
+                offset: Offset(0),
+                timestamp_ms: None,
+                headers: vec![KafkaWalHeader {
+                    key: key.to_owned(),
+                    value: Some(value.as_bytes().to_vec()),
+                }],
+            };
+            let records = vec![
+                record("tenant", "tenant-a"),
+                record(
+                    "traceparent",
+                    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                ),
+            ];
+
+            let span = tracing::info_span!("logs_compaction");
+            set_remote_parent_from_wal_records(&span, &records);
+
+            let context = span.context().span().span_context().clone();
+            check!(
+                context.trace_id()
+                    == TraceId::from_hex("0af7651916cd43dd8448eb211c80319c").expect("a trace id")
+            );
+        });
     }
 }
-
-/// The compaction span belongs to the producer's trace, taken from the
-/// first record that actually carries a `traceparent`. A record without
-/// one sits first on purpose: selecting it instead extracts no context and
-/// leaves the batch in a trace of its own.
-#[test]
-pub(crate) fn a_compaction_batch_is_reparented_into_the_producers_trace() {
-    use opentelemetry::trace::{TraceContextExt as _, TraceId};
-    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-
-    recording_trace_subscriber::with_recording_trace("observability-compaction-test", || {
-        let record = |key: &str, value: &str| KafkaWalRecord {
-            value: Vec::new(),
-            partition: PartitionIndex(0),
-            offset: Offset(0),
-            timestamp_ms: None,
-            headers: vec![KafkaWalHeader {
-                key: key.to_owned(),
-                value: Some(value.as_bytes().to_vec()),
-            }],
-        };
-        let records = vec![
-            record("tenant", "tenant-a"),
-            record(
-                "traceparent",
-                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-            ),
-        ];
-
-        let span = tracing::info_span!("logs_compaction");
-        set_remote_parent_from_wal_records(&span, &records);
-
-        let context = span.context().span().span_context().clone();
-        check!(
-            context.trace_id()
-                == TraceId::from_hex("0af7651916cd43dd8448eb211c80319c").expect("a trace id")
-        );
-    });
-}
-}
 mod a_vector_call_inside_a_string_literal_is_not_a_signed_literal {
-use super::*;
+    use super::*;
 
-struct VectorCallCase {
-    query: &'static str,
-    reported: bool,
-}
+    struct VectorCallCase {
+        query: &'static str,
+        reported: bool,
+    }
 
-/// `vector(` written inside a string literal is just text. Telling it from
-/// a real call needs the scanner to track exactly where the literal ends:
-/// a scanner that leaves early reads the text as a call, and one that
-/// never leaves swallows the code that follows.
-#[yare::parameterized(
+    /// `vector(` written inside a string literal is just text. Telling it from
+    /// a real call needs the scanner to track exactly where the literal ends:
+    /// a scanner that leaves early reads the text as a call, and one that
+    /// never leaves swallows the code that follows.
+    #[yare::parameterized(
     signed_integer = { VectorCallCase { query: "vector(-1)", reported: true } },
     spaced_positive = { VectorCallCase { query: "vector( +2)", reported: true } },
     unsigned = { VectorCallCase { query: "vector(1)", reported: false } },
     text_inside_literal = { VectorCallCase { query: r#"label_replace(vector(1), "dst", "Xvector( -1)", "s", "")"#, reported: false } },
     call_after_literal = { VectorCallCase { query: r#"label_replace(vector(1), "a", "b", "s", "") + vector(-1)"#, reported: true } },
 )]
-pub(crate) fn a_vector_call_inside_a_string_literal_is_not_a_signed_literal(case: VectorCallCase) {
-    check!(
-        signed_vector_function_literal_error(case.query).is_some() == case.reported,
-        "{}: {:?}",
-        case.query,
-        signed_vector_function_literal_error(case.query)
-    );
-}
+    pub(crate) fn a_vector_call_inside_a_string_literal_is_not_a_signed_literal(
+        case: VectorCallCase,
+    ) {
+        check!(
+            signed_vector_function_literal_error(case.query).is_some() == case.reported,
+            "{}: {:?}",
+            case.query,
+            signed_vector_function_literal_error(case.query)
+        );
+    }
 }
 mod count_values_and_approx_topk_are_recognised_apart_from_each_other {
-use super::*;
+    use super::*;
 
-struct AggregationRecognitionCase {
-    query: &'static str,
-    count_values: bool,
-    approx_topk: bool,
-}
+    struct AggregationRecognitionCase {
+        query: &'static str,
+        count_values: bool,
+        approx_topk: bool,
+    }
 
-/// `count_values` and `approx_topk` are both refused before a query is
-/// planned. The two predicates read different aggregation fields, so a
-/// query using one must not trip the other.
-#[yare::parameterized(
+    /// `count_values` and `approx_topk` are both refused before a query is
+    /// planned. The two predicates read different aggregation fields, so a
+    /// query using one must not trip the other.
+    #[yare::parameterized(
     count_values = { AggregationRecognitionCase { query: r#"count_values("status", rate({job="api"}[1m]))"#, count_values: true, approx_topk: false } },
     approx_topk = { AggregationRecognitionCase { query: r#"approx_topk(3, rate({job="api"}[1m]))"#, count_values: false, approx_topk: true } },
     sum = { AggregationRecognitionCase { query: r#"sum(rate({job="api"}[1m]))"#, count_values: false, approx_topk: false } },
     rate = { AggregationRecognitionCase { query: r#"rate({job="api"}[1m])"#, count_values: false, approx_topk: false } },
 )]
-pub(crate) fn count_values_and_approx_topk_are_recognised_apart_from_each_other(
-    case: AggregationRecognitionCase,
-) {
-    let parsed = parse_metric_query(case.query).expect(case.query);
-    check!(
-        metric_query_uses_count_values(&parsed) == case.count_values,
-        "{}",
-        case.query
-    );
-    check!(
-        metric_query_uses_approx_topk(&parsed) == case.approx_topk,
-        "{}",
-        case.query
-    );
-}
+    pub(crate) fn count_values_and_approx_topk_are_recognised_apart_from_each_other(
+        case: AggregationRecognitionCase,
+    ) {
+        let parsed = parse_metric_query(case.query).expect(case.query);
+        check!(
+            metric_query_uses_count_values(&parsed) == case.count_values,
+            "{}",
+            case.query
+        );
+        check!(
+            metric_query_uses_approx_topk(&parsed) == case.approx_topk,
+            "{}",
+            case.query
+        );
+    }
 }
 /// A delete request records its creation time in Unix *seconds*, the unit
 /// Loki's own API reports. Dividing rather than taking a remainder is what

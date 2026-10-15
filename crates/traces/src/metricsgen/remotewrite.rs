@@ -5,6 +5,7 @@ use krabka_blockstore::TENANT_HEADER;
 use krabka_metrics::wire::pb::v1::{
     BucketSpan as RemoteWriteBucketSpan, Exemplar as RemoteWriteExemplar, Histogram, Label, Sample,
     TimeSeries, WriteRequest,
+    histogram::{Count, ResetHint, ZeroCount},
 };
 use krabka_observability::server_security::InternalClient;
 use prost::Message as _;
@@ -14,9 +15,6 @@ use crate::metricsgen::{
     series::{Exemplar, HistogramBucket, Series, SeriesPayload, SeriesSample},
     sink::{RemoteWriteSink, SinkError},
 };
-
-use krabka_metrics::wire::pb::v1::histogram::{Count, ResetHint, ZeroCount};
-
 
 pub(crate) fn encode_write_request(rows: &[WireTimeSeries]) -> Result<Vec<u8>, String> {
     let request = WriteRequest {

@@ -303,7 +303,6 @@ pub fn tenant_from_headers(headers: &HeaderMap) -> Result<TenantId, RequestTenan
     resolve_request_tenant(headers.get(TENANT_HEADER).map(HeaderValue::as_bytes))
 }
 
-
 /// Most distinct tenants one metrics request can name.
 ///
 /// Grafana Mimir reads a `|` in `X-Scope-OrgID` as a list of tenants for a
@@ -364,7 +363,7 @@ impl IntoResponse for RequestTenantError {
 
 /// Why a metrics request may not use the tenant it names.
 ///
-/// [`authorized_tenant_from_headers`](super::authorized_tenant_from_headers)
+/// [`authorized_tenant_from_headers`]
 /// returns it. Each variant keeps the response of its source error, so an
 /// unusable tenant is still Mimir's plain-text rejection, and a refused
 /// principal is a 403.

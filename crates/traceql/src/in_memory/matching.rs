@@ -1,15 +1,17 @@
+use krabka_units::convert::TimeExt as _;
+
 use super::{
     AttrValue, EVENT_ATTR_PREFIX, EventRef, InputSpan, LINK_ATTR_PREFIX, LinkRef, MatchCmp,
     MatchScope, MatchValue, NestedSet, SpanMatcher, SpanRef, StoredTrace, attr_values_match,
-    enum_int_matches, int_matches,
-    event_matcher_matches_absence, event_matcher_matches_event, is_event_matcher,
-    is_link_matcher, link_matcher_matches_absence, link_matcher_matches_link,
+    enum_int_matches, event_matcher_matches_absence, event_matcher_matches_event, int_matches,
+    is_event_matcher, is_link_matcher, link_matcher_matches_absence, link_matcher_matches_link,
     matcher_attributes_match, nested_presence_matches, nil_matches, resource_matches,
     string_matches,
 };
-
-use crate::{engine::bytes_to_hex, span_enum_codes::{kind_enum_value, status_enum_value}};
-use krabka_units::convert::TimeExt as _;
+use crate::{
+    engine::bytes_to_hex,
+    span_enum_codes::{kind_enum_value, status_enum_value},
+};
 
 // Instrumentation Matches
 pub(crate) fn instrumentation_matches(span: &InputSpan, matcher: &SpanMatcher) -> bool {

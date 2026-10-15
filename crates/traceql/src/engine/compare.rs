@@ -2,12 +2,12 @@ use super::{
     Array, AsArray, AttrValue, Attribute, BTreeMap, COL_DURATION, COL_KIND, COL_NAME,
     COL_ROOT_SERVICE_NAME, COL_SPAN_ID, COL_STATUS_CODE, COL_STATUS_MESSAGE, COL_TRACE_ID,
     ComparisonOp, DataType, EVENT_ATTR_PREFIX, Field, FieldExpr, HashMap, HashSet, Intrinsic,
-    LINK_ATTR_PREFIX, MetricPoint, MetricsRange, RESOURCE_ATTR_PREFIX, RecordBatch, Result,
-    Scope, SpansetExpr, TraceMetricSeries, TraceqlError, UnixNano, Value,
-    block_row_scoped_attrs, bool_cmp, collect_selection_regexes, compare_row_in_selection_window,
-    f64_from_u64, fixed_16, fixed_8, float_cmp, i32_value, i64_value, kind_enum_name,
-    kind_enum_value, num_cmp, push_scoped_attr, row_attrs, span_start_column,
-    status_enum_name, status_enum_value, string_value,
+    LINK_ATTR_PREFIX, MetricPoint, MetricsRange, RESOURCE_ATTR_PREFIX, RecordBatch, Result, Scope,
+    SpansetExpr, TraceMetricSeries, TraceqlError, UnixNano, Value, block_row_scoped_attrs,
+    bool_cmp, collect_selection_regexes, compare_row_in_selection_window, f64_from_u64, fixed_8,
+    fixed_16, float_cmp, i32_value, i64_value, kind_enum_name, kind_enum_value, num_cmp,
+    push_scoped_attr, row_attrs, span_start_column, status_enum_name, status_enum_value,
+    string_value,
 };
 
 // Compare Attr Values Match
@@ -725,7 +725,6 @@ mod compare_row_attr_values_tests {
     }
 }
 
-
 pub(crate) fn enum_cmp(
     value: i32,
     op: ComparisonOp,
@@ -739,7 +738,6 @@ pub(crate) fn enum_cmp(
     };
     expected.is_some_and(|expected| num_cmp(i64::from(value), op, i64::from(expected)))
 }
-
 
 pub(crate) fn string_cmp(
     value: &str,
@@ -757,7 +755,6 @@ pub(crate) fn string_cmp(
         ComparisonOp::Lt | ComparisonOp::Lte | ComparisonOp::Gt | ComparisonOp::Gte => false,
     }
 }
-
 
 pub(crate) fn validate_compare_field_expr(fe: &FieldExpr) -> Result<()> {
     match fe {
@@ -785,7 +782,6 @@ pub(crate) fn validate_compare_field_expr(fe: &FieldExpr) -> Result<()> {
         FieldExpr::Const(_) => Ok(()),
     }
 }
-
 
 /// Validates that the per-row evaluator supports a compare selection spanset.
 ///
@@ -848,7 +844,6 @@ pub(crate) fn validate_compare_selection(selection: &SpansetExpr) -> Result<()> 
     }
 }
 
-
 pub(crate) fn field_expr_matches_row(
     fe: &FieldExpr,
     row: &CompareRow,
@@ -890,7 +885,6 @@ pub(crate) fn field_expr_matches_row(
     }
 }
 
-
 pub(crate) fn spanset_matches_row(
     selection: &SpansetExpr,
     row: &CompareRow,
@@ -909,14 +903,12 @@ pub(crate) fn spanset_matches_row(
     }
 }
 
-
 /// The reserved label key that Tempo uses to tag a compare series.
 ///
 /// The tag holds the group, `baseline` or `selection`, or the per-group total,
 /// `baseline_total` or `selection_total`. Grafana's exploretraces Comparison
 /// view reads this key.
 pub(crate) const META_TYPE_KEY: &str = "__meta_type";
-
 
 /// Scans the batches and accumulates per-bucket span counts.
 ///
@@ -1006,7 +998,6 @@ pub(crate) fn accumulate_compare_counts(
     }
     Ok(CompareAccumulation { counts, totals })
 }
-
 
 struct RankedCompareValue<'a> {
     value: &'a String,

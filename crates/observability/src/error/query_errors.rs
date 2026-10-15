@@ -1,9 +1,9 @@
-use crate::wal_produce::WalBatchError;
 use crate::{
     ActiveLogDeleteFilterError, BlockStoreError, DataFusionError, Error, IngestLimitError,
     IntoResponse, LogDeleteRequestStoreError, LokiRuleStoreError, ParseError, PlanError,
     QueryAuthorizationError, Response, SeriesFingerprint, StatusCode, TenantErrorSurface,
     TenantRequestError, Value, WalSinkError, json, rfc3339_seconds, server_security::TenantDenied,
+    wal_produce::WalBatchError,
 };
 
 pub(crate) fn column_number(query: &str, position: usize) -> usize {
@@ -121,8 +121,6 @@ pub(crate) fn loki_parse_error_text(query: &str, source: &ParseError) -> String 
         }
     }
 }
-
-
 
 #[derive(Debug, Error)]
 pub(crate) enum DistributorError {

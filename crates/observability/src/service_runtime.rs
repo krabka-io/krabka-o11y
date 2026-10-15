@@ -1,27 +1,28 @@
-use crate::SharedCompactionFrontier;
+use krabka_blockstore::ObjectStoreAccess;
+use krabka_units::prelude::TimeExt as _;
+use tokio_util::sync::DropGuard;
+
 use crate::{
     ALL_OPS, AllowAllIngestLimiter, AllowAllQueryAuthorizer, Arc, BLOCK_BUILDER_OPS,
-    BufferedLogHotTail, CancellationToken, CriticalTaskError, DISTRIBUTOR_OPS, DistributorState,
-    JoinHandle, LogIngestLimiter, LogQueryAuthorizer, ObjectStore, OverridesProvider, QUERIER_OPS,
+    BufferedLogHotTail, CancellationToken, ConfiguredObjectStore, CriticalTaskError,
+    DISTRIBUTOR_OPS, DRAINING_GATE, DistributorState, JoinHandle, LogIngestLimiter,
+    LogQueryAuthorizer, ObjectStore, OverridesProvider, QUERIER_OPS, QuerierState, ReadinessGate,
     Role, RoleKind, RoleReadiness, Router, ServiceAudit, ServiceConfig, ServiceConfigError,
-    ServiceDependencies, ServiceMetrics, ServiceRuntimeError, SharedLogDeleteRequests,
-    SharedLokiRules, StagedDrain, SupervisedTasks, SwappableQueryAuthorizer, TcpListener, ReadinessGate,
+    ServiceDependencies, ServiceMetrics, ServiceRuntimeError, SharedCompactionFrontier,
+    SharedLogDeleteRequests, SharedLokiRules, StagedDrain, SupervisedTasks,
+    SwappableQueryAuthorizer, TcpListener,
     audit::{AuditHandle, AuditService, AuditServiceParts, krabka_product},
     build_configured_object_store, build_configured_querier_state,
-    build_querier_state_with_overrides, compactor_delete_requests_for_config, ConfiguredObjectStore, QuerierState,
+    build_querier_state_with_overrides, compactor_delete_requests_for_config,
     compactor_router_with_delete_requests, delete_request_routes, distributor_push_routes,
     distributor_router_with_sink, limits_provider_for_config,
     load_querier_shared_compaction_frontier, loki_query_routes, querier_object_store_prefix,
     run_compactor_until_idle, run_compactor_until_shutdown,
     server_security::{ServerListener, ServerSecurity, serve_router},
-    spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller, spawn_query_authorizer_connect,
-    spawn_wal_hot_tail_connect_and_poll, spawn_logs_ruler, DRAINING_GATE, with_role_ops_routes, with_service_audit,
+    spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller, spawn_logs_ruler,
+    spawn_query_authorizer_connect, spawn_wal_hot_tail_connect_and_poll, with_role_ops_routes,
+    with_service_audit,
 };
-
-use krabka_blockstore::ObjectStoreAccess;
-use krabka_units::prelude::TimeExt as _;
-use tokio_util::sync::DropGuard;
-
 
 pub(crate) struct BackgroundTask {
     pub(crate) name: &'static str,
@@ -38,7 +39,6 @@ impl BackgroundTask {
         Self { name, handle }
     }
 }
-
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

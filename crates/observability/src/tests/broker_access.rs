@@ -15,59 +15,59 @@ mod broker_access_for_test;
 mod counting_broker_access;
 mod only_security_disabled_turns_a_describe_error_into_an_allow;
 mod the_quota_cache_and_the_rate_buckets_stay_within_the_tenant_capacity {
-use super::*;
-use crate::tests::api_record_for_test;
+    use super::*;
+    use crate::tests::api_record_for_test;
 
-/// A client can name any number of tenants. The quota snapshots and the rate
-/// buckets hold at most the configured count, so a spray of tenant names
-/// cannot grow the distributor's memory.
-#[tokio::test]
-pub(crate) async fn the_quota_cache_and_the_rate_buckets_stay_within_the_tenant_capacity() {
-    let source = Arc::new(CountingBrokerAccess::answering(Ok(
-        AclSet::SecurityDisabled,
-    )));
-    let mut quotas = BTreeMap::new();
-    quotas.insert("producer_byte_rate".to_string(), 1_000_000.0);
-    *source.quotas.lock().expect("fake quota lock") = Ok(quotas);
-    let access = broker_access_for_test(&source, 3).cache;
-    let limiter = BrokerBackedIngestLimiter::with_access(access, secs(1));
+    /// A client can name any number of tenants. The quota snapshots and the rate
+    /// buckets hold at most the configured count, so a spray of tenant names
+    /// cannot grow the distributor's memory.
+    #[tokio::test]
+    pub(crate) async fn the_quota_cache_and_the_rate_buckets_stay_within_the_tenant_capacity() {
+        let source = Arc::new(CountingBrokerAccess::answering(Ok(
+            AclSet::SecurityDisabled,
+        )));
+        let mut quotas = BTreeMap::new();
+        quotas.insert("producer_byte_rate".to_string(), 1_000_000.0);
+        *source.quotas.lock().expect("fake quota lock") = Ok(quotas);
+        let access = broker_access_for_test(&source, 3).cache;
+        let limiter = BrokerBackedIngestLimiter::with_access(access, secs(1));
 
-    for index in 0..50 {
-        let name = format!("tenant-{index}");
-        let tenant = tenant_for_test(&name);
+        for index in 0..50 {
+            let name = format!("tenant-{index}");
+            let tenant = tenant_for_test(&name);
+            check!(
+                limiter
+                    .check(
+                        &Principal::Unauthenticated,
+                        &tenant,
+                        &[api_record_for_test(&name)]
+                    )
+                    .await
+                    .is_ok()
+            );
+        }
+
         check!(
             limiter
-                .check(
-                    &Principal::Unauthenticated,
-                    &tenant,
-                    &[api_record_for_test(&name)]
-                )
-                .await
-                .is_ok()
+                .access
+                .quotas
+                .lock()
+                .expect("quota cache lock")
+                .entries
+                .len()
+                == 3
         );
+        let buckets = limiter.buckets.lock().expect("bucket lock");
+        check!(
+            buckets
+                .entries
+                .keys()
+                .map(TenantId::as_str)
+                .collect::<Vec<_>>()
+                == ["tenant-47", "tenant-48", "tenant-49"]
+        );
+        check!(source.lookups() == BrokerLookups { acl: 1, quota: 50 });
     }
-
-    check!(
-        limiter
-            .access
-            .quotas
-            .lock()
-            .expect("quota cache lock")
-            .entries
-            .len()
-            == 3
-    );
-    let buckets = limiter.buckets.lock().expect("bucket lock");
-    check!(
-        buckets
-            .entries
-            .keys()
-            .map(TenantId::as_str)
-            .collect::<Vec<_>>()
-            == ["tenant-47", "tenant-48", "tenant-49"]
-    );
-    check!(source.lookups() == BrokerLookups { acl: 1, quota: 50 });
-}
 }
 mod the_wal_topic_acls_decide_by_their_state_and_the_principal_kind;
 

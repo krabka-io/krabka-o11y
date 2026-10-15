@@ -10,8 +10,6 @@ use crate::{
     is_deleted_log_entry,
 };
 
-
-
 pub(crate) const COMPACTION_FRONTIER_MANIFEST_VERSION: u32 = 1;
 
 pub(crate) fn compaction_frontier_manifest_object_path(prefix: &ObjectPath) -> ObjectPath {

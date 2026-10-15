@@ -17,7 +17,6 @@ pub trait WalConsumerCommit: Send {
     async fn commit_sync(&mut self) -> Result<(), TracesError>;
 }
 
-
 /// Minimal WAL-consumer poll surface the block-builder loop drives.
 ///
 /// `run` takes this trait rather than the concrete
@@ -32,7 +31,6 @@ pub trait WalConsumerPoll: Send {
 
     async fn poll(&mut self, window: Time) -> Result<Vec<ConsumerRecord>, TracesError>;
 }
-
 
 /// Decode Kafka consumer records into per-partition span windows.
 ///
@@ -65,7 +63,6 @@ pub fn decode_consumer_records(
     }
     Ok(windows)
 }
-
 
 /// The WAL consumer the traces block builder drives.
 ///
@@ -146,4 +143,3 @@ impl WalConsumerCommit for BlockBuilderConsumer {
         Ok(())
     }
 }
-

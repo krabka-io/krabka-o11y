@@ -8,8 +8,6 @@ use crate::{
     poll_log_hot_tail_once_with_frontier, sleep,
 };
 
-
-
 pub(crate) fn native_timestamp_ms_to_ns(timestamp_ms: i64) -> Result<i64, WalRecordDecodeError> {
     let converted_ns = timestamp_ms.checked_mul(1_000_000).ok_or_else(|| {
         WalRecordDecodeError::InvalidNativeTimestampValue {

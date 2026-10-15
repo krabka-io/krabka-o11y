@@ -44,7 +44,6 @@ pub(crate) fn decode_rows_with_identity<T>(
 #[cfg_attr(test, mutants::skip)]
 #[cfg_attr(test, mutants::skip)]
 #[cfg_attr(test, mutants::skip)]
-
 // cargo-mutants: error formatting is validated through required-column decode tests.
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn null_required_column(column: &str, row: usize) -> HistogramCodecError {

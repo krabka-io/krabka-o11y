@@ -1,10 +1,7 @@
+use krabka_blockstore::{CycleSpans, SpanNode, assign_nested_set};
+
 use super::*;
-use crate::span::nested_set::BatchNestedSets;
-use crate::span::nested_set::SpanIdColumns;
-use crate::span::nested_set::batch_nested_sets;
-use krabka_blockstore::CycleSpans;
-use krabka_blockstore::SpanNode;
-use krabka_blockstore::assign_nested_set;
+use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
 
 pub(crate) fn append_nested_attr(
     event: Option<&EventRef>,

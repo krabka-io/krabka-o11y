@@ -13,6 +13,7 @@ use datafusion::{
     },
 };
 use futures::StreamExt;
+
 use crate::extension::only_logical_input;
 
 #[cfg(test)]

@@ -1,7 +1,8 @@
 //! Loading bundled rule files and installing their groups through the ruler API.
 
-use krabka_observability::server_security::ServerSecurity;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+use krabka_observability::server_security::ServerSecurity;
 
 use super::*;
 

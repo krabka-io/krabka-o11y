@@ -1,10 +1,9 @@
-use crate::querier::metric_eval::validation::VectorScalarExpressionParser;
 use crate::{
-    BTreeMap, Regex, ScalarSample, ScalarVectorExpressionResult,     parse_scalar_sample,
+    BTreeMap, Regex, ScalarSample, ScalarVectorExpressionResult, parse_scalar_sample,
+    querier::metric_eval::validation::VectorScalarExpressionParser,
 };
 
 mod vector_scalar_expression_parser;
-
 
 #[derive(Clone, Copy)]
 pub(crate) enum ScalarComparisonOp {

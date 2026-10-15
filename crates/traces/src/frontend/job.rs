@@ -134,7 +134,6 @@ pub struct RowGroupInfo {
     pub compressed: ByteSize,
 }
 
-
 /// The block-catalog door: which blocks overlap `[start_ns, end_ns]` for a
 /// tenant.
 ///
