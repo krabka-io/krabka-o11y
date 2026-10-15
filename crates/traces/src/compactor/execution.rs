@@ -1,4 +1,12 @@
-use super::*;
+use super::{
+    Arc, BlockMeta, BlockStoreError, BlockStreamWriter, BlockWriter, ByteSize, CompactedBlockStats,
+    CompactionPolicy, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, ObjectStore, RecordBatch,
+    SCOL_START_NANO, SCOL_TRACE_ID, SortedMerge, StreamExt, SummaryColumns, TraceGroupBuffer,
+    TraceIndex, TracesError, align_batch_to_block_schema, merged_promoted_attrs, open_block_stream,
+    plan_compactions, planned_compacted_object_key, prefixed_object_key, recompute_nested_sets,
+    recompute_trace_level_columns, span_block_decl, span_block_schema_with_promoted_attrs,
+    versioned_compaction_key,
+};
 
 /// What one compaction pass produced, and what it retired to produce it.
 ///

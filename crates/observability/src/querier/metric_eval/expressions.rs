@@ -1,21 +1,25 @@
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
 use crate::{
-    BTreeMap, ComparisonOp, MetricBinarySetOp, MetricScalarArithmeticOp, MetricVectorGroupModifier,
-    MetricVectorMatching, TimeRange, Value, eval_times, json, loki_success_value,
-    parse_logql_string_argument,
-    querier::metric_eval::validation::{
-        VectorScalarExpressionParser, scalar_vector_query_is_vector,
-    },
+    BTreeMap, TimeRange, Value, eval_times, json, loki_success_value,
+    querier::metric_eval::validation::VectorScalarExpressionParser, unix_ns_string_to_loki_seconds,
+};
+#[cfg(test)]
+use crate::{
+    ComparisonOp, MetricBinarySetOp, MetricScalarArithmeticOp, MetricVectorGroupModifier,
+    MetricVectorMatching, parse_logql_string_argument,
+    querier::metric_eval::validation::scalar_vector_query_is_vector,
     split_logql_function_arguments, split_top_level_arithmetic_query,
-    split_top_level_comparison_query, split_top_level_set_query, unix_ns_string_to_loki_seconds,
+    split_top_level_comparison_query, split_top_level_set_query,
 };
 
+#[cfg(test)]
 struct ParsedBoolModifier<'a> {
     bool_modifier: bool,
     remaining: &'a str,
 }
 
+#[cfg(test)]
 fn parse_leading_bool_modifier(query: &str) -> ParsedBoolModifier<'_> {
     let query = query.trim_start();
     if let Some(rest) = query.strip_prefix("bool") {
@@ -31,12 +35,14 @@ fn parse_leading_bool_modifier(query: &str) -> ParsedBoolModifier<'_> {
     }
 }
 
+#[cfg(test)]
 struct OrderedMetricVectors<'a> {
     left: &'a str,
     right: &'a str,
     scalar_on_left: bool,
 }
 
+#[cfg(test)]
 fn metric_vector_order<'a>(left: &'a str, right: &'a str) -> Option<OrderedMetricVectors<'a>> {
     let left_is_vector = scalar_vector_query_is_vector(left);
     let right_is_vector = scalar_vector_query_is_vector(right);
@@ -58,6 +64,7 @@ fn metric_vector_order<'a>(left: &'a str, right: &'a str) -> Option<OrderedMetri
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg(test)]
 pub(crate) struct LabelReplaceExpression {
     pub(crate) query: String,
     pub(crate) destination_label: String,
@@ -66,6 +73,7 @@ pub(crate) struct LabelReplaceExpression {
     pub(crate) pattern: String,
 }
 
+#[cfg(test)]
 pub(crate) enum LabelReplaceMetricBinaryExpression {
     Arithmetic {
         left: String,
@@ -88,6 +96,7 @@ pub(crate) enum LabelReplaceMetricBinaryExpression {
     },
 }
 
+#[cfg(test)]
 pub(crate) struct MetricVectorArithmeticExpression {
     pub(crate) metric_query: String,
     pub(crate) vector_query: String,
@@ -96,6 +105,7 @@ pub(crate) struct MetricVectorArithmeticExpression {
     pub(crate) matching: Option<MetricVectorMatching>,
 }
 
+#[cfg(test)]
 pub(crate) struct MetricVectorComparisonExpression {
     pub(crate) metric_query: String,
     pub(crate) vector_query: String,
@@ -105,6 +115,7 @@ pub(crate) struct MetricVectorComparisonExpression {
     pub(crate) matching: Option<MetricVectorMatching>,
 }
 
+#[cfg(test)]
 pub(crate) struct MetricVectorSetExpression {
     pub(crate) metric_query: String,
     pub(crate) vector_query: String,
@@ -113,6 +124,7 @@ pub(crate) struct MetricVectorSetExpression {
     pub(crate) matching: Option<MetricVectorMatching>,
 }
 
+#[cfg(test)]
 struct ParsedLabelReplaceOperands<'a> {
     left: &'a str,
     right: &'a str,
@@ -120,6 +132,7 @@ struct ParsedLabelReplaceOperands<'a> {
     bool_modifier: bool,
 }
 
+#[cfg(test)]
 fn parse_label_replace_operands<'a>(
     left: &'a str,
     right: &'a str,
@@ -150,6 +163,7 @@ fn parse_label_replace_operands<'a>(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_label_replace_metric_binary_expression(
     query: &str,
 ) -> Option<LabelReplaceMetricBinaryExpression> {
@@ -190,11 +204,13 @@ pub(crate) fn parse_label_replace_metric_binary_expression(
     None
 }
 
+#[cfg(test)]
 pub(crate) struct ParsedLabelList<'a> {
     pub(crate) labels: Vec<String>,
     pub(crate) remaining: &'a str,
 }
 
+#[cfg(test)]
 pub(crate) fn parse_leading_label_list(query: &str) -> Option<ParsedLabelList<'_>> {
     let inner = query.strip_prefix('(')?;
     let labels_end = inner.find(')')?;
@@ -215,11 +231,13 @@ pub(crate) fn parse_leading_label_list(query: &str) -> Option<ParsedLabelList<'_
     })
 }
 
+#[cfg(test)]
 pub(crate) struct ParsedMetricVectorGroupModifier<'a> {
     pub(crate) group: Option<MetricVectorGroupModifier>,
     pub(crate) remaining: &'a str,
 }
 
+#[cfg(test)]
 pub(crate) fn parse_leading_metric_vector_group_modifier(
     query: &str,
 ) -> Option<ParsedMetricVectorGroupModifier<'_>> {
@@ -251,11 +269,13 @@ pub(crate) fn parse_leading_metric_vector_group_modifier(
     })
 }
 
+#[cfg(test)]
 pub(crate) struct ParsedMetricVectorMatchingModifier<'a> {
     pub(crate) matching: Option<MetricVectorMatching>,
     pub(crate) remaining: &'a str,
 }
 
+#[cfg(test)]
 pub(crate) fn parse_leading_metric_vector_matching_modifier(
     query: &str,
     allow_group_modifier: bool,
@@ -291,6 +311,7 @@ pub(crate) fn parse_leading_metric_vector_matching_modifier(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_metric_vector_set_expression(query: &str) -> Option<MetricVectorSetExpression> {
     let split = split_top_level_set_query(query)?;
     let parsed_matching = parse_leading_metric_vector_matching_modifier(split.right, false)?;
@@ -321,10 +342,12 @@ pub(crate) fn parse_metric_vector_set_expression(query: &str) -> Option<MetricVe
     }
 }
 
+#[cfg(test)]
 pub(crate) struct SortVectorExpression {
     pub(crate) query: String,
     pub(crate) descending: bool,
 }
+#[cfg(test)]
 pub(crate) fn parse_metric_set_operator(operator: &str) -> Option<MetricBinarySetOp> {
     match operator {
         "and" => Some(MetricBinarySetOp::And),
@@ -334,6 +357,7 @@ pub(crate) fn parse_metric_set_operator(operator: &str) -> Option<MetricBinarySe
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parse_label_replace_expression(query: &str) -> Option<LabelReplaceExpression> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;
     let [
@@ -356,6 +380,7 @@ pub(crate) fn parse_label_replace_expression(query: &str) -> Option<LabelReplace
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_metric_arithmetic_operator(operator: &str) -> Option<MetricScalarArithmeticOp> {
     match operator {
         "+" => Some(MetricScalarArithmeticOp::Add),
@@ -368,6 +393,7 @@ pub(crate) fn parse_metric_arithmetic_operator(operator: &str) -> Option<MetricS
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parse_metric_comparison_operator(operator: &str) -> Option<ComparisonOp> {
     match operator {
         "==" => Some(ComparisonOp::Equal),
@@ -380,6 +406,7 @@ pub(crate) fn parse_metric_comparison_operator(operator: &str) -> Option<Compari
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parse_metric_vector_arithmetic_expression(
     query: &str,
 ) -> Option<MetricVectorArithmeticExpression> {
@@ -397,6 +424,7 @@ pub(crate) fn parse_metric_vector_arithmetic_expression(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_metric_vector_comparison_expression(
     query: &str,
 ) -> Option<MetricVectorComparisonExpression> {
@@ -417,6 +445,7 @@ pub(crate) fn parse_metric_vector_comparison_expression(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_sort_vector_expression(query: &str) -> Option<SortVectorExpression> {
     for function_name in ["sort", "sort_desc"] {
         let descending = function_name == "sort_desc";

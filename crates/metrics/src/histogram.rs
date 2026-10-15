@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     NativeHistogramRow, append_optional_i64,
     arrow_codec::{decode_rows_with_identity, require_non_null, schema_mismatch, typed_column},
-    numeric_sample_columns::encode_numeric_sample_columns,
     schema::{
         COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
         COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA,

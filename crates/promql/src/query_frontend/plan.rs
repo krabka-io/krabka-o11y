@@ -3,11 +3,8 @@ use krabka_units::prelude::*;
 use promql_parser::{
     label as prom_label,
     parser::{
-        AggregateExpr, Expr, LabelModifier, VectorSelector,
-        token::{
-            T_AVG, T_BOTTOMK, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM, T_TOPK,
-            TokenType,
-        },
+        AggregateExpr, Expr, VectorSelector,
+        token::{T_COUNT, T_GROUP, T_MAX, T_MIN, T_SUM},
     },
 };
 

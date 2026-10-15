@@ -1,6 +1,6 @@
 use krabka_o11y_verified::shard_range;
 
-use super::*;
+use super::{BTreeMap, BTreeSet, IndexShardRange, MAX_INDEX_SHARDS_PER_TENANT, TenantIndex};
 
 /// The shard width to cut a tenant spanning `[min_ts, max_ts]` with.
 ///

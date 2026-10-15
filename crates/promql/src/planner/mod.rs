@@ -262,6 +262,10 @@ fn consume_ident(chars: &[char], mut index: usize) -> usize {
 }
 
 /// Parses a `PromQL` expression with an instant-query duration context.
+///
+/// # Errors
+///
+/// Returns an error when the input does not parse as a valid `PromQL` expression.
 pub fn parse_promql(query: &str) -> Result<Expr> {
     parse_promql_with_duration_context(query, DurationExprContext::instant(0))
 }

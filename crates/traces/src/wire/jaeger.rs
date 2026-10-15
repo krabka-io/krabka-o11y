@@ -252,7 +252,7 @@ pub(super) struct JaegerSpan {
     pub(crate) logs: Vec<JaegerLog>,
 }
 
-pub(crate) fn jaeger_span_to_internal(span: &JaegerSpan, process: &JaegerProcess) -> Span {
+pub(super) fn jaeger_span_to_internal(span: &JaegerSpan, process: &JaegerProcess) -> Span {
     let mut resource_attrs = process.tags.clone();
     resource_attrs.push(KeyValue {
         key: "service.name".into(),
@@ -1120,7 +1120,7 @@ pub(crate) fn ref_type_name(ref_type: i32) -> &'static str {
     }
 }
 
-pub(crate) fn spans_from_batch(batch: &JaegerBatch) -> Vec<Span> {
+pub(super) fn spans_from_batch(batch: &JaegerBatch) -> Vec<Span> {
     batch
         .spans
         .iter()
@@ -1135,7 +1135,7 @@ pub(crate) fn trace_id(high: TraceIdHigh, low: TraceIdLow) -> [u8; 16] {
     out
 }
 
-pub(crate) fn read_batch(input: &mut CompactInput<'_>) -> Result<JaegerBatch, WireError> {
+pub(super) fn read_batch(input: &mut CompactInput<'_>) -> Result<JaegerBatch, WireError> {
     let mut out = JaegerBatch::default();
     let mut last = 0;
     while let Some(field) = input.read_field(&mut last)? {
@@ -1148,7 +1148,7 @@ pub(crate) fn read_batch(input: &mut CompactInput<'_>) -> Result<JaegerBatch, Wi
     Ok(out)
 }
 
-pub(crate) fn read_binary_batch(input: &mut BinaryInput<'_>) -> Result<JaegerBatch, WireError> {
+pub(super) fn read_binary_batch(input: &mut BinaryInput<'_>) -> Result<JaegerBatch, WireError> {
     let mut out = JaegerBatch::default();
     while let Some(field) = input.read_field()? {
         match field.field_id {
@@ -1162,7 +1162,7 @@ pub(crate) fn read_binary_batch(input: &mut BinaryInput<'_>) -> Result<JaegerBat
     Ok(out)
 }
 
-pub(crate) fn read_binary_log(input: &mut BinaryInput<'_>) -> Result<JaegerLog, WireError> {
+pub(super) fn read_binary_log(input: &mut BinaryInput<'_>) -> Result<JaegerLog, WireError> {
     let mut out = JaegerLog::default();
     while let Some(field) = input.read_field()? {
         match field.field_id {
@@ -1176,7 +1176,7 @@ pub(crate) fn read_binary_log(input: &mut BinaryInput<'_>) -> Result<JaegerLog, 
     Ok(out)
 }
 
-pub(crate) fn read_binary_process(input: &mut BinaryInput<'_>) -> Result<JaegerProcess, WireError> {
+pub(super) fn read_binary_process(input: &mut BinaryInput<'_>) -> Result<JaegerProcess, WireError> {
     let mut out = JaegerProcess::default();
     while let Some(field) = input.read_field()? {
         match field.field_id {
@@ -1190,7 +1190,7 @@ pub(crate) fn read_binary_process(input: &mut BinaryInput<'_>) -> Result<JaegerP
     Ok(out)
 }
 
-pub(crate) fn read_binary_ref(input: &mut BinaryInput<'_>) -> Result<JaegerRef, WireError> {
+pub(super) fn read_binary_ref(input: &mut BinaryInput<'_>) -> Result<JaegerRef, WireError> {
     let mut out = JaegerRef::default();
     while let Some(field) = input.read_field()? {
         match field.field_id {
@@ -1204,7 +1204,7 @@ pub(crate) fn read_binary_ref(input: &mut BinaryInput<'_>) -> Result<JaegerRef, 
     Ok(out)
 }
 
-pub(crate) fn read_binary_span(input: &mut BinaryInput<'_>) -> Result<JaegerSpan, WireError> {
+pub(super) fn read_binary_span(input: &mut BinaryInput<'_>) -> Result<JaegerSpan, WireError> {
     let mut out = JaegerSpan::default();
     while let Some(field) = input.read_field()? {
         match field.field_id {
@@ -1230,7 +1230,7 @@ pub(crate) fn read_binary_span(input: &mut BinaryInput<'_>) -> Result<JaegerSpan
     Ok(out)
 }
 
-pub(crate) fn read_log(input: &mut CompactInput<'_>) -> Result<JaegerLog, WireError> {
+pub(super) fn read_log(input: &mut CompactInput<'_>) -> Result<JaegerLog, WireError> {
     let mut out = JaegerLog::default();
     let mut last = 0;
     while let Some(field) = input.read_field(&mut last)? {
@@ -1245,7 +1245,7 @@ pub(crate) fn read_log(input: &mut CompactInput<'_>) -> Result<JaegerLog, WireEr
     Ok(out)
 }
 
-pub(crate) fn read_process(input: &mut CompactInput<'_>) -> Result<JaegerProcess, WireError> {
+pub(super) fn read_process(input: &mut CompactInput<'_>) -> Result<JaegerProcess, WireError> {
     let mut out = JaegerProcess::default();
     let mut last = 0;
     while let Some(field) = input.read_field(&mut last)? {
@@ -1258,7 +1258,7 @@ pub(crate) fn read_process(input: &mut CompactInput<'_>) -> Result<JaegerProcess
     Ok(out)
 }
 
-pub(crate) fn read_ref(input: &mut CompactInput<'_>) -> Result<JaegerRef, WireError> {
+pub(super) fn read_ref(input: &mut CompactInput<'_>) -> Result<JaegerRef, WireError> {
     let mut out = JaegerRef::default();
     let mut last = 0;
     while let Some(field) = input.read_field(&mut last)? {
@@ -1273,7 +1273,7 @@ pub(crate) fn read_ref(input: &mut CompactInput<'_>) -> Result<JaegerRef, WireEr
     Ok(out)
 }
 
-pub(crate) fn read_span(input: &mut CompactInput<'_>) -> Result<JaegerSpan, WireError> {
+pub(super) fn read_span(input: &mut CompactInput<'_>) -> Result<JaegerSpan, WireError> {
     let mut out = JaegerSpan::default();
     let mut last = 0;
     while let Some(field) = input.read_field(&mut last)? {
@@ -1317,7 +1317,7 @@ pub(crate) fn span_kind(tags: &[KeyValue]) -> SpanKind {
         .unwrap_or(SpanKind::Internal)
 }
 
-pub(crate) fn span_logs_to_events(logs: &[JaegerLog]) -> Vec<crate::span::EventRecord> {
+pub(super) fn span_logs_to_events(logs: &[JaegerLog]) -> Vec<crate::span::EventRecord> {
     logs.iter()
         .map(|log| {
             let name = log

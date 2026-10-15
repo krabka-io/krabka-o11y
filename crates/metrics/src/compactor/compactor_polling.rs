@@ -4,7 +4,13 @@ use krabka_observability::{
     set_remote_parent_from_kafka_headers,
 };
 
-use super::*;
+use super::{
+    BlockWriter, CompactionConsumerCommitMut, CompactionConsumerPoll,
+    CompactionConsumerRecordError, CompactionIndexSink, CompactionOffsetCommitter,
+    CompactionPollError, CompactionPollResult, CompactionWalRecord, ConsumerRecord, Offset,
+    PartitionIndex, ServiceMetrics, TRACEPARENT, Time, process_compaction_record_batch,
+    process_compaction_record_batch_with_consumer,
+};
 
 /// Converts polled consumer records from the metrics WAL topic into compactor
 /// inputs.

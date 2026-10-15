@@ -1752,9 +1752,9 @@ pub use shard_keys::{
     index_shard_tenant_prefix, index_shards_prefix_for_key, index_unbound_series_object_key,
 };
 pub(crate) use shard_keys::{parse_shard_bound_key, shard_bound_key};
-pub(crate) use shard_loading::{
-    IndexShardObject, ParsedIndexShardLocation, load_index_shards, parse_index_shard_location,
-};
+#[cfg(test)]
+use shard_loading::ParsedIndexShardLocation;
+pub(crate) use shard_loading::{IndexShardObject, load_index_shards, parse_index_shard_location};
 use shard_planning::plan_tenant_index_shards;
 pub(crate) use shard_wire::{
     INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, push_dictionary_id, push_len,

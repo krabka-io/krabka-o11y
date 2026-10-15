@@ -1,9 +1,9 @@
-use krabka_logql::MetricLabelJoin;
-
 use crate::{
-    HttpQueryError, ParseError, Regex, ScalarVectorExpressionResult, Value, json,
-    querier::metric_eval::for_each_loki_result_metric, scalar_vector_expression_result,
+    HttpQueryError, ParseError, Regex, Value, json,
+    querier::metric_eval::for_each_loki_result_metric,
 };
+#[cfg(test)]
+use crate::{ScalarVectorExpressionResult, scalar_vector_expression_result};
 
 mod vector_scalar_expression_parser;
 
@@ -20,6 +20,7 @@ pub(crate) fn scalar_vector_plain_parse_error(query: &str) -> Option<String> {
         .or_else(|| unspaced_vector_set_operator_error(query))
 }
 
+#[cfg(test)]
 pub(crate) fn scalar_vector_query_is_vector(query: &str) -> bool {
     matches!(
         scalar_vector_expression_result(query),
@@ -100,17 +101,6 @@ pub(crate) fn unspaced_vector_set_operator_error(query: &str) -> Option<String> 
             "parse error at line 1, col {column}: syntax error: unexpected IDENTIFIER"
         ))
     })
-}
-
-#[cfg(test)]
-#[cfg(test)]
-pub(crate) fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJoin) {
-    apply_label_join_fields(
-        value,
-        &label_join.destination_label,
-        &label_join.separator,
-        &label_join.source_labels,
-    );
 }
 
 pub(crate) fn apply_label_join_fields(

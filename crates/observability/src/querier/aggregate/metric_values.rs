@@ -2,10 +2,9 @@ use num_traits::{FromPrimitive as _, ToPrimitive};
 
 pub(crate) use super::record_matching::append_matching_log_row;
 use crate::{
-    ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, LokiStreamEntry, METRIC_DECIMAL_SCALE,
-    MetricValue, Ordering, Quantile, QueryError, QueryRow, Rational, StreamPlan, TimeRange,
-    VectorAggregationOp, gcd_signed, impl_rational_division_ops, impl_rational_float_conversion,
-    is_deleted_log_entry, matching_loki_stream_entry,
+    BTreeMap, METRIC_DECIMAL_SCALE, MetricValue, Ordering, Quantile, QueryError, Rational,
+    TimeRange, VectorAggregationOp, gcd_signed, impl_rational_division_ops,
+    impl_rational_float_conversion,
 };
 
 mod eval_times;

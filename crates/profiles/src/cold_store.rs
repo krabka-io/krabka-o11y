@@ -10,8 +10,6 @@ use arrow::{
     datatypes::{Int64Type, UInt64Type},
     record_batch::RecordBatch,
 };
-#[cfg(test)]
-use krabka_blockstore::OffsetRange;
 use krabka_blockstore::{LabelMatcher, ProfileIndex, SeriesFingerprint};
 use krabka_pprof::{
     ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, Frame,

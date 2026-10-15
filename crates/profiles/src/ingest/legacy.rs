@@ -1,9 +1,6 @@
 //! Legacy `POST /ingest` door.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    io::Cursor,
-};
+use std::{collections::BTreeMap, io::Cursor};
 
 use krabka_blockstore::Labels;
 use krabka_pprof::PprofProfile;
@@ -1467,6 +1464,7 @@ use super::intern_profile_string;
 /// `?spyName=` still produces a series carrying `pyroscope_spy="unknown"`.
 pub(crate) const DEFAULT_SPY_NAME: &str = "unknown";
 
+#[cfg(test)]
 pub(crate) fn apply_query_sample_rate(profile: PprofProfile, sample_rate: u32) -> PprofProfile {
     let mut profile = profile.into_inner();
     profile.period = (1_000_000_000_i64 / i64::from(sample_rate)).max(1);

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::*;
+use super::{RangeFn, Time, TimeExt, ToPrimitive};
 use crate::functions::extrapolate::{
     RangeKind, RateWindow, WindowBounds, WindowSpacing, window_spacing,
 };

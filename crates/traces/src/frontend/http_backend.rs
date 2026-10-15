@@ -48,7 +48,7 @@ use crate::frontend::{
     wire::{Metrics, SearchResponseJson, TraceByIdResponseJson},
 };
 
-struct QueryParam {
+pub(crate) struct QueryParam {
     key: String,
     value: String,
 }

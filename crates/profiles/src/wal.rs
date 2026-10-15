@@ -1,5 +1,7 @@
 //! Profiles WAL topic record contract.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use bytes::Bytes;
 use krabka_blockstore::{LabelPair, Labels};
 use krabka_client_consumer::ConsumerRecord;

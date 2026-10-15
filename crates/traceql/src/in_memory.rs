@@ -48,10 +48,13 @@ use intrinsic_values::{collect_span_intrinsic_values, collect_trace_intrinsic_va
 
 mod matching;
 use matching::{
-    child_count_for, instrumentation_matches, intrinsic_matches, matcher_matches,
-    matching_events_for_scan, matching_links_for_scan, nested_attr_value,
-    nested_event_matchers_match, nested_link_matchers_match, span_attr_matches, span_matches,
-    span_ref,
+    child_count_for, matching_events_for_scan, matching_links_for_scan, nested_attr_value,
+    span_matches, span_ref,
+};
+#[cfg(test)]
+use matching::{
+    instrumentation_matches, intrinsic_matches, matcher_matches, nested_event_matchers_match,
+    nested_link_matchers_match, span_attr_matches,
 };
 
 #[cfg(test)]
@@ -2506,11 +2509,6 @@ pub use in_memory_span_store::InMemorySpanStore;
 use intrinsic_tags::INTRINSIC_TAGS;
 use scan_builders::ScanBuilders;
 use stored_trace::StoredTrace;
-
-use crate::{
-    engine::bytes_to_hex,
-    span_enum_codes::{kind_enum_value, status_enum_value},
-};
 
 mod raw_attribute_columns;
 

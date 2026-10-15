@@ -1,5 +1,7 @@
 //! Neutral series payload model consumed by `remote_write` sinks.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use crate::metricsgen::NativeHistogram;
 
 /// Prometheus exemplar attached to a sample.

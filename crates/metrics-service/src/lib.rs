@@ -3005,7 +3005,6 @@ pub use evaluate_ruler_once::{
 pub use kafka_recording_rule_wal_sink::KafkaRecordingRuleWalSink;
 use keyed_producer_record::keyed_producer_record;
 mod alertmanager;
-use alertmanager::alertmanager_payload;
 pub use alertmanager::{
     AlertmanagerHttpSink, NoopAlertmanagerSink, QueuedAlertmanagerSink, RulerAlertmanagerSink,
 };
@@ -3027,17 +3026,12 @@ pub use wal_head::{
     WalHeadReplayResult, WalPartitionAssignment, poll_wal_head_consumer_once,
     replay_wal_head_records, run_wal_head_consumer_loop,
 };
-use wal_head::{
-    checked_replay_records, finish_wal_consumer_replay, poll_checked_replay_records,
-    wal_record_max_timestamp_ms,
-};
+use wal_head::{finish_wal_consumer_replay, poll_checked_replay_records};
 mod manifests;
-pub(crate) use manifests::ManifestTimeRange;
+#[cfg(test)]
+use manifests::load_compaction_manifests_filtered_with_cache;
 pub use manifests::{load_compaction_manifests, load_compaction_manifests_for_range};
-use manifests::{
-    load_compaction_manifests_filtered, load_compaction_manifests_filtered_with_cache,
-    load_compaction_manifests_for_range_with_cache, normalize_refresh_range,
-};
+use manifests::{load_compaction_manifests_for_range_with_cache, normalize_refresh_range};
 pub use metrics_service_error::MetricsServiceError;
 pub use mimir_tenant_admin::{MimirTenantAdminState, mimir_tenant_admin_router};
 pub use poll_ruler_state_consumer_once::poll_ruler_state_consumer_once;

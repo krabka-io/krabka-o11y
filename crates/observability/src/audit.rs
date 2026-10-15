@@ -132,6 +132,7 @@ pub fn audit_principal_of(request_principal: &Principal) -> AuditPrincipal {
 /// The record carries every audit header, and the chain headers with them. It
 /// has no key, because the partition is fixed. The producer stamps the record
 /// time. The event time is in the OCSF value.
+#[must_use]
 pub fn audit_producer_record(
     topic: &str,
     partition: PartitionIndex,

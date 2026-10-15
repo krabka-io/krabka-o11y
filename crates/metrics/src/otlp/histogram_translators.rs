@@ -1,4 +1,11 @@
-use super::*;
+use super::{
+    DecodedSeries, DeltaAccumulator, ExponentialHistogram, ExtraLabel, Histogram,
+    HistogramDataPoint, HistogramFamily, HistogramScope, OtlpError, PointFamily, ScalarPointSeries,
+    ScalarSeries, ToPrimitive, accumulate_delta_float_series, append_count_and_sum,
+    exemplars_for_bucket, exemplars_from_exponential_histogram_point,
+    exemplars_from_histogram_point, exponential_histogram_to_native,
+    histogram_points::decode_histogram_points, labels, nanos_to_millis,
+};
 use crate::wire::DecodedHistogramSample;
 
 pub(crate) fn classic_histogram_series(
@@ -70,9 +77,9 @@ pub(crate) fn histogram_series(
         let mut point_series = classic_histogram_series(
             point,
             &PointFamily {
-                name: &name,
+                name,
                 resource_attributes: scope.resource_attributes,
-                metadata: Some(&metadata),
+                metadata: Some(metadata),
                 strategy: scope.strategy,
             },
         )?;
@@ -97,7 +104,7 @@ pub(crate) fn exponential_histogram_series(
     decode_histogram_points(scope, &histogram.data_points, |point, family| {
         let HistogramFamily { name, metadata } = family;
         let labels = labels(
-            &name,
+            name,
             scope.resource_attributes,
             &point.attributes,
             None,

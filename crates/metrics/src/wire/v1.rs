@@ -1,5 +1,7 @@
 //! `remote_write` v1 (`prometheus.WriteRequest`) request decoder.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use std::collections::HashSet;
 
 use krabka_blockstore::{LabelPair, Labels};

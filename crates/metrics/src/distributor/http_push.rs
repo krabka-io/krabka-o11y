@@ -2,7 +2,6 @@ use std::io::Read as _;
 
 use axum::http::header::CONTENT_ENCODING;
 use flate2::read::GzDecoder;
-use krabka_units::convert::ByteSizeExt as _;
 use prost::Message as _;
 
 use super::*;

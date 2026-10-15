@@ -1,5 +1,7 @@
 //! Prometheus `remote_write` sink implementation.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use async_trait::async_trait;
 use krabka_blockstore::TENANT_HEADER;
 use krabka_metrics::wire::pb::v1::{

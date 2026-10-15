@@ -1894,18 +1894,19 @@ fn aggregate_filter_query_any_sql(
          SELECT matched.* FROM matched JOIN passing ON matched.{trace} = passing.{trace}"
     ))
 }
-use grouped_sql::{grouped_aggregate_sql, grouped_no_filter_by, grouped_pipeline_sql};
+#[cfg(test)]
+use grouped_sql::grouped_no_filter_by;
 use nested_projection_matcher::nested_projection_matcher;
-use pipeline_sql::{
-    pipeline_nested_projection_matchers, pipeline_to_sql, scan_options_with_pipeline_projections,
-};
+#[cfg(test)]
+use pipeline_sql::pipeline_nested_projection_matchers;
+use pipeline_sql::{pipeline_to_sql, scan_options_with_pipeline_projections};
 pub(crate) use plan_query::plan_query;
 pub(crate) use planned_spanset::PlannedSpanset;
 pub(crate) use planner_context::PlannerContext;
 use registration::{
     register_batches, register_field_comparison_columns, register_nested_selector_tables,
 };
-use spanset_sql::{plan_spanset_sql, spanset_to_sql};
+use spanset_sql::plan_spanset_sql;
 
 mod apply_expression_pipeline;
 

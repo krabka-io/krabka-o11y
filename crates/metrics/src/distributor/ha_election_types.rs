@@ -1,6 +1,6 @@
 //! HA election consumer records, errors, and protocols.
 
-use super::*;
+use super::{ConsumerRecord, HaElectionRecord, Offset, PartitionIndex, ProduceError, Time};
 
 #[async_trait::async_trait]
 pub trait HaElectionConsumerCommit: Send {

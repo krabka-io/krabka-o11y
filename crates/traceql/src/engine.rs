@@ -14,7 +14,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::arrow::array::AsArray;
-use krabka_units::{ByteSize, Time, convert::TimeExt as _, millis};
+use krabka_units::{ByteSize, Time, millis};
 
 use crate::{
     ast::{
@@ -56,42 +56,47 @@ use response_builders::{
 };
 
 mod row_attributes;
+#[cfg(test)]
+use row_attributes::block_attr_values_for_key;
 pub use row_attributes::block_row_attrs_where;
-use row_attributes::{attr_value_display, block_attr_values_for_key, push_scoped_attr, row_attrs};
+use row_attributes::{push_scoped_attr, row_attrs};
 
 mod array_utils;
 use array_utils::{fixed_8, fixed_16, optional_fixed_8, optional_list_column, span_start_column};
 
 mod attr_values;
+#[cfg(test)]
+use attr_values::row_attr_values;
 use attr_values::{
-    bool_attr_values, f64_attr_values, i64_attr_values, row_attr_values, string_array_value,
-    string_attr_values,
+    bool_attr_values, f64_attr_values, i64_attr_values, string_array_value, string_attr_values,
 };
 
 mod compare;
 use compare::{
-    CompareAccumulation, CompareAttributeKey, CompareByAttr, CompareCountKey, CompareCounts,
-    CompareFieldClass, CompareGroup, CompareRegexCache, CompareSpec, CompareTotals,
-    DisplayAttribute, META_TYPE_KEY, SpanIdentity, accumulate_compare_counts, build_compare_series,
-    compare_attr_values_match, compare_comparison_matches, compare_field_class,
-    compare_field_present, compare_group_for_row, compare_intrinsic_matches,
-    compare_intrinsic_present, compare_points, compare_row_attr_values, compare_span_identities,
-    compare_total_series, compare_value_match, compare_value_series, enum_cmp,
-    field_expr_matches_row, spanset_matches_row, string_cmp, validate_compare_field_expr,
+    CompareFieldClass, CompareRegexCache, CompareSpec, DisplayAttribute, SpanIdentity,
+    accumulate_compare_counts, build_compare_series, compare_field_class, compare_row_attr_values,
+    compare_span_identities, field_expr_matches_row, validate_compare_field_expr,
     validate_compare_selection,
+};
+#[cfg(test)]
+use compare::{
+    CompareGroup, compare_attr_values_match, compare_field_present, compare_group_for_row,
+    compare_intrinsic_matches, compare_intrinsic_present, compare_value_match, enum_cmp,
+    spanset_matches_row, string_cmp,
 };
 pub(crate) use compare::{CompareRow, compare_row};
 
 mod metrics;
 use metrics::{
-    ExemplarBuckets, ExemplarRange, MetricBucket, MetricExemplarPolicy, MetricFieldNumber,
-    MetricFilter, MetricFunction, MetricGrid, MetricLabels, MetricPipelineParts, MetricPlan,
-    MetricsRange, apply_metric_filter, count_over_time_plan, histogram_points,
-    histogram_series_for_group, metric_exemplar, metric_exemplars, metric_field_column,
-    metric_field_number, metric_filter, metric_filter_passes, metric_label_key, metric_label_value,
-    metric_labels, metric_log2_bucket_value, metric_nested_projection_matchers,
-    metric_numeric_value, metric_pipeline_parts, metric_plan, metric_plan_for,
-    metric_plan_with_compare, metric_series_for_group, rank_limit, usize_from_integer_f64,
+    MetricExemplarPolicy, MetricPlan, MetricsRange, apply_metric_filter, metric_exemplar,
+    metric_field_column, metric_filter, metric_label_key, metric_labels, metric_log2_bucket_value,
+    metric_nested_projection_matchers, metric_numeric_value, metric_plan, metric_series_for_group,
+    rank_limit,
+};
+#[cfg(test)]
+use metrics::{
+    MetricFilter, count_over_time_plan, metric_filter_passes, metric_pipeline_parts,
+    usize_from_integer_f64,
 };
 
 #[cfg(test)]

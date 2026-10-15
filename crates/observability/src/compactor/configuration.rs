@@ -47,7 +47,6 @@ fn deferred_query_authorizer_connect(
     Ok(DeferredQueryAuthorizerDependencies { bootstrap, connect })
 }
 #[cfg_attr(test, mutants::skip)]
-
 /// The consumer group an all-in-one querier tails the WAL under.
 ///
 /// The block builder keeps the configured group. The querier gets its own,

@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    BTreeMap, BTreeSet, BucketSpan, ClassicBucket, InstantSample, Labels, NativeHistogram,
+    NativeQuantileBucket, Result, almost_equal, classic_bucket_bound,
+    compact_spanned_histogram_counts, custom_histogram_bound, float_sample_value, labels_key,
+    labels_without_label, labels_without_metric_name, record_metric_name, warn_mixed_histograms,
+};
 
 pub(crate) struct BucketMapSum {
     pub(crate) spans: Vec<BucketSpan>,
@@ -64,7 +69,7 @@ pub(crate) fn append_native_spanned_buckets(
 pub(super) type ClassicBucketGroups = BTreeMap<String, ClassicBucketGroup>;
 
 /// The labels and bucket rows belonging to one classic histogram series.
-pub(super) struct ClassicBucketGroup {
+pub(crate) struct ClassicBucketGroup {
     pub(super) labels: Labels,
     pub(super) buckets: Vec<ClassicBucket>,
 }

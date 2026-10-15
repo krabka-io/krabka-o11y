@@ -1,4 +1,4 @@
-use super::*;
+use super::{Code, ConnectError, ProfileError, Response, StatusCode, TenantResolveError};
 
 pub(crate) fn connect_error(err: ProfileError) -> ConnectError {
     let code = match &err {

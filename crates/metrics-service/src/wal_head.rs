@@ -6,7 +6,9 @@ use krabka_observability::{
     wal_consumer_metrics::WalConsumerMetrics,
 };
 
-use super::*;
+use super::{
+    BTreeMap, ConsumerRecord, Offset, PartitionIndex, Time, WalHead, WalRecord, WalRecordAt,
+};
 
 #[async_trait::async_trait]
 pub trait WalHeadConsumerCommit: Send {

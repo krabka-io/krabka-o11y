@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Deserialize, Serialize, TenantCompactionRows};
 
 /// A validated Prometheus TSDB block, as rows ready for the block writer.
 #[derive(Clone, Debug, PartialEq)]

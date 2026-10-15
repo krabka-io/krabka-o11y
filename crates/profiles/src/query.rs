@@ -3908,7 +3908,9 @@ mod render_inner;
 mod render_params;
 mod render_query;
 mod router;
-use render_params::{parse_render_offset, parse_render_query, parse_render_time_param};
+#[cfg(test)]
+use render_params::parse_render_offset;
+use render_params::{parse_render_query, parse_render_time_param};
 mod select_heatmap_inner;
 mod select_merge_profile_inner;
 mod select_merge_span_profile_inner;
@@ -3941,10 +3943,10 @@ use error_responses::{connect_error, profile_error_response, tenant_error_respon
 use escape_quoted::{TabEscape, escape_quoted};
 use exemplar_helpers::{
     heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan, heatmap_time_buckets,
-    heatmap_y_mins, individual_exemplars_from_scan, individual_exemplars_from_totals,
-    span_exemplars_from_scan, span_exemplars_from_totals, span_heatmap_points_from_scan,
+    heatmap_y_mins, individual_exemplars_from_scan, span_exemplars_from_scan,
+    span_heatmap_points_from_scan,
 };
-use flamebearer_json::{flamebearer_diff_json, flamebearer_json, flamebearer_metadata};
+use flamebearer_json::{flamebearer_diff_json, flamebearer_json};
 use flamegraph_dot::flamegraph_dot;
 use get_profile_stats_inner::get_profile_stats_inner;
 use heatmap_from_points::heatmap_from_points;

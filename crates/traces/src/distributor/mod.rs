@@ -1,6 +1,6 @@
 //! Distributor role: push-door HTTP routes into the traces WAL.
 
-use std::{collections::BTreeMap, io::Read, net::SocketAddr, sync::Arc};
+use std::{io::Read, net::SocketAddr, sync::Arc};
 
 use axum::{
     Router,
@@ -945,7 +945,9 @@ use listener::bind_and_spawn_server;
 pub use otlp_grpc_service::{OtlpGrpcService, serve_otlp_grpc};
 use push_request::PushRequest;
 use push_spans::{SpanPush, push_spans};
-use request_body::{CONTENT_ENCODING, decode_body, require_content_type};
+#[cfg(test)]
+use request_body::CONTENT_ENCODING;
+use request_body::{decode_body, require_content_type};
 use response_helpers::{
     append_decoded_response, error_response, limit_error_to_traces_error, otlp_success_response,
     record_ingest_response,
@@ -953,7 +955,10 @@ use response_helpers::{
 pub use router::router;
 pub use serve::serve;
 use serve_grpc_receiver::{GrpcReceiver, serve_grpc_receiver};
+#[cfg(test)]
 use serve_jaeger_compact_udp::handle_jaeger_compact_datagram;
 pub use serve_jaeger_compact_udp::serve_jaeger_compact_udp;
-use shared_attr_validation::{check_shared_attrs, shared_attr_measured, validate_shared};
+#[cfg(test)]
+use shared_attr_validation::check_shared_attrs;
+use shared_attr_validation::validate_shared;
 pub use wal_sink::{WalSink, produce_spans};

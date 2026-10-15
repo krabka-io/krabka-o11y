@@ -302,6 +302,7 @@ pub(crate) fn sort_value(sample: &InstantSample) -> f64 {
 /// Prometheus writes the result through `labels.Builder.Set`, which deletes a
 /// label rather than store it empty.
 #[must_use]
+#[cfg(test)]
 pub fn apply_label_join(
     samples: Vec<InstantSample>,
     dst_label: &str,

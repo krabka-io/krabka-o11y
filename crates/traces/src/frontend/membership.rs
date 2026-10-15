@@ -37,6 +37,8 @@
 //!   the process behind it can answer. A pod that is listening but has not
 //!   loaded its index is in DNS and is not able to serve.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;

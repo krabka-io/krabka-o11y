@@ -70,7 +70,7 @@ use spawn_retention_sweeper::spawn_retention_sweeper;
 use target::Target;
 use value_parsers::{
     TargetValueParser, parse_compactor_target_rows, parse_distributor_max_decompressed,
-    parse_ingest_rate_bucket_cap, retired_role_message,
+    parse_ingest_rate_bucket_cap,
 };
 
 use self::cli::Cli;

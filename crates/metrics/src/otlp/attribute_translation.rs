@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AnyValue, ExtraLabel, InstrumentationScope, KeyValue, Labels, ScopeMetrics,
+    TranslationStrategy, any_value, normalize_name, string_attribute,
+};
 
 pub(crate) fn attribute_value(value: Option<&AnyValue>) -> Option<String> {
     match value?.value.as_ref()? {

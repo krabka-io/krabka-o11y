@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    BTreeMap, BlockWriter, CompactionBatchResult, CompactionIndexSink, CompactionPartitionOffset,
+    CompactionWalRecord, CompactionWindowError, CompactionWindowResult, PartitionIndex,
+    compact_wal_records, write_compacted_tenant_partition_blocks,
+};
+use crate::WalRecord;
 
 pub(crate) async fn write_compaction_partition_window<S>(
     block_writer: &BlockWriter,

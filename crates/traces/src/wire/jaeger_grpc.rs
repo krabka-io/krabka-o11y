@@ -152,21 +152,21 @@ pub(crate) fn duration_micros(duration: Option<&Duration>) -> i64 {
     })
 }
 
-pub(crate) fn log_from_proto(log: &api_v2::Log) -> JaegerLog {
+pub(super) fn log_from_proto(log: &api_v2::Log) -> JaegerLog {
     JaegerLog {
         timestamp_micros: timestamp_micros(log.timestamp.as_ref()),
         fields: log.fields.iter().map(key_value_from_proto).collect(),
     }
 }
 
-pub(crate) fn process_from_proto(process: &api_v2::Process) -> JaegerProcess {
+pub(super) fn process_from_proto(process: &api_v2::Process) -> JaegerProcess {
     JaegerProcess {
         service_name: process.service_name.clone(),
         tags: process.tags.iter().map(key_value_from_proto).collect(),
     }
 }
 
-pub(crate) fn ref_from_proto(reference: &api_v2::SpanRef) -> Result<JaegerRef, WireError> {
+pub(super) fn ref_from_proto(reference: &api_v2::SpanRef) -> Result<JaegerRef, WireError> {
     let trace_id = trace_id_parts(&reference.trace_id)?;
     Ok(JaegerRef {
         ref_type: reference.ref_type,
@@ -230,7 +230,7 @@ pub(crate) fn key_value_from_proto(kv: &api_v2::KeyValue) -> KeyValue {
     }
 }
 
-pub(crate) fn span_from_proto(span: api_v2::Span) -> Result<JaegerSpan, WireError> {
+pub(super) fn span_from_proto(span: api_v2::Span) -> Result<JaegerSpan, WireError> {
     let trace_id = trace_id_parts(&span.trace_id)?;
     let span_id = span_id_part(&span.span_id)?;
     Ok(JaegerSpan {

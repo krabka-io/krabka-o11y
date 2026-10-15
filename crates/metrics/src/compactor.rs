@@ -3115,7 +3115,6 @@ pub use run_compactor_loop::run_compactor_loop;
 pub use run_compactor_loop_with_clock::run_compactor_loop_with_clock;
 pub(crate) use series_labels_for_kind::series_labels_for_kind;
 use write_compacted_block::write_compacted_block;
-use write_tenant_blocks::write_compacted_tenant_blocks_with_partition;
 pub use write_tenant_blocks::{
     write_compacted_tenant_blocks, write_compacted_tenant_partition_blocks,
 };
@@ -3153,7 +3152,7 @@ pub(crate) fn validate_non_empty(
 }
 
 use compaction_flush::{flush_buffer, flush_buffer_with_consumer};
-pub(crate) use compactor_polling::{compaction_batch_span, poll_compaction_wal_records};
+pub(crate) use compactor_polling::compaction_batch_span;
 pub use compactor_polling::{
     compaction_wal_records_from_consumer_records, poll_compactor_consumer_once, poll_compactor_once,
 };

@@ -1578,9 +1578,9 @@ mod serve;
 mod serve_supervised;
 mod wal_sink;
 
-use connect_error::{
-    INTERNAL_ERROR_MESSAGE, client_facing_message, connect_error, limit_connect_code,
-};
+#[cfg(test)]
+use connect_error::{INTERNAL_ERROR_MESSAGE, limit_connect_code};
+use connect_error::{client_facing_message, connect_error};
 use connect_ingest::{ConnectIngest, connect_ingest};
 pub use distributor_state::DistributorState;
 #[doc(hidden)]

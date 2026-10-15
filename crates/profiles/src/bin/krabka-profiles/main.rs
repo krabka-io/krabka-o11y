@@ -1252,8 +1252,8 @@ use krabka_observability::cli_value_parsers::{
     parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
 };
 use parse_cli::{
-    parse_min_two_usize, parse_non_empty_string, parse_positive_time_or_legacy,
-    parse_positive_time_or_legacy_millis, parse_positive_time_or_legacy_nanos,
+    parse_min_two_usize, parse_non_empty_string, parse_positive_time_or_legacy_millis,
+    parse_positive_time_or_legacy_nanos,
 };
 use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
@@ -1270,7 +1270,7 @@ use run_block_builder::run_block_builder;
 use run_compaction_pass::run_compaction_pass;
 use run_compactor::run_compactor;
 use run_distributor::run_distributor;
-use run_read_role::{ReadRole, ReadRoleInputs, run_querier, run_query_frontend, run_read_role};
+use run_read_role::{ReadRoleInputs, run_querier, run_query_frontend};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;

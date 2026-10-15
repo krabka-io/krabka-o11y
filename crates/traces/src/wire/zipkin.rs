@@ -1,5 +1,7 @@
 //! Zipkin v2 JSON to internal spans.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use std::collections::BTreeMap;
 
 use serde::Deserialize;

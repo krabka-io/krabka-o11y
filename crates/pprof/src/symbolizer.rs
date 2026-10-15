@@ -12,6 +12,7 @@ use krabka_units::{
     convert::{ByteSizeExt as _, TimeExt as _},
     mebibytes, secs,
 };
+#[cfg(test)]
 use object::{Object as _, ObjectSymbol as _};
 use refined_type::{Refined, rule::GreaterU64};
 
@@ -38,6 +39,7 @@ pub trait NativeResolver: Send + Sync {
     fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>>;
 }
 
+#[cfg(test)]
 pub(crate) fn nearest_symbol_name(object: &object::File<'_>, address: u64) -> Option<String> {
     object
         .symbols()
@@ -809,6 +811,7 @@ pub(crate) fn validate_positive_timeout(name: &str, timeout: Time) -> Result<(),
 /// This function catches any panic that the parser can trigger on a crafted
 /// artifact. It returns `Ok(())` only when the bytes parse cleanly and the
 /// parser does not panic.
+#[cfg(test)]
 pub(crate) fn parse_object_guarded(bytes: &[u8]) -> Result<(), String> {
     std::panic::catch_unwind(|| {
         object::File::parse(bytes)

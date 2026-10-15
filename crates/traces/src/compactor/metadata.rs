@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    Array, BTreeMap, BTreeSet, BooleanArray, Float64Array, Int64Array, ListArray,
+    RESOURCE_ATTR_PREFIX, RecordBatch, SCOL_ATTR_KEYS, SCOL_EVENTS, SCOL_INSTRUMENTATION_NAME,
+    SCOL_INSTRUMENTATION_VERSION, StringArray, TagCatalog, TracesError, attr_value,
+    collect_link_metadata, collect_nested_column_metadata, collect_string_column_metadata,
+    list_column, string_list_value, struct_i64_field, struct_list_field, struct_string_field,
+};
 
 pub(crate) trait MetadataValueArray: Array {
     fn string_value(&self, idx: usize) -> String;

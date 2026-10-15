@@ -55,9 +55,10 @@ pub(super) use extended_range_value::{
     interpolate_histogram,
 };
 use extrapolation::{
-    HistogramExtrapolation, extrapolate_histogram_delta, extrapolated_histogram_component,
-    extrapolated_rate, extrapolated_rate_with_starts,
+    HistogramExtrapolation, extrapolated_histogram_component, extrapolated_rate_with_starts,
 };
+#[cfg(test)]
+use extrapolation::{extrapolate_histogram_delta, extrapolated_rate};
 use fold_over_time_extremum::fold_over_time_extremum;
 use instant_delta_histogram::instant_delta_histogram;
 use instant_delta_sample_from_series::instant_delta_sample_from_series;

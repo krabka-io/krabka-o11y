@@ -1,6 +1,11 @@
 use krabka_observability::persisted_format::validate_consumer_record;
 
-use super::*;
+use super::{
+    Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, FunctionRec, Labels, LineRec,
+    LocationRec, ObjectStore, ObjectStoreMetrics, OffsetRange, PositionedProfileRecord,
+    ProfileIndex, ProfileRecord, ProfilesError, STACKTRACE_PARTITION, SymbolDb, SymbolRefs,
+    WalSymbolSet, build_block_with_positions, mapping_rec, remap_ref,
+};
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
 struct TenantPartition {

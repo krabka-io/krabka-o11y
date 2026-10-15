@@ -1,5 +1,7 @@
 //! Span source and `remote_write` sink traits.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},

@@ -1,6 +1,11 @@
 use std::num::FpCategory;
 
-use super::*;
+use super::{
+    ClassicBucket, FractionBounds, HistogramReducers, InstantSample, NativeHistogram,
+    NativeQuantileBucket, Result, apply_histogram_reduction, bucket_overlap_fraction,
+    classic_histogram_buckets, emit_info, native_histogram_all_buckets,
+    native_histogram_fraction_nans_info, normalized_classic_histogram_buckets, zero_bucket_bounds,
+};
 
 /// Applies `histogram_fraction(lower, upper, v)` to an instant vector `v`,
 /// with `bounds` holding `lower` and `upper`.

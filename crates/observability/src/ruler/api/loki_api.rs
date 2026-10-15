@@ -42,9 +42,10 @@ fn status_html_page(title: &str, body: &str) -> Response {
         .expect("status page headers are valid")
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn deleted_rule_response(
     state: &QuerierState,
-    #[allow(clippy::needless_pass_by_value)] security: RequestSecurity,
+    security: RequestSecurity,
     operation: &'static str,
     resources: Vec<AuditResource>,
     tenant: &str,

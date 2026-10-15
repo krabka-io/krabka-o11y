@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Array, BTreeMap, BTreeSet, BlockMeta, FixedSizeBinaryArray, RecordBatch, SCOL_TRACE_ID,
+    ShardedTraceBloom, TraceBlockStats, TracesError, push_tag_metadata,
+};
 
 /// Folds `batch`'s trace ids into the set the block's bloom filter is built
 /// from.

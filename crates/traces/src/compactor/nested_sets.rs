@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    Arc, Array, Int32Array, Int64Array, RecordBatch, SCOL_CHILD_COUNT, SCOL_DURATION_NANOS,
+    SCOL_NAME, SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID,
+    SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO,
+    SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, StringArray, TracesError,
+    fixed_column, int64_column, set_column, string_column,
+};
 use crate::span::nested_set::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
 
 pub(crate) struct Int32ColumnReplacement<'a> {

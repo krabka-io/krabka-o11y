@@ -763,16 +763,13 @@ mod execution;
 mod metadata;
 mod nested_sets;
 mod trace_group_buffer;
-use block_stats::{CompactedBlockStats, push_trace_ids};
+use block_stats::CompactedBlockStats;
 pub use cleanup::{expire_trace_blocks, sweep_orphaned_trace_blocks};
 pub use execution::{
     CompactionPassOutcome, compact_block_keys_with_max_bytes, compact_once_with_policy,
 };
-use metadata::{
-    MetadataValueArray, collect_attr_metadata, collect_event_metadata, collect_nested_attrs,
-    push_tag_metadata,
-};
-use nested_sets::{recompute_nested_sets, recompute_trace_level_columns, replace_int32_columns};
+use metadata::{MetadataValueArray, collect_nested_attrs, push_tag_metadata};
+use nested_sets::{recompute_nested_sets, recompute_trace_level_columns};
 use trace_group_buffer::TraceGroupBuffer;
 
 use crate::blockbuilder::TagCatalog;

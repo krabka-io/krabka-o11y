@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Array, BTreeSet, DictionaryArray, FixedSizeBinaryArray, Int32Array, Int32Type, Int64Array,
+    LargeStringArray, ListArray, RecordBatch, ResourceAttrs, StringArray, StringViewArray,
+    StructArray, TraceqlError, fixed, int64_value,
+};
 
 pub(crate) fn fixed_array_value<const N: usize>(
     values: &FixedSizeBinaryArray,

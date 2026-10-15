@@ -5,6 +5,8 @@
 //! they are interchangeable for one shard kind and genuinely sharded for the
 //! other. [`assign_jobs`] carries the evidence for that split and acts on it.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use crate::frontend::job::JobShard;
 
 /// One planned shard, and the querier that will scan it.

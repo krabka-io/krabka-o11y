@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, OtlpAnyValue, OtlpArrayValue, OtlpValue, Value, json, metric_value_json};
 
 pub(crate) fn attr_value_json(value: &AttrValue) -> Value {
     match value {

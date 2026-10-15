@@ -83,11 +83,13 @@ pub use self::{
 const STALE_NAN_BITS: u64 = 0x7ff0_0000_0000_0002;
 
 /// Converts an `i64` to the nearest `f64`, as Go's `float64(int64)` does.
+#[must_use]
 pub fn i64_to_f64(value: i64) -> f64 {
     value.to_f64().unwrap_or(f64::MAX)
 }
 
 /// Converts a `u64` to the nearest `f64`, as Go's `float64(uint64)` does.
+#[must_use]
 pub fn u64_to_f64(value: u64) -> f64 {
     value.to_f64().unwrap_or(f64::MAX)
 }
@@ -96,6 +98,10 @@ pub fn u64_to_f64(value: u64) -> f64 {
 /// big-endian CRC32C of the content, and returns the verified content.
 ///
 /// The symbol table and the postings offset table use this frame.
+///
+/// # Errors
+///
+/// Returns an error if the section is truncated or its checksum does not match.
 pub fn checked_section<'a>(
     file: &'a [u8],
     offset: u64,
@@ -119,6 +125,10 @@ pub fn checked_section<'a>(
 }
 
 /// Creates `value` as JSON at `key`, and answers `false` if the key exists.
+///
+/// # Errors
+///
+/// Returns an error if serialization fails or the object store rejects the write.
 pub async fn create_import_json<T: Serialize>(
     store: &dyn ObjectStore,
     key: &Path,
@@ -146,6 +156,10 @@ pub async fn create_import_json<T: Serialize>(
 }
 
 /// Writes `value` as JSON at `key`, and replaces an object at the key.
+///
+/// # Errors
+///
+/// Returns an error if serialization fails or the object store rejects the write.
 pub async fn put_import_json<T: Serialize>(
     store: &dyn ObjectStore,
     key: &Path,
@@ -167,6 +181,7 @@ pub async fn put_import_json<T: Serialize>(
 
 /// The histogram that Prometheus reads for a stale marker in a histogram
 /// chunk: only the sum is set, to the stale NaN.
+#[must_use]
 pub fn stale_histogram(is_float: bool) -> NativeHistogram {
     NativeHistogram {
         schema: 0,

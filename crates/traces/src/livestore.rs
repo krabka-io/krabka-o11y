@@ -266,7 +266,7 @@ pub use live_store::LiveStore;
 pub use run::run;
 use values::{
     INTRINSIC_TAGS, collect_event_values, collect_link_values, collect_span_intrinsic_value,
-    collect_trace_intrinsic_values, event_ref, order_spans, span_ref,
+    collect_trace_intrinsic_values, order_spans, span_ref,
 };
 
 use crate::span::typed_value_parts::typed_value_parts;

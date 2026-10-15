@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BTreeSet, Span, attr_value_string};
 
 /// The tag names and per-tag values a trace block's index entry carries,
 /// borrowed while a block builder or the compactor collects them.

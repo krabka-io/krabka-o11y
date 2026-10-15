@@ -4138,8 +4138,8 @@ mod wal_ingest;
 mod wal_sink;
 mod written_counts_response;
 
+use clock_series::clock_identity_labels;
 pub use clock_series::{CLOCK_READING_METRIC, clock_series};
-use clock_series::{clock_identity_labels, clock_projection, clock_state_series, projected_labels};
 use decode_influx::decode_influx;
 use decoded_series::{decoded_sample_count, decoded_series};
 pub use distributor_state::{
@@ -4149,17 +4149,15 @@ pub use ha_election_compaction_key::ha_election_compaction_key;
 pub use ha_election_consumer::{
     poll_ha_election_consumer_once, replay_ha_election_records, run_ha_election_consumer_loop,
 };
-use http_push::{
-    OtlpPushOutcome, clocks_push, clocks_push_inner, decode_otlp_http_body, influx_push,
-    influx_push_inner, otlp_push, otlp_push_inner, push, push_inner,
-};
+#[cfg(test)]
+use http_push::decode_otlp_http_body;
+use http_push::{clocks_push, influx_push, otlp_push, push};
 use ingest_clock::ingest_stamp;
 pub use ingest_clock::{IngestClock, SystemIngestClock};
-use ingest_gates::{
-    enforce_and_record_active_series, enforce_creation_grace_period, enforce_ingest_limits,
-    enforce_ingestion_rate, enforce_label_limits, enforce_out_of_order_window,
-};
-use ingest_request_start::{IngestRequestStart, ingest_span};
+use ingest_gates::enforce_ingest_limits;
+#[cfg(test)]
+use ingest_gates::{enforce_label_limits, enforce_out_of_order_window};
+use ingest_request_start::IngestRequestStart;
 pub use kafka_ha_election_sink::KafkaHaElectionSink;
 pub use kafka_sink::KafkaSink;
 use mimir_tenant_status::{all_user_stats, runtime_config, user_limits, user_stats};
@@ -4173,13 +4171,14 @@ pub use router::router;
 use sample_timestamp_bounds::sample_timestamp_bounds;
 use series_tracker::SeriesTracker;
 pub use serve::serve;
-use status_from_push_error::{status_from_http_status, status_from_push_error};
+#[cfg(test)]
+use status_from_push_error::status_from_http_status;
+use status_from_push_error::status_from_push_error;
 pub use validate::validate;
-use validate::{
-    MAX_EXEMPLAR_LABEL_CODEPOINTS, is_valid_label_name, require_otlp_protobuf_content_type,
-    require_snappy_encoding, validate_exemplar_labels,
-};
-use wal_ingest::{append_clock_readings, append_decoded_series, append_wal_records};
+#[cfg(test)]
+use validate::{MAX_EXEMPLAR_LABEL_CODEPOINTS, validate_exemplar_labels};
+use validate::{require_otlp_protobuf_content_type, require_snappy_encoding};
+use wal_ingest::{append_clock_readings, append_decoded_series};
 pub use wal_ingest::{clock_wal_records, wal_records_from_series};
 pub use wal_sink::{ProduceError, WalBatchRecord, WalSink};
 use written_counts_response::written_counts_response;

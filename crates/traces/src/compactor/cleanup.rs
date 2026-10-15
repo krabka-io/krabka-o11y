@@ -1,6 +1,10 @@
 use object_store::path::Path;
 
-use super::*;
+use super::{
+    Arc, BTreeSet, BlockTimestampUnit, ExpiredBlock, LifecycleError, ObjectStore, OrphanSweepStats,
+    RetentionWindows, SystemTime, TRACE_BLOCK_OBJECT_PREFIX, Time, TraceIndex, UnixNano,
+    list_index_object_keys, plan_expired_blocks, prefixed_object_key, reconcile_orphans,
+};
 
 /// Drops every block that has fallen outside its tenant's retention window,
 /// and returns the blocks it dropped.

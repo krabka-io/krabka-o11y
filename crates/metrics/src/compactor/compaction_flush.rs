@@ -1,8 +1,13 @@
 use std::time::Instant;
 
-use krabka_units::{Time, convert::TimeExt as _};
+use krabka_units::Time;
 
-use super::*;
+use super::{
+    BlockWriter, CompactionBatchResult, CompactionConsumerCommitMut, CompactionIndexSink,
+    CompactionLoopResult, CompactionOffsetCommitter, CompactionPartitionOffset,
+    CompactionPollError, CompactionWalRecord, ServiceMetrics, TimeExt,
+    process_compaction_record_batch, process_compaction_record_batch_with_consumer,
+};
 
 /// Writes one block from the buffered records, commits their offsets, and folds
 /// the result into the running loop summary.

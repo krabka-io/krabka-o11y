@@ -1,5 +1,7 @@
 //! OTLP `TracesData` to internal spans.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use opentelemetry_proto::tonic::{
     common::v1::{AnyValue, KeyValue as OtlpKv},
     trace::v1::{Status, TracesData, span::SpanKind as OtlpKind},
@@ -349,6 +351,7 @@ pub(crate) fn any_to_attr(value: &AnyValue) -> AttrValue {
     AttrValue::from(value)
 }
 
+#[cfg(test)]
 pub(crate) fn any_to_text(value: &AnyValue) -> Option<String> {
     match any_to_attr(value) {
         AttrValue::Str(value) => Some(value),

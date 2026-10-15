@@ -4123,16 +4123,17 @@ use array_columns::{
     struct_string_field,
 };
 pub(crate) use attribute_values::ColdAttributeTagNames;
+#[cfg(test)]
+use attribute_values::collect_intrinsic_value;
 use attribute_values::{
-    AttrMatch, RequestedTag, ResourceAttrs, attr_values_with_resource, batch_attr_matches,
-    batch_attr_matches_with_resource, collect_attribute_tag_names, collect_attribute_tag_values,
-    collect_intrinsic_value, event_values, instrumentation_matches, intrinsic_values_from_batches,
-    link_values, merge_dynamic_scope, merge_static_scope, resource_attr_values, resource_matches,
+    RequestedTag, ResourceAttrs, attr_values_with_resource, batch_attr_matches,
+    collect_attribute_tag_names, collect_attribute_tag_values, event_values,
+    instrumentation_matches, intrinsic_values_from_batches, link_values, merge_dynamic_scope,
+    merge_static_scope, resource_attr_values, resource_matches,
 };
 use batch_projection::{
-    add_nested_intrinsic_columns, add_nested_intrinsic_columns_to_batch,
-    add_span_attr_columns_to_batch, align_scan_batch_to_schema, block_span_schema,
-    deduplicate_scan_batches, filter_batches_by_matchers,
+    add_nested_intrinsic_columns, add_span_attr_columns_to_batch, align_scan_batch_to_schema,
+    block_span_schema, deduplicate_scan_batches, filter_batches_by_matchers,
 };
 pub use krabka_span_store::KrabkaSpanStore;
 use krabka_traceql::{kind_enum_value, status_enum_value, typed_value_parts};
@@ -4140,16 +4141,17 @@ use nested_projection::{
     NestedAttrColumn, NestedAttrColumnProjection, ScanInt32ColumnReplacement,
     nested_intrinsic_rows, replace_scan_int32_columns,
 };
+#[cfg(test)]
+use nested_scan::recompute_batch_nested_sets;
 use nested_scan::{
     NestedAttrScope, append_nested_attr, append_nested_event, append_nested_link,
     matching_events_for_scan, matching_links_for_scan, nested_attr_columns,
     nested_event_matchers_match, nested_link_matchers_match, nested_string_attrs,
-    recompute_batch_nested_sets, recompute_scan_nested_sets, recompute_trace_nested_sets,
+    recompute_scan_nested_sets, recompute_trace_nested_sets,
 };
-use scan_helpers::{
-    INSTRUMENTATION_TAGS, SCOPE_ORDER, intrinsic_matches, row_matcher_matches, row_matches,
-    trace_from_batches,
-};
+#[cfg(test)]
+use scan_helpers::intrinsic_matches;
+use scan_helpers::{INSTRUMENTATION_TAGS, SCOPE_ORDER, row_matches, trace_from_batches};
 pub use scan_helpers::{SharedTraceIndex, block_builder_frontier_ns};
 
 use super::INTRINSIC_TAGS;

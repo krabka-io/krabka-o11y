@@ -120,8 +120,6 @@ mod tests {
 }
 
 #[cfg_attr(test, mutants::skip)]
-#[cfg_attr(test, mutants::skip)]
-
 pub(crate) fn proto_param_value(param: &str) -> Option<String> {
     let pair = param.trim().split_once('=')?;
     pair.0

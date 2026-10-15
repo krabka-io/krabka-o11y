@@ -1,4 +1,17 @@
-use super::*;
+use super::{
+    ATTR_PREFIX, Array, AttrValue, Attribute, BTreeMap, BTreeSet, COL_CHILD_COUNT, COL_DURATION,
+    COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, COL_KIND, COL_NAME, COL_NS_LEFT,
+    COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID, COL_ROOT_SERVICE_NAME, COL_ROOT_SPAN_NAME,
+    COL_SPAN_ID, COL_STATUS_CODE, COL_STATUS_MESSAGE, COL_TRACE_DURATION, COL_TRACE_ID, DataType,
+    EventRef, INSTRUMENTATION_ATTR_PREFIX, LinkRef, MatchCmp, MatchValue, RESOURCE_ATTR_PREFIX,
+    RecordBatch, SCOL_EVENTS, SCOL_LINKS, SpanMatcher, StructArray, TagScope, TagScopeTags, Time,
+    TimeExt, TraceqlError, TypedValue, attr_values_match, block_row_attrs_where, bool_array_value,
+    bytes_to_hex, fixed, fixed_array_value, float64_array_value, insert_i32_value,
+    insert_i64_value, insert_string_value, int64_array_value, nested_string_attrs,
+    nullable_fixed_value, optional_list_column, root_service_matches, string_array_value,
+    string_matches, string_value, struct_fixed_field, struct_int64_field, struct_list_field,
+    struct_string_field, tag_scope_key, typed_value_parts,
+};
 
 /// One attribute comparison against a row: the attribute key, how to compare,
 /// the value to compare with, and whether resource attributes take part.

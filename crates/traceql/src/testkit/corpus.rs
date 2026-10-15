@@ -49,6 +49,8 @@ pub(crate) fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
         .collect()
 }
 
+/// # Panics
+/// Panics if the current-thread Tokio runtime cannot be created.
 pub fn run_corpus_dir(dir: impl AsRef<Path>) -> Report {
     let dir = dir.as_ref();
     let mut files = match fs::read_dir(dir) {

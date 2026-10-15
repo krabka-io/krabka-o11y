@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BlockWriter, CompactedBlockRequest, CompactedBlockWrite, CompactionIndexSink,
+    CompactionWriteError, MetricBlockKind, PartitionIndex, TenantCompactionRows,
+    encode_tenant_batches, series_labels_for_kind, write_compacted_block,
+};
 
 /// Writes all non-empty block kinds for a compacted tenant window.
 ///

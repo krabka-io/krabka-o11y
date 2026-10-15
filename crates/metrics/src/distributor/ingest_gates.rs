@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BTreeSet, DecodedSeries, DistributorState, HaElection, IngestEnforcer, Instant, LimitError,
+    Limits, PushError, TenantId, Time, TimeExt, decoded_sample_count, sample_timestamp_bounds,
+    strip_replica_label, validate,
+};
 
 /// Enforces the per-user active-series limit and records the new series under a
 /// single lock acquisition. The lock covers the check AND the insert, which

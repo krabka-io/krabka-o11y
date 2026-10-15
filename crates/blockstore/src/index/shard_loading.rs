@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, ByteSize, Index, IndexShardRange, ObjectStore, Path, Result, StreamExt,
+    decode_index_shard, index_shard_tenant_prefix, index_shards_prefix_for_key, instrument,
+    parse_shard_bound_key, read_index_shard, unescape_object_path_segment,
+};
 
 /// What an object under the index-shard prefix turned out to be.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -21,7 +21,6 @@ pub(crate) fn compactor_delete_requests_for_config(
 }
 
 #[cfg_attr(test, mutants::skip)]
-
 /// Builds the logs object store, wrapped so every request it serves is counted
 /// in `metrics`.
 ///

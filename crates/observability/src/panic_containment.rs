@@ -68,8 +68,6 @@ pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
-use futures_util::FutureExt as _;
-
 /// Runs the rest of the stack and answers 500 if it panics.
 ///
 /// The panic hook has already run by the time the unwind reaches here, so the

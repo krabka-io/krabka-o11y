@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DecodedExemplar, HistogramDataPoint, Labels, OtlpExemplar, ToPrimitive, TranslationStrategy,
+    insert_attributes, nanos_to_millis, otlp_exemplar,
+};
 
 pub(crate) fn exemplar(
     exemplar: &OtlpExemplar,

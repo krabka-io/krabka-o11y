@@ -1,7 +1,5 @@
 use std::borrow::Borrow;
 
-use krabka_units::convert::TimeExt as _;
-
 use super::*;
 
 pub(crate) const INTRINSIC_TAGS: &[&str] = &[

@@ -2574,14 +2574,14 @@ mod serve_role_router;
 use all_role_stage::{AllRoleStage, all_role_stage};
 use build_querier_router_with_live::build_querier_router_with_live;
 use cli::Cli;
+#[cfg(test)]
+use cli_options::u64_limit_from_usize;
 use cli_options::{
     apply_metrics_generator_cli_overrides, compaction_policy_from_cli, engine_opts_from_cli,
-    f64_from_usize, frontend_config_from_cli, ingest_rate_from_cli, limits_from_cli,
-    live_i64_param, load_traces_limits_overrides_config, max_trace_size,
+    frontend_config_from_cli, limits_from_cli, live_i64_param, load_traces_limits_overrides_config,
     parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes,
     parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64,
-    parse_positive_time_or_secs, parse_scan_concat_max, parse_time_or_legacy_i64, parse_unix_nano,
-    promoted_attrs_from_cli, u64_limit_from_usize,
+    parse_positive_time_or_secs, parse_scan_concat_max, parse_unix_nano, promoted_attrs_from_cli,
 };
 use distributor_role::{DistributorRole, PrimaryListen};
 use krabka_observability::cli_value_parsers::{
@@ -2594,20 +2594,24 @@ use parse_promoted_attr::parse_promoted_attr;
 use parse_querier_addrs::parse_querier_addrs;
 use require_role_topics::require_role_topics;
 #[cfg(test)]
+use role_builders::build_object_store;
+#[cfg(test)]
 use role_builders::build_querier_router;
 #[cfg(test)]
 use role_builders::build_query_frontend_router;
 use role_builders::{
     ConfiguredObjectStore, IndexedLiveSource, SharedObjectStore, build_live_store_router,
-    build_object_store, build_query_frontend_app, build_trace_index_catalog,
+    build_query_frontend_app, build_trace_index_catalog,
 };
+#[cfg(test)]
+use role_runners::run_compactor_once;
 use role_runners::{
-    compaction_loop, run_all_query_frontend, run_block_builder, run_compactor, run_compactor_once,
-    run_distributor, run_live_store, run_metrics_generator, run_query_frontend, wal_consumer,
+    run_all_query_frontend, run_block_builder, run_compactor, run_distributor, run_live_store,
+    run_metrics_generator, run_query_frontend, wal_consumer,
 };
 use role_support::{
     AllRoleContext, BlockStoreGates, ListeningRole, MetricsFlags, ProcessSecurity, Target,
-    all_role_stages, log_role_outcome, require_internal_credential,
+    all_role_stages, require_internal_credential,
 };
 use run::run;
 use run_all::run_all;

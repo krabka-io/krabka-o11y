@@ -2,7 +2,7 @@ use krabka_observability::persisted_format::{
     PERSISTED_FORMAT_HEADER, PERSISTED_FORMAT_VERSION, keyed_persisted_record,
 };
 
-use super::*;
+use super::{Bytes, ProducerHeader, ProducerRecord, WAL_TOPIC};
 
 #[must_use]
 /// Builds a keyed producer record for a compacted topic.

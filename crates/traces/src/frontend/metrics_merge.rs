@@ -13,6 +13,8 @@
 //! therefore both decodes per-shard querier responses and re-serializes the
 //! merged result correctly.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use serde::{Deserialize, Serialize};
 
 /// One exemplar in Tempo's metrics shape.

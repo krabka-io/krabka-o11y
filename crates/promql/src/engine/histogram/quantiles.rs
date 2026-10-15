@@ -1,6 +1,14 @@
 use std::num::FpCategory;
 
-use super::*;
+use super::{
+    ClassicBucket, HistogramReducers, InstantSample, NativeHistogram, NativeQuantileBucket,
+    NormalizedClassicBuckets, Result, apply_histogram_reduction,
+    emit_histogram_quantile_forced_monotonicity_info, emit_info, emit_warning,
+    invalid_quantile_warning, is_valid_quantile, native_histogram_all_buckets,
+    native_histogram_bucket_quantile, native_histogram_quantile_nan_result_info,
+    native_histogram_quantile_nan_skew_info, normalized_classic_histogram_buckets,
+    zero_bucket_bounds,
+};
 
 /// Prometheus. Both the `__name__` and `le` labels are dropped from every output
 /// series. Classic output samples carry `time_ms`; native ones keep the source
@@ -363,6 +371,7 @@ fn bucket_walk(
 }
 
 /// Quantile labels use `OpenMetrics` floats, including a decimal for integers.
+#[cfg(test)]
 pub(crate) fn format_quantile_label(value: f64) -> String {
     if !value.is_finite() {
         return crate::http_api::format_sample_value(value);

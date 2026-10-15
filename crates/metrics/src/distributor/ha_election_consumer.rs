@@ -1,6 +1,10 @@
 use krabka_observability::persisted_format::{PersistedHeader, validate_persisted_format};
 
-use super::*;
+use super::{
+    BTreeMap, HaElectionConsumerCommit, HaElectionConsumerError, HaElectionConsumerLoopSummary,
+    HaElectionConsumerPoll, HaElectionConsumerRecord, HaElectionPartitionOffset, HaElectionRecord,
+    HaElectionReplayError, HaElectionReplayResult, HaTracker, Offset, PartitionIndex, Time,
+};
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.

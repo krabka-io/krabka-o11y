@@ -20,7 +20,6 @@ mod materialize_delete_requests_in_existing_object_store_blocks;
 #[cfg_attr(test, mutants::skip)]
 pub(crate) use materialize_delete_requests_in_existing_object_store_blocks::materialize_delete_requests_in_existing_object_store_blocks;
 #[cfg_attr(test, mutants::skip)]
-
 pub(crate) fn active_log_delete_tenants(
     delete_requests: &SharedLogDeleteRequests,
 ) -> Result<BTreeSet<String>, ActiveLogDeleteFilterError> {

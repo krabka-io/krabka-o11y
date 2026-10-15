@@ -9,11 +9,7 @@ use krabka_observability::{
     wal_group_assignment::WalRebalanceListener,
 };
 use krabka_traces::frontend::{HttpQuerier, MembershipView, QuerierScheme};
-use krabka_units::{
-    ByteSize,
-    convert::{ByteSizeExt as _, TimeExt as _},
-    fmt::Human as _,
-};
+use krabka_units::{ByteSize, fmt::Human as _};
 use tokio::net::TcpListener;
 
 use super::*;

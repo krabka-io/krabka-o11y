@@ -6,6 +6,7 @@ pub(crate) mod annotation_query_uri {
 
     // Builds a GET URI for `route` with `query` and a fixed single-step evaluation
     // window, so an instant query and a range query cover the same instant.
+    #[allow(dead_code)]
     pub(crate) fn annotation_query_uri(route: &str, query: &str) -> String {
         let form = form_urlencoded::Serializer::new(String::new())
             .append_pair("query", query)
@@ -24,6 +25,7 @@ pub(crate) mod annotation_store {
     // One float series `up` and one native-histogram series `h`, both at timestamp
     // zero. A float-only query warns, a histogram-against-float comparison raises an
     // info, and a selector that matches nothing raises neither.
+    #[allow(dead_code)]
     pub(crate) fn annotation_store() -> InMemoryMetricStore {
         let mut store = InMemoryMetricStore::new();
         let mut up = Labels::new();
@@ -87,6 +89,7 @@ pub(crate) mod two_series_store {
 
     // Two `up` series in one tenant, at timestamp zero. Every series-cap test needs
     // a tenant whose selected-series count is above a cap of one.
+    #[allow(dead_code)]
     pub(crate) fn two_series_store() -> InMemoryMetricStore {
         let mut store = InMemoryMetricStore::new();
         for job in ["api", "worker"] {

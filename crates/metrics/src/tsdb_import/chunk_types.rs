@@ -1,4 +1,4 @@
-use super::*;
+use super::NativeHistogram;
 
 /// The sample encodings that a Prometheus chunk can declare.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

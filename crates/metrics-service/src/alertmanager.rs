@@ -1,6 +1,6 @@
 //! Alertmanager request delivery and ruler sinks.
 
-use super::*;
+use super::{AlertmanagerSink, BTreeMap, Duration, RulerWalError, unix_ms_to_rfc3339};
 
 pub(crate) struct AlertmanagerDeliveryError {
     message: String,
@@ -227,8 +227,6 @@ macro_rules! impl_alertmanager_sink {
         }
     };
 }
-pub(crate) use impl_alertmanager_sink;
-
 impl_alertmanager_sink!(AlertmanagerHttpSink);
 
 pub(crate) fn alertmanager_payload(

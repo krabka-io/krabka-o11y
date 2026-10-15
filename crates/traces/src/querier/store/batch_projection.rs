@@ -1,6 +1,14 @@
 use num_traits::ToPrimitive;
 
-use super::*;
+use super::{
+    Arc, Array, ArrayRef, AttrValue, BlockStore, BooleanArray, COL_EVENT_NAME,
+    COL_EVENT_TIME_SINCE_START, COL_LINK_SPAN_ID, COL_LINK_TRACE_ID, COL_SPAN_ID, COL_TRACE_ID,
+    DataType, Field, Float64Array, HashSet, Int64Array, ProjectedAttrColumn, RecordBatch, Schema,
+    SchemaRef, SpanMatcher, StringArray, TraceqlError, attr_values_with_resource, block_err,
+    block_promoted_attrs, cast, filter_record_batch, fixed, nested_attr_columns,
+    nested_intrinsic_rows, promoted_attr_column, promoted_span_attr_from_field, row_matches,
+    span_block_schema, span_block_schema_with_promoted_attrs, take,
+};
 
 pub(crate) fn add_nested_intrinsic_columns(
     batches: Vec<RecordBatch>,
