@@ -122,6 +122,29 @@ benches/target/release/examples/log_query_frontend_profile 100000 1 single
 This driver also verifies once before its timed requests. CPU and allocation
 captures include fixture creation and that verification request.
 
+`metrics_otlp_http_profile` measures the production OTLP metrics HTTP router at
+100, 1,000 and 10,000 points per metric for gauges, cumulative sums, delta sums,
+classic histograms, exponential histograms and summaries:
+
+```bash
+cargo run --manifest-path benches/Cargo.toml --release --example metrics_otlp_http_profile -- 5
+```
+
+The CSV reports mean HTTP latency in microseconds, allocation count, total bytes
+allocated and peak live bytes for one request. Allocation counting runs separately
+from latency timing and is disabled during timed requests; the instrumented
+allocator remains linked. A current-thread Tokio runtime keeps the complete handler on
+the thread measured by `allocation-counter`. Fixture encoding, router creation
+and a warmup request stay outside measurement. The warmup checks the accepted WAL
+record count. Requests traverse authentication, protobuf decoding, partial-success
+translation under the tenant accumulator lock, limit checks, WAL conversion and
+response encoding. A counting sink acknowledges records without retaining them;
+network sockets and broker I/O are excluded. Delta state persists across requests.
+
+The [issue 369 comparison](../qualification/metrics-otlp-http-369.md) records
+before/after HTTP timings and allocations with an explicitly documented local
+build profile.
+
 ## Where they run
 
 The `bench` job in [//.github/workflows/ci.yml](../.github/workflows/ci.yml) runs them on a schedule, not on a pull request. This follows the fuzz run, which is scheduled for the same reason: the work is unbounded, and a pull request cannot pay for it.

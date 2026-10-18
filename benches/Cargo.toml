@@ -80,6 +80,13 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
+# HTTP ingest profiling stays in this workspace so allocation instrumentation
+# and OTLP fixture dependencies do not reach production or unit-test binaries.
+allocation-counter = "0.8.1"
+async-trait = "0.1"
+bytes = "1"
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "metrics"] }
+prost = "0.14"
 assert2 = "0.4"
 # `async_tokio` so a bench body can be an `async` block driven by a runtime
 # Criterion enters once per iteration rather than by a hand-rolled `block_on`
