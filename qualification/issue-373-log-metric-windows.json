@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "issue": "https://github.com/krabka-io/krabka-o11y/issues/373",
+  "status": "measured",
+  "base_commit": "d34a85f3979a6eb6409bec616a85e2c8b9ce84ab",
+  "working_tree_changes": true,
+  "source_sha256": {
+    "crates/observability/src/querier/aggregate/record_matching.rs": "ca4181f518d1f0a540f908dc3b01b1e2967a18487cc63275bd687e480654b4d8",
+    "crates/observability/src/querier/aggregate/record_matching/tests.rs": "f8a1d3ac4b10ccbc71f2b36eae6620ee222aeeb9ef9f8b471dd079bd7515f5f8",
+    "benches/src/log_metric_windows.rs": "2f8b7e4583458ece871b975fdedec36cf0bef2f7deac24569ed7c2d72e53a368",
+    "benches/benches/log_metric_windows.rs": "8d77cd2e9b8e3d5087869a3c3846f0da05f3e08440c197eb7d99b76a8b8cde76"
+  },
+  "command": "tools/bench.sh --quick log_metric_windows",
+  "run_metadata": {
+    "commit": "d34a85f3979a6eb6409bec616a85e2c8b9ce84ab",
+    "started_at": "2026-10-18T22:20:08Z",
+    "duration_seconds": "86",
+    "command": "tools/bench.sh --quick log_metric_windows",
+    "filter": "",
+    "sample_size": "10",
+    "measurement_time_seconds": "1",
+    "warm_up_time_seconds": "0.5",
+    "host": "Linux 466ff9abda37 6.18.55 #1 SMP Wed Oct 14 19:45:18 UTC 2026 x86_64 GNU/Linux",
+    "cpu_count": "5",
+    "memory_kib": "18440112",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01);binary: rustc;commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985;commit-date: 2026-09-01;host: x86_64-unknown-linux-gnu;release: 1.98.1;LLVM version: 22.1.8;"
+  },
+  "runner_cpu_quota": "400000 100000",
+  "workload": {
+    "storage": "Parquet on InMemory object storage",
+    "query": "count_over_time({app=\"api\"}[1m])",
+    "range_seconds": 60,
+    "step_seconds": 15,
+    "max_windows_per_row": 4,
+    "row_timestamps": "evenly spaced across the scan interval",
+    "timed": "complete cold query, including scanning, pipeline evaluation, accumulation and response construction",
+    "excluded": "fixture construction, stream planning and the independent full-response check"
+  },
+  "comparison": "Optimized implementation only; the previous implementation was not timed. These measurements do not establish an end-to-end speedup.",
+  "validation": {
+    "boundary_combinations": 660,
+    "exact_hot_cold_mixed_queries": 21,
+    "targeted_tests_passed": 8,
+    "observability_clippy": "passed with -D warnings",
+    "benchmark_clippy": "passed with -D warnings",
+    "formatting": "passed nightly rustfmt",
+    "benchmark_inventory": "passed, all nine IDs present; numeric budgets remain unseeded"
+  },
+  "measurements": [
+    {
+      "rows": 10000,
+      "steps": 60,
+      "mean_ns": 12846064.932757938,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 12441091.337063491,
+        "upper_bound": 13300706.776488097
+      }
+    },
+    {
+      "rows": 100000,
+      "steps": 60,
+      "mean_ns": 140818041.0,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 137998267.57500002,
+        "upper_bound": 144219564.9925
+      }
+    },
+    {
+      "rows": 1000000,
+      "steps": 60,
+      "mean_ns": 1656188919.1,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 1602520960.4,
+        "upper_bound": 1719266848.0
+      }
+    },
+    {
+      "rows": 10000,
+      "steps": 360,
+      "mean_ns": 14687602.935555557,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 13917039.702222222,
+        "upper_bound": 15519821.14611111
+      }
+    },
+    {
+      "rows": 100000,
+      "steps": 360,
+      "mean_ns": 146017123.6,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 144008469.5,
+        "upper_bound": 148020793.6575
+      }
+    },
+    {
+      "rows": 1000000,
+      "steps": 360,
+      "mean_ns": 1615004416.3,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 1589235451.89,
+        "upper_bound": 1641692295.8
+      }
+    },
+    {
+      "rows": 10000,
+      "steps": 5760,
+      "mean_ns": 21903374.725674603,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 20516826.087306548,
+        "upper_bound": 23336769.246666666
+      }
+    },
+    {
+      "rows": 100000,
+      "steps": 5760,
+      "mean_ns": 167431385.0,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 162718679.6,
+        "upper_bound": 172379075.2
+      }
+    },
+    {
+      "rows": 1000000,
+      "steps": 5760,
+      "mean_ns": 1547066814.2,
+      "mean_confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 1529861195.3725,
+        "upper_bound": 1563016828.3475
+      }
+    }
+  ]
+}
