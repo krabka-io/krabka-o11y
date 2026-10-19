@@ -9,12 +9,18 @@ use super::{
 
 const SPAN_BATCH_ROWS: usize = 8_192;
 
+// Arrival slots preserve duplicate spans and stable query ordering, while allowing
+// expiration to remove an individual span without scanning or shifting a trace.
+type TraceSpans = BTreeMap<usize, Span>;
+type Expiration = (i64, String, [u8; 16], usize);
+
 /// In-memory recent span store keyed by tenant and trace id.
 #[derive(Debug)]
 pub struct LiveStore {
     pub(crate) retention_ns: i64,
     pub(crate) max_start_ns: i64,
-    pub(crate) by_tenant: BTreeMap<String, BTreeMap<[u8; 16], Vec<Span>>>,
+    expirations: BTreeSet<Expiration>,
+    pub(crate) by_tenant: BTreeMap<String, BTreeMap<[u8; 16], TraceSpans>>,
 }
 
 impl LiveStore {
@@ -26,6 +32,7 @@ impl LiveStore {
             retention_ns,
             max_start_ns: i64::MIN,
             by_tenant: BTreeMap::new(),
+            expirations: BTreeSet::new(),
         }
     }
 
@@ -41,12 +48,18 @@ impl LiveStore {
         {
             return;
         }
-        self.by_tenant
-            .entry(rec.tenant)
+        let spans = self
+            .by_tenant
+            .entry(rec.tenant.clone())
             .or_default()
             .entry(rec.span.trace_id)
-            .or_default()
-            .push(rec.span);
+            .or_default();
+        let slot = spans.last_key_value().map_or(0, |(slot, _)| slot + 1);
+        if self.retention_ns != i64::MAX {
+            self.expirations
+                .insert((rec.span.start_ns, rec.tenant, rec.span.trace_id, slot));
+        }
+        spans.insert(slot, rec.span);
     }
 
     /// Return recent spans for one trace, ordered by start time and span id.
@@ -56,8 +69,7 @@ impl LiveStore {
             .by_tenant
             .get(tenant)
             .and_then(|traces| traces.get(trace_id))
-            .cloned()
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |spans| spans.values().cloned().collect());
         order_spans(&mut spans);
         spans
     }
@@ -83,7 +95,7 @@ impl LiveStore {
         if let Some(traces) = self.by_tenant.get(tenant) {
             for spans in traces.values() {
                 let mut in_range = spans
-                    .iter()
+                    .values()
                     .filter(|span| in_time_range(span, UnixNano(start_ns), UnixNano(end_ns)))
                     .collect::<Vec<_>>();
                 if in_range.is_empty() {
@@ -92,7 +104,7 @@ impl LiveStore {
                 order_spans(&mut in_range);
                 // Nested sets describe this trace's selected rows; root columns
                 // describe its complete span set, even when the window clips it.
-                for row in span_rows_for_window(&in_range, spans) {
+                for row in span_rows_for_window(&in_range, spans.values()) {
                     rows.push(row);
                     if rows.len() == SPAN_BATCH_ROWS {
                         batches.push(
@@ -118,13 +130,24 @@ impl LiveStore {
             return;
         }
         let cutoff = self.max_start_ns.saturating_sub(self.retention_ns);
-        self.by_tenant.retain(|_, traces| {
-            traces.retain(|_, spans| {
-                spans.retain(|span| span.start_ns >= cutoff);
-                !spans.is_empty()
-            });
-            !traces.is_empty()
-        });
+        // Only visit expired entries. A frontier advance with no expiration
+        // checks the first key, regardless of the number of retained spans.
+        while self
+            .expirations
+            .first()
+            .is_some_and(|entry| entry.0 < cutoff)
+        {
+            let (_, tenant, trace_id, slot) = self.expirations.pop_first().unwrap();
+            let traces = self.by_tenant.get_mut(&tenant).expect("indexed tenant");
+            let spans = traces.get_mut(&trace_id).expect("indexed trace");
+            spans.remove(&slot);
+            if spans.is_empty() {
+                traces.remove(&trace_id);
+            }
+            if traces.is_empty() {
+                self.by_tenant.remove(&tenant);
+            }
+        }
     }
 }
 
@@ -172,7 +195,7 @@ impl TagCatalog for LiveStore {
         if let Some(traces) = self.by_tenant.get(tenant) {
             for item in traces
                 .values()
-                .flatten()
+                .flat_map(|spans| spans.values())
                 .filter(|item| in_time_range(item, UnixNano(start_ns), UnixNano(end_ns)))
             {
                 has_spans = true;
@@ -224,14 +247,14 @@ impl TagCatalog for LiveStore {
         if let Some(traces) = self.by_tenant.get(tenant) {
             for spans in traces.values() {
                 let in_range = spans
-                    .iter()
+                    .values()
                     .filter(|span| in_time_range(span, UnixNano(start_ns), UnixNano(end_ns)))
                     .collect::<Vec<_>>();
                 collect_trace_intrinsic_values(&in_range, tag, &mut values);
             }
             for span in traces
                 .values()
-                .flatten()
+                .flat_map(|spans| spans.values())
                 .filter(|item| in_time_range(item, UnixNano(start_ns), UnixNano(end_ns)))
             {
                 if matches!(attr_scope, None | Some(krabka_traceql::TagScope::Resource)) {
@@ -268,5 +291,54 @@ impl TagCatalog for LiveStore {
             }
         }
         Ok(values.into_iter().collect())
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use assert2::assert;
+
+    use super::*;
+
+    #[test]
+    fn expiration_index_is_bounded_and_empty_tenants_are_pruned() {
+        let mut store = LiveStore::new(10);
+        for time in 0..1_000 {
+            store.ingest(SpanRecord {
+                tenant: format!("tenant-{time}"),
+                span: Span {
+                    start_ns: time,
+                    ..Span::default()
+                },
+            });
+            assert!(store.expirations.len() == store.by_tenant.len());
+            assert!(store.expirations.len() <= 11);
+        }
+        store.ingest(SpanRecord {
+            tenant: "last".into(),
+            span: Span {
+                start_ns: i64::MAX,
+                ..Span::default()
+            },
+        });
+        assert!(store.by_tenant.len() == 1);
+        assert!(store.expirations.len() == 1);
+        assert!(store.by_tenant.contains_key("last"));
+    }
+
+    #[test]
+    fn unbounded_retention_does_not_build_an_expiration_index() {
+        let mut store = LiveStore::new(i64::MAX);
+        for time in [i64::MIN, 0, i64::MAX, -1] {
+            store.ingest(SpanRecord {
+                tenant: "t".into(),
+                span: Span {
+                    start_ns: time,
+                    ..Span::default()
+                },
+            });
+        }
+        assert!(store.expirations.is_empty());
+        assert!(store.trace_by_id("t", &[0; 16]).len() == 4);
     }
 }
