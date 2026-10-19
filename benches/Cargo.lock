@@ -125,6 +125,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocation-counter"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beb9e990c0a33699f1984d85a6abead615ccc72dd8130bf3e15dcabe2ca149c9"
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3590,9 +3596,12 @@ dependencies = [
 name = "krabka-o11y-benches"
 version = "0.0.0"
 dependencies = [
+ "allocation-counter",
  "arrow",
  "assert2",
+ "async-trait",
  "axum",
+ "bytes",
  "criterion",
  "datafusion",
  "krabka-blockstore",
@@ -3604,6 +3613,8 @@ dependencies = [
  "krabka-traceql",
  "krabka-units",
  "object_store",
+ "opentelemetry-proto",
+ "prost 0.14.4",
  "serde_json",
  "tokio",
  "tower",

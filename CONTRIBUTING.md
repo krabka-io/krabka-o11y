@@ -21,8 +21,20 @@ cargo check --workspace --all-targets --locked
 ```
 
 PRs and pushes to `main` run one non-container Bazel test pass, plus Cargo
-compilation and feature checks. Cargo tests, coverage, and the fuzz/benchmark
+compilation and feature checks. The main Bazel lane's lint, build, and test
+commands run on BuildBuddy remote runners using the organization-level
+`BUILDBUDDY_API_KEY` secret. Each invocation uses the exact checked-out commit,
+16 CPUs and 64 GB of memory, with a 55-minute timeout. Fork PRs run these commands
+locally because GitHub does not share organization secrets with forks. A missing
+key on a trusted run fails with a configuration error.
+
+Cargo tests, coverage, and the fuzz/benchmark
 compile checks run nightly or through manual CI dispatch.
+
+Require the **CI gate** check in branch protection. It waits for the routine
+build/test/lint, Cargo, dependency policy, tool, documentation, and website jobs,
+and fails if any of them fails, is cancelled, or is skipped. Nightly and release
+suites are outside this PR gate.
 
 The `image` workflow requires the full Docker, scale, proof, Kubernetes, and
 strict query-conformance suites before publishing a `v*` release. Resuming a

@@ -257,7 +257,7 @@ impl QuerierMember {
 
 /// How the frontend asks one querier whether it can answer.
 ///
-/// The production implementation is [`HttpReadinessProbe`](HttpReadinessProbe),
+/// The production implementation is [`HttpReadinessProbe`],
 /// which reads the querier's own `/ready`. The trait exists so a test can put
 /// a querier into any health without needing a process that is genuinely in
 /// it.

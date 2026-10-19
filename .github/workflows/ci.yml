@@ -20,15 +20,46 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  # One non-container test pass on PRs and main. The open-source Aspect CLI
-  # runs the full target set; it does not select impacted tests.
+  # Require only this stable check in branch protection. Always evaluate the
+  # results so a failed, cancelled, or skipped dependency cannot pass the gate.
+  gate:
+    name: CI gate
+    if: always() && github.event_name != 'schedule'
+    needs: [ci, cargo, deny, tools, docs, website]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require successful checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"${RESULTS}"
+          jq -e 'all(.[]; .result == "success")' <<<"${RESULTS}"
+  # The main Bazel lane runs on BuildBuddy remote runners. Keep the existing
+  # non-container test set and report its result through the same CI gate.
   ci:
     name: build · test · lint · format
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Three separate remote invocations, each below the one-hour plan limit.
+    timeout-minutes: 180
+    env:
+      BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+      # Forks do not receive organization secrets and keep a local build path.
+      BUILDBUDDY_REQUIRED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
+      - name: install BuildBuddy CLI
+        if: env.BUILDBUDDY_API_KEY != ''
+        run: |
+          set -euo pipefail
+          directory="${RUNNER_TEMP}/buildbuddy-cli"
+          mkdir -p "${directory}"
+          curl -fsSL https://github.com/buildbuddy-io/bazel/releases/download/5.0.493/bazel-5.0.493-linux-x86_64 -o "${directory}/bb"
+          echo "557d731cd912b73184de9ca03baae6c95305479b5203375da312f150b05c5caa  ${directory}/bb" | sha256sum -c -
+          chmod +x "${directory}/bb"
+          echo "${directory}" >> "${GITHUB_PATH}"
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
           bazelisk-cache: true
@@ -42,13 +73,10 @@ jobs:
           client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
           client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
           upload: ${{ github.event_name != 'pull_request' }}
-      # This job builds and tests every target, and it ran the runner out of
-      # disk: the link died as `clang++: linker command failed due to signal`
-      # with `zstd: cannot write block: No space left on device` beside it.
-      # ENOSPC wears that disguise consistently here -- an LLVM crash report in
-      # `coverage`, a Bus error in `cargo`. The runner ships ~25 GB of
-      # toolchains no Bazel action touches.
+      # Only fork PRs compile on the GitHub runner. Remote builds have their
+      # own CPU, memory and disk allocation and do not need this reclamation.
       - name: free disk
+        if: env.BUILDBUDDY_API_KEY == ''
         run: |
           set -euo pipefail
           before=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
@@ -75,19 +103,15 @@ jobs:
       # and `info` off it -- so this gates here and only reports locally.
       - name: format
         run: aspect format
-      # `aspect lint` narrows to the targets a change touched and annotates the
-      # pull request. It reads the `rules_lint_machine` output group, which is
-      # why the clippy aspect comes from aspect_rules_lint_rust rather than from
-      # @rules_rust -- see //tools/lint/linters.bzl. `bazel test //...` gates on
-      # the same aspect through the `*_clippy` targets, for anyone without the
-      # CLI. The aspect is named here rather than left to the `build:lint`
-      # bazelrc config, which `aspect lint` does not read.
+      # Use the same Clippy aspect as `aspect lint`, with violations fatal.
+      # A remote runner needs only Bazel; the Aspect CLI stays on the launcher
+      # for the formatting step above.
       - name: lint
-        run: aspect lint --aspect=//tools/lint:linters.bzl%clippy
+        run: tools/remote-bazel.sh build --config=lint --@aspect_rules_lint//lint:fail_on_violation //... --build_tag_filters=-docker,-scale
       - name: build
-        run: aspect build //... --build_tag_filters=-docker,-scale
+        run: tools/remote-bazel.sh build //... --build_tag_filters=-docker,-scale
       - name: test
-        run: aspect test //... --build_tests_only
+        run: tools/remote-bazel.sh test //... --build_tests_only
   # Cargo, gated. Bazel is what the rest of CI builds with, but the two are not
   # the same build, so the cargo path can break with nothing to say so:
   # //bazel/defs.bzl strips the `vendored-protoc` feature and hands `PROTOC` to
@@ -506,6 +530,9 @@ jobs:
           CARGO_TARGET_DIR="${PWD}/.tools/http-native-target" cargo clippy --manifest-path wasi-client/Cargo.toml --locked --all-targets -- -D warnings
           CARGO_TARGET_DIR="${PWD}/.tools/http-native-target" cargo test --manifest-path wasi-client/Cargo.toml --locked
       - name: build production services and static site
+        env:
+          # cargo-wasix and wasixcc authenticate their GitHub release downloads.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p .tools
           npm run build 2>&1 | tee .tools/lab-build.log
