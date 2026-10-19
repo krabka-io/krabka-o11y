@@ -63,7 +63,7 @@ Install the tool with `cargo install cargo-fuzz --locked --version 0.13.2`. The 
 
 ### The toolchain
 
-cargo-fuzz needs nightly. //rust-toolchain.toml pins stable 1.97.1, and Bazel builds through rules_rs against a pinned toolchain, so this directory is a workspace of its own and every command here names `+nightly`. `cargo build --workspace` and `bazel build //...` do not reach it. //Cargo.toml names it in `exclude`.
+cargo-fuzz needs nightly. //rust-toolchain.toml pins stable 1.99.1, and Bazel builds through rules_rs against a pinned toolchain, so this directory is a workspace of its own and every command here names `+nightly`. `cargo build --workspace` and `bazel build //...` do not reach it. //Cargo.toml names it in `exclude`.
 
 The channel is `nightly` rather than a date. This is the one place the repository floats a toolchain, and the reason is that the `-Z` flags cargo-fuzz passes are not stable, so a pinned date buys reproducibility at the cost of an old compiler that the tool may stop supporting. The job that runs these targets is scheduled, not a gate on a pull request, so a nightly regression delays a report and blocks nobody.
 

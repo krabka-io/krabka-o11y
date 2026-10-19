@@ -1742,10 +1742,15 @@ mod tests {
 
     #[test]
     fn duration_overflow_errors() {
-        // A duration literal far beyond i64 nanoseconds must surface as a parse
-        // error rather than overflowing (the i64::try_from at the end fails).
-        let msg = parse_err("{ span:duration = 100000000000h }");
-        assert!(msg.contains("range"));
+        assert!(
+            selector_rhs("{ span:duration = 9223372036854775807ns }") == Value::Duration(i64::MAX)
+        );
+        // Both one nanosecond beyond the boundary and a scaled duration must
+        // return our diagnostic, independent of integer-conversion wording.
+        for literal in ["9223372036854775808ns", "100000000000h"] {
+            let msg = parse_err(&format!("{{ span:duration = {literal} }}"));
+            assert!(msg == format!("duration out of range: {literal:?}"));
+        }
     }
 
     #[test]

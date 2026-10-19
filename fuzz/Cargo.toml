@@ -24,7 +24,7 @@ edition = "2024"
 # targets need nightly. It is stated because Cargo's resolver reads it, and
 # with it the lockfile beside this file picks the same dependency versions as
 # //Cargo.lock rather than the newest ones the registry offers.
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 license = "Apache-2.0"
 authors = ["The Krabka Authors"]
 

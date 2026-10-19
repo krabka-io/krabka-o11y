@@ -79,6 +79,8 @@ jobs:
           set -euo pipefail
           evidence=qualification/evidence/envelope
           target=//crates/integration:soak_envelope_docker_test
+          rust_channel="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "${rust_channel}"
           bazel build -c opt --bes_backend= "${target}"
           for run in $(seq 1 "${REPETITIONS}"); do
             bazel test -c opt --config=scale --bes_backend= \
@@ -87,7 +89,7 @@ jobs:
               --test_env=KRABKA_SOAK_RUNNER \
               --test_env=KRABKA_SOAK_PHASE_SECONDS \
               --test_env=KRABKA_SOAK_RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${run}" \
-              --test_env=KRABKA_SOAK_RUSTC='rustc 1.98.1 (MODULE.bazel)' \
+              --test_env=KRABKA_SOAK_RUSTC="rustc ${rust_channel} (MODULE.bazel)" \
               --test_env=KRABKA_SOAK_COMMAND='bazel test -c opt --config=scale --cache_test_results=no --flaky_test_attempts=1 --test_timeout=7200 //crates/integration:soak_envelope_docker_test' \
               "${target}" 2>&1 | tee "${evidence}/run-${run}.log"
             outputs=bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs
