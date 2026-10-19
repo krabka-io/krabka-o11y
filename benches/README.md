@@ -182,6 +182,12 @@ The rerun calls `tools/bench.sh` once for each bench target, with a filter that 
 
 The rerun uses the `tolerance` and `noise_ceiling` that the first verdict records. If you give `--tolerance` or `--noise-ceiling` with a different value, the command stops with exit 2.
 
+The benchmark-ratchet workflow measures one Criterion group per remote invocation,
+with a 55-minute timeout below BuildBuddy's one-hour free-tier limit. It derives
+the shards from the benchmark sources and validates them against the baseline
+and Cargo targets, including groups that share a target (`index_load` and
+`index_prune`). Every group retains its inventory and numeric checks.
+
 The benchmark-ratchet workflow runs this step after exit 1, with a limit of four benchmarks and ten minutes. The step is a second `bb remote` invocation with runner recycling off, so it does not run in the container that measured the first run. The first step prints the verdict to its log, and the second step reads it from there. The workflow reports exit 4 as runner variance and passes.
 
 ## Adding a benchmark
