@@ -2,10 +2,10 @@ use datafusion::arrow::array::{Array as _, Int64Array, UInt64Array};
 
 use crate::{
     ActiveLogDeleteFilter, BTreeMap, BTreeSet, CompactionFrontier, LabelFormatAssignment,
-    LabelIndex, Labels, LokiStreamEntry, MapArray, MetricQuery, MetricSamples, MetricValue,
-    MetricWindow, PipelineStage, QueryError, RangeAggregation, RecordBatch, SeriesFingerprint,
-    StreamPlan, StreamQuery, StringArray, UNWRAP_SAMPLE_VALUE_LABEL, WalLogRecord,
-    is_unwrapped_metric_query,
+    LabelIndex, Labels, LokiStreamEntry, MapArray, MetricQuery, MetricSampleState, MetricSamples,
+    MetricValue, MetricWindow, PipelineStage, QueryError, RangeAggregation, RecordBatch,
+    SeriesFingerprint, StreamPlan, StreamQuery, StringArray, UNWRAP_SAMPLE_VALUE_LABEL,
+    WalLogRecord, is_unwrapped_metric_query,
 };
 
 mod append_matching_hot_log_record;
@@ -423,7 +423,9 @@ pub(crate) fn record_matching_metric_sample(
     for eval_time_ns in eval_times {
         let window_end_ns = eval_time_ns.saturating_sub(query.offset_ns.0);
         if timestamp_ns > window_end_ns.saturating_sub(range_ns) && timestamp_ns <= window_end_ns {
-            let sample = samples.entry(*eval_time_ns).or_default();
+            let sample = samples
+                .entry(*eval_time_ns)
+                .or_insert_with(|| MetricSampleState::new(query.aggregation));
             sample.record(timestamp_ns, value);
         }
     }

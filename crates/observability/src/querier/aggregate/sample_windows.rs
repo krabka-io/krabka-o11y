@@ -1,3 +1,5 @@
+use std::collections::btree_map::Entry;
+
 use crate::{
     ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, MatchOp, MetricQuery, MetricSampleState,
     Ordering, PipelineStage, QueryError, RangeAggregation, StreamPlan, VectorAggregation,
@@ -29,8 +31,12 @@ pub(crate) fn merge_metric_samples(samples: &mut MetricSamples, block_samples: M
     for series in block_samples {
         let target = samples.entry(series.0).or_default();
         for sample_entry in series.1 {
-            let sample = target.entry(sample_entry.0).or_default();
-            sample.merge(sample_entry.1);
+            match target.entry(sample_entry.0) {
+                Entry::Vacant(entry) => {
+                    entry.insert(sample_entry.1);
+                }
+                Entry::Occupied(mut entry) => entry.get_mut().merge(sample_entry.1),
+            }
         }
     }
 }
@@ -47,7 +53,12 @@ pub(crate) fn group_range_samples(
         let grouped_labels = vector_group_labels(&labels, Some(grouping));
         let grouped_values = grouped.entry(grouped_labels).or_default();
         for sample in values {
-            grouped_values.entry(sample.0).or_default().merge(sample.1);
+            match grouped_values.entry(sample.0) {
+                Entry::Vacant(entry) => {
+                    entry.insert(sample.1);
+                }
+                Entry::Occupied(mut entry) => entry.get_mut().merge(sample.1),
+            }
         }
     }
 
@@ -207,7 +218,7 @@ pub(crate) fn apply_absent_over_time(
                 .is_some_and(MetricSampleState::has_samples)
         });
         if !has_sample {
-            let mut sample = MetricSampleState::default();
+            let mut sample = MetricSampleState::new(query.aggregation);
             sample.record(*eval_time_ns, MetricValue::integer(1));
             absent_values.insert(*eval_time_ns, sample);
         }
@@ -355,30 +366,12 @@ pub(crate) fn range_sample_value(
     value: &mut MetricSampleState,
     query: &MetricQuery,
 ) -> MetricValue {
+    let result = value.value(query.aggregation);
     match query.aggregation {
-        RangeAggregation::CountOverTime
-        | RangeAggregation::BytesOverTime
-        | RangeAggregation::AbsentOverTime
-        | RangeAggregation::SumOverTime => value.summary.sum,
-        RangeAggregation::PresentOverTime => MetricValue::integer(1),
-        RangeAggregation::Rate | RangeAggregation::BytesRate => {
-            rate_metric_value(value.summary.sum, query.range_ns.0)
+        RangeAggregation::Rate | RangeAggregation::BytesRate | RangeAggregation::RateCounter => {
+            rate_metric_value(result, query.range_ns.0)
         }
-        RangeAggregation::RateCounter => {
-            rate_metric_value(value.counter_increase(), query.range_ns.0)
-        }
-        RangeAggregation::AvgOverTime => value.average(),
-        RangeAggregation::StdvarOverTime => value.stdvar(),
-        RangeAggregation::StddevOverTime => value.stddev(),
-        RangeAggregation::QuantileOverTime(quantile) => value.quantile(quantile),
-        RangeAggregation::MinOverTime => value.summary.min.unwrap_or_else(MetricValue::zero),
-        RangeAggregation::MaxOverTime => value.summary.max.unwrap_or_else(MetricValue::zero),
-        RangeAggregation::FirstOverTime => value
-            .first
-            .map_or_else(MetricValue::zero, |sample| sample.value),
-        RangeAggregation::LastOverTime => value
-            .last
-            .map_or_else(MetricValue::zero, |sample| sample.value),
+        _ => result,
     }
 }
 

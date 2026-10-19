@@ -1,0 +1,564 @@
+{
+  "schema_version": 1,
+  "issue": "https://github.com/krabka-io/krabka-o11y/issues/374",
+  "baseline_commit": "d34a85f3979a6eb6409bec616a85e2c8b9ce84ab",
+  "source_sha256": "ed4edd2cce8d7b2fd2c3ad08f163ddbaffb0528a3faf68426a05b44a49a70a05",
+  "compiler": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "build": "Cargo dev test profile, unoptimized; same binary for both states",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "cpu_count": 5,
+  "scope": "Accumulator creation, record, reduction and destruction. Every row contributes to every window. No Parquet, query planning or network IO.",
+  "fixture": "Each sample has value one. Timestamps are distinct and increase from zero. Each process checks the complete reduction checksum.",
+  "memory": "Whole-process peak RSS from wait4, in KiB. Allocation calls include malloc, calloc, realloc and aligned allocation calls, including test harness overhead.",
+  "latency": "Three fresh processes per state, with alternating order. Latency captures have no allocation probe. Shared build host; these are diagnostic timings, not end-to-end speedup measurements.",
+  "reproduce": "source /workspace/.cloud-setup/activate.sh; cargo test -p krabka-observability --lib --locked --no-run; python3 qualification/evidence/metric-sample-state-2026-10-19/measure.py <test-binary> qualification/metric-sample-state-2026-10-19.json",
+  "measurements": [
+    {
+      "operation": "count",
+      "rows": 1000,
+      "windows": 1,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 2857,
+            "peak_rss_kib": 38180
+          },
+          {
+            "elapsed_us": 1030,
+            "peak_rss_kib": 37824
+          },
+          {
+            "elapsed_us": 1632,
+            "peak_rss_kib": 37504
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 276,
+            "peak_rss_kib": 34788
+          },
+          {
+            "elapsed_us": 187,
+            "peak_rss_kib": 34876
+          },
+          {
+            "elapsed_us": 200,
+            "peak_rss_kib": 34700
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 1408,
+          "peak_rss_kib": 38016,
+          "allocation_calls": 443,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 398,
+          "peak_rss_kib": 34560,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 1000,
+      "windows": 8,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 9359,
+            "peak_rss_kib": 37908
+          },
+          {
+            "elapsed_us": 8905,
+            "peak_rss_kib": 38324
+          },
+          {
+            "elapsed_us": 9738,
+            "peak_rss_kib": 38240
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 825,
+            "peak_rss_kib": 35316
+          },
+          {
+            "elapsed_us": 1026,
+            "peak_rss_kib": 34876
+          },
+          {
+            "elapsed_us": 927,
+            "peak_rss_kib": 34836
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 7193,
+          "peak_rss_kib": 37856,
+          "allocation_calls": 1675,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 1602,
+          "peak_rss_kib": 35316,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 1000,
+      "windows": 32,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 52595,
+            "peak_rss_kib": 40804
+          },
+          {
+            "elapsed_us": 52201,
+            "peak_rss_kib": 40216
+          },
+          {
+            "elapsed_us": 38881,
+            "peak_rss_kib": 40804
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 3192,
+            "peak_rss_kib": 34928
+          },
+          {
+            "elapsed_us": 3679,
+            "peak_rss_kib": 34708
+          },
+          {
+            "elapsed_us": 4600,
+            "peak_rss_kib": 34996
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 39697,
+          "peak_rss_kib": 40860,
+          "allocation_calls": 5899,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 4384,
+          "peak_rss_kib": 35508,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 10000,
+      "windows": 1,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 13451,
+            "peak_rss_kib": 38748
+          },
+          {
+            "elapsed_us": 12848,
+            "peak_rss_kib": 38584
+          },
+          {
+            "elapsed_us": 11181,
+            "peak_rss_kib": 38396
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 1201,
+            "peak_rss_kib": 34752
+          },
+          {
+            "elapsed_us": 796,
+            "peak_rss_kib": 34700
+          },
+          {
+            "elapsed_us": 1080,
+            "peak_rss_kib": 35252
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 10666,
+          "peak_rss_kib": 38840,
+          "allocation_calls": 1946,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 1372,
+          "peak_rss_kib": 34784,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 10000,
+      "windows": 8,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 109420,
+            "peak_rss_kib": 45392
+          },
+          {
+            "elapsed_us": 95562,
+            "peak_rss_kib": 45972
+          },
+          {
+            "elapsed_us": 93897,
+            "peak_rss_kib": 45308
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 9435,
+            "peak_rss_kib": 35384
+          },
+          {
+            "elapsed_us": 6668,
+            "peak_rss_kib": 34880
+          },
+          {
+            "elapsed_us": 7300,
+            "peak_rss_kib": 35380
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 115080,
+          "peak_rss_kib": 45972,
+          "allocation_calls": 13699,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 8859,
+          "peak_rss_kib": 35252,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 10000,
+      "windows": 32,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 460590,
+            "peak_rss_kib": 72932
+          },
+          {
+            "elapsed_us": 405131,
+            "peak_rss_kib": 72528
+          },
+          {
+            "elapsed_us": 421561,
+            "peak_rss_kib": 72984
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 25408,
+            "peak_rss_kib": 34696
+          },
+          {
+            "elapsed_us": 24836,
+            "peak_rss_kib": 35252
+          },
+          {
+            "elapsed_us": 26128,
+            "peak_rss_kib": 34788
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 370654,
+          "peak_rss_kib": 72660,
+          "allocation_calls": 53995,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 28400,
+          "peak_rss_kib": 35188,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 100000,
+      "windows": 1,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 126453,
+            "peak_rss_kib": 47972
+          },
+          {
+            "elapsed_us": 134066,
+            "peak_rss_kib": 47920
+          },
+          {
+            "elapsed_us": 112516,
+            "peak_rss_kib": 47920
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 9379,
+            "peak_rss_kib": 34700
+          },
+          {
+            "elapsed_us": 12389,
+            "peak_rss_kib": 35508
+          },
+          {
+            "elapsed_us": 14620,
+            "peak_rss_kib": 35380
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 131314,
+          "peak_rss_kib": 47320,
+          "allocation_calls": 16949,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 8257,
+          "peak_rss_kib": 34752,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 100000,
+      "windows": 8,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 1093319,
+            "peak_rss_kib": 125652
+          },
+          {
+            "elapsed_us": 1085258,
+            "peak_rss_kib": 126136
+          },
+          {
+            "elapsed_us": 1141447,
+            "peak_rss_kib": 125668
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 82828,
+            "peak_rss_kib": 34784
+          },
+          {
+            "elapsed_us": 61592,
+            "peak_rss_kib": 35048
+          },
+          {
+            "elapsed_us": 76780,
+            "peak_rss_kib": 34996
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 1089037,
+          "peak_rss_kib": 126056,
+          "allocation_calls": 133723,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 58774,
+          "peak_rss_kib": 35508,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "count",
+      "rows": 100000,
+      "windows": 32,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 4507440,
+            "peak_rss_kib": 393504
+          },
+          {
+            "elapsed_us": 5011935,
+            "peak_rss_kib": 393496
+          },
+          {
+            "elapsed_us": 5836259,
+            "peak_rss_kib": 394008
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 244867,
+            "peak_rss_kib": 34908
+          },
+          {
+            "elapsed_us": 254071,
+            "peak_rss_kib": 35316
+          },
+          {
+            "elapsed_us": 413055,
+            "peak_rss_kib": 34836
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 7106782,
+          "peak_rss_kib": 393496,
+          "allocation_calls": 534091,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 244482,
+          "peak_rss_kib": 35316,
+          "allocation_calls": 267,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "quantile",
+      "rows": 100000,
+      "windows": 8,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 1833645,
+            "peak_rss_kib": 126240
+          },
+          {
+            "elapsed_us": 1627248,
+            "peak_rss_kib": 126620
+          },
+          {
+            "elapsed_us": 1074309,
+            "peak_rss_kib": 126692
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 73108,
+            "peak_rss_kib": 60648
+          },
+          {
+            "elapsed_us": 69559,
+            "peak_rss_kib": 60124
+          },
+          {
+            "elapsed_us": 60672,
+            "peak_rss_kib": 60328
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 1256481,
+          "peak_rss_kib": 126756,
+          "allocation_calls": 133731,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 64174,
+          "peak_rss_kib": 59796,
+          "allocation_calls": 403,
+          "state_bytes": 80
+        }
+      }
+    },
+    {
+      "operation": "counter",
+      "rows": 100000,
+      "windows": 8,
+      "timings_without_probe": {
+        "legacy": [
+          {
+            "elapsed_us": 1188467,
+            "peak_rss_kib": 126484
+          },
+          {
+            "elapsed_us": 1212531,
+            "peak_rss_kib": 126244
+          },
+          {
+            "elapsed_us": 1164175,
+            "peak_rss_kib": 126480
+          }
+        ],
+        "selected": [
+          {
+            "elapsed_us": 968057,
+            "peak_rss_kib": 101088
+          },
+          {
+            "elapsed_us": 1056539,
+            "peak_rss_kib": 101548
+          },
+          {
+            "elapsed_us": 1440384,
+            "peak_rss_kib": 101400
+          }
+        ]
+      },
+      "allocation_capture": {
+        "legacy": {
+          "elapsed_us": 1574689,
+          "peak_rss_kib": 126244,
+          "allocation_calls": 133723,
+          "state_bytes": 352
+        },
+        "selected": {
+          "elapsed_us": 1447875,
+          "peak_rss_kib": 101540,
+          "allocation_calls": 133595,
+          "state_bytes": 80
+        }
+      }
+    }
+  ],
+  "date": "2026-10-19",
+  "cpu_quota": "800000 200000",
+  "verification": {
+    "cargo test -p krabka-observability --lib --test querier --locked -- --test-threads=2": "passed: 523 unit tests, 70 querier tests; 1 profiling workload ignored",
+    "cargo clippy -p krabka-observability --lib --tests --locked -- -D warnings": "passed",
+    "bazel run //tools/format": "passed before workspace restart; final changed Rust files also passed rustfmt --check",
+    "bazel test //...": "Results unavailable after workspace restart; no full-suite pass claimed"
+  }
+}

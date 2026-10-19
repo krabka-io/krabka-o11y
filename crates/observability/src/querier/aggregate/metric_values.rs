@@ -14,8 +14,6 @@ mod vector_aggregation_state;
 
 pub(crate) use eval_times::{checked_eval_times, eval_times};
 pub(crate) use metric_sample_state::MetricSampleState;
-#[cfg(test)]
-pub(crate) use metric_sample_state::TimestampedMetricValue;
 pub(crate) use vector_aggregation_state::VectorAggregationState;
 
 pub(crate) fn format_metric_value(value: MetricValue) -> String {

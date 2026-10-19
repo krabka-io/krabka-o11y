@@ -144,11 +144,7 @@ pub(crate) mod prelude {
         limits::*,
         metrics::ServiceMetrics,
         querier::{
-            aggregate::{
-                metric_values::{TimestampedMetricValue, *},
-                record_matching::*,
-                sample_windows::*,
-            },
+            aggregate::{metric_values::*, record_matching::*, sample_windows::*},
             analytics::{
                 detected_fields::{DetectedDurationUnit, ParsedLogfmtPair, *},
                 index_patterns::*,
