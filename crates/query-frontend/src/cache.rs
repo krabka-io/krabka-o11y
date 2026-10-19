@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt::Write as _,
     marker::PhantomData,
     num::NonZeroUsize,
@@ -527,6 +527,8 @@ pub enum ObjectStoreCacheError {
     Encode(serde_json::Error),
     #[error("query frontend cache decoding failed: {0}")]
     Decode(serde_json::Error),
+    #[error("invalid query frontend cache metadata path: {0}")]
+    Metadata(Path),
 }
 
 /// Object-store-backed JSON cache shared by query frontend instances.
@@ -570,14 +572,14 @@ impl<V> ObjectStoreCache<V> {
         self
     }
 
-    fn path(&self, key: &CacheKey) -> Path {
-        let tenant = if key.tenant.is_empty() {
-            "_".to_string()
-        } else {
-            hex(key.tenant.as_bytes())
-        };
-        let name = hex(&key.bytes);
-        Path::from(format!("{}/{tenant}/{name}.json", self.prefix))
+    // The timestamp and LIST size are the eviction metadata. Keeping them on
+    // the payload object avoids a separate index that can drift across writers.
+    fn path(&self, key: &CacheKey, stored_at_ms: i64) -> Path {
+        Path::from(format!("{}v1-{stored_at_ms}.json", self.key_prefix(key)))
+    }
+
+    fn key_prefix(&self, key: &CacheKey) -> String {
+        format!("{}k{}/", self.tenant_prefix(key.tenant()), hex(&key.bytes))
     }
 
     fn tenant_prefix(&self, tenant: &str) -> String {
@@ -605,7 +607,24 @@ where
 
     async fn get(&self, key: &CacheKey) -> Result<Option<V>, Self::Error> {
         let result = async {
-            let path = self.path(key);
+            let prefix = Path::from(self.key_prefix(key));
+            let newest = self
+                .store
+                .list(Some(&prefix))
+                .map_err(ObjectStoreCacheError::from)
+                .try_fold(None, |newest: Option<StoredObject>, object| async move {
+                    let object = StoredObject::try_from(object)?;
+                    Ok::<_, ObjectStoreCacheError>(Some(match newest {
+                        Some(newest) if newest.stored_at_ms > object.stored_at_ms => newest,
+                        _ => object,
+                    }))
+                })
+                .await?;
+            let Some(object) = newest else {
+                self.metrics.misses.inc();
+                return Ok(None);
+            };
+            let path = object.path;
             let bytes = match self.store.get(&path).await {
                 Ok(result) => result.bytes().await?,
                 Err(object_store::Error::NotFound { .. }) => {
@@ -640,8 +659,9 @@ where
 
     async fn insert(&self, key: &CacheKey, value: &V) -> Result<(), Self::Error> {
         let result = async {
+            let stored_at_ms = self.clock.now_epoch_millis();
             let bytes = serde_json::to_vec(&StoredValue {
-                stored_at_ms: self.clock.now_epoch_millis(),
+                stored_at_ms,
                 value,
             })
             .map_err(ObjectStoreCacheError::Encode)?;
@@ -659,7 +679,7 @@ where
                 return Ok(());
             }
             self.store
-                .put(&self.path(key), PutPayload::from(bytes))
+                .put(&self.path(key, stored_at_ms), PutPayload::from(bytes))
                 .await?;
             self.prune_for_insert(key).await?;
             Ok(())
@@ -675,15 +695,18 @@ where
         let result = async {
             let _guard = self.mutation.lock().await;
             let prefix = Path::from(self.prefix.clone());
-            let mut objects = self.store.list(Some(&prefix));
+            let objects = self
+                .store
+                .list(Some(&prefix))
+                .map_err(ObjectStoreCacheError::from)
+                .and_then(|object| async { StoredObject::try_from(object) })
+                .try_collect::<Vec<_>>()
+                .await?;
             let now_ms = self.clock.now_epoch_millis();
             let mut swept = 0;
-            while let Some(object) = objects.try_next().await? {
-                let bytes = self.store.get(&object.location).await?.bytes().await?;
-                let stored: StoredValue<serde_json::Value> =
-                    serde_json::from_slice(&bytes).map_err(ObjectStoreCacheError::Decode)?;
-                if is_expired(stored.stored_at_ms, now_ms, self.ttl) {
-                    self.store.delete(&object.location).await?;
+            for object in objects {
+                if is_expired(object.stored_at_ms, now_ms, self.ttl) {
+                    self.store.delete(&object.path).await?;
                     swept += 1;
                 }
             }
@@ -731,6 +754,26 @@ struct StoredObject {
     same_tenant: bool,
 }
 
+impl TryFrom<object_store::ObjectMeta> for StoredObject {
+    type Error = ObjectStoreCacheError;
+
+    fn try_from(object: object_store::ObjectMeta) -> Result<Self, Self::Error> {
+        let stored_at_ms = object
+            .location
+            .filename()
+            .and_then(|name| name.strip_prefix("v1-"))
+            .and_then(|name| name.strip_suffix(".json"))
+            .and_then(|timestamp| timestamp.parse::<i64>().ok())
+            .ok_or_else(|| ObjectStoreCacheError::Metadata(object.location.clone()))?;
+        Ok(Self {
+            path: object.location,
+            stored_at_ms,
+            bytes: usize::try_from(object.size).unwrap_or(usize::MAX),
+            same_tenant: false,
+        })
+    }
+}
+
 impl<V> ObjectStoreCache<V>
 where
     V: DeserializeOwned + Send + Sync + Serialize,
@@ -738,50 +781,52 @@ where
     async fn prune_for_insert(&self, key: &CacheKey) -> Result<(), ObjectStoreCacheError> {
         let tenant_prefix = self.tenant_prefix(key.tenant());
         let prefix = Path::from(self.prefix.clone());
-        let objects = self
-            .store
-            .list(Some(&prefix))
-            .try_collect::<Vec<_>>()
-            .await?;
+        let mut objects = self.store.list(Some(&prefix));
         let mut stored = Vec::new();
-        let mut total_bytes = 0_usize;
-        let mut total_objects = 0_usize;
-        let mut tenant_bytes = 0_usize;
-        let mut tenant_objects = 0_usize;
-        for object in objects {
-            let bytes = self.store.get(&object.location).await?.bytes().await?;
-            let value: StoredValue<serde_json::Value> = match serde_json::from_slice(&bytes) {
-                Ok(value) => value,
-                Err(error) => {
-                    self.metrics.errors.inc();
-                    return Err(ObjectStoreCacheError::Decode(error));
-                }
-            };
-            if is_expired(value.stored_at_ms, self.clock.now_epoch_millis(), self.ttl) {
-                self.store.delete(&object.location).await?;
-                self.metrics.stale.inc();
-                self.metrics.sweeps.inc();
-                continue;
-            }
-            let same_tenant = object.location.as_ref().starts_with(&tenant_prefix);
-            total_objects += 1;
-            total_bytes = total_bytes.saturating_add(bytes.len());
-            if same_tenant {
-                tenant_objects += 1;
-                tenant_bytes = tenant_bytes.saturating_add(bytes.len());
-            }
-            stored.push(StoredObject {
-                path: object.location,
-                stored_at_ms: value.stored_at_ms,
-                bytes: bytes.len(),
-                same_tenant,
-            });
+        while let Some(object) = objects.try_next().await? {
+            stored.push(StoredObject::try_from(object)?);
         }
         stored.sort_by(|left, right| {
             left.stored_at_ms
                 .cmp(&right.stored_at_ms)
                 .then_with(|| left.path.as_ref().cmp(right.path.as_ref()))
         });
+        // Keep the newest timestamp for each key. Different timestamps have
+        // different paths, so an old snapshot cannot delete a newer replacement.
+        let mut keys = BTreeSet::new();
+        let mut live = VecDeque::new();
+        let now_ms = self.clock.now_epoch_millis();
+        let mut total_bytes = 0_usize;
+        let mut total_objects = 0_usize;
+        let mut tenant_bytes = 0_usize;
+        let mut tenant_objects = 0_usize;
+        for mut object in stored.into_iter().rev() {
+            let key_path = object
+                .path
+                .as_ref()
+                .rsplit_once('/')
+                .map(|(key, _)| key)
+                .unwrap_or_default();
+            let newest = keys.insert(key_path.to_owned());
+            let expired = is_expired(object.stored_at_ms, now_ms, self.ttl);
+            if expired || !newest {
+                self.store.delete(&object.path).await?;
+                if expired {
+                    self.metrics.stale.inc();
+                    self.metrics.sweeps.inc();
+                }
+                continue;
+            }
+            object.same_tenant = object.path.as_ref().starts_with(&tenant_prefix);
+            total_objects += 1;
+            total_bytes = total_bytes.saturating_add(object.bytes);
+            if object.same_tenant {
+                tenant_objects += 1;
+                tenant_bytes = tenant_bytes.saturating_add(object.bytes);
+            }
+            live.push_front(object);
+        }
+        let mut stored = live;
         while tenant_objects
             > self
                 .policy
@@ -796,7 +841,7 @@ where
             let Some(position) = stored.iter().position(|object| object.same_tenant) else {
                 break;
             };
-            let object = stored.remove(position);
+            let object = stored.remove(position).expect("position exists");
             self.store.delete(&object.path).await?;
             tenant_objects -= 1;
             tenant_bytes -= object.bytes;
@@ -811,10 +856,9 @@ where
                 .map_or(usize::MAX, NonZeroUsize::get)
             || total_bytes > self.policy.max_bytes.map_or(usize::MAX, NonZeroUsize::get)
         {
-            let Some(object) = stored.first().cloned() else {
+            let Some(object) = stored.pop_front() else {
                 break;
             };
-            stored.remove(0);
             self.store.delete(&object.path).await?;
             total_objects -= 1;
             total_bytes -= object.bytes;

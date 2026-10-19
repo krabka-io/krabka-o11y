@@ -25,6 +25,7 @@ Each format has one current version. Writers stamp it. Readers reject a missing,
 | profiles | block metadata, SymbolDB objects, and lifecycle manifests | protobuf/JSON version 1 | exact version; immutable object keys |
 | profiles | async query generations and expiry fences | JSON `version: 1`, required | exact version and tenant/query identity; immutable conditional creation; expiry fences remain after payload retention cleanup |
 | ruler | rule groups, evaluations, and active-alert tenant state | `krabka-format-version: 1`, required | exact version; validate the whole poll before state mutation |
+| query frontend | cached JSON query results | object filename `v1-<stored_at_ms>.json`, required | exact version; TTL and eviction use the path timestamp and LIST size |
 | tenant admin | delete requests, deletion markers, overrides, and uploaded debuginfo | JSON/raw version 1 | one current schema; raw uploads are immutable |
 | recovery | backup part manifests (`.krabka-recovery/manifest.json`) | JSON `schema_version` 1 | exact version; a manifest names a tenant, a part, or both; another version is rejected before a copy |
 | recovery | deployment cut (`krabka-recovery/cut.json`) | JSON `schema_version` 1 | exact version; written last, so a set without it is incomplete; `omitted_parts` is required |
