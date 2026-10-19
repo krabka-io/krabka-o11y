@@ -1,0 +1,306 @@
+name: release tests
+
+# Called before publishing a v* image or resuming an existing release.
+# Manual dispatch also supports qualification without publishing anything.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Source tag or commit to test
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source tag or commit to test (empty uses the selected branch)
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+
+jobs:
+  # Replay the checked-in Creusot sessions with the same immutable toolchain
+  # that produces the broker repository's proofs. The image supplies Rust,
+  # Why3 and the provers; this repository supplies the explicit package list.
+  proofs:
+    name: creusot proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CREUSOT_IMAGE: ghcr.io/krabka-io/creusot@sha256:15834cde90d902a148d08ec6c8d9a03336ac353d24fa05d3beb32e69bb5cb51b
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - name: replay proofs
+        run: |
+          docker run --rm \
+            --entrypoint /bin/bash \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace \
+            --workdir /workspace \
+            "${CREUSOT_IMAGE}" tools/creusot-prove.sh
+  # Container suites, one runner each. Every release runs the complete set.
+  #
+  # These saturate a runner: each boots a Grafana-stack component and compares
+  # against it, so running them together buys little -- the box, not the target
+  # granularity, is the limit. One job per suite, so the wall clock is the
+  # slowest suite rather than the sum of all of them.
+  docker-select:
+    name: select container suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      suites: ${{ steps.select.outputs.suites }}
+      any: ${{ steps.select.outputs.any }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: false
+          repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
+      - id: select
+        run: |
+          set -euo pipefail
+          # `except` the scale suites. They are container suites and carry
+          # the `docker` tag, so without this they land in this job -- whose
+          # budget is 60 minutes for a differential run, not the ingest of ten
+          # thousand series. The `scale` job below is theirs.
+          # Image loaders and tarballs also have Docker tags. Select tests only.
+          all() {
+            suites='attr(tags, "docker", //crates/...) except attr(tags, "scale", //crates/...)'
+            versions='attr(name, ".*_version_test", //bazel/images:*)'
+            bazel query "tests((${suites}) union ${versions})"
+          }
+
+          targets="$(all)"
+
+          # One matrix entry per target, `name` being the bare suite for the job
+          # label -- the full label is too long to read in the checks list.
+          # `grep` finding nothing is the empty selection, not an error, and a
+          # bare `[ ] && x` would exit under `set -e` whenever the test is false.
+          suites="$(
+            printf '%s\n' "${targets}" | { grep -E '^//' || true; } |
+              jq -R -s -c 'split("\n") | map(select(length > 0)) |
+                map({target: ., name: (. | split(":")[1] | sub("_docker_test$"; ""))})'
+          )"
+          if [ -z "${suites}" ]; then suites='[]'; fi
+          echo "suites=${suites}" >>"${GITHUB_OUTPUT}"
+          echo "any=$([ "${suites}" = '[]' ] && echo false || echo true)" >>"${GITHUB_OUTPUT}"
+          echo "Selected: ${suites}"
+  docker:
+    name: container · ${{ matrix.suite.name }}
+    needs: docker-select
+    if: needs.docker-select.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # One suite failing should not cancel the rest -- the point of the shard
+      # is to see every suite's result in one run.
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.docker-select.outputs.suites) }}
+    env:
+      KRABKA_GENERATED_CASES: '16'
+      KRABKA_GENERATED_NIGHTLY: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - name: source commit
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: false
+          repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
+      # The differential suites point a Grafana-stack container back at a
+      # collector running on the host, under the name `host.docker.internal`.
+      # The container resolves it through
+      # `--add-host=host.docker.internal:host-gateway`; the host has to resolve
+      # it too, because the same address is what the test asserts against.
+      - run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+      - id: run
+        run: |
+          python3 tools/build-query-runners.py --bazel test --config=docker \
+            --nocache_test_results --flaky_test_attempts=1 --nozip_undeclared_test_outputs \
+            --test_env=KRABKA_GENERATED_CASES --test_env=KRABKA_GENERATED_NIGHTLY \
+            ${{ matrix.suite.target }}
+      - name: collect immutable query evidence
+        if: always()
+        env:
+          TARGET: ${{ matrix.suite.target }}
+          SUITE: ${{ matrix.suite.name }}
+        run: |
+          set -euo pipefail
+          evidence="${RUNNER_TEMP}/query-evidence/${SUITE}"
+          mkdir -p "${evidence}/raw"
+          git rev-parse HEAD > "${evidence}/commit"
+          printf '%s\n' '${{ steps.run.outcome }}' > "${evidence}/run-result"
+          printf '%s\n' "${TARGET}" > "${evidence}/target"
+          upstream_runner=false
+          if [[ "${TARGET}" == *diff_prometheus* || "${TARGET}" == *loki_differential* ]]; then
+            upstream_runner=true
+          fi
+          printf '%s\n' "generated_cases=${KRABKA_GENERATED_CASES}" \
+            "generated_nightly=${KRABKA_GENERATED_NIGHTLY}" "docker=true" \
+            "upstream_runner=${upstream_runner}" "cache_test_results=false" \
+            "flaky_test_attempts=1" "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" "runner=${RUNNER_NAME}" \
+            "runner_os=${RUNNER_OS}" > "${evidence}/run-profile.txt"
+          uname -a > "${evidence}/kernel.txt"
+          lscpu > "${evidence}/cpu.txt"
+          docker info > "${evidence}/docker.txt" 2>&1 || true
+          sha256sum MODULE.bazel bazel/images/images.bzl rust-toolchain.toml \
+            tools/build-query-runners.py > "${evidence}/source-sha256.txt"
+          cp bazel/images/images.bzl "${evidence}/oracle-images.bzl"
+          logs="bazel-testlogs/${TARGET#//}"
+          logs="${logs/:/\/}"
+          if [[ -f "${logs}/test.log" ]]; then
+            cp "${logs}/test.log" "${evidence}/test.log"
+            cp "${logs}/test.log" "${evidence}/raw/test.log"
+          fi
+          if [[ -d "${logs}/test.outputs" ]]; then
+            cp -rL "${logs}/test.outputs/." "${evidence}/raw/"
+          fi
+          for provenance in "${RUNNER_TEMP}"/query-runners/*runner*.json; do
+            if [[ -f "${provenance}" ]]; then
+              cp "${provenance}" "${evidence}/"
+            fi
+          done
+          (cd "${evidence}" && find . -type f ! -path ./SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > SHA256SUMS)
+      - name: verify selected query evidence
+        if: always()
+        run: |
+          python3 tools/query-language-report.py \
+            --evidence "${RUNNER_TEMP}/query-evidence" \
+            --output "${RUNNER_TEMP}/query-selected-report.json" \
+            --fail-invalid-evidence --allow-partial
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-conformance-${{ matrix.suite.name }}-${{ env.SOURCE_SHA }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/query-evidence/
+            ${{ runner.temp }}/query-selected-report.json
+          if-no-files-found: error
+  # The scale suites: the block store at the cardinality and volume the design
+  # targets, against a real object store.
+  #
+  # Release-only, and separate from the `docker` job above even though these are
+  # container suites too. A differential suite boots a component and compares a
+  # few hundred answers against it. A scale suite writes ten thousand series or
+  # a million spans before its first assertion, which is the container job's
+  # whole budget. Two tag sets, two jobs, two budgets -- see //.bazelrc, which
+  # states the same split.
+  #
+  # These assert on shape, not on wall clock: how many blocks a prune selected,
+  # how many objects a compaction left, whether every row survived. A runner
+  # under load makes them slow, not red, which is what lets them gate a release.
+  scale:
+    name: scale · ${{ matrix.suite.name }}
+    runs-on: ubuntu-latest
+    # A bound, not an estimate, the same way the jobs above treat theirs.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Named rather than queried. There are a handful of these by design,
+        # and a matrix computed by a `needs` job would cost a second runner and
+        # twenty minutes of Bazel start-up to learn what this list already says.
+        # `bazel test --config=scale //crates/...` runs the same set for anyone
+        # who would rather not name them.
+        suite:
+          - name: object_store
+            target: //crates/observability:scale_object_store_docker_test
+          # The operating-envelope soak: all four signals through eight phases
+          # each. Same tag and same container as the suite above, its own
+          # runner because it holds a wall-clock budget of its own and would
+          # otherwise spend the other suite's.
+          - name: soak
+            target: //crates/integration:soak_envelope_docker_test
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - name: source commit
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: false
+          repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
+      - run: |
+          bazel test --config=scale ${{ matrix.suite.target }} \
+            --test_env=KRABKA_SOAK_COMMIT=${SOURCE_SHA}
+      # A shared runner's numbers are too noisy to ratchet, so this step
+      # checks the shape of the report only: every signal, every phase, every
+      # field. The regression gate is `tools/soak-gate.py --baseline` on the
+      # stable runner; see //docs/operating_envelope.md.
+      - name: soak report
+        if: matrix.suite.name == 'soak'
+        run: |
+          outputs=bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs
+          if [ ! -f "${outputs}/soak-report.json" ] && [ -f "${outputs}/outputs.zip" ]; then
+            unzip -o "${outputs}/outputs.zip" soak-report.json -d "${outputs}"
+          fi
+          tools/soak-gate.py --structural "${outputs}/soak-report.json"
+      - name: evidence manifest
+        if: always()
+        run: |
+          evidence="${RUNNER_TEMP}/scale-evidence"
+          mkdir -p "${evidence}"
+          {
+            echo "commit=${SOURCE_SHA}"
+            echo "suite=${{ matrix.suite.name }}"
+            echo "host=$(uname -a)"
+            echo "cpu_count=$(nproc)"
+            awk '/^MemTotal:/ {print "memory_kib=" $2}' /proc/meminfo
+            echo "command=bazel test --config=scale ${{ matrix.suite.target }}"
+          } >"${evidence}/run.metadata.txt"
+          find -L bazel-testlogs -type f -print0 2>/dev/null | sort -z \
+            | xargs -0 -r sha256sum >"${evidence}/SHA256SUMS"
+          sha256sum "${evidence}/run.metadata.txt" >>"${evidence}/SHA256SUMS"
+      - name: evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scale-${{ matrix.suite.name }}-${{ env.SOURCE_SHA }}
+          path: |
+            ${{ runner.temp }}/scale-evidence/
+            bazel-testlogs/**/test.log
+            bazel-testlogs/**/test.outputs/**
+          if-no-files-found: warn
+  kubernetes:
+    uses: ./.github/workflows/kubernetes.yml
+    with:
+      ref: ${{ inputs.ref || github.ref }}
+  query-conformance:
+    uses: ./.github/workflows/query-conformance.yml
+    with:
+      ref: ${{ inputs.ref || github.ref }}
+      strict: true
+    secrets: inherit
