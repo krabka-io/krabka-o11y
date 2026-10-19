@@ -29,7 +29,7 @@ fi
 exec bb remote \
   --os=linux \
   --arch=amd64 \
-  --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
+  --container_image=docker://docker.io/library/rust@sha256:e259494b14672950a909b4c54527e19d29cae6ebf980672114c8bb85e5594e4a \
   --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   --env=CI=true \
   --run_from_commit="$(git rev-parse HEAD)" \
