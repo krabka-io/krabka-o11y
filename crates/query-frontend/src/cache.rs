@@ -529,6 +529,8 @@ pub enum ObjectStoreCacheError {
     Decode(serde_json::Error),
     #[error("invalid query frontend cache metadata path: {0}")]
     Metadata(Path),
+    #[error("query frontend cache replacement revision exhausted")]
+    RevisionExhausted,
 }
 
 /// Object-store-backed JSON cache shared by query frontend instances.
@@ -574,8 +576,11 @@ impl<V> ObjectStoreCache<V> {
 
     // The timestamp and LIST size are the eviction metadata. Keeping them on
     // the payload object avoids a separate index that can drift across writers.
-    fn path(&self, key: &CacheKey, stored_at_ms: i64) -> Path {
-        Path::from(format!("{}v1-{stored_at_ms}.json", self.key_prefix(key)))
+    fn path(&self, key: &CacheKey, revision: u64, stored_at_ms: i64) -> Path {
+        Path::from(format!(
+            "{}v2-{revision}-{stored_at_ms}.json",
+            self.key_prefix(key)
+        ))
     }
 
     fn key_prefix(&self, key: &CacheKey) -> String {
@@ -615,7 +620,9 @@ where
                 .try_fold(None, |newest: Option<StoredObject>, object| async move {
                     let object = StoredObject::try_from(object)?;
                     Ok::<_, ObjectStoreCacheError>(Some(match newest {
-                        Some(newest) if newest.stored_at_ms > object.stored_at_ms => newest,
+                        Some(newest) if newest.replacement_order() > object.replacement_order() => {
+                            newest
+                        }
                         _ => object,
                     }))
                 })
@@ -678,8 +685,23 @@ where
                 self.metrics.errors.inc();
                 return Ok(());
             }
+            // Validate the whole namespace before a write can replace a result.
+            // Revisions follow observed writes, independently of frontend clocks.
+            let objects = self.stored_objects().await?;
+            let key_prefix = self.key_prefix(key);
+            let revision = objects
+                .iter()
+                .filter(|object| object.path.as_ref().starts_with(&key_prefix))
+                .map(|object| object.revision)
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or(ObjectStoreCacheError::RevisionExhausted)?;
             self.store
-                .put(&self.path(key, stored_at_ms), PutPayload::from(bytes))
+                .put(
+                    &self.path(key, revision, stored_at_ms),
+                    PutPayload::from(bytes),
+                )
                 .await?;
             self.prune_for_insert(key).await?;
             Ok(())
@@ -694,14 +716,7 @@ where
     async fn sweep(&self) -> Result<usize, Self::Error> {
         let result = async {
             let _guard = self.mutation.lock().await;
-            let prefix = Path::from(self.prefix.clone());
-            let objects = self
-                .store
-                .list(Some(&prefix))
-                .map_err(ObjectStoreCacheError::from)
-                .and_then(|object| async { StoredObject::try_from(object) })
-                .try_collect::<Vec<_>>()
-                .await?;
+            let objects = self.stored_objects().await?;
             let now_ms = self.clock.now_epoch_millis();
             let mut swept = 0;
             for object in objects {
@@ -749,24 +764,41 @@ where
 #[derive(Clone)]
 struct StoredObject {
     path: Path,
+    revision: u64,
     stored_at_ms: i64,
     bytes: usize,
     same_tenant: bool,
+}
+
+impl StoredObject {
+    fn replacement_order(&self) -> (u64, &str) {
+        // Concurrent writes can choose the same revision. Break their tie
+        // consistently; a later non-overlapping write observes both revisions.
+        (self.revision, self.path.as_ref())
+    }
 }
 
 impl TryFrom<object_store::ObjectMeta> for StoredObject {
     type Error = ObjectStoreCacheError;
 
     fn try_from(object: object_store::ObjectMeta) -> Result<Self, Self::Error> {
-        let stored_at_ms = object
+        let (revision, stored_at_ms) = object
             .location
             .filename()
-            .and_then(|name| name.strip_prefix("v1-"))
+            .and_then(|name| name.strip_prefix("v2-"))
             .and_then(|name| name.strip_suffix(".json"))
-            .and_then(|timestamp| timestamp.parse::<i64>().ok())
+            .and_then(|name| name.split_once('-'))
+            .and_then(|(revision, timestamp)| {
+                Some((
+                    revision.parse::<u64>().ok()?,
+                    timestamp.parse::<i64>().ok()?,
+                ))
+            })
+            .filter(|(revision, _)| *revision > 0)
             .ok_or_else(|| ObjectStoreCacheError::Metadata(object.location.clone()))?;
         Ok(Self {
             path: object.location,
+            revision,
             stored_at_ms,
             bytes: usize::try_from(object.size).unwrap_or(usize::MAX),
             same_tenant: false,
@@ -778,21 +810,22 @@ impl<V> ObjectStoreCache<V>
 where
     V: DeserializeOwned + Send + Sync + Serialize,
 {
+    async fn stored_objects(&self) -> Result<Vec<StoredObject>, ObjectStoreCacheError> {
+        let prefix = Path::from(self.prefix.clone());
+        self.store
+            .list(Some(&prefix))
+            .map_err(ObjectStoreCacheError::from)
+            .and_then(|object| async { StoredObject::try_from(object) })
+            .try_collect()
+            .await
+    }
+
     async fn prune_for_insert(&self, key: &CacheKey) -> Result<(), ObjectStoreCacheError> {
         let tenant_prefix = self.tenant_prefix(key.tenant());
-        let prefix = Path::from(self.prefix.clone());
-        let mut objects = self.store.list(Some(&prefix));
-        let mut stored = Vec::new();
-        while let Some(object) = objects.try_next().await? {
-            stored.push(StoredObject::try_from(object)?);
-        }
-        stored.sort_by(|left, right| {
-            left.stored_at_ms
-                .cmp(&right.stored_at_ms)
-                .then_with(|| left.path.as_ref().cmp(right.path.as_ref()))
-        });
-        // Keep the newest timestamp for each key. Different timestamps have
-        // different paths, so an old snapshot cannot delete a newer replacement.
+        let mut stored = self.stored_objects().await?;
+        stored.sort_by(|left, right| left.replacement_order().cmp(&right.replacement_order()));
+        // Different revisions have different paths, so an old snapshot cannot
+        // delete a later replacement, even if the writer's clock moved backward.
         let mut keys = BTreeSet::new();
         let mut live = VecDeque::new();
         let now_ms = self.clock.now_epoch_millis();
@@ -827,6 +860,11 @@ where
             live.push_front(object);
         }
         let mut stored = live;
+        stored.make_contiguous().sort_by(|left, right| {
+            left.stored_at_ms
+                .cmp(&right.stored_at_ms)
+                .then_with(|| left.path.as_ref().cmp(right.path.as_ref()))
+        });
         while tenant_objects
             > self
                 .policy

@@ -146,7 +146,7 @@ async fn insert_downloads_no_payloads_as_objects_bytes_and_tenants_grow() {
         second.insert(&key, &payload).await.unwrap();
         assert!(store.gets.load(Ordering::Relaxed) == 0);
         assert!(store.downloaded.load(Ordering::Relaxed) == 0);
-        assert!(store.lists.load(Ordering::Relaxed) - lists_before == 1);
+        assert!(store.lists.load(Ordering::Relaxed) - lists_before == 2);
         assert!(second.get(&key).await.unwrap() == Some(payload));
         assert!(store.gets.load(Ordering::Relaxed) == 1);
         assert!(store.downloaded.load(Ordering::Relaxed) > payload_bytes);
@@ -317,7 +317,7 @@ async fn insert_prunes_expired_entries_after_the_exact_ttl_boundary() {
 
 #[tokio::test]
 async fn malformed_or_unknown_metadata_versions_are_rejected() {
-    for name in ["0.json", "v2-0.json", "v1-invalid.json"] {
+    for name in ["0.json", "v3-1-0.json", "v2-invalid-0.json", "v2-0-0.json"] {
         let store = Arc::new(CountingStore::default());
         let cache = ObjectStoreCache::<usize>::new(store.clone(), "cache", Duration::from_secs(60));
         let path = Path::from(format!("cache/74656e616e74/k6b6579/{name}"));
@@ -339,5 +339,97 @@ async fn malformed_or_unknown_metadata_versions_are_rejected() {
                 .len()
                 == 1
         );
+    }
+}
+
+#[tokio::test]
+async fn later_replacements_win_with_equal_or_backward_frontend_clocks() {
+    for later_time in [100, 90] {
+        let store = Arc::new(CountingStore::default());
+        let first_clock = Arc::new(ManualClock::default());
+        first_clock.0.store(100, Ordering::Relaxed);
+        let later_clock = Arc::new(ManualClock::default());
+        later_clock.0.store(later_time, Ordering::Relaxed);
+        let first =
+            ObjectStoreCache::<usize>::new(store.clone(), "cache", Duration::from_millis(20))
+                .with_clock(first_clock.clone());
+        let later = Arc::new(
+            ObjectStoreCache::<usize>::new(store.clone(), "cache", Duration::from_millis(20))
+                .with_clock(later_clock.clone()),
+        );
+        let key = CacheKey::new("tenant", b"key");
+        first.insert(&key, &1).await.unwrap();
+        store.delete_gate.pause.store(true, Ordering::Relaxed);
+        let writer = later.clone();
+        let write_key = key.clone();
+        let replacement = tokio::spawn(async move { writer.insert(&write_key, &2).await });
+        store.delete_gate.started.notified().await;
+        // Both versions still exist while pruning is paused. Reads also need
+        // to select the higher revision rather than the larger timestamp.
+        assert!(first.get(&key).await.unwrap() == Some(2));
+        store.delete_gate.resume.notify_one();
+        replacement.await.unwrap().unwrap();
+        assert!(first.get(&key).await.unwrap() == Some(2));
+        assert!(
+            store
+                .inner
+                .list(None)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap()
+                .len()
+                == 1
+        );
+        // The revision changes ordering, but TTL still uses the writer's clock.
+        later_clock.0.store(later_time + 20, Ordering::Relaxed);
+        assert!(later.sweep().await.unwrap() == 0);
+        later_clock.0.store(later_time + 21, Ordering::Relaxed);
+        assert!(later.sweep().await.unwrap() == 1);
+    }
+}
+
+#[tokio::test]
+async fn invalid_metadata_in_another_tenant_prevents_new_and_replacement_writes() {
+    for invalid_name in ["v3-1-0.json", "v2-invalid-0.json", "0.json"] {
+        for replace in [false, true] {
+            let store = Arc::new(CountingStore::default());
+            let cache =
+                ObjectStoreCache::<usize>::new(store.clone(), "cache", Duration::from_secs(60));
+            let existing = CacheKey::new("tenant", b"existing");
+            cache.insert(&existing, &1).await.unwrap();
+            let invalid = Path::from(format!("cache/7a/kbad/{invalid_name}"));
+            store
+                .inner
+                .put(&invalid, PutPayload::from("{}"))
+                .await
+                .unwrap();
+            let before = store
+                .inner
+                .list(None)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            let key = if replace {
+                existing.clone()
+            } else {
+                CacheKey::new("tenant", b"new")
+            };
+            let result = cache.insert(&key, &2).await;
+            assert!(matches!(
+                result,
+                Err(krabka_query_frontend::ObjectStoreCacheError::Metadata(_))
+            ));
+            let after = store
+                .inner
+                .list(None)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            assert!(after == before);
+            assert!(cache.metrics().snapshot().errors == 1);
+            assert!(store.gets.load(Ordering::Relaxed) == 0);
+            assert!(store.downloaded.load(Ordering::Relaxed) == 0);
+            assert!(cache.get(&existing).await.unwrap() == Some(1));
+        }
     }
 }
