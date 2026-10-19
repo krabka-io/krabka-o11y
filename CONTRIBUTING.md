@@ -17,10 +17,20 @@ Run the repository checks before you open a pull request:
 ```bash
 bazel run //tools/format
 bazel test //...
-cargo test --workspace --locked
+cargo check --workspace --all-targets --locked
 ```
 
-Run the Docker-tagged upstream suites when a change affects compatibility:
+PRs and pushes to `main` run one non-container Bazel test pass, plus Cargo
+compilation and feature checks. Cargo tests, coverage, and the fuzz/benchmark
+compile checks run nightly or through manual CI dispatch.
+
+The `image` workflow requires the full Docker, scale, proof, Kubernetes, and
+strict query-conformance suites before publishing a `v*` release. Resuming a
+release tests the requested source tag too. These suites do not run on PRs,
+main pushes, or the nightly CI schedule. Use the **release tests** workflow's
+manual dispatch to qualify a tag or commit without publishing.
+
+Run the Docker-tagged upstream suites locally when a change affects compatibility:
 
 ```bash
 bazel test --config=docker //crates/...

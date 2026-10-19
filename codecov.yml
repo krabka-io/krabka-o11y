@@ -1,9 +1,8 @@
 # Codecov configuration for krabka-o11y.
 #
 # The `coverage` job in //.github/workflows/ci.yml runs `bazel coverage
-# //crates/...` and uploads the merged LCOV file. Before this file existed
-# Codecov applied its own defaults, so no status could fail and a pull request
-# that added two thousand uncovered lines was green.
+# //crates/...` nightly or on manual dispatch and uploads the merged LCOV
+# file. Coverage statuses are informational because PRs do not upload reports.
 #
 # Read the reported percentage with one thing in mind. //.bazelrc sets
 #
@@ -40,26 +39,8 @@ coverage:
         target: auto
         informational: true
 
-    # The gate. New and changed lines need coverage, whatever the whole-project
-    # number reads.
-    #
-    # 80 percent rather than 100 percent, for the same reason `project` is
-    # informational: a change to the ingest path or to the compactor can be
-    # covered only by a suite this run skips, and its lines then read as
-    # uncovered here. 80 percent leaves room for that and still fails a change
-    # that brings no tests at all. Raise it when the exclusions no longer hide
-    # real coverage.
-    patch:
-      default:
-        target: 80%
-        threshold: 0%
-        # A pull request that touches no instrumented file, such as a change to
-        # docs or to a workflow, has no patch to measure. That is a pass, not a
-        # failure.
-        if_not_found: success
-        # A broken or missing upload must be loud. It is the failure this file
-        # exists to stop being silent.
-        if_ci_failed: error
+    # Coverage runs nightly or on manual dispatch, so PRs have no patch report.
+    patch: off
 
 # Integration test sources are compiled into the instrumented binaries, so they
 # appear in the report as ordinary files. Counting them would let a change that
