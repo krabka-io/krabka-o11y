@@ -28,6 +28,9 @@ pub struct DistributorState {
     pub tenant_policy: TenantPolicy,
     pub active_series: Mutex<HashMap<String, BTreeSet<u64>>>,
     pub cumulative_profiles: tokio::sync::Mutex<CumulativeProfileCache>,
+    /// Serializes cumulative transactions and max-series reservations per tenant.
+    /// Weak entries keep idle tenant locks reclaimable without breaking waiters.
+    pub tenant_ingest_locks: Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
     pub ingestion_buckets: Mutex<HashMap<String, Arc<TokenBucket>>>,
     pub relabel: Vec<RelabelConfig>,
     /// Shared raw, Connect, and decompressed request-body limit.
@@ -39,4 +42,26 @@ pub struct DistributorState {
     /// `record_ingest`. The WAL-append error site inside
     /// [`super::process_raw`] calls `record_wal_append_failure`.
     pub metrics: ServiceMetrics,
+}
+
+impl DistributorState {
+    pub(crate) fn tenant_ingest_lock(
+        &self,
+        tenant: &str,
+    ) -> Result<Arc<tokio::sync::Mutex<()>>, super::ProfilesError> {
+        let mut locks = self.tenant_ingest_locks.lock().map_err(|_| {
+            super::ProfilesError::Internal("tenant ingest lock poisoned".to_owned())
+        })?;
+        if let Some(lock) = locks.get(tenant).and_then(std::sync::Weak::upgrade) {
+            return Ok(lock);
+        }
+        // Reap idle entries at the accounting cap. Live locks must never be
+        // evicted: another request may still hold or be waiting on them.
+        if locks.len() >= self.max_tracked_tenants {
+            locks.retain(|_, lock| lock.strong_count() != 0);
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(tenant.to_owned(), Arc::downgrade(&lock));
+        Ok(lock)
+    }
 }
