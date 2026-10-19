@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tarfile
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 REVISION = '706d63224a7ce7be61ceb9d0525fe942d99a93df'
 
@@ -21,6 +21,18 @@ def archive(url, destination, prefix=''):
                 continue
             entry.name = relative
             contents.extract(entry, destination, filter='data')
+
+
+def backtrace_revision():
+    headers = {'Accept': 'application/vnd.github+json'}
+    if token := os.environ.get('GITHUB_TOKEN'):
+        headers['Authorization'] = f'Bearer {token}'
+    request = Request(
+        f'https://api.github.com/repos/wasix-org/rust/contents/library/backtrace?ref={REVISION}',
+        headers=headers,
+    )
+    with urlopen(request, timeout=30) as response:
+        return json.load(response)['sha']
 
 
 def prepare(tools, compiler, patch):
@@ -43,8 +55,7 @@ def prepare(tools, compiler, patch):
         archive(f'https://codeload.github.com/wasix-org/rust/tar.gz/{REVISION}', source, 'library/')
         # The backtrace submodule is the only library subtree absent from a GitHub
         # source archive. Resolve its exact revision from this immutable tree.
-        with urlopen(f'https://api.github.com/repos/wasix-org/rust/contents/library/backtrace?ref={REVISION}', timeout=30) as response:
-            revision = json.load(response)['sha']
+        revision = backtrace_revision()
         archive(f'https://codeload.github.com/rust-lang/backtrace-rs/tar.gz/{revision}', source / 'library/backtrace')
         subprocess.run(['patch', '-p1', '--batch', '--fuzz=0', '-i', str(patch)], cwd=source, check=True, stdout=subprocess.DEVNULL)
         marker.write_text(json.dumps(record, indent=2) + '\n')

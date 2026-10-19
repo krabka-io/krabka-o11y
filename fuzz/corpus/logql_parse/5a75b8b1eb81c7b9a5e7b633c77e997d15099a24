@@ -1,0 +1,1 @@
+sum by(token_extracted)(count_over_time({app="api"}[1m]))

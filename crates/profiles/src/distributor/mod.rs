@@ -112,13 +112,17 @@ mod tests {
         check!(err.contains("height does not fit u32"), "got: {err}");
     }
 
-    fn test_state(sink: Arc<dyn WalSink>, overrides: OverridesProvider) -> DistributorState {
+    pub(super) fn test_state(
+        sink: Arc<dyn WalSink>,
+        overrides: OverridesProvider,
+    ) -> DistributorState {
         DistributorState {
             sink,
             overrides,
             tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             cumulative_profiles: tokio::sync::Mutex::default(),
+            tenant_ingest_locks: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
             max_decompressed: mebibytes(16),
@@ -1607,3 +1611,6 @@ pub use router::router;
 pub use serve::serve;
 pub use serve_supervised::serve_supervised;
 pub use wal_sink::WalSink;
+
+#[cfg(test)]
+mod ingest_concurrency_tests;

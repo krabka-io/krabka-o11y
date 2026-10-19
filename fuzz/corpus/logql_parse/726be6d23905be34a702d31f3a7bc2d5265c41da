@@ -1,0 +1,1 @@
+bytes_over_time({app="api"}[1m] offset 15s)
