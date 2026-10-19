@@ -3262,6 +3262,60 @@ overrides:
     }
 
     #[tokio::test]
+    async fn otlp_http_preserves_rejection_counts_first_error_and_all_invalid_status() {
+        let mut data = MetricsData::decode(otlp_mixed_gauge_body().as_slice()).unwrap();
+        let Some(metric::Data::Gauge(gauge)) =
+            &mut data.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!("gauge fixture");
+        };
+        gauge.data_points.push(NumberDataPoint {
+            time_unix_nano: u64::MAX,
+            value: Some(number_data_point::Value::AsDouble(3.0)),
+            ..Default::default()
+        });
+        gauge.data_points.push(NumberDataPoint::default());
+        let fixture = test_state();
+        let app = router(fixture.state);
+        let response = app
+            .clone()
+            .oneshot(otlp_request(data.encode_to_vec()))
+            .await
+            .unwrap();
+        assert!(response.status() == StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let partial = ExportMetricsServiceResponse::decode(body)
+            .unwrap()
+            .partial_success
+            .unwrap();
+        check!(partial.rejected_data_points == 3);
+        check!(
+            partial
+                .error_message
+                .contains("missing number datapoint value")
+        );
+        check!(fixture.sink.records().len() == 2);
+
+        let Some(metric::Data::Gauge(gauge)) =
+            &mut data.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!("gauge fixture");
+        };
+        gauge.data_points.remove(0);
+        let response = app
+            .oneshot(otlp_request(data.encode_to_vec()))
+            .await
+            .unwrap();
+        check!(response.status() == StatusCode::BAD_REQUEST);
+        check!(
+            fixture.sink.records().len() == 2,
+            "all-invalid request appends nothing"
+        );
+    }
+
+    #[tokio::test]
     async fn otlp_http_accepts_gzip_and_both_standard_aliases() {
         let fixture = test_state();
         let state = fixture.state;

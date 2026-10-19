@@ -14,6 +14,17 @@ pub(crate) fn metric_series(
         return Ok(Vec::new());
     };
 
+    metric_series_with_data(metric, data, resource_attributes, strategy, accumulator)
+}
+
+/// Translate a point container while borrowing the original metric's metadata.
+pub(super) fn metric_series_with_data(
+    metric: &Metric,
+    data: &metric::Data,
+    resource_attributes: &[KeyValue],
+    strategy: TranslationStrategy,
+    accumulator: Option<&mut DeltaAccumulator>,
+) -> Result<Vec<DecodedSeries>, OtlpError> {
     reject_far_future_points(&metric.name, data)?;
     let histogram_scope = HistogramScope {
         metric,
