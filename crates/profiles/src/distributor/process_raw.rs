@@ -61,8 +61,33 @@ pub async fn process_raw(
         }
     }
 
-    let mut cumulative_profiles = state.cumulative_profiles.lock().await;
-    let mut next_cumulative_profiles = cumulative_profiles.clone();
+    let has_cumulative = decoded.iter().any(|record| record.cumulative);
+    // Cumulative baselines are a transaction through the WAL acknowledgement.
+    // Limited tenants also serialize reservations: otherwise a failed request
+    // could remove a fingerprint that a concurrent successful request reused.
+    // Ordinary, unlimited ingestion never enters either coordination path.
+    let _tenant_guard = if has_cumulative || limits.max_series != 0 {
+        Some(
+            state
+                .tenant_ingest_lock(tenant.as_str())?
+                .lock_owned()
+                .await,
+        )
+    } else {
+        None
+    };
+    let mut next_cumulative_profiles = CumulativeProfileCache::new();
+    if has_cumulative {
+        let cache = state.cumulative_profiles.lock().await;
+        for decoded in decoded.iter().filter(|record| record.cumulative) {
+            let key = cumulative_key(&decoded.record, tenant.as_str());
+            if let Some(previous) = cache.get(&key) {
+                next_cumulative_profiles
+                    .entry(key)
+                    .or_insert_with(|| previous.clone());
+            }
+        }
+    }
     let reservation_records = decoded
         .iter()
         .map(|decoded| decoded.record.clone())
@@ -79,7 +104,13 @@ pub async fn process_raw(
         }
     }
     if pending.is_empty() {
-        *cumulative_profiles = next_cumulative_profiles;
+        if has_cumulative {
+            state
+                .cumulative_profiles
+                .lock()
+                .await
+                .extend(next_cumulative_profiles);
+        }
         return Ok(());
     }
 
@@ -107,9 +138,22 @@ pub async fn process_raw(
         return Err(ProfilesError::from(error));
     }
 
-    *cumulative_profiles = next_cumulative_profiles;
+    if has_cumulative {
+        state
+            .cumulative_profiles
+            .lock()
+            .await
+            .extend(next_cumulative_profiles);
+    }
 
     Ok(())
+}
+
+fn cumulative_key(record: &ProfileRecord, tenant: &str) -> CumulativeProfileKey {
+    CumulativeProfileKey {
+        tenant: tenant.to_owned(),
+        labels: record.labels.clone(),
+    }
 }
 
 fn apply_cumulative_delta(
@@ -117,10 +161,7 @@ fn apply_cumulative_delta(
     tenant: &str,
     cache: &mut CumulativeProfileCache,
 ) {
-    let key = CumulativeProfileKey {
-        tenant: tenant.to_string(),
-        labels: record.labels.clone(),
-    };
+    let key = cumulative_key(record, tenant);
     let mut current = std::collections::HashMap::new();
     for sample in &record.samples {
         current.insert(sample.stacktrace_location_refs.clone(), sample.value);
