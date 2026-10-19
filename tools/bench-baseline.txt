@@ -306,3 +306,14 @@ log_query_frontend/all_limited/20000 unseeded
 log_query_frontend/all_sharded_limited/20000 unseeded
 log_query_frontend/all_limited/100000 unseeded
 log_query_frontend/all_sharded_limited/100000 unseeded
+
+# Log metric windows: row count x evaluation grid, one-minute ranges.
+log_metric_windows/steps_60/10000 unseeded
+log_metric_windows/steps_360/10000 unseeded
+log_metric_windows/steps_5760/10000 unseeded
+log_metric_windows/steps_60/100000 unseeded
+log_metric_windows/steps_360/100000 unseeded
+log_metric_windows/steps_5760/100000 unseeded
+log_metric_windows/steps_60/1000000 unseeded
+log_metric_windows/steps_360/1000000 unseeded
+log_metric_windows/steps_5760/1000000 unseeded

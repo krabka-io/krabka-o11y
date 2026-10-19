@@ -357,6 +357,7 @@ pub(crate) struct MetricValue {
 #[derive(Clone, Copy)]
 pub(crate) struct MetricWindow<'a> {
     pub(crate) query: &'a MetricQuery,
+    /// Sorted in ascending order so each row's containing windows form a slice.
     pub(crate) eval_times: &'a [i64],
     pub(crate) range_ns: i64,
     pub(crate) delete_filters: &'a [ActiveLogDeleteFilter],

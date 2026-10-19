@@ -1,0 +1,1 @@
+sum_over_time({app="api"} | logfmt | unwrap value [1m] offset 15s)

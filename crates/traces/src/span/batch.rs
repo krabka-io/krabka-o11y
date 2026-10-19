@@ -126,9 +126,9 @@ pub(crate) fn push_span_attr(attrs: &mut Vec<SpanAttr>, key: String, value: &Att
 
 /// Build rows for one trace, keeping whole-trace metadata when its window is clipped.
 /// Callers can then pack several traces without mixing their root columns.
-pub(crate) fn span_rows_for_window(
+pub(crate) fn span_rows_for_window<'a>(
     row_spans: &[impl Borrow<Span>],
-    trace_spans: &[Span],
+    trace_spans: impl Iterator<Item = &'a Span> + Clone,
 ) -> Vec<SpanRow> {
     // Nested-set intervals and child counts describe the rows themselves, so
     // they are computed over `row_spans`. Trace-level columns describe the
@@ -653,7 +653,7 @@ pub fn span_batch_for_window(
     trace_spans: &[Span],
     promoted_attrs: &[PromotedSpanAttr],
 ) -> Result<RecordBatch, TracesError> {
-    let rows = span_rows_for_window(row_spans, trace_spans);
+    let rows = span_rows_for_window(row_spans, trace_spans.iter());
 
     encode_span_rows_with_promoted_attrs(&rows, promoted_attrs)
         .map_err(|err| TracesError::Block(err.to_string()))

@@ -531,7 +531,7 @@ jobs:
           CARGO_TARGET_DIR="${PWD}/.tools/http-native-target" cargo test --manifest-path wasi-client/Cargo.toml --locked
       - name: build production services and static site
         env:
-          # cargo-wasix and wasixcc authenticate their GitHub release downloads.
+          # Authenticate toolchain release downloads and std submodule lookups.
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p .tools

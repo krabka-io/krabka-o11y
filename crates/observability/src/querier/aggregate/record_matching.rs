@@ -12,6 +12,9 @@ mod append_matching_hot_log_record;
 mod apply_distinct_to_streams;
 mod query_row;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) use append_matching_hot_log_record::append_matching_hot_log_record;
 pub(crate) use apply_distinct_to_streams::apply_distinct_to_streams;
 pub(crate) use krabka_logql::parse_decimal_sample_literal;
@@ -420,14 +423,22 @@ pub(crate) fn record_matching_metric_sample(
         | RangeAggregation::FirstOverTime
         | RangeAggregation::LastOverTime => unwrap_sample.unwrap_or_default(),
     };
-    for eval_time_ns in eval_times {
-        let window_end_ns = eval_time_ns.saturating_sub(query.offset_ns.0);
-        if timestamp_ns > window_end_ns.saturating_sub(range_ns) && timestamp_ns <= window_end_ns {
-            let sample = samples
-                .entry(*eval_time_ns)
-                .or_insert_with(|| MetricSampleState::new(query.aggregation));
-            sample.record(timestamp_ns, value);
-        }
+    // Both boundaries are monotone on the sorted evaluation grid, including
+    // where subtraction saturates. Search the original boundary expressions:
+    // moving the offset or range to the other side changes extreme timestamps.
+    let first =
+        eval_times.partition_point(|time| time.saturating_sub(query.offset_ns.0) < timestamp_ns);
+    let remaining = &eval_times[first..];
+    let count = remaining.partition_point(|time| {
+        time.saturating_sub(query.offset_ns.0)
+            .saturating_sub(range_ns)
+            < timestamp_ns
+    });
+    for eval_time_ns in &remaining[..count] {
+        let sample = samples
+            .entry(*eval_time_ns)
+            .or_insert_with(|| MetricSampleState::new(query.aggregation));
+        sample.record(timestamp_ns, value);
     }
 }
 

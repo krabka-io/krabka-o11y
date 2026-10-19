@@ -92,6 +92,15 @@ benches/target/release/examples/log_stream_query_profile 20000 1 all_exact
 This driver verifies one complete response before its timed queries. Whole
 process captures include fixture creation and that verification query.
 
+`tools/bench.sh --quick log_metric_windows` measures complete Parquet-backed
+`count_over_time` range queries at 10,000, 100,000 and 1,000,000 rows crossed
+with 60, 360 and 5,760 evaluation steps. Every case uses a one-minute range
+and fifteen-second steps, so a row contributes to at most four windows.
+Rows span the evaluation interval. Each complete response is checked against
+counts from the input timestamp ledger before measurement. Fixture writing
+and planning stay outside timing; scans, window accumulation and response
+construction are timed without a frontend cache.
+
 `tools/bench.sh --quick log_query_frontend` adds production Loki HTTP handlers
 to the same four stream counts. Requests use real Parquet and tenant manifests
 on a private local filesystem, a one-hour index cache, and a disabled result
@@ -204,6 +213,12 @@ tools/bench-ratchet.py --confirm verdict.json --json confirm.json
 The rerun calls `tools/bench.sh` once for each bench target, with a filter that holds only the regressed ids. It writes to `benches/target/criterion-confirm`, so the first run stays as it was. Two limits keep it small: `--confirm-limit` (default 8) reruns only the worst regressions, and `--confirm-timeout` (default 900 seconds) is the time for all the reruns together. At that limit, the rerun stops `tools/bench.sh` and every process it started. The exit code is 1 when a regression occurs again, 4 when none does, and 3 when a benchmark was not rerun and none of the reruns regressed.
 
 The rerun uses the `tolerance` and `noise_ceiling` that the first verdict records. If you give `--tolerance` or `--noise-ceiling` with a different value, the command stops with exit 2.
+
+The benchmark-ratchet workflow measures one Criterion group per remote invocation,
+with a 55-minute timeout below BuildBuddy's one-hour free-tier limit. It derives
+the shards from the benchmark sources and validates them against the baseline
+and Cargo targets, including groups that share a target (`index_load` and
+`index_prune`). Every group retains its inventory and numeric checks.
 
 The benchmark-ratchet workflow runs this step after exit 1, with a limit of four benchmarks and ten minutes. The step is a second `bb remote` invocation with runner recycling off, so it does not run in the container that measured the first run. The first step prints the verdict to its log, and the second step reads it from there. The workflow reports exit 4 as runner variance and passes.
 

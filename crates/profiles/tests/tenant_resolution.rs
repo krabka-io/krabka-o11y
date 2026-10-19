@@ -250,6 +250,7 @@ impl Stack {
             tenant_policy: policy,
             active_series: Mutex::default(),
             cumulative_profiles: tokio::sync::Mutex::default(),
+            tenant_ingest_locks: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: Vec::new(),
             max_decompressed: krabka_units::mebibytes(16),

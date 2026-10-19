@@ -15,16 +15,16 @@ pub(crate) struct RootInfo {
     pub(crate) duration: Time,
 }
 
-pub(crate) fn root_info(spans: &[Span]) -> RootInfo {
+pub(crate) fn root_info<'a>(spans: impl Iterator<Item = &'a Span> + Clone) -> RootInfo {
     let root = spans
-        .iter()
+        .clone()
         .find(|span| span.is_root())
-        .or_else(|| spans.iter().min_by_key(|span| span.start_ns));
+        .or_else(|| spans.clone().min_by_key(|span| span.start_ns));
     let service = root
         .and_then(|span| service_name(&span.resource_attrs))
         .unwrap_or_default();
     let name = root.map_or_else(Default::default, |span| span.name.clone());
-    let bounds = crate::trace_time_bounds(spans.iter().map(|span| crate::SpanTiming {
+    let bounds = crate::trace_time_bounds(spans.map(|span| crate::SpanTiming {
         start_ns: span.start_ns,
         duration_ns: span.duration_ns,
     }));
