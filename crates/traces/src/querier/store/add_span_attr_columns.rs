@@ -52,7 +52,7 @@ pub(crate) fn add_span_attr_columns(
             format!("{ATTR_PREFIX}{}", matcher.key)
         };
         let hint = match matcher.value {
-            MatchValue::Str(_) => Some(DataType::Utf8),
+            MatchValue::Str(_) | MatchValue::Regex(_) => Some(DataType::Utf8),
             MatchValue::Int(_) => Some(DataType::Int64),
             MatchValue::Float(_) => Some(DataType::Float64),
             MatchValue::Bool(_) => Some(DataType::Boolean),

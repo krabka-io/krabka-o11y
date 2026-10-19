@@ -73,8 +73,8 @@ pub use span_matching::{
     nested_presence_matches, nil_matches, present_value_matches, string_matches, typed_value_parts,
 };
 pub use store::{
-    MatchCmp, MatchScope, MatchValue, ScanJob, ScanOptions, ScanResult, SpanMatcher, SpanStore,
-    TagCatalog, filter_trace_spans_by_time,
+    MatchCmp, MatchScope, MatchValue, PreparedRegex, ScanJob, ScanOptions, ScanResult, SpanMatcher,
+    SpanStore, TagCatalog, filter_trace_spans_by_time,
 };
 
 /// Returns whether a matcher selects links, including link-scoped intrinsic keys.

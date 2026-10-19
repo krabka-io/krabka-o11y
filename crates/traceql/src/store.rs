@@ -86,7 +86,7 @@ mod tag_catalog;
 
 pub use match_cmp::MatchCmp;
 pub use match_scope::MatchScope;
-pub use match_value::MatchValue;
+pub use match_value::{MatchValue, PreparedRegex};
 pub use scan_job::ScanJob;
 pub use scan_options::ScanOptions;
 pub use scan_result::ScanResult;

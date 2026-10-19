@@ -73,6 +73,7 @@ pub fn enum_int_matches(
     enum_value: fn(&str) -> Option<i32>,
 ) -> bool {
     let expected = match expected {
+        MatchValue::Regex(regex) => enum_value(&regex.pattern.to_ascii_lowercase()).map(i64::from),
         MatchValue::Str(name) => enum_value(&name.to_ascii_lowercase()).map(i64::from),
         MatchValue::Int(value) => Some(*value),
         MatchValue::Nil => return present_value_matches(op, expected).unwrap_or(false),
@@ -185,19 +186,28 @@ pub fn link_matcher_matches_link(link: &LinkRef, matcher: &SpanMatcher) -> bool 
 /// Whether `value` satisfies `op` against a string `expected`.
 ///
 /// A regex must match the whole value; an invalid regex matches nothing.
+/// Use [`SpanMatcher::prepare_regexes`] before a scan to reuse compiled patterns.
 #[must_use]
 pub fn string_matches(value: &str, op: MatchCmp, expected: &MatchValue) -> bool {
-    let MatchValue::Str(expected) = expected else {
-        return false;
+    let (pattern, compiled) = match expected {
+        MatchValue::Str(pattern) => (pattern.as_str(), None),
+        MatchValue::Regex(regex) => (regex.pattern.as_str(), Some(&regex.compiled)),
+        _ => return false,
     };
     match op {
-        MatchCmp::Eq => value == expected,
-        MatchCmp::Neq => value != expected,
-        MatchCmp::Re => {
-            regex::Regex::new(&format!("^(?:{expected})$")).is_ok_and(|re| re.is_match(value))
-        }
-        MatchCmp::Nre => {
-            regex::Regex::new(&format!("^(?:{expected})$")).is_ok_and(|re| !re.is_match(value))
+        MatchCmp::Eq => value == pattern,
+        MatchCmp::Neq => value != pattern,
+        MatchCmp::Re | MatchCmp::Nre => {
+            let fallback;
+            let compiled = if let Some(compiled) = compiled {
+                compiled
+            } else {
+                fallback = regex::Regex::new(&format!("^(?:{pattern})$")).ok();
+                &fallback
+            };
+            compiled
+                .as_ref()
+                .is_some_and(|regex| regex.is_match(value) != (op == MatchCmp::Nre))
         }
         MatchCmp::Lt | MatchCmp::Lte | MatchCmp::Gt | MatchCmp::Gte => false,
     }

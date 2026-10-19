@@ -52,10 +52,7 @@ use matching::{
     span_matches, span_ref,
 };
 #[cfg(test)]
-use matching::{
-    instrumentation_matches, intrinsic_matches, matcher_matches, nested_event_matchers_match,
-    nested_link_matchers_match, span_attr_matches,
-};
+use matching::{instrumentation_matches, intrinsic_matches, matcher_matches};
 
 #[cfg(test)]
 mod tests {
@@ -1457,6 +1454,25 @@ mod tests {
             negated: true,
         };
         assert!(scan_matches(&[neg]).await == 0);
+    }
+
+    #[tokio::test]
+    async fn scan_regex_matchers_preserve_negation_and_invalid_patterns() {
+        for (pattern, re, nre) in [("check.*", 1, 0), ("check", 0, 1), ("", 0, 1), ("[", 0, 0)] {
+            for (op, expected) in [(MatchCmp::Re, re), (MatchCmp::Nre, nre)] {
+                for negated in [false, true] {
+                    let matcher = SpanMatcher {
+                        scope: MatchScope::Intrinsic,
+                        key: "span:name".into(),
+                        op,
+                        value: MatchValue::Str(pattern.into()),
+                        negated,
+                    };
+                    let expected = if negated { 1 - expected } else { expected };
+                    assert!(scan_matches(&[matcher]).await == expected);
+                }
+            }
+        }
     }
 
     // ---- comparison operator coverage for typed matchers ----

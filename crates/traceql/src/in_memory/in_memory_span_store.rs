@@ -108,7 +108,7 @@ impl InMemorySpanStore {
                 MatchValue::Int(_) => DataType::Int64,
                 MatchValue::Float(_) => DataType::Float64,
                 MatchValue::Bool(_) => DataType::Boolean,
-                MatchValue::Str(_) | MatchValue::Nil => DataType::Utf8,
+                MatchValue::Str(_) | MatchValue::Regex(_) | MatchValue::Nil => DataType::Utf8,
             });
         }
         cols.into_iter()
@@ -130,6 +130,8 @@ impl InMemorySpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<ScanResult> {
+        let prepared = SpanMatcher::prepare_regexes(matchers);
+        let matchers = prepared.as_ref();
         let in_range = self.traces_in_range(tenant, start_ns, end_ns);
         let row_count: usize = in_range.iter().map(|trace| trace.spans.len()).sum();
         let attr_cols = Self::attr_columns(&in_range, projection_matchers);

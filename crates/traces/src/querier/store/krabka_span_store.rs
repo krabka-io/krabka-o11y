@@ -168,6 +168,8 @@ impl KrabkaSpanStore {
         end_ns: i64,
         options: &ScanOptions,
     ) -> Result<ScanResult, TraceqlError> {
+        let prepared = SpanMatcher::prepare_regexes(matchers);
+        let matchers = prepared.as_ref();
         let scan_job = options.job.as_ref();
         let mut batches = self
             .cold_batches(tenant, start_ns, end_ns, scan_job)

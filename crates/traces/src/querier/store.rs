@@ -3789,13 +3789,46 @@ mod tests {
             .row(),
         ];
         let batch = encode_span_rows(&rows).unwrap();
-        let engine = cold_block_engine(IndexedBlock {
+        let IndexedBlockStore { blocks, index } = write_indexed_block(IndexedBlock {
             key: "blocks/search-block-array-attrs.parquet",
             batch,
             trace_ids: &[[1; 16], [3; 16]],
             ..IndexedBlock::default()
         })
         .await;
+        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
+        let engine = TraceqlEngine::new(store.clone(), EngineOpts::default());
+
+        for (scope, key, pattern, re_count, nre_count) in [
+            (MatchScope::Intrinsic, "span:name", "GET.*", 1, 1),
+            (MatchScope::Span, "http.method", "POST", 1, 1),
+            (MatchScope::Span, "http.method", "P", 0, 2),
+            (MatchScope::Span, "http.method", "[", 0, 0),
+            (MatchScope::Span, "absent", ".*", 0, 0),
+        ] {
+            for (op, count) in [(MatchCmp::Re, re_count), (MatchCmp::Nre, nre_count)] {
+                for negated in [false, true] {
+                    let matcher = SpanMatcher {
+                        scope,
+                        key: key.into(),
+                        op,
+                        value: MatchValue::Str(pattern.into()),
+                        negated,
+                    };
+                    let scan = store.scan("tenant", &[matcher], 0, 10_000).await.unwrap();
+                    let rows = scan
+                        .ctx
+                        .table(&scan.span_table)
+                        .await
+                        .unwrap()
+                        .count()
+                        .await
+                        .unwrap();
+                    let expected = if negated { 2 - count } else { count };
+                    assert2::assert!(rows == expected);
+                }
+            }
+        }
 
         let resp = engine
             .search("tenant", "{ span.http.method = \"POST\" }", 0, 10_000, 10)

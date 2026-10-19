@@ -14,7 +14,10 @@ use krabka_o11y_benches::{
     index::TENANT,
     spans::{START_NS, end_ns, span_store},
 };
-use krabka_traceql::{EngineOpts, TraceqlEngine, parse};
+use krabka_traceql::{
+    AttrValue, EngineOpts, MatchCmp, MatchScope, MatchValue, SpanMatcher, TraceqlEngine,
+    attr_matches, parse,
+};
 use tokio::runtime::Runtime;
 
 /// The queries under test.
@@ -80,7 +83,63 @@ fn traceql_filter(criterion: &mut Criterion) {
         }
     }
 
+    selector_regex(&mut group);
     group.finish();
+}
+
+/// Measures one selector scan, including preparation, against the previous per-value compilation.
+fn selector_regex(group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
+    for (label, value) in [
+        ("scalar", AttrValue::Str("GET /api/traces".into())),
+        (
+            "array",
+            AttrValue::Array(vec![
+                AttrValue::Str("POST /api/traces".into()),
+                AttrValue::Str("PUT /api/traces".into()),
+                AttrValue::Str("GET /api/traces".into()),
+            ]),
+        ),
+    ] {
+        for spans in [100_u64, 1_000, 10_000] {
+            group.throughput(Throughput::Elements(spans));
+            for pattern in ["GET.*", "["] {
+                let matchers = [SpanMatcher {
+                    scope: MatchScope::Span,
+                    key: "http.method".into(),
+                    op: MatchCmp::Re,
+                    value: MatchValue::Str(pattern.into()),
+                    negated: false,
+                }];
+                for prepared in [false, true] {
+                    let mode = if prepared { "prepared" } else { "per_value" };
+                    let pattern_label = if pattern == "[" { "invalid" } else { "valid" };
+                    group.bench_function(
+                        BenchmarkId::new(
+                            format!("selector_regex_{label}_{pattern_label}_{mode}"),
+                            spans,
+                        ),
+                        |bencher| {
+                            bencher.iter(|| {
+                                let matchers = if prepared {
+                                    SpanMatcher::prepare_regexes(&matchers)
+                                } else {
+                                    std::borrow::Cow::Borrowed(matchers.as_slice())
+                                };
+                                let matcher = &matchers[0];
+                                for _ in 0..spans {
+                                    black_box(attr_matches(
+                                        black_box(&value),
+                                        matcher.op,
+                                        &matcher.value,
+                                    ));
+                                }
+                            })
+                        },
+                    );
+                }
+            }
+        }
+    }
 }
 
 criterion_group!(benches, traceql_filter);
