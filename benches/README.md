@@ -44,6 +44,11 @@ tools/bench.sh --quick             # every benchmark, a few seconds each
 tools/bench.sh --quick index_prune # one benchmark
 ```
 
+`tools/bench.sh --quick template_regex` renders each pre-parsed template over
+100,000 log lines. It measures `count`, `regexReplaceAll` and
+`regexReplaceAllLiteral` with simple and complex patterns. Parsing stays outside
+the timed loop; the first render initializes the regex cache.
+
 `--quick` is the mode for a local run. A full run is minutes of wall clock per target.
 
 The results go to `benches/target/criterion`. Criterion writes an HTML report at `benches/target/criterion/report/index.html`, which the `bench` job uploads as an artifact.

@@ -2,8 +2,8 @@ use num_traits::ToPrimitive;
 
 use super::{
     ParseError, TemplateRenderContext, TemplateRuntimeValue, TemplateValue,
-    evaluate_template_function, is_template_function_name, template_parse_error,
-    tokenize_template_command,
+    evaluate_template_byte_function::TemplateRegexCache, evaluate_template_function,
+    is_template_function_name, template_parse_error, tokenize_template_command,
 };
 
 struct SliceCollectionBounds {
@@ -21,6 +21,7 @@ pub(crate) enum TemplateCommand {
     Function {
         name: String,
         args: Vec<TemplateValue>,
+        regex_cache: Option<TemplateRegexCache>,
     },
 }
 
@@ -44,12 +45,28 @@ impl TemplateCommand {
                     .collect::<Result<Vec<_>, _>>()?,
             });
         }
+        let args = tail
+            .iter()
+            .map(|token| TemplateValue::parse(token))
+            .collect::<Result<Vec<_>, _>>()?;
+        let regex_cache = matches!(
+            head.as_str(),
+            "regexReplaceAll" | "regexReplaceAllLiteral" | "count"
+        )
+        .then(|| {
+            if matches!(
+                args.first(),
+                Some(TemplateValue::String(_) | TemplateValue::Bytes(_))
+            ) {
+                TemplateRegexCache::constant()
+            } else {
+                TemplateRegexCache::default()
+            }
+        });
         Ok(Self::Function {
             name: head.clone(),
-            args: tail
-                .iter()
-                .map(|token| TemplateValue::parse(token))
-                .collect::<Result<Vec<_>, _>>()?,
+            args,
+            regex_cache,
         })
     }
 
@@ -88,7 +105,11 @@ impl TemplateCommand {
                 }
                 callee.evaluate_with_args(context, &values)
             }
-            Self::Function { name, args } => {
+            Self::Function {
+                name,
+                args,
+                regex_cache,
+            } => {
                 if matches!(name.as_str(), "and" | "or") {
                     if args.is_empty() && input.is_none() {
                         *context.error.borrow_mut() =
@@ -188,6 +209,26 @@ impl TemplateCommand {
                 if let Err(error) = validate_template_function(name, &values) {
                     *context.error.borrow_mut() = Some(error);
                     return TemplateRuntimeValue::String(String::new());
+                }
+                if matches!(
+                    name.as_str(),
+                    "regexReplaceAll" | "regexReplaceAllLiteral" | "count"
+                ) {
+                    return match regex_cache
+                        .as_ref()
+                        .expect("regex command has cache")
+                        .get(values[0].string_bytes().expect("validated string"))
+                    {
+                        Ok(regex) => {
+                            super::evaluate_template_byte_function::evaluate_regex_function(
+                                name, &values, &regex,
+                            )
+                        }
+                        Err(error) => {
+                            *context.error.borrow_mut() = Some(error);
+                            TemplateRuntimeValue::String(String::new())
+                        }
+                    };
                 }
                 if name == "query" {
                     return values.first().map_or_else(
@@ -415,11 +456,6 @@ fn validate_template_function(name: &str, values: &[TemplateRuntimeValue]) -> Re
         {
             return Err("invalid slice bounds".to_string());
         }
-    }
-    if matches!(name, "regexReplaceAll" | "regexReplaceAllLiteral" | "count") {
-        let pattern = values[0].string_bytes().ok_or("regex must be a string")?;
-        let pattern = std::str::from_utf8(pattern).map_err(|_| "invalid UTF-8 in regexp")?;
-        regex::Regex::new(pattern).map_err(|error| error.to_string())?;
     }
     if name == "urldecode" {
         let value = values[0].as_rendered_string();

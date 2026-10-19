@@ -255,7 +255,7 @@ fn collect_query_calls_from_expression(
                     collect_query_calls_from_value(arg, queries);
                 }
             }
-            TemplateCommand::Function { name, args } => {
+            TemplateCommand::Function { name, args, .. } => {
                 if name == "query"
                     && let Some(TemplateValue::String(query)) = args.first()
                 {
@@ -405,7 +405,7 @@ fn validate_function_expression(
 ) -> Result<(), ParseError> {
     for command in &expression.commands {
         match command {
-            TemplateCommand::Function { name, args } => {
+            TemplateCommand::Function { name, args, .. } => {
                 validate_function_name(name, prometheus)?;
                 for value in args {
                     validate_function_value(value, prometheus)?;

@@ -8,6 +8,41 @@ pub struct TemplateFunctionCase {
 
 pub const CASES: &[TemplateFunctionCase] = &[
     TemplateFunctionCase {
+        name: "dynamic_regex_captures",
+        expression: r#"regexReplaceAll (printf "%s" "(?P<word>a)(b+)") "abb" "${word}:$2:$$""#,
+        expected: "a:bb:$",
+    },
+    TemplateFunctionCase {
+        name: "dynamic_regex_count",
+        expression: r#"count (printf "%s" "a+") "abaac""#,
+        expected: "2",
+    },
+    TemplateFunctionCase {
+        name: "dynamic_regex_literal",
+        expression: r#"regexReplaceAllLiteral (printf "%s" "(a)(b+)") "abb" "${1}:$2:$$""#,
+        expected: "${1}:$2:$$",
+    },
+    TemplateFunctionCase {
+        name: "lazy_invalid_regex",
+        expression: r#"or "ok" (count "[" "a")"#,
+        expected: "ok",
+    },
+    TemplateFunctionCase {
+        name: "lazy_invalid_regex_utf8",
+        expression: r#"or "ok" (regexReplaceAll "\xff" "a" "b")"#,
+        expected: "ok",
+    },
+    TemplateFunctionCase {
+        name: "raw_regex_count",
+        expression: r#"count "." "\xff\xfe""#,
+        expected: "2",
+    },
+    TemplateFunctionCase {
+        name: "raw_regex_literal",
+        expression: r#"b64enc (regexReplaceAllLiteral "." "\xff\xfe" "\xfe")"#,
+        expected: "/v4=",
+    },
+    TemplateFunctionCase {
         name: "b64enc",
         expression: r#"b64enc "abc""#,
         expected: "YWJj",
