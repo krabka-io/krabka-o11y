@@ -20,6 +20,22 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
+  # Require only this stable check in branch protection. Always evaluate the
+  # results so a failed, cancelled, or skipped dependency cannot pass the gate.
+  gate:
+    name: CI gate
+    if: always() && github.event_name != 'schedule'
+    needs: [ci, cargo, deny, tools, docs, website]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require successful checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"${RESULTS}"
+          jq -e 'all(.[]; .result == "success")' <<<"${RESULTS}"
   # One non-container test pass on PRs and main. The open-source Aspect CLI
   # runs the full target set; it does not select impacted tests.
   ci:
