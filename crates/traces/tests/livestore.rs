@@ -249,6 +249,107 @@ fn wal_retention_keeps_complete_traces_at_timestamp_boundaries() {
     }
 }
 
+// Keep the pre-index retention rule as an independent oracle, including its
+// sentinel and saturating arithmetic behavior. Compare after every arrival so
+// a late span, a tie, or trace recreation cannot hide an intermediate mistake.
+#[test]
+fn indexed_retention_matches_scan_after_every_arrival() {
+    for retention in [i64::MIN, -50, -1, 0, 1, 50, 500, i64::MAX - 1, i64::MAX] {
+        let mut store = LiveStore::new(retention);
+        let mut expected: Vec<SpanRecord> = Vec::new();
+        let mut frontier = i64::MIN;
+        let mut seed = 123_u64;
+        for arrival in 0..600_u64 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let time = match arrival {
+                0 | 1 => i64::MIN,
+                2 => i64::MIN + 1,
+                3 => i64::MIN + 50,
+                596 => i64::MAX - 50,
+                597 => i64::MAX - 1,
+                598 | 599 => i64::MAX,
+                _ => i64::try_from(arrival).unwrap() - i64::try_from(seed % 80).unwrap(),
+            };
+            let tenant = ["a", "b", "c"][usize::try_from(seed % 3).unwrap()];
+            let trace_id = [u8::try_from((seed >> 8) % 4).unwrap(); 16];
+            let mut item = span(trace_id, u8::try_from(seed % 3).unwrap(), time);
+            item.name = format!("arrival-{arrival}");
+            if time > frontier {
+                frontier = time;
+                if retention != i64::MAX && frontier != i64::MIN {
+                    expected.retain(|row| row.span.start_ns >= frontier.saturating_sub(retention));
+                }
+            }
+            if retention == i64::MAX
+                || frontier == i64::MIN
+                || time >= frontier.saturating_sub(retention)
+            {
+                expected.push(record(tenant, item.clone()));
+            }
+            store.ingest(record(tenant, item));
+            for tenant in ["a", "b", "c", "missing"] {
+                for trace_id in [[0; 16], [1; 16], [2; 16], [3; 16]] {
+                    let mut trace = expected
+                        .iter()
+                        .filter(|row| row.tenant == tenant && row.span.trace_id == trace_id)
+                        .map(|row| row.span.clone())
+                        .collect::<Vec<_>>();
+                    trace.sort_by_key(|span| (span.start_ns, span.span_id));
+                    assert2::assert!(
+                        store.trace_by_id(tenant, &trace_id) == trace,
+                        "retention={retention}, arrival={arrival}, tenant={tenant}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn expiration_preserves_duplicate_order_when_an_earlier_slot_is_removed() {
+    let mut store = LiveStore::new(50);
+    for (start, name) in [(0, "expired"), (50, "first"), (50, "second"), (50, "third")] {
+        let mut value = span([1; 16], 1, start);
+        value.name = name.into();
+        store.ingest(record("a", value));
+    }
+    store.ingest(record("b", span([2; 16], 1, 51)));
+    let trace = store.trace_by_id("a", &[1; 16]);
+    assert2::assert!(
+        trace
+            .iter()
+            .map(|span| span.name.as_str())
+            .collect::<Vec<_>>()
+            == ["first", "second", "third"]
+    );
+    // Expire the entire trace, recreate it, and expire the recreated slot too.
+    store.ingest(record("b", span([2; 16], 1, 101)));
+    assert2::assert!(store.trace_by_id("a", &[1; 16]).is_empty());
+    store.ingest(record("a", span([1; 16], 1, 100)));
+    store.ingest(record("b", span([2; 16], 1, 151)));
+    assert2::assert!(store.trace_by_id("a", &[1; 16]).is_empty());
+}
+
+#[tokio::test]
+async fn expiration_keeps_arrival_order_for_clipped_trace_root_metadata() {
+    let mut store = LiveStore::new(50);
+    for (start, name) in [(0, "expired-root"), (50, "first-root"), (40, "late-root")] {
+        let mut value = span([1; 16], 1, start);
+        value.name = name.into();
+        store.ingest(record("a", value));
+    }
+    store.ingest(record("b", span([2; 16], 1, 51)));
+    let batches = store.span_batches("a", 50, 50).await.unwrap();
+    assert2::assert!(batches.len() == 1);
+    let roots = batches[0]
+        .column_by_name(SCOL_ROOT_SPAN_NAME)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert2::assert!(roots.iter().collect::<Vec<_>>() == [Some("first-root")]);
+}
+
 #[test]
 fn exposes_recent_spans_as_mem_table_over_span_schema() {
     let mut store = LiveStore::new(i64::MAX);
