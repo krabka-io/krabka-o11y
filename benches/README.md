@@ -92,6 +92,15 @@ benches/target/release/examples/log_stream_query_profile 20000 1 all_exact
 This driver verifies one complete response before its timed queries. Whole
 process captures include fixture creation and that verification query.
 
+`tools/bench.sh --quick log_metric_windows` measures complete Parquet-backed
+`count_over_time` range queries at 10,000, 100,000 and 1,000,000 rows crossed
+with 60, 360 and 5,760 evaluation steps. Every case uses a one-minute range
+and fifteen-second steps, so a row contributes to at most four windows.
+Rows span the evaluation interval. Each complete response is checked against
+counts from the input timestamp ledger before measurement. Fixture writing
+and planning stay outside timing; scans, window accumulation and response
+construction are timed without a frontend cache.
+
 `tools/bench.sh --quick log_query_frontend` adds production Loki HTTP handlers
 to the same four stream counts. Requests use real Parquet and tenant manifests
 on a private local filesystem, a one-hour index cache, and a disabled result

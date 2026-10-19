@@ -22,6 +22,7 @@
 pub mod blocks;
 pub mod index;
 pub mod log_frontend;
+pub mod log_metric_windows;
 pub mod log_queries;
 pub mod metrics;
 pub mod profile_run_args;

@@ -155,6 +155,10 @@ name = "log_stream_query"
 harness = false
 
 [[bench]]
+name = "log_metric_windows"
+harness = false
+
+[[bench]]
 name = "log_query_frontend"
 harness = false
 

@@ -3,6 +3,7 @@
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -13,12 +14,19 @@ import tempfile
 import time
 import tomllib
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).with_name("prepare-wasix.py")
 SPEC = importlib.util.spec_from_file_location("prepare_wasix", SCRIPT)
 helper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(helper)
+
+STD_SPEC = importlib.util.spec_from_file_location(
+    "prepare_wasix_std", Path(__file__).with_name("prepare-wasix-std.py")
+)
+std_helper = importlib.util.module_from_spec(STD_SPEC)
+STD_SPEC.loader.exec_module(std_helper)
 
 
 def write(path, text):
@@ -28,6 +36,28 @@ def write(path, text):
 
 def fingerprints(root):
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file()}
+
+
+class PrepareWasixStdTest(unittest.TestCase):
+    def test_submodule_lookup_uses_ci_token_when_available(self):
+        revision = "a" * 40
+        for token in ("ci-test-token", ""):
+            with self.subTest(authenticated=bool(token)):
+                response = io.BytesIO(json.dumps({"sha": revision}).encode())
+                with patch.dict(os.environ, {"GITHUB_TOKEN": token}), \
+                        patch.object(std_helper, "urlopen", return_value=response) as open_url:
+                    self.assertEqual(std_helper.backtrace_revision(), revision)
+                request = open_url.call_args.args[0]
+                self.assertEqual(
+                    request.full_url,
+                    "https://api.github.com/repos/wasix-org/rust/contents/library/backtrace?ref="
+                    + std_helper.REVISION,
+                )
+                self.assertEqual(request.get_header("Accept"), "application/vnd.github+json")
+                self.assertEqual(
+                    request.get_header("Authorization"), f"Bearer {token}" if token else None
+                )
+                self.assertEqual(open_url.call_args.kwargs, {"timeout": 30})
 
 
 class PrepareWasixTest(unittest.TestCase):
