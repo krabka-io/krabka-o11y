@@ -530,6 +530,9 @@ jobs:
           CARGO_TARGET_DIR="${PWD}/.tools/http-native-target" cargo clippy --manifest-path wasi-client/Cargo.toml --locked --all-targets -- -D warnings
           CARGO_TARGET_DIR="${PWD}/.tools/http-native-target" cargo test --manifest-path wasi-client/Cargo.toml --locked
       - name: build production services and static site
+        env:
+          # cargo-wasix and wasixcc authenticate their GitHub release downloads.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p .tools
           npm run build 2>&1 | tee .tools/lab-build.log

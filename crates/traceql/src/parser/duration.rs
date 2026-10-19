@@ -92,5 +92,5 @@ pub(crate) fn parse_duration_nanos(s: &str) -> Result<i64> {
         rest = part.rest;
     }
 
-    i64::try_from(total).map_err(|e| TraceqlError::Parse(e.to_string()))
+    i64::try_from(total).map_err(|_| TraceqlError::Parse(format!("duration out of range: {s:?}")))
 }
