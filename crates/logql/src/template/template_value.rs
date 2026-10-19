@@ -215,7 +215,7 @@ impl TemplateValue {
             Self::Function(name) => TemplateCommand::Function {
                 name: name.clone(),
                 args: Vec::new(),
-                regex_cache: Default::default(),
+                regex_cache: None,
             }
             .evaluate(context, None),
         }

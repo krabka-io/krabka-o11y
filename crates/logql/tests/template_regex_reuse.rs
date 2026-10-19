@@ -57,7 +57,7 @@ fn cached_patterns_preserve_invalid_input_bytes() {
 
 #[test]
 fn invalid_dynamic_patterns_do_not_poison_later_lines() {
-    let format = LineFormat::new(r#"{{ count .pattern __line__ }}"#).unwrap();
+    let format = LineFormat::new("{{ count .pattern __line__ }}").unwrap();
     for pattern in ["a", "[", "b", "[", "a"] {
         let fields = BTreeMap::from([("pattern".into(), pattern.into())]);
         let expected = if pattern == "[" { "" } else { "1" };
