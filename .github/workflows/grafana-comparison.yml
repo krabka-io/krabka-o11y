@@ -31,6 +31,19 @@ on:
         description: Independent paired repetitions
         type: number
         default: 3
+      query_mode:
+        description: Query scheduling (serial comparison, concurrent readers, or fixed total arrivals)
+        type: choice
+        options: [serial, concurrent, fixed]
+        default: fixed
+      query_readers:
+        description: Space-separated reader sweep (ignored in serial mode; each 1..256)
+        type: string
+        default: '1 4 16'
+      query_rate:
+        description: Queries/sec (fixed total arrivals; otherwise per-reader ceiling)
+        type: number
+        default: 4
       max_writers:
         description: Highest writer ramp level
         type: number
@@ -82,6 +95,9 @@ jobs:
       - uses: actions/checkout@v7
       - name: Validate comparison and profiling inputs
         env:
+          QUERY_MODE: ${{ inputs.query_mode || 'fixed' }}
+          QUERY_READERS: ${{ inputs.query_readers || '1 4 16' }}
+          QUERY_RATE: ${{ inputs.query_rate }}
           BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
           BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
           PROFILING: ${{ inputs.profiling }}
@@ -93,6 +109,17 @@ jobs:
           PROFILES_TARGET: ${{ inputs.profiles_target }}
         run: |
           set -euo pipefail
+          python3 - <<'PYLOAD'
+          import importlib.util, os
+          spec = importlib.util.spec_from_file_location('envelope', 'tools/deployment-envelope.py')
+          env = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(env)
+          readers = [1] if os.environ['QUERY_MODE'] == 'serial' else [int(n) for n in os.environ['QUERY_READERS'].split()]
+          if not readers or len(set(readers)) != len(readers):
+              raise ValueError('reader sweep must contain distinct levels')
+          for count in readers:
+              env.query_load_config(os.environ['QUERY_MODE'], count, float(os.environ['QUERY_RATE']))
+          PYLOAD
           if [[ "${PROFILE_QUERY_ONLY}" == true ]]; then
             [[ "${PROFILING}" == cpu && "${SIGNAL}" == profiles ]]
           fi
@@ -206,6 +233,9 @@ jobs:
       - name: Compare both backends on this host
         if: inputs.profiling == 'none' || inputs.profiling == ''
         env:
+          QUERY_MODE: ${{ inputs.query_mode || 'fixed' }}
+          QUERY_READERS: ${{ inputs.query_readers || '1 4 16' }}
+          QUERY_RATE: ${{ inputs.query_rate }}
           PHASE_SECONDS: ${{ inputs.phase_seconds }}
           REPETITIONS: ${{ inputs.repetitions }}
           MAX_WRITERS: ${{ inputs.max_writers }}
@@ -218,6 +248,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p qualification/evidence/comparison
+          query_args=(--query-mode "${QUERY_MODE}" --query-rate "${QUERY_RATE}")
+          if [[ "${QUERY_MODE}" != serial ]]; then
+            read -r -a readers <<< "${QUERY_READERS}"
+            query_args+=(--reader-sweep "${readers[@]}")
+          fi
+          python3 tools/deployment-envelope.py --self-test
           for value in "${PHASE_SECONDS}" "${REPETITIONS}" "${MAX_WRITERS}" "${MAX_CARDINALITY}"; do
             [[ "${value}" =~ ^[1-9][0-9]*$ ]]
           done
@@ -246,7 +282,7 @@ jobs:
               --deployment-target "${target}" --profiles-target "${target}" \
               --host-wait-seconds 120 --output "${output}" \
               --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
-              --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
+              --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}" "${query_args[@]}"
           done
       - name: Compare revisions on this host
         if: inputs.baseline_image_artifact_run != ''
@@ -254,6 +290,9 @@ jobs:
           SIGNAL: ${{ matrix.signal }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           PROFILES_TARGET: ${{ inputs.profiles_target }}
+          QUERY_MODE: ${{ inputs.query_mode || 'fixed' }}
+          QUERY_READERS: ${{ inputs.query_readers || '1 4 16' }}
+          QUERY_RATE: ${{ inputs.query_rate }}
           PHASE_SECONDS: ${{ inputs.phase_seconds }}
           REPETITIONS: ${{ inputs.repetitions }}
           BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
@@ -263,6 +302,11 @@ jobs:
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
         run: |
           set -euo pipefail
+          query_args=(--query-mode "${QUERY_MODE}" --query-rate "${QUERY_RATE}")
+          if [[ "${QUERY_MODE}" != serial ]]; then
+            read -r -a readers <<< "${QUERY_READERS}"
+            query_args+=(--reader-sweep "${readers[@]}")
+          fi
           root=qualification/evidence/comparison/revisions
           mkdir -p "${root}/baseline-image"
           cp qualification/baseline-image/{tag,commit,manifest-digest,config-digest} "${root}/baseline-image/"
@@ -288,7 +332,7 @@ jobs:
                 --image-commit "$(cat "${image_dir}/commit")" \
                 --deployment-target "${target}" --profiles-target "${target}" \
                 --host-wait-seconds 120 --seconds "${PHASE_SECONDS}" --repetitions 1 --max-cardinality "${MAX_CARDINALITY}" \
-                --output "${root}/${pair}-${revision}"
+                --output "${root}/${pair}-${revision}" "${query_args[@]}"
             done
           done
       - name: Install profiling tools
