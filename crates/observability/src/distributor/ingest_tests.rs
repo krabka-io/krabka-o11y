@@ -22,7 +22,14 @@ fn outcome(
 fn compare_with_legacy(body: &[u8]) {
     let tenant = TenantId::new("test").unwrap();
     let headers = json_headers();
-    for limits in [Limits::unenforced(), Limits::default()] {
+    // Both paths use the wall clock for timestamp windows. Disable those
+    // windows so their errors do not differ only in the sampled current time.
+    let bounded = Limits {
+        reject_old_samples_max_age: crate::Time::ZERO,
+        creation_grace_period: crate::Time::ZERO,
+        ..Limits::default()
+    };
+    for limits in [Limits::unenforced(), bounded] {
         assert!(
             outcome(normalize_loki_http_push(&tenant, &headers, body, &limits))
                 == outcome(legacy_http_push(&tenant, &headers, body, &limits)),
