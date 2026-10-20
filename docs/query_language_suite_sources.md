@@ -145,3 +145,26 @@ requests, both Grafana responses and both replay results. The report gate checks
 these values against the independent fixture and selected image configuration.
 Both client versions are required in the aggregate. This suite does not exercise
 browser builder actions, other Grafana datasources or other official clients.
+
+## Grafana Prometheus client replay
+
+The [Prometheus Grafana suite](../crates/metrics-service/tests/grafana_integration.rs)
+seeds the same remote-write body into Krabka and the pinned Prometheus oracle.
+Both datasources set `httpMethod: POST`. The shared recording proxy retains the
+plugin-generated method, path, tenant, form content type and encoded body. The
+replay keeps each of these values. Both pinned Grafana versions run the suite.
+
+Six cases cover instant and range selectors, sums and rates. The independent
+counter fixture has timestamps 0, 15, 30 and 45 seconds, with GET values 0, 30,
+75 and 120 and POST values 0, 3, 5 and 8. Range sums must return 0, 33, 80 and
+128. A GET rate over 30 seconds is 2.5 at t=30 and 3 at t=45. At t=30, the
+counter's extrapolation toward zero caps the left padding at ten seconds:
+`(75-30) * (25/15) / 30 = 2.5`.
+
+`grafana-prometheus-client-replay.json` retains the dashboard inputs, plugin
+requests, raw backend answers and Grafana frames. The report gate checks the
+complete fixture, expressions, form parameters, timestamps, values and labels.
+Frame comparisons keep the metric name, field types and semantic metadata.
+Unexpected warnings, infos and non-finite samples fail the positive suite.
+Independent comparator controls reject equal but wrong backend or frame values.
+This is backend plugin replay; it does not establish browser builder coverage.

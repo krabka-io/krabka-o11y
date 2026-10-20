@@ -16,9 +16,10 @@ import urllib.parse
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+PROMETHEUS_REPLAY = runpy.run_path(str(ROOT / "tools/grafana-prometheus-replay.py"))
 EVIDENCE_TYPED_EQUAL = runpy.run_path(str(ROOT / "tools/query-language-evidence.py"))["typed_equal"]
 REQUIRED = {
-    "grafana-loki-client-replay.json",
+    "grafana-loki-client-replay.json", "grafana-prometheus-client-replay.json",
     "promql-3.14.0-qualification.json",
     "promql-http-compliance-summary.json",
     "loki-remote-range.json",
@@ -45,6 +46,8 @@ PROMQL_TARGETS = {
     True: "//crates/promql:upstream_qualification_experimental_test",
 }
 CLIENT_TARGETS = {
+    "//crates/metrics-service:grafana_integration_docker_test": "grafana",
+    "//crates/metrics-service:grafana_integration_previous_docker_test": "grafana_previous",
     "//crates/observability:grafana_e2e_docker_test": "grafana",
     "//crates/observability:grafana_e2e_previous_docker_test": "grafana_previous",
 }
@@ -64,7 +67,7 @@ REQUIRED_TARGETS = {
 
 
 SUITE_REPORTS = {
-    **{target: {"grafana-loki-client-replay.json"} for target in CLIENT_TARGETS},
+    **{target: {"grafana-prometheus-client-replay.json" if target.startswith("//crates/metrics-service:") else "grafana-loki-client-replay.json"} for target in CLIENT_TARGETS},
     **{target: {"promql-3.14.0-qualification.json"} for target in PROMQL_TARGETS.values()},
     "//crates/metrics-service:diff_prometheus_docker_test": {
         "diff_prometheus-report.json", "promql-http-compliance-summary.json",
@@ -170,6 +173,7 @@ def verdicts(report):
 
 PINNED_COUNTS = {
     "grafana-loki-client-replay.json": 5,
+    "grafana-prometheus-client-replay.json": 6,
     "diff_mimir-report.json": 1800,  # Includes five numeric last-operation cases.
     "diff_prometheus-report.json": 1795,
     "promql-3.14.0-qualification.json": 2195,
@@ -903,6 +907,8 @@ def qualification_counts(name, report, generated_count=None):
     expected = PINNED_COUNTS.get(name)
     errors.extend(pyroscope_binding_errors(name, report))
     errors.extend(experimental_query_binding_errors(name, report))
+    if name == "grafana-prometheus-client-replay.json":
+        errors.extend(PROMETHEUS_REPLAY["binding_errors"](report, ROOT))
     if name == "grafana-loki-client-replay.json":
         errors.extend(grafana_replay_binding_errors(report))
     if name == "tempo-instant-bounds-conformance.json":
@@ -1176,6 +1182,7 @@ def usable_evidence(reference, kind, executed, rejected_cases):
 
 
 def self_check():
+    PROMETHEUS_REPLAY["self_check"](ROOT)
     client_base = 1700000000 * 1_000_000_000
     replay_rows = []
     for case_id, (expression, query_type, direction, limit, offsets) in GRAFANA_REPLAY_CASES.items():
@@ -1939,7 +1946,7 @@ def main():
                 report = {}
                 counts, errors = collections.Counter(uncovered=1), [f"unreadable or invalid report: {error}"]
             configuration = None
-            if path.name == "grafana-loki-client-replay.json":
+            if path.name in ("grafana-loki-client-replay.json", "grafana-prometheus-client-replay.json"):
                 target = suites.get(str(binding_directory))
                 configuration = CLIENT_TARGETS.get(target)
                 image = re.search(r'\("' + str(configuration) + r'", "[^\"]+", "[^\"]+", "([^\"]+)"', (ROOT / "MODULE.bazel").read_text())
@@ -1987,8 +1994,8 @@ def main():
                                         metadata[name], path.name, report, path)
             elif "cases" in report:
                 namespace = f"storage/transitions/{path.stem}" if path.name.endswith("-query-transitions.json") else f"traceql/metrics/{path.stem}" if metric_result or path.name.startswith("tempo-numeric-") or path.name.startswith("tempo-live-exemplar-") or path.name.startswith("tempo-typed-group-") or path.name.startswith("tempo-field-arithmetic-") else "pyroscope/v2" if path.name == "pyroscope-v2-fields.json" else "pyroscope/v1-aggregation" if path.name == "pyroscope-v1-aggregation.json" else "pyroscope/v2-async-disabled" if path.name == "pyroscope-v2-async-disabled.json" else {"loki-experimental-query-conformance.json":"logql/experimental", "tempo-pipeline-hint-conformance.json":"traceql/pipeline", "tempo-instant-bounds-conformance.json":"traceql/instant", "diff_mimir-report.json":"promql/mimir", "diff_prometheus-report.json":"promql/prometheus", "backup-query-invariance.json":"storage/restore"}.get(path.name, "pyroscope/rpc")
-                if path.name == "grafana-loki-client-replay.json":
-                    namespace = f"clients/grafana-loki/{configuration}"
+                if path.name in ("grafana-loki-client-replay.json", "grafana-prometheus-client-replay.json"):
+                    namespace = f"clients/{path.stem}/{configuration}"
                 for ordinal, case in enumerate(report["cases"], 1):
                     identity = case.get("stableid", case.get("id", ordinal))
                     reference = f"{namespace}/{identity}"
@@ -2028,6 +2035,7 @@ def main():
             "crates/promql/tests/testdata/upstream-3.14.0/*.test",
             "crates/*/tests/support/*fixture.rs", "crates/*/tests/*differential.rs",
             "crates/observability/tests/grafana_e2e.rs", "crates/observability/tests/support/grafana_client_replay.rs",
+            "crates/metrics-service/tests/grafana_integration.rs", "crates/metrics-service/tests/support/*client_replay*.rs",
             "crates/metrics-service/tests/diff_*.rs", "crates/*/tests/*deployment.rs",
             "crates/integration/tests/backup_restore.rs",
             "crates/traceql/tests/testdata/traceql/*.case",

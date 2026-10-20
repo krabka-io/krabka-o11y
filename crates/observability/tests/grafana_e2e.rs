@@ -25,6 +25,8 @@
 //!
 //! `cargo test -p krabka-observability --test grafana_e2e -- --ignored --nocapture`
 
+#[path = "../../metrics-service/tests/support/client_replay_proxy.rs"]
+mod client_replay_proxy;
 #[path = "support/grafana_client_replay.rs"]
 mod grafana_client_replay;
 #[path = "support/grafana_loki.rs"]

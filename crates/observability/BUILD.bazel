@@ -104,6 +104,7 @@ crate_tests(
     },
     # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
     extra_srcs = {
+        "grafana_e2e": ["//crates/metrics-service:tests/support/client_replay_proxy.rs"],
         "loki_differential": [
             "//crates/metrics-service:tests/support/generated_differential.rs",
             "//crates/logql:tests/support/template_functions.rs",

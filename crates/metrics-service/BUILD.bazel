@@ -35,6 +35,7 @@ PROMQL_CORPUS = ["//crates/promql:tests/testdata/%s.test" % stem for stem in [
 
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 exports_files([
+    "tests/support/client_replay_proxy.rs",
     "Cargo.toml",
     "tests/support/generated_differential.rs",
 ])
@@ -76,7 +77,7 @@ crate_tests(
     docker = {
         "diff_mimir": ["mimir"],
         "diff_prometheus": ["prometheus"],
-        "grafana_integration": ["grafana"],
+        "grafana_integration": ["grafana", "prometheus"],
         "metrics_deployment": [
             "krabka",
             "broker",
@@ -86,7 +87,12 @@ crate_tests(
     },
     docker_variants = {
         "diff_prometheus": {"previous": {"prometheus": "prometheus_previous"}},
-        "grafana_integration": {"previous": {"grafana": "grafana_previous"}},
+        "grafana_integration": {
+            "previous": {
+                "grafana": "grafana_previous",
+                "prometheus": "prometheus",
+            },
+        },
     },
     # The hand-written seed dataset lives with //crates/metrics and these suites
     # reach it with `#[path]`; naming it here puts it at that same relative
