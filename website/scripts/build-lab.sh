@@ -19,7 +19,9 @@ llvm_tag='21.1.206'
 binaryen_tag='version_133'
 sdk_version='0.19.0'
 sdk_revision='362e0db28fea57fb23af8d34cffefcb7333a883d'
-modules=(krabka-broker krabka-format krabka-o11y-bootstrap krabka-metrics krabka-metrics-service krabka-observability krabka-traces krabka-profiles krabka-lab-http krabka-lab-network)
+runtime_modules=(krabka-broker krabka-format krabka-o11y-bootstrap krabka-metrics krabka-metrics-service krabka-observability krabka-traces krabka-profiles krabka-lab-http)
+qualification_modules=(krabka-lab-network)
+modules=("${runtime_modules[@]}" "${qualification_modules[@]}")
 mkdir -p "$tools" "$lab"
 export TMPDIR="$tools/tmp"
 mkdir -p "$TMPDIR"
@@ -165,12 +167,13 @@ actual_sdk_revision="$(python3 -c 'import json, sys; print(json.load(open(sys.ar
 [[ -s "$lab/sdk/dist/index.js" && -s "$lab/sdk/pkg/wasmer_sdk_js_bg.wasm" ]] || { echo 'Browser runtime artifacts are missing.' >&2; exit 1; }
 
 artifact_directory="$(mktemp -d "$tools/lab-artifacts.XXXXXX")"
-python3 - "$repository" "$source_tree" "$CARGO_TARGET_DIR/wasm32-wasmer-wasi/release" "$artifact_directory" "$lab" "$sdk_version" "$sdk_revision" "$rust_tag" "$cargo_wasix_version" "$wasixcc_version" "${modules[@]}" <<'PY'
+python3 - "$repository" "$source_tree" "$CARGO_TARGET_DIR/wasm32-wasmer-wasi/release" "$artifact_directory" "$lab" "$sdk_version" "$sdk_revision" "$rust_tag" "$cargo_wasix_version" "$wasixcc_version" "${#runtime_modules[@]}" "${modules[@]}" <<'PY'
 import hashlib, json, shutil, subprocess, sys
 from pathlib import Path
 repo, source, release, output, lab = map(Path, sys.argv[1:6])
 sdk_version, sdk_revision, rust_tag, cargo_wasix, wasixcc = sys.argv[6:11]
-names = sys.argv[11:]
+runtime_count = int(sys.argv[11])
+names = sys.argv[12:]
 
 def digest(path):
     with path.open("rb") as stream:
@@ -185,6 +188,7 @@ for name in names:
     item = {"name": name, "file": artifact.name, "sha256": digest(artifact), "bytes": artifact.stat().st_size}
     shutil.copy2(artifact, output / artifact.name)
     modules.append(item)
+runtime_modules, qualification_modules = modules[:runtime_count], modules[runtime_count:]
 runtime = lab / "sdk/pkg/wasmer_sdk_js_bg.wasm"
 runtime_build = json.loads((source.parent / 'wasmer-sdk/.krabka-runtime-build.json').read_text())
 std_build = json.loads((source.parent / 'wasix-rust/.krabka-std.json').read_text())
@@ -206,11 +210,13 @@ manifest = {
     "locks": {"native": digest(repo / "Cargo.lock"), **lock_hashes},
     "scripts": {name: digest(repo / "website/scripts" / name) for name in ["build-lab.sh", "prepare-wasix.py", "port-wasix.py", "build-runtime.sh", "prepare-wasix-std.py", "lab-cache.py"]},
     "platformPatches": {path.name: digest(path) for path in sorted((repo / 'website/wasi').glob('*.patch'))},
-    "modules": modules,
-    "totalBytes": sum(module["bytes"] for module in modules),
+    "modules": runtime_modules,
+    "qualificationModules": qualification_modules,
+    "totalBytes": sum(module["bytes"] for module in runtime_modules),
+    "qualificationBytes": sum(module["bytes"] for module in qualification_modules),
 }
 (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-print(f"Built {len(modules)} real modules: {manifest['totalBytes']:,} bytes.")
+print(f"Built {len(modules)} real modules: {manifest['totalBytes']:,} runtime bytes, {manifest['qualificationBytes']:,} qualification bytes.")
 PY
 for name in "${modules[@]}"; do cp "$artifact_directory/$name.wasm" "$lab/$name.wasm"; done
 mv "$artifact_directory/manifest.json" "$lab/manifest.json"
