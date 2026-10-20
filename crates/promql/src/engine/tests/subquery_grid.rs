@@ -1,8 +1,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::super::subquery_grid::SUBQUERY_GRID_DISABLED;
-use super::super::{PerStepSampleStats, collect_query_sample_stats};
-use super::*;
+use super::{
+    super::{
+        PerStepSampleStats, collect_query_sample_stats, subquery_grid::SUBQUERY_GRID_DISABLED,
+    },
+    *,
+};
 use crate::{
     PromqlMatcher as LabelMatcher,
     error::Result,

@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use super::{HashMap, LeafMemo, StepGrid};
 use crate::engine::subquery_grid::SubqueryGrid;
-use std::sync::Arc;
 
 /// The state behind [`StepVectorCache`](super::StepVectorCache).
 pub(crate) struct StepVectorCacheInner {
