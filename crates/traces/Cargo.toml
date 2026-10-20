@@ -75,6 +75,7 @@ wincode = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
+bon = { workspace = true }
 krabka-broker = { version = "1.0.0" }
 krabka-protocol = { version = "0.6.0" }
 datatest-stable = { workspace = true }
@@ -93,6 +94,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tower = { workspace = true, features = ["util"] }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
+yare.workspace = true
 
 [build-dependencies]
 protox = { workspace = true }

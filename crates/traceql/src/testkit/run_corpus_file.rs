@@ -27,3 +27,17 @@ pub fn run_corpus_file(file: impl AsRef<Path>) -> Report {
 
     Report { cases }
 }
+
+/// Run one corpus file with [`run_corpus_file`] and print the report's text.
+///
+/// # Errors
+/// Returns the I/O error when `file` does not exist or cannot be read.
+///
+/// # Panics
+/// Panics where [`run_corpus_file`] does.
+pub fn run_and_print_corpus_file(file: &Path) -> std::io::Result<Report> {
+    fs::metadata(file)?;
+    let report = run_corpus_file(file);
+    println!("{}", report.to_text());
+    Ok(report)
+}

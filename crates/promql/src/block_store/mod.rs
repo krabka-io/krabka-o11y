@@ -13,3 +13,4 @@ mod metric_block_store;
 
 use apply_manifest_to_blockstore::apply_manifest_to_blockstore;
 pub use metric_block_store::MetricBlockStore;
+pub(crate) use metric_block_store::MetricLabelKey;

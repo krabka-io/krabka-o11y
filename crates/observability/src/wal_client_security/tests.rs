@@ -35,6 +35,53 @@ const ENVIRONMENT: [&str; 9] = [
     "KRABKA_WAL_SASL_OAUTHBEARER_TOKEN_PATH",
 ];
 
+struct FixtureFile<'a> {
+    name: &'a str,
+    contents: &'a [u8],
+}
+
+struct ProtocolNameCase {
+    wire_name: &'static str,
+    protocol: WalSecurityProtocol,
+}
+
+struct MechanismNameCase {
+    wire_name: &'static str,
+    mechanism: WalSaslMechanism,
+}
+
+struct ProtocolRequirementCase {
+    protocol: WalSecurityProtocol,
+    tls: bool,
+    sasl: bool,
+}
+
+struct PasswordLineCase {
+    contents: &'static str,
+    expected: &'static str,
+}
+
+struct SecretRendering {
+    name: &'static str,
+    rendering: String,
+}
+
+struct EnvironmentSetting<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+fn with_environment<T>(overrides: &[EnvironmentSetting<'_>], run: impl FnOnce() -> T) -> T {
+    if overrides.is_empty() {
+        return run();
+    }
+    let override_value = &overrides[0];
+    let remaining = &overrides[1..];
+    temp_env::with_var(override_value.name, Some(override_value.value), || {
+        with_environment(remaining, run)
+    })
+}
+
 #[derive(Debug, Parser)]
 struct Cli {
     #[command(flatten)]
@@ -61,19 +108,37 @@ struct Files {
 impl Files {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("temporary directory");
-        for (name, contents) in [
-            ("ca.pem", b"ca".as_slice()),
-            ("cert.pem", b"cert".as_slice()),
-            ("key.pem", b"key".as_slice()),
-            ("token", b"header.payload.signature\n".as_slice()),
-            ("password", format!("{SECRET}\n").as_bytes()),
-            ("blank-password", b"\r\n\n".as_slice()),
-            (
-                "not-utf8-password",
-                [SECRET.as_bytes(), &[0xff]].concat().as_slice(),
-            ),
+        for fixture in [
+            FixtureFile {
+                name: "ca.pem",
+                contents: b"ca".as_slice(),
+            },
+            FixtureFile {
+                name: "cert.pem",
+                contents: b"cert".as_slice(),
+            },
+            FixtureFile {
+                name: "key.pem",
+                contents: b"key".as_slice(),
+            },
+            FixtureFile {
+                name: "token",
+                contents: b"header.payload.signature\n".as_slice(),
+            },
+            FixtureFile {
+                name: "password",
+                contents: format!("{SECRET}\n").as_bytes(),
+            },
+            FixtureFile {
+                name: "blank-password",
+                contents: b"\r\n\n".as_slice(),
+            },
+            FixtureFile {
+                name: "not-utf8-password",
+                contents: [SECRET.as_bytes(), &[0xff]].concat().as_slice(),
+            },
         ] {
-            fs::write(dir.path().join(name), contents).expect("write fixture");
+            fs::write(dir.path().join(fixture.name), fixture.contents).expect("write fixture");
         }
         fs::create_dir(dir.path().join("directory")).expect("create directory");
         Self { dir }
@@ -111,7 +176,12 @@ fn assert_same_security(actual: &ClientSecurity, expected: &ClientSecurity) {
     assert!(same_password, "the SASL passwords differ");
 }
 
-type TlsFields<'a> = (&'a TrustStore, &'a str, &'a Option<KeyStore>);
+#[derive(PartialEq, Eq)]
+struct TlsFields<'a> {
+    trust_store: &'a TrustStore,
+    server_name: &'a str,
+    key_store: &'a Option<KeyStore>,
+}
 
 fn tls_fields(tls: &TlsConnectorConfig) -> TlsFields<'_> {
     let TlsConnectorConfig {
@@ -120,44 +190,65 @@ fn tls_fields(tls: &TlsConnectorConfig) -> TlsFields<'_> {
         key_store,
         ..
     } = tls;
-    (trust_store, server_name.as_str(), key_store)
+    TlsFields {
+        trust_store,
+        server_name: server_name.as_str(),
+        key_store,
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct PublicCredentialFields<'a> {
+    mechanism: SaslMechanism,
+    principals: Vec<&'a str>,
+    key_path: Option<&'a Path>,
 }
 
 /// Every credential field except the password, which a failure may print.
-fn public_credential_fields(
-    credentials: &SaslCredentials,
-) -> (SaslMechanism, Vec<&str>, Option<&Path>) {
+fn public_credential_fields(credentials: &SaslCredentials) -> PublicCredentialFields<'_> {
     let mechanism = credentials.mechanism();
     match credentials {
-        SaslCredentials::Plain { username, .. } => (mechanism, vec![username.as_str()], None),
+        SaslCredentials::Plain { username, .. } => PublicCredentialFields {
+            mechanism,
+            principals: vec![username.as_str()],
+            key_path: None,
+        },
         SaslCredentials::Scram {
             username,
             delegation_token,
             ..
         } => {
             assert!(!delegation_token);
-            (mechanism, vec![username.as_str()], None)
+            PublicCredentialFields {
+                mechanism,
+                principals: vec![username.as_str()],
+                key_path: None,
+            }
         }
         SaslCredentials::Gssapi {
             keytab_path,
             client_principal,
             service_name,
             kdc_url,
-        } => (
+        } => PublicCredentialFields {
             mechanism,
-            vec![
+            principals: vec![
                 client_principal.as_str(),
                 service_name.as_str(),
                 kdc_url.as_str(),
             ],
-            Some(keytab_path.as_path()),
-        ),
+            key_path: Some(keytab_path.as_path()),
+        },
         SaslCredentials::OAuthBearer {
             token: OAuthBearerTokenSource::File(token_path),
             extensions,
         } => {
             assert!(extensions.is_empty());
-            (mechanism, Vec::new(), Some(token_path.as_path()))
+            PublicCredentialFields {
+                mechanism,
+                principals: Vec::new(),
+                key_path: Some(token_path.as_path()),
+            }
         }
         SaslCredentials::OAuthBearer {
             token: OAuthBearerTokenSource::Provider(_),
@@ -211,20 +302,25 @@ fn every_flag_parses_from_the_command_line_and_from_the_environment() {
         "--wal-sasl-oauthbearer-token-path",
     ];
 
-    let command_line: Vec<&str> = flags
-        .iter()
-        .zip(values)
-        .flat_map(|(flag, value)| [*flag, value])
+    let command_line: Vec<&str> = (0..flags.len())
+        .flat_map(|index| [flags[index], values[index]])
         .collect();
     assert!(let Ok(from_flags) = parse(&command_line));
     assert!(from_flags == expected);
 
-    let environment: Vec<(&str, Option<&str>)> = ENVIRONMENT
+    let mut value_index = 0;
+    let environment = ENVIRONMENT
         .iter()
-        .zip(values)
-        .map(|(name, value)| (*name, Some(value)))
-        .collect();
-    let from_environment = temp_env::with_vars(environment, || {
+        .map(|name| {
+            let setting = EnvironmentSetting {
+                name,
+                value: values[value_index],
+            };
+            value_index += 1;
+            setting
+        })
+        .collect::<Vec<_>>();
+    let from_environment = with_environment(&environment, || {
         Cli::try_parse_from([PROGRAM]).map(|cli| cli.wal)
     });
     assert!(let Ok(from_environment) = from_environment);
@@ -233,37 +329,83 @@ fn every_flag_parses_from_the_command_line_and_from_the_environment() {
 
 #[test]
 fn the_protocol_and_the_mechanism_parse_from_their_kafka_names() {
-    for (value, expected) in [
-        ("PLAINTEXT", WalSecurityProtocol::Plaintext),
-        ("SSL", WalSecurityProtocol::Ssl),
-        ("SASL_PLAINTEXT", WalSecurityProtocol::SaslPlaintext),
-        ("SASL_SSL", WalSecurityProtocol::SaslSsl),
-        ("sasl_ssl", WalSecurityProtocol::SaslSsl),
+    for case in [
+        ProtocolNameCase {
+            wire_name: "PLAINTEXT",
+            protocol: WalSecurityProtocol::Plaintext,
+        },
+        ProtocolNameCase {
+            wire_name: "SSL",
+            protocol: WalSecurityProtocol::Ssl,
+        },
+        ProtocolNameCase {
+            wire_name: "SASL_PLAINTEXT",
+            protocol: WalSecurityProtocol::SaslPlaintext,
+        },
+        ProtocolNameCase {
+            wire_name: "SASL_SSL",
+            protocol: WalSecurityProtocol::SaslSsl,
+        },
+        ProtocolNameCase {
+            wire_name: "sasl_ssl",
+            protocol: WalSecurityProtocol::SaslSsl,
+        },
     ] {
-        assert!(let Ok(args) = parse(&["--wal-security-protocol", value]));
-        assert!(args.wal_security_protocol == expected);
-        assert!(expected.to_string() == value.to_uppercase());
+        assert!(let Ok(args) = parse(&["--wal-security-protocol", case.wire_name]));
+        assert!(args.wal_security_protocol == case.protocol);
+        assert!(case.protocol.to_string() == case.wire_name.to_uppercase());
     }
-    for (value, expected) in [
-        ("PLAIN", WalSaslMechanism::Plain),
-        ("SCRAM-SHA-256", WalSaslMechanism::ScramSha256),
-        ("SCRAM-SHA-512", WalSaslMechanism::ScramSha512),
-        ("OAUTHBEARER", WalSaslMechanism::OAuthBearer),
-        ("GSSAPI", WalSaslMechanism::Gssapi),
+    for case in [
+        MechanismNameCase {
+            wire_name: "PLAIN",
+            mechanism: WalSaslMechanism::Plain,
+        },
+        MechanismNameCase {
+            wire_name: "SCRAM-SHA-256",
+            mechanism: WalSaslMechanism::ScramSha256,
+        },
+        MechanismNameCase {
+            wire_name: "SCRAM-SHA-512",
+            mechanism: WalSaslMechanism::ScramSha512,
+        },
+        MechanismNameCase {
+            wire_name: "OAUTHBEARER",
+            mechanism: WalSaslMechanism::OAuthBearer,
+        },
+        MechanismNameCase {
+            wire_name: "GSSAPI",
+            mechanism: WalSaslMechanism::Gssapi,
+        },
     ] {
-        assert!(let Ok(args) = parse(&["--wal-sasl-mechanism", value]));
-        assert!(args.wal_sasl_mechanism == Some(expected));
-        assert!(expected.to_string() == value);
-        assert!(SaslMechanism::from(expected).wire_name() == value);
+        assert!(let Ok(args) = parse(&["--wal-sasl-mechanism", case.wire_name]));
+        assert!(args.wal_sasl_mechanism == Some(case.mechanism));
+        assert!(case.mechanism.to_string() == case.wire_name);
+        assert!(SaslMechanism::from(case.mechanism).wire_name() == case.wire_name);
     }
-    for (protocol, tls, sasl) in [
-        (WalSecurityProtocol::Plaintext, false, false),
-        (WalSecurityProtocol::Ssl, true, false),
-        (WalSecurityProtocol::SaslPlaintext, false, true),
-        (WalSecurityProtocol::SaslSsl, true, true),
+    for case in [
+        ProtocolRequirementCase {
+            protocol: WalSecurityProtocol::Plaintext,
+            tls: false,
+            sasl: false,
+        },
+        ProtocolRequirementCase {
+            protocol: WalSecurityProtocol::Ssl,
+            tls: true,
+            sasl: false,
+        },
+        ProtocolRequirementCase {
+            protocol: WalSecurityProtocol::SaslPlaintext,
+            tls: false,
+            sasl: true,
+        },
+        ProtocolRequirementCase {
+            protocol: WalSecurityProtocol::SaslSsl,
+            tls: true,
+            sasl: true,
+        },
     ] {
-        assert!(protocol.requires_tls() == tls);
-        assert!(protocol.requires_sasl() == sasl);
+        assert!(case.protocol.requires_tls() == case.tls);
+        assert!(case.protocol.requires_sasl() == case.sasl);
     }
     // Kafka matches `sasl.mechanism` exactly, and an empty value names nothing.
     for invalid in [
@@ -290,7 +432,8 @@ fn no_flag_gives_plaintext_and_the_client_default_of_no_policy() {
 #[test]
 fn sasl_ssl_with_scram_sha_512_builds_the_whole_policy() {
     let files = Files::new();
-    let (ca, password_path) = (files.path("ca.pem"), files.path("password"));
+    let ca = files.path("ca.pem");
+    let password_path = files.path("password");
     assert!(let
         Ok(Some(actual)) = load(&[
             "--wal-security-protocol",
@@ -326,20 +469,35 @@ fn sasl_ssl_with_scram_sha_512_builds_the_whole_policy() {
     assert_same_security(&actual, &expected);
 }
 
+struct SecurityCase<'a> {
+    name: &'static str,
+    args: Vec<&'a str>,
+    expected: ClientSecurity,
+}
+
+macro_rules! security_case {
+    ($name:expr, $args:expr, $expected:expr $(,)?) => {
+        SecurityCase {
+            name: $name,
+            args: $args,
+            expected: $expected,
+        }
+    };
+}
+
 #[test]
 fn each_protocol_and_mechanism_builds_the_policy_it_names() {
     let files = Files::new();
-    let (ca, cert, key) = (
-        files.path("ca.pem"),
-        files.path("cert.pem"),
-        files.path("key.pem"),
-    );
-    let (password_path, token) = (files.path("password"), files.path("token"));
+    let ca = files.path("ca.pem");
+    let cert = files.path("cert.pem");
+    let key = files.path("key.pem");
+    let password_path = files.path("password");
+    let token = files.path("token");
     let mut tls = TlsConnectorConfig::default();
     tls.trust_store = TrustStore::PemFile(PathBuf::from(&ca));
     tls.server_name = "localhost".to_string();
-    let cases: [(&str, Vec<&str>, ClientSecurity); 5] = [
-        (
+    let cases: [SecurityCase<'_>; 5] = [
+        security_case!(
             "SSL",
             vec![
                 "--wal-security-protocol",
@@ -356,7 +514,7 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
                 sasl_host: None,
             },
         ),
-        (
+        security_case!(
             "SSL with a client certificate",
             vec![
                 "--wal-security-protocol",
@@ -385,7 +543,7 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
                 sasl_host: None,
             },
         ),
-        (
+        security_case!(
             "SASL_PLAINTEXT with PLAIN",
             vec![
                 "--wal-security-protocol",
@@ -407,7 +565,7 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
                 sasl_host: None,
             },
         ),
-        (
+        security_case!(
             "SASL_PLAINTEXT with SCRAM-SHA-256",
             vec![
                 "--wal-security-protocol",
@@ -431,7 +589,7 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
                 sasl_host: None,
             },
         ),
-        (
+        security_case!(
             "SASL_SSL with OAUTHBEARER",
             vec![
                 "--wal-security-protocol",
@@ -456,10 +614,10 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
             },
         ),
     ];
-    for (name, args, expected) in &cases {
-        let result = load(args).map_err(|error| format!("{name}: {error}"));
+    for case in &cases {
+        let result = load(&case.args).map_err(|error| format!("{}: {error}", case.name));
         assert!(let Ok(Some(actual)) = result);
-        assert_same_security(&actual, expected);
+        assert_same_security(&actual, &case.expected);
     }
 }
 
@@ -485,7 +643,21 @@ fn a_tls_protocol_installs_a_rustls_default_provider() {
 type Refusal<'a> = Box<dyn Fn(&WalClientSecurityError) -> bool + 'a>;
 
 /// A case name, the flags it passes, and the error it expects.
-type RefusalCase<'a> = (&'static str, Vec<&'a str>, Refusal<'a>);
+struct RefusalCase<'a> {
+    name: &'static str,
+    args: Vec<&'a str>,
+    expected: Refusal<'a>,
+}
+
+macro_rules! refusal_case {
+    ($name:expr, $args:expr, $expected:expr $(,)?) => {
+        RefusalCase {
+            name: $name,
+            args: $args,
+            expected: $expected,
+        }
+    };
+}
 
 macro_rules! refused {
     ($pattern:pat $(if $guard:expr)?) => {
@@ -536,7 +708,10 @@ impl FixturePaths {
 
 /// Cases where a TLS flag is out of place or missing.
 fn tls_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
-    let (ca, cert, key, password) = (&*paths.ca, &*paths.cert, &*paths.key, &*paths.password);
+    let ca = paths.ca.as_str();
+    let cert = paths.cert.as_str();
+    let key = paths.key.as_str();
+    let password = paths.password.as_str();
     let ca_and_name = [
         "--wal-tls-ca-path",
         ca,
@@ -545,7 +720,7 @@ fn tls_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
     ];
     let plain = [&PLAIN_USER[..], &["--wal-sasl-password-path", password]].concat();
     vec![
-        (
+        refusal_case!(
             "a CA file with PLAINTEXT",
             vec!["--wal-tls-ca-path", ca],
             refused!(WalClientSecurityError::TlsFlagWithoutTlsProtocol {
@@ -553,7 +728,7 @@ fn tls_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::Plaintext,
             }),
         ),
-        (
+        refusal_case!(
             "a server name with PLAINTEXT",
             vec!["--wal-tls-server-name", "localhost"],
             refused!(WalClientSecurityError::TlsFlagWithoutTlsProtocol {
@@ -561,7 +736,7 @@ fn tls_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::Plaintext,
             }),
         ),
-        (
+        refusal_case!(
             "a certificate with PLAINTEXT",
             vec!["--wal-tls-cert-path", cert],
             refused!(WalClientSecurityError::TlsFlagWithoutTlsProtocol {
@@ -569,7 +744,7 @@ fn tls_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::Plaintext,
             }),
         ),
-        (
+        refusal_case!(
             "a key with SASL_PLAINTEXT",
             [&SASL_PLAINTEXT[..], &plain, &["--wal-tls-key-path", key]].concat(),
             refused!(WalClientSecurityError::TlsFlagWithoutTlsProtocol {
@@ -577,26 +752,26 @@ fn tls_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::SaslPlaintext,
             }),
         ),
-        (
+        refusal_case!(
             "SSL without a CA file",
             [&SSL[..], &["--wal-tls-server-name", "localhost"]].concat(),
             refused!(WalClientSecurityError::MissingTlsCaPath {
                 protocol: WalSecurityProtocol::Ssl,
             }),
         ),
-        (
+        refusal_case!(
             "SASL_SSL without a server name",
             [&SASL_SSL[..], &plain, &["--wal-tls-ca-path", ca]].concat(),
             refused!(WalClientSecurityError::MissingTlsServerName {
                 protocol: WalSecurityProtocol::SaslSsl,
             }),
         ),
-        (
+        refusal_case!(
             "a certificate without a key",
             [&SSL[..], &ca_and_name, &["--wal-tls-cert-path", cert]].concat(),
             refused!(WalClientSecurityError::TlsCertWithoutKey),
         ),
-        (
+        refusal_case!(
             "a key without a certificate",
             [&SSL[..], &ca_and_name, &["--wal-tls-key-path", key]].concat(),
             refused!(WalClientSecurityError::TlsKeyWithoutCert),
@@ -606,7 +781,9 @@ fn tls_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
 
 /// Cases where a SASL flag is out of place or missing.
 fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
-    let (ca, password, token) = (&*paths.ca, &*paths.password, &*paths.token);
+    let ca = paths.ca.as_str();
+    let password = paths.password.as_str();
+    let token = paths.token.as_str();
     let ca_and_name = [
         "--wal-tls-ca-path",
         ca,
@@ -626,7 +803,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
         "alice",
     ];
     vec![
-        (
+        refusal_case!(
             "a mechanism with PLAINTEXT",
             vec!["--wal-sasl-mechanism", "PLAIN"],
             refused!(WalClientSecurityError::SaslFlagWithoutSaslProtocol {
@@ -634,7 +811,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::Plaintext,
             }),
         ),
-        (
+        refusal_case!(
             "a user name with SSL",
             [&SSL[..], &ca_and_name, &["--wal-sasl-username", "alice"]].concat(),
             refused!(WalClientSecurityError::SaslFlagWithoutSaslProtocol {
@@ -642,7 +819,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::Ssl,
             }),
         ),
-        (
+        refusal_case!(
             "a password file with SSL",
             [
                 &SSL[..],
@@ -655,7 +832,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::Ssl,
             }),
         ),
-        (
+        refusal_case!(
             "a token file with SSL",
             [
                 &SSL[..],
@@ -668,19 +845,19 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 protocol: WalSecurityProtocol::Ssl,
             }),
         ),
-        (
+        refusal_case!(
             "SASL_PLAINTEXT without a mechanism",
             SASL_PLAINTEXT.to_vec(),
             refused!(WalClientSecurityError::MissingSaslMechanism {
                 protocol: WalSecurityProtocol::SaslPlaintext,
             }),
         ),
-        (
+        refusal_case!(
             "GSSAPI",
             [&SASL_PLAINTEXT[..], &["--wal-sasl-mechanism", "GSSAPI"]].concat(),
             refused!(WalClientSecurityError::GssapiUnsupported),
         ),
-        (
+        refusal_case!(
             "PLAIN without a user name",
             [
                 &SASL_PLAINTEXT[..],
@@ -692,7 +869,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 mechanism: WalSaslMechanism::Plain,
             }),
         ),
-        (
+        refusal_case!(
             "SCRAM-SHA-256 without a password file",
             [
                 &SASL_PLAINTEXT[..],
@@ -704,7 +881,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 mechanism: WalSaslMechanism::ScramSha256,
             }),
         ),
-        (
+        refusal_case!(
             "SCRAM-SHA-512 with a token file",
             [
                 &SASL_PLAINTEXT[..],
@@ -718,7 +895,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 mechanism: WalSaslMechanism::ScramSha512,
             }),
         ),
-        (
+        refusal_case!(
             "OAUTHBEARER without a token file",
             [
                 &SASL_PLAINTEXT[..],
@@ -727,7 +904,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
             .concat(),
             refused!(WalClientSecurityError::MissingOAuthBearerTokenPath),
         ),
-        (
+        refusal_case!(
             "OAUTHBEARER with a user name",
             [
                 &SASL_PLAINTEXT[..],
@@ -740,7 +917,7 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 mechanism: WalSaslMechanism::OAuthBearer,
             }),
         ),
-        (
+        refusal_case!(
             "OAUTHBEARER with a password file",
             [
                 &SASL_PLAINTEXT[..],
@@ -758,13 +935,12 @@ fn sasl_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
 
 /// Cases where a named file cannot be read or holds no usable password.
 fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
-    let (cert, key, missing, directory) = (
-        &*paths.cert,
-        &*paths.key,
-        &*paths.missing,
-        &*paths.directory,
-    );
-    let (blank, not_utf8) = (&*paths.blank, &*paths.not_utf8);
+    let cert = paths.cert.as_str();
+    let key = paths.key.as_str();
+    let missing = paths.missing.as_str();
+    let directory = paths.directory.as_str();
+    let blank = paths.blank.as_str();
+    let not_utf8 = paths.not_utf8.as_str();
     let ca_and_name = [
         "--wal-tls-ca-path",
         &*paths.ca,
@@ -772,7 +948,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
         "localhost",
     ];
     vec![
-        (
+        refusal_case!(
             "an unreadable CA file",
             [
                 &SSL[..],
@@ -790,7 +966,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 ..
             } if path == Path::new(missing)),
         ),
-        (
+        refusal_case!(
             "a directory as the CA file",
             [
                 &SSL[..],
@@ -808,7 +984,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 ..
             } if path == Path::new(directory)),
         ),
-        (
+        refusal_case!(
             "an unreadable certificate",
             [
                 &SSL[..],
@@ -822,7 +998,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 ..
             } if path == Path::new(missing)),
         ),
-        (
+        refusal_case!(
             "an unreadable key",
             [
                 &SSL[..],
@@ -836,7 +1012,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 ..
             } if path == Path::new(missing)),
         ),
-        (
+        refusal_case!(
             "an unreadable password file",
             [
                 &SASL_PLAINTEXT[..],
@@ -850,7 +1026,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 ..
             } if path == Path::new(missing)),
         ),
-        (
+        refusal_case!(
             "an unreadable token file",
             [
                 &SASL_PLAINTEXT[..],
@@ -864,7 +1040,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
                 ..
             } if path == Path::new(missing)),
         ),
-        (
+        refusal_case!(
             "a password file that is not UTF-8",
             [
                 &SASL_PLAINTEXT[..],
@@ -875,7 +1051,7 @@ fn file_refusals(paths: &FixturePaths) -> Vec<RefusalCase<'_>> {
             refused!(WalClientSecurityError::PasswordFileNotUtf8 { path }
                 if path == Path::new(not_utf8)),
         ),
-        (
+        refusal_case!(
             "a password file of line breaks only",
             [
                 &SASL_PLAINTEXT[..],
@@ -896,11 +1072,11 @@ fn every_invalid_combination_is_refused_with_its_own_error() {
     let cases = [tls_refusals, sasl_refusals, file_refusals]
         .into_iter()
         .flat_map(|refusals| refusals(&paths));
-    for (name, args, is_expected) in cases {
+    for case in cases {
         // `.err()` keeps an accepted policy, and its password, out of the
         // failure output.
-        assert!(let Some(error) = load(&args).err(), "{name} was accepted");
-        assert!(is_expected(&error), "{name}: {error}");
+        assert!(let Some(error) = load(&case.args).err(), "{} was accepted", case.name);
+        assert!((case.expected)(&error), "{}: {error}", case.name);
     }
 }
 
@@ -919,25 +1095,44 @@ fn gssapi_is_refused_as_not_supported_yet() {
 #[test]
 fn the_password_file_loses_only_its_trailing_line_breaks() {
     let files = Files::new();
-    for (contents, expected) in [
-        ("hunter2", "hunter2"),
-        ("hunter2\n", "hunter2"),
-        ("hunter2\r\n", "hunter2"),
-        ("hunter2\n\n", "hunter2"),
-        (" hunter 2 \n", " hunter 2 "),
-        ("\nhunter2\n", "\nhunter2"),
+    for case in [
+        PasswordLineCase {
+            contents: "hunter2",
+            expected: "hunter2",
+        },
+        PasswordLineCase {
+            contents: "hunter2\n",
+            expected: "hunter2",
+        },
+        PasswordLineCase {
+            contents: "hunter2\r\n",
+            expected: "hunter2",
+        },
+        PasswordLineCase {
+            contents: "hunter2\n\n",
+            expected: "hunter2",
+        },
+        PasswordLineCase {
+            contents: " hunter 2 \n",
+            expected: " hunter 2 ",
+        },
+        PasswordLineCase {
+            contents: "\nhunter2\n",
+            expected: "\nhunter2",
+        },
     ] {
         let path = files.dir.path().join("line-breaks");
-        fs::write(&path, contents).expect("write password file");
+        fs::write(&path, case.contents).expect("write password file");
         assert!(let Ok(password) = read_password_file(&path));
-        assert!(password == expected);
+        assert!(password == case.expected);
     }
 }
 
 #[test]
 fn the_password_never_appears_in_debug_output_or_in_an_error() {
     let files = Files::new();
-    let (password_path, not_utf8) = (files.path("password"), files.path("not-utf8-password"));
+    let password_path = files.path("password");
+    let not_utf8 = files.path("not-utf8-password");
     let scram = [
         "--wal-security-protocol",
         "SASL_SSL",
@@ -948,9 +1143,12 @@ fn the_password_never_appears_in_debug_output_or_in_an_error() {
         "--wal-sasl-password-path",
     ];
 
-    let mut renderings = Vec::new();
+    let mut renderings: Vec<SecretRendering> = Vec::new();
     assert!(let Ok(args) = parse(&[&scram[..], &[password_path.as_str()]].concat()));
-    renderings.push(("the arguments", format!("{args:?}")));
+    renderings.push(SecretRendering {
+        name: "the arguments",
+        rendering: format!("{args:?}"),
+    });
 
     // The password file reads first, and the missing CA file fails after it.
     assert!(let Some(after_read) = args.load().err());
@@ -958,19 +1156,28 @@ fn the_password_never_appears_in_debug_output_or_in_an_error() {
         after_read,
         WalClientSecurityError::MissingTlsCaPath { .. }
     ));
-    renderings.push(("an error after the read", after_read.to_string()));
-    renderings.push((
-        "an error after the read, as Debug",
-        format!("{after_read:?}"),
-    ));
+    renderings.push(SecretRendering {
+        name: "an error after the read",
+        rendering: after_read.to_string(),
+    });
+    renderings.push(SecretRendering {
+        name: "an error after the read, as Debug",
+        rendering: format!("{after_read:?}"),
+    });
 
     assert!(let Some(utf8_error) = load(&[&scram[..], &[not_utf8.as_str()]].concat()).err());
-    renderings.push(("a UTF-8 error", utf8_error.to_string()));
-    renderings.push(("a UTF-8 error, as Debug", format!("{utf8_error:?}")));
+    renderings.push(SecretRendering {
+        name: "a UTF-8 error",
+        rendering: utf8_error.to_string(),
+    });
+    renderings.push(SecretRendering {
+        name: "a UTF-8 error, as Debug",
+        rendering: format!("{utf8_error:?}"),
+    });
 
-    for (name, rendering) in renderings {
-        let leaked = rendering.contains(SECRET);
-        assert!(!leaked, "{name} holds the password");
+    for rendering in renderings {
+        let leaked = rendering.rendering.contains(SECRET);
+        assert!(!leaked, "{} holds the password", rendering.name);
     }
 }
 

@@ -5,7 +5,98 @@
 //! they are interchangeable for one shard kind and genuinely sharded for the
 //! other. [`assign_jobs`] carries the evidence for that split and acts on it.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use crate::frontend::job::JobShard;
+
+/// One planned shard, and the querier that will scan it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssignedJob {
+    /// What to scan.
+    pub shard: JobShard,
+    /// The `host:port` to scan it on.
+    pub querier: String,
+}
+
+/// The score of `key` on `addr`, for rendezvous hashing.
+///
+/// FNV-1a over `key \x1f addr`, then a `splitmix64` finalizer. FNV-1a rather
+/// than `DefaultHasher` because the assignment has to be the same in two
+/// processes and across two builds: `DefaultHasher`'s algorithm is explicitly
+/// not guaranteed stable, and a frontend that hashes differently after an
+/// upgrade re-shuffles every block to a different querier for no reason.
+///
+/// The finalizer is not decoration. Pool addresses differ from one another in
+/// a byte or two, and FNV-1a's avalanche over a short common suffix is poor
+/// enough that the highest-scoring querier is not evenly distributed -- a
+/// four-querier pool took a 42% share of 400 blocks without it. Mixing the
+/// output restores an even spread, which is what makes an ownership hash
+/// double as a balancer.
+pub(crate) fn rendezvous_score(addr: &str, key: &str) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    for byte in key.as_bytes().iter().chain(b"\x1f").chain(addr.as_bytes()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash ^= hash >> 30;
+    hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    hash ^= hash >> 27;
+    hash = hash.wrapping_mul(0x94d0_49bb_1331_11eb);
+    hash ^ (hash >> 31)
+}
+
+/// Place every planned shard on a ready querier.
+///
+/// The two shard kinds are not the same problem, and conflating them is what
+/// made a single round-robin counter look sufficient.
+///
+/// **Cold-block shards are interchangeable work.** The shard names an object
+/// key and a row-group range, every querier loads the same `TraceIndex`
+/// snapshot from the same bucket, and every querier reads blocks out of that
+/// bucket. Any ready querier gives byte-identical results for a block job. The
+/// only thing to decide is which one, and the answer is ownership rather than
+/// rotation -- see `rendezvous_pick`.
+///
+/// **The live shard is not interchangeable.** A querier run with
+/// `--querier-live-store` holds its own hot tier, fed by a WAL consumer in the
+/// group `krabka-traces-querier-live-store`; N querier replicas in one group
+/// are assigned disjoint partitions, so each holds a *different* slice of the
+/// recent spans and no single querier holds them all. Sending the live shard
+/// to one querier chosen by a counter therefore answers from roughly 1/N of
+/// the hot tier and returns it as a complete 200. The frontend cannot narrow a
+/// live job to the partitions one querier owns -- that assignment lives inside
+/// the consumer group and is never reported over the query API -- so the only
+/// correct fan-out is every ready querier, unioned.
+///
+/// The union is safe in the other topology too. Queriers pointed at a shared
+/// live-store with `--querier-live-store-url` all return the same recent
+/// spans, and the merge reunions by `traceID`, so the duplicates collapse.
+/// What it costs there is a repeated scan, not a wrong answer. It is the same
+/// reasoning `QueryFrontend::trace_by_id` already applies, for the same reason.
+#[must_use]
+pub fn assign_jobs(jobs: Vec<JobShard>, ready: &[&str]) -> Vec<AssignedJob> {
+    let mut assigned = Vec::with_capacity(jobs.len());
+    for shard in jobs {
+        match shard {
+            JobShard::Live => assigned.extend(ready.iter().map(|addr| AssignedJob {
+                shard: JobShard::Live,
+                querier: (*addr).to_string(),
+            })),
+            JobShard::Block { .. } => {
+                let Some(querier) = rendezvous_pick(ready, &shard_key(&shard)) else {
+                    continue;
+                };
+                assigned.push(AssignedJob {
+                    shard,
+                    querier: querier.to_string(),
+                });
+            }
+        }
+    }
+    assigned
+}
 
 #[cfg(test)]
 mod tests {
@@ -73,7 +164,7 @@ mod tests {
         let moved = before
             .iter()
             .zip(&after)
-            .filter(|(b, a)| b.querier != a.querier)
+            .filter(|pair| pair.0.querier != pair.1.querier)
             .count();
         let owned_by_c = before.iter().filter(|a| a.querier == "c:1").count();
         check!(owned_by_c > 0, "c owned some of the 64 blocks");
@@ -113,16 +204,53 @@ mod tests {
     }
 }
 
-mod assign_jobs;
-mod assigned_job;
-mod pick_querier;
-mod rendezvous_pick;
-mod rendezvous_score;
-mod shard_key;
+/// The ready querier that owns `key`, for work that is not shard-planned.
+///
+/// A `TraceQL`-metrics query runs as one unsharded job, so it has no shard to
+/// assign; it still needs a target, and it still must not be a querier the
+/// membership has ejected. Keying on the query text keeps a repeated query on
+/// the same querier while the pool holds, which is worth having for whatever
+/// that querier has already decoded.
+#[must_use]
+pub fn pick_querier<'a>(ready: &[&'a str], key: &str) -> Option<&'a str> {
+    rendezvous_pick(ready, key)
+}
 
-pub use assign_jobs::assign_jobs;
-pub use assigned_job::AssignedJob;
-pub use pick_querier::pick_querier;
-use rendezvous_pick::rendezvous_pick;
-use rendezvous_score::rendezvous_score;
-use shard_key::shard_key;
+/// Pick the querier that owns `key`, by highest random weight.
+///
+/// Rendezvous hashing, not round-robin. Round-robin is a load-balancing
+/// decision; this is an ownership one, and ownership wants two properties
+/// round-robin does not have. The same block goes to the same querier while
+/// the pool is unchanged, so a querier's page cache and its decoded row-group
+/// work are worth having. And when a querier leaves, only the keys it owned
+/// move -- every other block keeps its owner, rather than the whole assignment
+/// rotating by one the way a modulus does.
+///
+/// Ties break on the address so the choice is total and reproducible.
+/// `None` only when `candidates` is empty.
+pub(crate) fn rendezvous_pick<'a>(candidates: &[&'a str], key: &str) -> Option<&'a str> {
+    candidates
+        .iter()
+        .max_by(|a, b| {
+            rendezvous_score(a, key)
+                .cmp(&rendezvous_score(b, key))
+                .then_with(|| a.cmp(b))
+        })
+        .copied()
+}
+
+/// The ownership key of a cold-block shard.
+///
+/// It names the block and the row-group range, so the two halves of a split
+/// block are owned independently and a large block's work spreads instead of
+/// landing whole on one querier.
+pub(crate) fn shard_key(shard: &JobShard) -> String {
+    match shard {
+        JobShard::Live => "live".to_string(),
+        JobShard::Block {
+            block_id,
+            row_group_start,
+            row_group_end,
+        } => format!("{block_id}#{row_group_start}-{row_group_end}"),
+    }
+}

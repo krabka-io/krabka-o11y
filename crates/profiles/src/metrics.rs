@@ -12,69 +12,110 @@
 //! is `krabka_profiles`, so the `ingest_requests` counter renders on the wire
 //! as `krabka_profiles_ingest_requests_total{status="ok"}`.
 
-use std::sync::Arc;
-
-use krabka_blockstore::ObjectStoreMetrics;
-use krabka_observability::{
-    compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics,
-    wal_produce::WalProduceMetrics,
+pub use krabka_observability::service_metrics::{
+    RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, TenantLabel, metrics_router,
 };
-use krabka_units::{Time, convert::TimeExt as _};
-use prometheus_client::{
-    encoding::EncodeLabelSet,
-    metrics::{counter::Counter, family::Family, histogram::Histogram},
-    registry::Registry,
-};
-use tokio::sync::Mutex;
 
-use crate::ids::{IngestBytes, IngestItems};
+/// Result of one lookup in the per-pass uploaded-symbol cache, as the
+/// `symbolizer_cache_requests{status}` counter records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolizerCacheLookup {
+    /// The build id was in the cache: `status="hit"`.
+    Hit,
+    /// The build id was not in the cache: `status="miss"`.
+    Miss,
+}
+
+impl SymbolizerCacheLookup {
+    /// The `status` label value for this lookup.
+    #[must_use]
+    pub const fn status(self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::Miss => "miss",
+        }
+    }
+}
+
+mod service_metrics;
+
+pub use service_metrics::ServiceMetrics;
 
 #[cfg(test)]
 mod tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../metrics/tests/support/shared_registry_assertion.rs"
+    ));
     use assert2::{assert, check};
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
+    use krabka_blockstore::ObjectStoreOperation;
+    use krabka_observability::service_metrics::{
+        IngestRequest, QueryRequest, RequestOutcome, encode_registry,
     };
-    use krabka_units::millis;
-    use tower::ServiceExt as _;
+    use krabka_units::{bytes, millis};
 
-    use super::*;
+    use super::{ServiceMetrics, StatusLabel, SymbolizerCacheLookup};
+
+    /// A one-item, one-byte ingest request with `outcome`. Tests override
+    /// the fields they check with struct update syntax.
+    fn ingest_request(outcome: RequestOutcome) -> IngestRequest {
+        IngestRequest {
+            outcome,
+            body: bytes(1),
+            items: 1,
+            elapsed: millis(1),
+        }
+    }
 
     #[tokio::test]
     async fn registry_has_profiles_prefix_and_all_metrics() {
         let m = ServiceMetrics::new();
-        m.record_ingest(true, IngestBytes(1024), IngestItems(3), millis(12));
-        m.record_ingest(false, IngestBytes(0), IngestItems(0), millis(1));
+        m.record_ingest(IngestRequest {
+            body: bytes(1024),
+            items: 3,
+            elapsed: millis(12),
+            ..ingest_request(RequestOutcome::Ok)
+        });
+        m.record_ingest(IngestRequest {
+            body: bytes(0),
+            items: 0,
+            ..ingest_request(RequestOutcome::Error)
+        });
         m.record_wal_append_failure();
         m.record_ingest_samples("tenant-a", 3);
         m.record_blocks_built(2);
-        m.record_query("select_series", true, millis(500));
-        m.record_query("render", false, millis(100));
+        m.record_query(QueryRequest {
+            route: "select_series",
+            outcome: RequestOutcome::Ok,
+            elapsed: millis(500),
+        });
+        m.record_query(QueryRequest {
+            route: "render",
+            outcome: RequestOutcome::Error,
+            elapsed: millis(100),
+        });
         m.debuginfo_upload_retries.inc();
         m.debuginfo_upload_timeouts.inc();
-        m.record_symbolizer_cache(true);
-        m.record_symbolizer_cache(false);
-
-        let mut buf = String::new();
-        let r = m.registry.lock().await;
-        prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
-        for needle in [
-            "krabka_profiles_ingest_requests_total",
-            "krabka_profiles_ingest_bytes_total",
-            "krabka_profiles_ingest_items_total",
-            "krabka_profiles_ingest_duration_seconds",
-            "krabka_profiles_wal_append_failures_total",
-            "krabka_profiles_ingest_samples_total",
-            "krabka_profiles_blocks_built_total",
-            "krabka_profiles_query_requests_total",
-            "krabka_profiles_query_duration_seconds",
-            "krabka_profiles_debuginfo_upload_retries_total",
-            "krabka_profiles_debuginfo_upload_timeouts_total",
-            "krabka_profiles_symbolizer_cache_requests_total",
-        ] {
-            assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
-        }
+        m.record_symbolizer_cache(SymbolizerCacheLookup::Hit);
+        m.record_symbolizer_cache(SymbolizerCacheLookup::Miss);
+        let buf = assert_shared_registry_metrics!(
+            &m,
+            "krabka_profiles",
+            [
+                "krabka_profiles_ingest_requests_total",
+                "krabka_profiles_ingest_bytes_total",
+                "krabka_profiles_ingest_items_total",
+                "krabka_profiles_ingest_duration_seconds",
+                "krabka_profiles_wal_append_failures_total",
+                "krabka_profiles_ingest_samples_total",
+                "krabka_profiles_blocks_built_total",
+                "krabka_profiles_query_requests_total",
+                "krabka_profiles_query_duration_seconds",
+                "krabka_profiles_debuginfo_upload_retries_total",
+                "krabka_profiles_debuginfo_upload_timeouts_total",
+                "krabka_profiles_symbolizer_cache_requests_total",
+            ]
+        );
         for label in [
             "tenant=\"tenant-a\"",
             "status=\"ok\"",
@@ -87,46 +128,20 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn metrics_route_returns_openmetrics() {
-        let m = ServiceMetrics::new();
-        m.record_ingest(true, IngestBytes(42), IngestItems(1), millis(10));
-        let app = metrics_router(m.registry);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/metrics")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert!(resp.status() == StatusCode::OK);
-        let ct = resp
-            .headers()
-            .get("content-type")
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert!(ct.starts_with("application/openmetrics-text"), "ct={ct}");
-        let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
-            .await
-            .unwrap();
-        let s = std::str::from_utf8(&body).unwrap();
-        assert!(s.contains("krabka_profiles_ingest_requests_total"), "{s}");
-        assert!(s.contains("# EOF"), "{s}");
-    }
-
     #[test]
     fn record_ingest_adds_positive_bytes_and_items() {
         let m = ServiceMetrics::new();
-        m.record_ingest(true, IngestBytes(1024), IngestItems(3), millis(12));
+        m.record_ingest(IngestRequest {
+            body: bytes(1024),
+            items: 3,
+            elapsed: millis(12),
+            ..ingest_request(RequestOutcome::Ok)
+        });
 
         // A positive body/item count must flow through to the cumulative
-        // counters. This pins the `> 0` guards: flipping to `< 0` or `== 0`
-        // would skip `inc_by` for positive inputs, leaving these at zero.
-        check!(m.ingest_bytes.get() == 1024);
-        check!(m.ingest_items.get() == 3);
+        // counters, so a dropped or zeroed `inc_by` leaves these at zero.
+        check!(m.ingest.bytes.get() == 1024);
+        check!(m.ingest.items.get() == 3);
     }
 
     /// The request counter is split by outcome, so a swapped status label
@@ -136,19 +151,20 @@ mod tests {
     fn ingest_requests_are_counted_under_their_own_outcome() {
         let m = ServiceMetrics::new();
         let count = |status: &str| {
-            m.ingest_requests
+            m.ingest
+                .requests
                 .get_or_create(&StatusLabel {
                     status: status.into(),
                 })
                 .get()
         };
 
-        m.record_ingest(true, IngestBytes(1), IngestItems(1), millis(1));
+        m.record_ingest(ingest_request(RequestOutcome::Ok));
         check!(count("ok") == 1);
         check!(count("error") == 0);
 
-        m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
-        m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
+        m.record_ingest(ingest_request(RequestOutcome::Error));
+        m.record_ingest(ingest_request(RequestOutcome::Error));
         check!(
             count("ok") == 1,
             "a failure must not land on the success series"
@@ -176,78 +192,15 @@ mod tests {
     #[test]
     fn wal_append_failure_is_separate_from_request_outcome() {
         let m = ServiceMetrics::new();
-        // An ok=false request alone must NOT bump wal_append_failures.
-        m.record_ingest(false, IngestBytes(0), IngestItems(0), millis(1));
-        assert!(m.wal_append_failures.get() == 0);
+        // An error request alone must NOT bump wal_append_failures.
+        m.record_ingest(IngestRequest {
+            body: bytes(0),
+            items: 0,
+            ..ingest_request(RequestOutcome::Error)
+        });
+        assert!(m.ingest.wal_append_failures.get() == 0);
         // Only the explicit WAL-failure call does.
         m.record_wal_append_failure();
-        assert!(m.wal_append_failures.get() == 1);
-    }
-    /// The shared WAL-consumer, compaction and object-store bundles register
-    /// into this signal's own registry, so their names have to come out under
-    /// this signal's prefix. A bundle wired into the wrong registry, or not
-    /// registered at all, is invisible from the recording call and shows up
-    /// only here.
-    #[tokio::test]
-    async fn shared_instruments_carry_this_signals_prefix() {
-        use krabka_blockstore::ObjectStoreOperation;
-
-        let m = ServiceMetrics::new();
-        m.wal_consumer.record_poll_at(
-            &[krabka_client_consumer::ConsumerRecord {
-                topic: "__wal".into(),
-                partition: 2,
-                offset: 17,
-                leader_epoch: 0,
-                timestamp: 1_000,
-                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-                key: None,
-                value: None,
-                headers: Vec::new(),
-            }],
-            3_000,
-        );
-        m.compaction.record_run(true, krabka_units::secs(1));
-        m.compaction.record_output(4);
-        m.object_store
-            .record_operation(ObjectStoreOperation::Get, false, krabka_units::millis(20));
-        m.object_store.record_retry(ObjectStoreOperation::Get);
-
-        let mut buf = String::new();
-        let r = m.registry.lock().await;
-        prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
-        for needle in [
-            "krabka_profiles_wal_consumer_records_total{topic=\"__wal\",partition=\"2\"} 1",
-            "krabka_profiles_wal_consumer_last_consumed_offset{topic=\"__wal\",partition=\"2\"} 17",
-            "krabka_profiles_wal_consumer_polls_total{outcome=\"records\"} 1",
-            "krabka_profiles_wal_consumer_receive_delay_seconds_sum 2.0",
-            "krabka_profiles_compaction_runs_total{status=\"ok\"} 1",
-            "krabka_profiles_compaction_duration_seconds_count 1",
-            "krabka_profiles_compaction_blocks_total 4",
-            "krabka_profiles_objstore_operations_total{operation=\"get\"} 1",
-            "krabka_profiles_objstore_operation_failures_total{operation=\"get\"} 1",
-            "krabka_profiles_objstore_operation_retries_total{operation=\"get\"} 1",
-            "krabka_profiles_objstore_operation_duration_seconds_count{operation=\"get\"} 1",
-        ] {
-            assert2::assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
-        }
+        assert!(m.ingest.wal_append_failures.get() == 1);
     }
 }
-
-mod export;
-mod metrics_router;
-mod route_label;
-mod route_status_label;
-mod service_metrics;
-mod shared_registry;
-mod status_label;
-mod tenant_label;
-
-use export::export;
-pub use metrics_router::metrics_router;
-pub use route_label::RouteLabel;
-pub use route_status_label::RouteStatusLabel;
-pub use service_metrics::ServiceMetrics;
-pub use shared_registry::SharedRegistry;
-pub use status_label::StatusLabel;
-pub use tenant_label::TenantLabel;

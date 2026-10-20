@@ -1,6 +1,6 @@
 use assert2::check;
 use krabka_traces::metricsgen::{
-    BucketSpan, NativeHistogram, SpanKind, SpanRecord, StatusCode, TRACES_WAL_TOPIC,
+    BucketSpan, NativeHistogram, SpanAttribute, SpanKind, SpanRecord, StatusCode, TRACES_WAL_TOPIC,
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
@@ -18,8 +18,8 @@ fn metricsgen_contract_exposes_wal_projection() {
         status: StatusCode::Ok,
         status_message: String::new(),
         service_name: "checkout".into(),
-        attributes: vec![("http.method".into(), "GET".into())],
-        resource_attributes: vec![("deployment.environment".into(), "prod".into())],
+        attributes: vec![SpanAttribute::new("http.method", "GET")],
+        resource_attributes: vec![SpanAttribute::new("deployment.environment", "prod")],
         size: ByteSize::from_bytes(128),
     };
 

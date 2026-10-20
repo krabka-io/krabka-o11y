@@ -4,7 +4,8 @@
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
 use krabka_traceql::{
-    AttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceMetricSeries, TraceqlEngine,
+    AttrValue, Attribute, EngineOpts, InMemorySpanStore, InputSpan, TraceMetricSeries,
+    TraceqlEngine,
 };
 use krabka_units::nanos;
 use proptest::prelude::*;
@@ -40,6 +41,26 @@ fn sample() -> impl Strategy<Value = Sample> {
     ]
 }
 
+#[derive(Clone, Debug)]
+struct SamplePair {
+    lhs: Sample,
+    rhs: Sample,
+}
+
+struct SearchAndMetrics {
+    search: krabka_traceql::SearchResponse,
+    metrics: krabka_traceql::TraceMetricsResponse,
+}
+
+fn sample_pair() -> impl Strategy<Value = SamplePair> {
+    sample().prop_flat_map(|lhs| {
+        sample().prop_map(move |rhs| SamplePair {
+            lhs: lhs.clone(),
+            rhs,
+        })
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Operator {
     Equal,
@@ -63,21 +84,25 @@ impl Operator {
     }
 
     fn model(self, lhs: &Sample, rhs: &Sample) -> bool {
-        let ordering = match (lhs, rhs) {
-            (Sample::Integer(lhs), Sample::Integer(rhs)) => Some(lhs.cmp(rhs)),
-            (Sample::Float(lhs), Sample::Float(rhs)) => Some(lhs.cmp(rhs)),
-            (Sample::Integer(lhs), Sample::Float(rhs)) => {
-                (f64::from(*lhs) * 2.0).partial_cmp(&f64::from(*rhs))
-            }
-            (Sample::Float(lhs), Sample::Integer(rhs)) => {
-                f64::from(*lhs).partial_cmp(&(f64::from(*rhs) * 2.0))
-            }
-            (Sample::Text(lhs), Sample::Text(rhs)) => Some(lhs.cmp(rhs)),
-            (Sample::Boolean(lhs), Sample::Boolean(rhs))
-                if matches!(self, Self::Equal | Self::Different) =>
-            {
-                Some(lhs.cmp(rhs))
-            }
+        let ordering = match lhs {
+            Sample::Integer(lhs) => match rhs {
+                Sample::Integer(rhs) => Some(lhs.cmp(rhs)),
+                Sample::Float(rhs) => (f64::from(*lhs) * 2.0).partial_cmp(&f64::from(*rhs)),
+                _ => None,
+            },
+            Sample::Float(lhs) => match rhs {
+                Sample::Float(rhs) => Some(lhs.cmp(rhs)),
+                Sample::Integer(rhs) => f64::from(*lhs).partial_cmp(&(f64::from(*rhs) * 2.0)),
+                _ => None,
+            },
+            Sample::Text(lhs) => match rhs {
+                Sample::Text(rhs) => Some(lhs.cmp(rhs)),
+                _ => None,
+            },
+            Sample::Boolean(lhs) if matches!(self, Self::Equal | Self::Different) => match rhs {
+                Sample::Boolean(rhs) => Some(lhs.cmp(rhs)),
+                _ => None,
+            },
             _ => None,
         };
         let Some(ordering) = ordering else {
@@ -95,6 +120,13 @@ impl Operator {
 }
 
 fn input(id: u8, lhs: &Sample, rhs: &Sample) -> InputSpan {
+    let mut attrs = Vec::new();
+    if let Some(value) = lhs.attribute() {
+        attrs.push(Attribute::new("lhs", value));
+    }
+    if let Some(value) = rhs.attribute() {
+        attrs.push(Attribute::new("rhs", value));
+    }
     InputSpan {
         trace_id: [1; 16],
         span_id: [id; 8],
@@ -107,10 +139,7 @@ fn input(id: u8, lhs: &Sample, rhs: &Sample) -> InputSpan {
         status_message: String::new(),
         instrumentation_name: String::new(),
         instrumentation_version: String::new(),
-        attrs: [("lhs", lhs.attribute()), ("rhs", rhs.attribute())]
-            .into_iter()
-            .filter_map(|(key, value)| value.map(|value| (key.into(), value)))
-            .collect(),
+        attrs,
         events: Vec::new(),
         links: Vec::new(),
     }
@@ -121,33 +150,33 @@ proptest! {
 
     #[test]
     fn typed_comparison_and_boolean_trees_match_original_value_ledger(
-        rows in prop::collection::vec((sample(),sample()),1..9),
+        rows in prop::collection::vec(sample_pair(),1..9),
         operator in prop::sample::select(&[Operator::Equal,Operator::Different,Operator::Less,Operator::LessOrEqual,Operator::Greater,Operator::GreaterOrEqual]),
         negate in any::<bool>(),
         require_present in any::<bool>(),
     ) {
         let mut store = InMemorySpanStore::new();
         store.push_trace("t","service","root",rows.iter().enumerate()
-            .map(|(index,(lhs,rhs))|input(u8::try_from(index+1).unwrap(),lhs,rhs)).collect());
+            .map(|indexed_row| input(u8::try_from(indexed_row.0+1).unwrap(), &indexed_row.1.lhs, &indexed_row.1.rhs)).collect());
         let engine=TraceqlEngine::new(Arc::new(store),EngineOpts::default());
         let comparison=format!("span.lhs {} span.rhs",operator.text());
         let comparison=if negate {format!("!({comparison})")} else {comparison};
         let expression=if require_present {format!("({comparison}) && span.lhs != nil")} else {comparison};
-        let expected=rows.iter().enumerate().filter(|(_, (lhs,rhs))| {
-            (operator.model(lhs,rhs) != negate) && (!require_present || !matches!(lhs,Sample::Missing))
-        }).map(|(index,_)|[u8::try_from(index+1).unwrap();8]).collect::<Vec<_>>();
+        let expected=rows.iter().enumerate().filter(|indexed_row| {
+            (operator.model(&indexed_row.1.lhs,&indexed_row.1.rhs) != negate) && (!require_present || !matches!(indexed_row.1.lhs,Sample::Missing))
+        }).map(|indexed_row|[u8::try_from(indexed_row.0+1).unwrap();8]).collect::<Vec<_>>();
         let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let (search,metrics)=runtime.block_on(async {
+        let SearchAndMetrics { search, metrics } = runtime.block_on(async {
             let search=engine.search_with_spss("t",&format!("{{ {expression} }}"),0,100,100,100).await.unwrap();
             let metrics=engine.query_range("t",&format!("{{ {expression} }} | count_over_time()"),0,100,100).await.unwrap();
-            (search,metrics)
+            SearchAndMetrics { search, metrics }
         });
         let mut actual=search.traces.iter().flat_map(|trace|trace.span_sets.iter())
             .flat_map(|set|set.spans.iter()).map(|span|span.span_id).collect::<Vec<_>>();
         actual.sort_unstable();
         prop_assert_eq!(actual,expected.clone(),"query: {}",expression);
         let count=f64::from(u32::try_from(expected.len()).unwrap());
-        let expected_series = if expected.is_empty() { Vec::new() } else { vec![TraceMetricSeries { labels: Vec::new(), label_types: BTreeMap::new(), points: vec![(0,count),(100,0.0)], exemplars: Vec::new() }] };
+        let expected_series = if expected.is_empty() { Vec::new() } else { vec![TraceMetricSeries { labels: Vec::new(), label_types: BTreeMap::new(), points: vec![krabka_traceql::MetricPoint::new(0,count),krabka_traceql::MetricPoint::new(100,0.0)], exemplars: Vec::new() }] };
         prop_assert_eq!(metrics.series, expected_series, "query: {}", expression);
     }
 }

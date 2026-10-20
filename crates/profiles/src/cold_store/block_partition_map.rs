@@ -25,8 +25,8 @@ pub(crate) fn block_partition_map(
     sorted.sort_unstable();
     sorted.dedup();
     let mut map = BTreeMap::new();
-    for (local, stored) in sorted.into_iter().enumerate() {
-        let local = u64::try_from(local).map_err(|err| {
+    for (local_index, stored) in sorted.into_iter().enumerate() {
+        let local = u64::try_from(local_index).map_err(|err| {
             ProfileError::Store(format!("local partition does not fit u64: {err}"))
         })?;
         if local >= 1 << 32 {

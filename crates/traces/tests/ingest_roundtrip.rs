@@ -12,7 +12,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use krabka_blockstore::{BlockWriter, TraceIndex};
+use krabka_blockstore::{BlockWriter, OffsetRange, TraceIndex};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_producer::Producer;
 use krabka_protocol::owned::create_topics_request::{CreatableTopic, CreateTopicsRequest};
@@ -94,7 +94,7 @@ async fn otlp_lands_as_span_block() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store);
     let mut index = TraceIndex::new();
-    let offset_range = (
+    let offset_range = OffsetRange::new(
         records.iter().map(|record| record.offset).min().unwrap(),
         records.iter().map(|record| record.offset).max().unwrap(),
     );

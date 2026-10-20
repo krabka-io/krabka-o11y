@@ -39,19 +39,65 @@ use crate::{
 };
 
 mod build_leaf_batch;
-mod instant_selector_plan;
 mod leaf_scan;
-mod leaf_schema;
 mod plan_instant_vector_selector;
-mod sample_time_column;
-mod time_column;
-mod value_column;
+mod range_udf_plan;
+mod series_leaf;
 
 use build_leaf_batch::build_leaf_batch;
-pub use instant_selector_plan::InstantSelectorPlan;
 pub(crate) use leaf_scan::leaf_scan;
-use leaf_schema::leaf_schema;
 pub use plan_instant_vector_selector::plan_instant_vector_selector;
-pub use sample_time_column::SAMPLE_TIME_COLUMN;
-pub use time_column::TIME_COLUMN;
-pub use value_column::VALUE_COLUMN;
+pub(crate) use range_udf_plan::{RangeWindows, WindowUdf, range_udf_plan};
+pub(crate) use series_leaf::{SeriesLeaf, divide_and_normalize, series_leaf};
+
+/// The assembled operator plan plus labels needed to reattach series labels.
+pub struct InstantSelectorPlan {
+    /// Session context whose planner understands the custom operators.
+    pub ctx: SessionContext,
+    /// The logical plan for the instant-selector chain.
+    pub plan: LogicalPlan,
+    /// Series labels keyed by fingerprint, for assembling the result.
+    pub labels_by_fp: std::collections::BTreeMap<SeriesFingerprint, Labels>,
+}
+
+/// Leaf-batch column that keeps the original sample timestamp.
+///
+/// The operator chain carries this through unchanged, so the engine can
+/// recover the selected sample's timestamp after evaluation.
+pub const SAMPLE_TIME_COLUMN: &str = "sample_timestamp";
+
+/// Whether a leaf batch carries a sample-time duplicate of its timestamp.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SampleTimePresence {
+    Included,
+    Omitted,
+}
+
+/// Leaf-batch column with the per-sample timestamp in epoch milliseconds.
+///
+/// This column is the time index of the operator chain, so
+/// [`InstantManipulate`] rewrites it to the grid eval timestamp on output.
+pub const TIME_COLUMN: &str = "timestamp";
+
+/// Leaf-batch column carrying the per-sample float value.
+pub const VALUE_COLUMN: &str = "value";
+
+/// The leaf-batch schema: one nullable `Binary` column per label name, then the
+/// timestamp and value columns, then the sample-time duplicate when
+/// `sample_time` includes it.
+pub(crate) fn leaf_schema(label_names: &[String], sample_time: SampleTimePresence) -> Arc<Schema> {
+    let mut fields = Vec::with_capacity(label_names.len() + 3);
+    for name in label_names {
+        // Label columns are nullable so an ABSENT label (NULL) is distinguishable
+        // from a PRESENT-but-empty-valued label (`""`). The reconstruction
+        // (`engine::labels_from_batch`) maps NULL -> absent and `""` ->
+        // present-empty, preserving the byte-exact label set through the chain.
+        fields.push(Field::new(name, DataType::Binary, true));
+    }
+    fields.push(Field::new(TIME_COLUMN, DataType::Int64, false));
+    fields.push(Field::new(VALUE_COLUMN, DataType::Float64, false));
+    if sample_time == SampleTimePresence::Included {
+        fields.push(Field::new(SAMPLE_TIME_COLUMN, DataType::Int64, false));
+    }
+    Arc::new(Schema::new(fields))
+}

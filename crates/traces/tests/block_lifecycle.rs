@@ -21,7 +21,7 @@ use assert2::check;
 use futures::StreamExt as _;
 use krabka_blockstore::{
     BlockDeletionReport, BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
-    DEFAULT_BLOCK_SWEEP_GRACE, ExpiredBlock, OrphanSweepStats, TraceIndex, read_block,
+    DEFAULT_BLOCK_SWEEP_GRACE, ExpiredBlock, OffsetRange, OrphanSweepStats, TraceIndex, read_block,
 };
 use krabka_traces::{
     AttrValue, KeyValue, Limits, Span, SpanKind, SpanRecord, StatusCode,
@@ -48,57 +48,108 @@ const DAY_NS: i64 = 24 * 60 * 60 * 1_000_000_000;
 /// against a moving instant.
 const NOW_NS: i64 = 1_700_000_000 * 1_000_000_000;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct TraceSpanIdentity {
+    trace_id: [u8; 16],
+    span_id: [u8; 8],
+}
+
 fn span_record(tenant: &str, trace: u8, start_ns: i64) -> SpanRecord {
     SpanRecord {
         tenant: tenant.to_string(),
         span: Span {
             trace_id: [trace; 16],
             span_id: [trace; 8],
-            parent_span_id: None,
             name: "GET /".into(),
             kind: SpanKind::Server,
             start_ns,
             duration_ns: 5,
             status: StatusCode::Ok,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "service.name".into(),
                 value: AttrValue::Str("api".into()),
             }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
             instrumentation_scope: "test".into(),
-            instrumentation_version: String::new(),
+            ..Span::default()
         },
     }
 }
 
-/// Writes one block for `tenant` whose newest span starts at `start_ns`, and
-/// registers it in `index`. Returns its object key.
+/// One test block: the tenant and trace of its one span, and when that span
+/// starts.
 ///
 /// `offset` separates one block's key from the next, as the WAL offsets do in
 /// production.
-async fn write_block(
-    writer: &BlockWriter,
-    index: &mut TraceIndex,
-    tenant: &str,
+struct TestBlock<'a> {
+    tenant: &'a str,
     trace: u8,
     start_ns: i64,
     offset: i64,
-) -> String {
+}
+
+/// Writes `block` and registers it in `index`. Returns its object key.
+async fn write_block(writer: &BlockWriter, index: &mut TraceIndex, block: TestBlock<'_>) -> String {
+    let TestBlock {
+        tenant,
+        trace,
+        start_ns,
+        offset,
+    } = block;
     let metas = build_blocks(
         writer,
         index,
         tenant,
         7,
         &[span_record(tenant, trace, start_ns)],
-        (offset, offset),
+        OffsetRange::new(offset, offset),
     )
     .await
     .expect("the block is written");
     check!(metas.len() == 1, "one flush window is one block");
     metas[0].object_key.clone()
+}
+
+/// Two `tenant-a` blocks in one store: `old`, whose span starts 30 days
+/// before now, and `recent`, one day before.
+struct OldAndRecentBlocks {
+    store: Arc<dyn ObjectStore>,
+    index: TraceIndex,
+    old: String,
+    recent: String,
+}
+
+async fn old_and_recent_blocks() -> OldAndRecentBlocks {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let mut index = TraceIndex::new();
+    let old = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 10,
+        },
+    )
+    .await;
+    let recent = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 2,
+            start_ns: NOW_NS - DAY_NS,
+            offset: 20,
+        },
+    )
+    .await;
+    OldAndRecentBlocks {
+        store,
+        index,
+        old,
+        recent,
+    }
 }
 
 /// Every block key the index names, in a stable order.
@@ -121,11 +172,21 @@ async fn keys_under(store: &Arc<dyn ObjectStore>, prefix: &str) -> BTreeSet<Stri
     keys
 }
 
-fn windows(entries: &[(&str, Time)]) -> OverridesProvider {
+struct TenantRetentionWindow<'a> {
+    tenant: &'a str,
+    window: Time,
+}
+
+fn retention_window(tenant: &str, window: Time) -> TenantRetentionWindow<'_> {
+    TenantRetentionWindow { tenant, window }
+}
+
+fn windows(entries: &[TenantRetentionWindow<'_>]) -> OverridesProvider {
     let mut yaml = String::from("overrides:\n");
-    for (tenant, window) in entries {
-        let secs = window.secs_i64();
-        writeln!(yaml, "  {tenant}:\n    block_retention: {secs}s").expect("a string writes");
+    for entry in entries {
+        let secs = entry.window.secs_i64();
+        writeln!(yaml, "  {}:\n    block_retention: {secs}s", entry.tenant)
+            .expect("a string writes");
     }
     OverridesProvider::from_yaml(&yaml).expect("the overrides parse")
 }
@@ -164,16 +225,17 @@ fn wide_policy() -> CompactionPolicy {
 /// it is still readable data that a query over the window would need.
 #[tokio::test]
 async fn a_block_past_its_window_is_dropped_and_deleted_and_one_inside_it_survives() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
-    let old = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS - 30 * DAY_NS, 10).await;
-    let recent = write_block(&writer, &mut index, "tenant-a", 2, NOW_NS - DAY_NS, 20).await;
+    let OldAndRecentBlocks {
+        store,
+        mut index,
+        old,
+        recent,
+    } = old_and_recent_blocks().await;
 
     let expired = expire_trace_blocks(
         &mut index,
         UnixNano(NOW_NS),
-        &windows(&[("tenant-a", days(14))]),
+        &windows(&[retention_window("tenant-a", days(14))]),
     );
 
     check!(
@@ -214,11 +276,12 @@ async fn a_block_past_its_window_is_dropped_and_deleted_and_one_inside_it_surviv
 #[tokio::test]
 async fn an_expired_block_does_not_come_back_through_a_snapshot_merge() {
     const KEY: &str = "index/traces.json";
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
-    let old = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS - 30 * DAY_NS, 10).await;
-    let recent = write_block(&writer, &mut index, "tenant-a", 2, NOW_NS - DAY_NS, 20).await;
+    let OldAndRecentBlocks {
+        store,
+        mut index,
+        old,
+        recent,
+    } = old_and_recent_blocks().await;
     index
         .save_latest_snapshot(&store, KEY)
         .await
@@ -227,7 +290,7 @@ async fn an_expired_block_does_not_come_back_through_a_snapshot_merge() {
     let expired = expire_trace_blocks(
         &mut index,
         UnixNano(NOW_NS),
-        &windows(&[("tenant-a", days(14))]),
+        &windows(&[retention_window("tenant-a", days(14))]),
     );
     index
         .save_latest_snapshot(&store, KEY)
@@ -260,8 +323,28 @@ async fn compaction_inputs_are_deleted_and_the_merged_output_still_reads() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let first = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS, 10).await;
-    let second = write_block(&writer, &mut index, "tenant-a", 2, NOW_NS, 20).await;
+    let first = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS,
+            offset: 10,
+        },
+    )
+    .await;
+    let second = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 2,
+            start_ns: NOW_NS,
+            offset: 20,
+        },
+    )
+    .await;
 
     let pass = compact_once(store.clone(), &writer, &mut index, "", wide_policy())
         .await
@@ -303,7 +386,17 @@ async fn the_orphan_sweep_deletes_only_the_blocks_no_index_names() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let live = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS, 10).await;
+    let live = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS,
+            offset: 10,
+        },
+    )
+    .await;
     index
         .save_latest_snapshot(&store, KEY)
         .await
@@ -356,7 +449,17 @@ async fn the_orphan_sweep_preserves_an_index_inside_the_block_prefix() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    write_block(&writer, &mut index, "tenant-a", 1, NOW_NS, 10).await;
+    write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS,
+            offset: 10,
+        },
+    )
+    .await;
     index
         .save_latest_snapshot(&store, KEY)
         .await
@@ -402,17 +505,47 @@ async fn each_tenant_expires_by_its_own_window_and_a_zero_window_expires_nothing
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let short = write_block(&writer, &mut index, "short", 1, NOW_NS - 30 * DAY_NS, 10).await;
-    let long = write_block(&writer, &mut index, "long", 2, NOW_NS - 30 * DAY_NS, 20).await;
-    let forever = write_block(&writer, &mut index, "forever", 3, NOW_NS - 30 * DAY_NS, 30).await;
+    let short = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "short",
+            trace: 1,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 10,
+        },
+    )
+    .await;
+    let long = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "long",
+            trace: 2,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 20,
+        },
+    )
+    .await;
+    let forever = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "forever",
+            trace: 3,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 30,
+        },
+    )
+    .await;
 
     let expired = expire_trace_blocks(
         &mut index,
         UnixNano(NOW_NS),
         &windows(&[
-            ("short", hours(48)),
-            ("long", days(365)),
-            ("forever", <Time as TimeExt>::ZERO),
+            retention_window("short", hours(48)),
+            retention_window("long", days(365)),
+            retention_window("forever", <Time as TimeExt>::ZERO),
         ]),
     );
 
@@ -496,9 +629,39 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     // retention will expire.
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let first = write_block(&writer, &mut index, "tenant-a", 1, now_ns, 10).await;
-    let second = write_block(&writer, &mut index, "tenant-a", 2, now_ns, 20).await;
-    let old = write_block(&writer, &mut index, "tenant-b", 3, now_ns - 30 * DAY_NS, 30).await;
+    let first = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: now_ns,
+            offset: 10,
+        },
+    )
+    .await;
+    let second = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 2,
+            start_ns: now_ns,
+            offset: 20,
+        },
+    )
+    .await;
+    let old = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-b",
+            trace: 3,
+            start_ns: now_ns - 30 * DAY_NS,
+            offset: 30,
+        },
+    )
+    .await;
     index
         .save_latest_snapshot(&store, KEY)
         .await
@@ -550,7 +713,10 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     let expired = expire_trace_blocks(
         &mut index,
         UnixNano(now_ns),
-        &windows(&[("tenant-a", days(14)), ("tenant-b", days(14))]),
+        &windows(&[
+            retention_window("tenant-a", days(14)),
+            retention_window("tenant-b", days(14)),
+        ]),
     );
     check!(
         expired
@@ -611,37 +777,76 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
 /// publication/deletion lifecycle. Expectations come from the original spans.
 #[tokio::test]
 async fn typed_queries_survive_compaction_deletion_and_snapshot_reload() {
+    #[derive(bon::Builder)]
+    struct LifecycleSpanCase {
+        tenant: &'static str,
+        trace: u8,
+        foo: i64,
+        bar: i64,
+        offset: i64,
+    }
     const SNAPSHOT: &str = "index/query-lifecycle.json";
     let objects: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(objects.clone());
     let mut index = TraceIndex::new();
     let mut job_counts = BTreeMap::new();
-    for (tenant, trace, foo, bar, offset) in [
-        ("tenant-a", 1, 10, 10, 10),
-        ("tenant-a", 2, 20, 20, 20),
-        ("tenant-a", 3, 30, 31, 30),
+    for case in [
+        LifecycleSpanCase::builder()
+            .tenant("tenant-a")
+            .trace(1)
+            .foo(10)
+            .bar(10)
+            .offset(10)
+            .build(),
+        LifecycleSpanCase::builder()
+            .tenant("tenant-a")
+            .trace(2)
+            .foo(20)
+            .bar(20)
+            .offset(20)
+            .build(),
+        LifecycleSpanCase::builder()
+            .tenant("tenant-a")
+            .trace(3)
+            .foo(30)
+            .bar(31)
+            .offset(30)
+            .build(),
         // Same trace and span identities, but a different tenant.
-        ("tenant-b", 1, 10, 10, 40),
+        LifecycleSpanCase::builder()
+            .tenant("tenant-b")
+            .trace(1)
+            .foo(10)
+            .bar(10)
+            .offset(40)
+            .build(),
     ] {
-        let mut record = span_record(tenant, trace, NOW_NS);
+        let mut record = span_record(case.tenant, case.trace, NOW_NS);
         record.span.span_attrs = vec![
             KeyValue {
                 key: "foo".into(),
-                value: AttrValue::Int(foo),
+                value: AttrValue::Int(case.foo),
             },
             KeyValue {
                 key: "bar".into(),
-                value: AttrValue::Int(bar),
+                value: AttrValue::Int(case.bar),
             },
         ];
-        let metas = build_blocks(&writer, &mut index, tenant, 7, &[record], (offset, offset))
-            .await
-            .expect("independent input block");
+        let metas = build_blocks(
+            &writer,
+            &mut index,
+            case.tenant,
+            7,
+            &[record],
+            OffsetRange::new(case.offset, case.offset),
+        )
+        .await
+        .expect("independent input block");
         assert2::assert!(metas.len() == 1);
         job_counts.insert(
             metas[0].object_key.clone(),
-            if tenant == "tenant-a" {
-                [Some(1), (foo == bar).then_some(1)]
+            if case.tenant == "tenant-a" {
+                [Some(1), (case.foo == case.bar).then_some(1)]
             } else {
                 [None, None]
             },
@@ -677,12 +882,15 @@ async fn typed_queries_survive_compaction_deletion_and_snapshot_reload() {
     check_lifecycle_queries(objects, &reloaded, &job_counts).await;
 }
 
+#[allow(clippy::items_after_statements)]
 async fn check_lifecycle_queries(
     objects: Arc<dyn ObjectStore>,
     index: &TraceIndex,
     job_counts: &BTreeMap<String, [Option<u8>; 2]>,
 ) {
-    use krabka_traceql::{EngineOpts, ScanJob, ScanOptions, TraceMetricSeries, TraceqlEngine};
+    use krabka_traceql::{
+        EngineOpts, MetricPoint, ScanJob, ScanOptions, TraceMetricSeries, TraceqlEngine,
+    };
     let snapshot = TraceIndex::load_latest_snapshot(&objects, "index/query-lifecycle.json")
         .await
         .expect("published query index");
@@ -704,26 +912,53 @@ async fn check_lifecycle_queries(
         .iter()
         .flat_map(|trace| {
             trace.span_sets.iter().flat_map(move |set| {
-                set.spans
-                    .iter()
-                    .map(move |span| (trace.trace_id, span.span_id))
+                set.spans.iter().map(move |span| TraceSpanIdentity {
+                    trace_id: trace.trace_id,
+                    span_id: span.span_id,
+                })
             })
         })
         .collect::<BTreeSet<_>>();
-    check!(identities == BTreeSet::from([([1; 16], [1; 8]), ([2; 16], [2; 8])]));
+    check!(
+        identities
+            == BTreeSet::from([
+                TraceSpanIdentity {
+                    trace_id: [1; 16],
+                    span_id: [1; 8]
+                },
+                TraceSpanIdentity {
+                    trace_id: [2; 16],
+                    span_id: [2; 8]
+                },
+            ])
+    );
     check!(
         indexed_block_keys(index)
             .into_iter()
             .collect::<BTreeSet<_>>()
             == job_counts.keys().cloned().collect::<BTreeSet<_>>()
     );
-    for (query_index, (query, count)) in [
-        ("{} | count_over_time()", 3.0),
-        ("{ .foo = .bar } | count_over_time()", 2.0),
+    struct MetricQueryCase {
+        query: &'static str,
+        expected_count: f64,
+    }
+    for entry in [
+        MetricQueryCase {
+            query: "{} | count_over_time()",
+            expected_count: 3.0,
+        },
+        MetricQueryCase {
+            query: "{ .foo = .bar } | count_over_time()",
+            expected_count: 2.0,
+        },
     ]
     .into_iter()
     .enumerate()
     {
+        let query_index = entry.0;
+        let case = entry.1;
+        let query = case.query;
+        let count = case.expected_count;
         let response = engine
             .query_range("tenant-a", query, NOW_NS, NOW_NS + 10, 10)
             .await
@@ -733,7 +968,16 @@ async fn check_lifecycle_queries(
                 == vec![TraceMetricSeries {
                     label_types: BTreeMap::default(),
                     labels: Vec::new(),
-                    points: vec![(NOW_NS, count), (NOW_NS + 10, 0.0)],
+                    points: vec![
+                        MetricPoint {
+                            timestamp: NOW_NS,
+                            value: count
+                        },
+                        MetricPoint {
+                            timestamp: NOW_NS + 10,
+                            value: 0.0
+                        },
+                    ],
                     exemplars: Vec::new(),
                 }]
         );
@@ -766,14 +1010,23 @@ async fn check_lifecycle_queries(
                 vec![TraceMetricSeries {
                     label_types: BTreeMap::default(),
                     labels: Vec::new(),
-                    points: vec![(NOW_NS, f64::from(count)), (NOW_NS + 10, 0.0)],
+                    points: vec![
+                        MetricPoint {
+                            timestamp: NOW_NS,
+                            value: f64::from(count),
+                        },
+                        MetricPoint {
+                            timestamp: NOW_NS + 10,
+                            value: 0.0,
+                        },
+                    ],
                     exemplars: Vec::new(),
                 }]
             });
             check!(response.series == expected, "scan job {key}");
             for series in &response.series {
-                for (sum, (_, value)) in sharded.iter_mut().zip(&series.points) {
-                    *sum += value;
+                for (index, total) in sharded.iter_mut().enumerate() {
+                    *total += series.points[index].value;
                 }
             }
         }
@@ -794,7 +1047,10 @@ async fn check_lifecycle_queries(
             == vec![TraceMetricSeries {
                 label_types: BTreeMap::default(),
                 labels: Vec::new(),
-                points: vec![(NOW_NS, 10e-9)],
+                points: vec![MetricPoint {
+                    timestamp: NOW_NS,
+                    value: 10e-9
+                }],
                 exemplars: Vec::new(),
             }]
     );

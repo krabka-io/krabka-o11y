@@ -21,24 +21,76 @@ mod tests {
         TenantResolveError,
     };
 
+    struct TenantResolutionCase<'a> {
+        name: &'a str,
+        value: Option<&'a [u8]>,
+        required: Result<TenantId, TenantResolveError>,
+        fallback: Result<TenantId, TenantResolveError>,
+    }
+
+    struct ValidTenantCase<'a> {
+        description: &'a str,
+        id: &'a str,
+    }
+
+    struct InvalidTenantCase<'a> {
+        description: &'a str,
+        id: &'a str,
+        expected: String,
+    }
+
     #[test]
     fn every_valid_shape_is_accepted() {
         let valid = [
-            ("plain", "tenant-a"),
-            ("underscore", "team_42"),
-            ("interior dots", "user.name"),
-            ("one byte", "a"),
-            ("upper case", "ALL-CAPS"),
-            ("every punctuation mark", "ascii!-_.*'()"),
-            ("digits only", "0123456789"),
-            ("leading dot", ".hidden"),
-            ("three dots", "..."),
-            ("anonymous", ANONYMOUS_TENANT),
+            ValidTenantCase {
+                description: "plain",
+                id: "tenant-a",
+            },
+            ValidTenantCase {
+                description: "underscore",
+                id: "team_42",
+            },
+            ValidTenantCase {
+                description: "interior dots",
+                id: "user.name",
+            },
+            ValidTenantCase {
+                description: "one byte",
+                id: "a",
+            },
+            ValidTenantCase {
+                description: "upper case",
+                id: "ALL-CAPS",
+            },
+            ValidTenantCase {
+                description: "every punctuation mark",
+                id: "ascii!-_.*'()",
+            },
+            ValidTenantCase {
+                description: "digits only",
+                id: "0123456789",
+            },
+            ValidTenantCase {
+                description: "leading dot",
+                id: ".hidden",
+            },
+            ValidTenantCase {
+                description: "three dots",
+                id: "...",
+            },
+            ValidTenantCase {
+                description: "anonymous",
+                id: ANONYMOUS_TENANT,
+            },
         ];
 
-        for (name, id) in valid {
-            let parsed = TenantId::new(id);
-            check!(parsed.as_ref().map(TenantId::as_str) == Ok(id), "{name}");
+        for case in valid {
+            let parsed = TenantId::new(case.id);
+            check!(
+                parsed.as_ref().map(TenantId::as_str) == Ok(case.id),
+                "{}",
+                case.description
+            );
         }
     }
 
@@ -54,52 +106,117 @@ mod tests {
             format!("tenant ID '{id}' contains unsupported character '{character}'")
         };
         let invalid = [
-            ("empty", "", "tenant ID is empty".to_string()),
-            (
-                "one over the limit",
-                too_long.as_str(),
-                "tenant ID is too long: max 150 characters".to_string(),
-            ),
-            ("dot", ".", "tenant ID is '.' or '..'".to_string()),
-            ("dot dot", "..", "tenant ID is '.' or '..'".to_string()),
-            ("separator", "a/b", unsupported("a/b", '/')),
-            ("traversal", "../other", unsupported("../other", '/')),
-            ("absolute", "/etc/passwd", unsupported("/etc/passwd", '/')),
-            ("backslash", "a\\b", unsupported("a\\b", '\\')),
-            ("space", "with space", unsupported("with space", ' ')),
-            ("leading space", " lead", unsupported(" lead", ' ')),
-            ("trailing space", "trail ", unsupported("trail ", ' ')),
-            ("tab", "a\tb", unsupported("a\tb", '\t')),
-            ("null", "a\0b", unsupported("a\0b", '\0')),
-            ("delete", "ctl\u{7f}", unsupported("ctl\u{7f}", '\u{7f}')),
+            InvalidTenantCase {
+                description: "empty",
+                id: "",
+                expected: "tenant ID is empty".to_string(),
+            },
+            InvalidTenantCase {
+                description: "one over the limit",
+                id: too_long.as_str(),
+                expected: "tenant ID is too long: max 150 characters".to_string(),
+            },
+            InvalidTenantCase {
+                description: "dot",
+                id: ".",
+                expected: "tenant ID is '.' or '..'".to_string(),
+            },
+            InvalidTenantCase {
+                description: "dot dot",
+                id: "..",
+                expected: "tenant ID is '.' or '..'".to_string(),
+            },
+            InvalidTenantCase {
+                description: "separator",
+                id: "a/b",
+                expected: unsupported("a/b", '/'),
+            },
+            InvalidTenantCase {
+                description: "traversal",
+                id: "../other",
+                expected: unsupported("../other", '/'),
+            },
+            InvalidTenantCase {
+                description: "absolute",
+                id: "/etc/passwd",
+                expected: unsupported("/etc/passwd", '/'),
+            },
+            InvalidTenantCase {
+                description: "backslash",
+                id: "a\\b",
+                expected: unsupported("a\\b", '\\'),
+            },
+            InvalidTenantCase {
+                description: "space",
+                id: "with space",
+                expected: unsupported("with space", ' '),
+            },
+            InvalidTenantCase {
+                description: "leading space",
+                id: " lead",
+                expected: unsupported(" lead", ' '),
+            },
+            InvalidTenantCase {
+                description: "trailing space",
+                id: "trail ",
+                expected: unsupported("trail ", ' '),
+            },
+            InvalidTenantCase {
+                description: "tab",
+                id: "a\tb",
+                expected: unsupported("a\tb", '\t'),
+            },
+            InvalidTenantCase {
+                description: "null",
+                id: "a\0b",
+                expected: unsupported("a\0b", '\0'),
+            },
+            InvalidTenantCase {
+                description: "delete",
+                id: "ctl\u{7f}",
+                expected: unsupported("ctl\u{7f}", '\u{7f}'),
+            },
             // `dskit` names the first byte of `é`, read as a code point, and so
             // does not name `é`. The pinned Mimir image answers `Ã` here.
-            (
-                "non ASCII",
-                "unicode-\u{e9}",
-                unsupported("unicode-\u{e9}", '\u{c3}'),
-            ),
-            (
-                "euro sign",
-                "a\u{20ac}b",
-                unsupported("a\u{20ac}b", '\u{e2}'),
-            ),
-            ("percent", "a%2Fb", unsupported("a%2Fb", '%')),
-            ("comma", "comma,tenant", unsupported("comma,tenant", ',')),
-            ("pipe", "a|b", unsupported("a|b", '|')),
+            InvalidTenantCase {
+                description: "non ASCII",
+                id: "unicode-\u{e9}",
+                expected: unsupported("unicode-\u{e9}", '\u{c3}'),
+            },
+            InvalidTenantCase {
+                description: "euro sign",
+                id: "a\u{20ac}b",
+                expected: unsupported("a\u{20ac}b", '\u{e2}'),
+            },
+            InvalidTenantCase {
+                description: "percent",
+                id: "a%2Fb",
+                expected: unsupported("a%2Fb", '%'),
+            },
+            InvalidTenantCase {
+                description: "comma",
+                id: "comma,tenant",
+                expected: unsupported("comma,tenant", ','),
+            },
+            InvalidTenantCase {
+                description: "pipe",
+                id: "a|b",
+                expected: unsupported("a|b", '|'),
+            },
             // `dskit` checks the characters before the length, so an id that
             // breaks both rules names the character.
-            (
-                "too long and unsupported",
-                too_long_and_bad.as_str(),
-                unsupported(&too_long_and_bad, '/'),
-            ),
+            InvalidTenantCase {
+                description: "too long and unsupported",
+                id: too_long_and_bad.as_str(),
+                expected: unsupported(&too_long_and_bad, '/'),
+            },
         ];
 
-        for (name, id, expected) in invalid {
+        for case in invalid {
             check!(
-                TenantId::new(id).map_err(|error| error.to_string()) == Err(expected),
-                "{name}"
+                TenantId::new(case.id).map_err(|error| error.to_string()) == Err(case.expected),
+                "{}",
+                case.description
             );
         }
     }
@@ -162,34 +279,49 @@ mod tests {
             ))
         };
 
-        let cases: [(&str, Option<&[u8]>, _, _); 5] = [
-            ("named", Some(b"tenant-a"), tenant_a.clone(), tenant_a),
-            (
-                "absent",
-                None,
-                Err(TenantResolveError::Missing),
-                single.clone(),
-            ),
-            ("empty", Some(b""), Err(TenantResolveError::Missing), single),
-            (
-                "malformed",
-                Some(b"a/b"),
-                unsupported("a/b", '/'),
-                unsupported("a/b", '/'),
-            ),
-            (
-                "not UTF-8",
-                Some(b"a\xff"),
-                unsupported("a\u{fffd}", '\u{ff}'),
-                unsupported("a\u{fffd}", '\u{ff}'),
-            ),
+        let cases = [
+            TenantResolutionCase {
+                name: "named",
+                value: Some(b"tenant-a"),
+                required: tenant_a.clone(),
+                fallback: tenant_a,
+            },
+            TenantResolutionCase {
+                name: "absent",
+                value: None,
+                required: Err(TenantResolveError::Missing),
+                fallback: single.clone(),
+            },
+            TenantResolutionCase {
+                name: "empty",
+                value: Some(b""),
+                required: Err(TenantResolveError::Missing),
+                fallback: single,
+            },
+            TenantResolutionCase {
+                name: "malformed",
+                value: Some(b"a/b"),
+                required: unsupported("a/b", '/'),
+                fallback: unsupported("a/b", '/'),
+            },
+            TenantResolutionCase {
+                name: "not UTF-8",
+                value: Some(b"a\xff"),
+                required: unsupported("a\u{fffd}", '\u{ff}'),
+                fallback: unsupported("a\u{fffd}", '\u{ff}'),
+            },
         ];
-        for (name, value, required, fallen_back) in cases {
+        for case in cases {
             check!(
-                TenantId::resolve(value, &TenantPolicy::Required) == required,
-                "{name}"
+                TenantId::resolve(case.value, &TenantPolicy::Required) == case.required,
+                "{}",
+                case.name
             );
-            check!(TenantId::resolve(value, &fallback) == fallen_back, "{name}");
+            check!(
+                TenantId::resolve(case.value, &fallback) == case.fallback,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -211,20 +343,263 @@ mod tests {
     }
 }
 
-mod anonymous_tenant;
-mod is_allowed_tenant_byte;
-mod max_tenant_id_len;
-mod tenant_header;
-mod tenant_id;
-mod tenant_id_error;
-mod tenant_policy;
-mod tenant_resolve_error;
+/// Longest tenant id in bytes, as Grafana Mimir's `errTenantIDTooLong` sets it.
+pub const MAX_TENANT_ID_LEN: usize = 150;
 
-pub use anonymous_tenant::ANONYMOUS_TENANT;
-use is_allowed_tenant_byte::is_allowed_tenant_byte;
-pub use max_tenant_id_len::MAX_TENANT_ID_LEN;
-pub use tenant_header::TENANT_HEADER;
-pub use tenant_id::TenantId;
-pub use tenant_id_error::TenantIdError;
-pub use tenant_policy::TenantPolicy;
-pub use tenant_resolve_error::TenantResolveError;
+/// The HTTP header, and the gRPC metadata key, that names a request's tenant.
+///
+/// HTTP header names are case-insensitive, and gRPC metadata keys are
+/// lowercase, so this lowercase spelling matches both.
+pub const TENANT_HEADER: &str = "x-scope-orgid";
+
+/// Reports whether `byte` is allowed in a tenant id.
+///
+/// The set is ASCII alphanumerics plus `! - _ . * ' ( )`, which is what
+/// Grafana Mimir's `tenant.ValidTenantID` allows.
+pub(super) fn is_allowed_tenant_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(byte, b'!' | b'-' | b'_' | b'.' | b'*' | b'\'' | b'(' | b')')
+}
+
+/// The tenant a single-tenant deployment uses when a request names none.
+///
+/// Grafana Tempo and Grafana Pyroscope both use this name when multi-tenancy
+/// is off, so a Krabka service that accepts a request without an
+/// `X-Scope-OrgID` header reads as those components do. It is a valid
+/// [`TenantId`], and each signal decides for itself whether a request
+/// without a tenant gets this name or a rejection.
+pub const ANONYMOUS_TENANT: &str = "anonymous";
+
+/// Why a string is not a tenant id.
+///
+/// Each message is the text Grafana's `dskit` `tenant.ValidTenantID` writes,
+/// which is what Mimir and Loki send back to a client. The pinned Mimir 2.16.1
+/// and Loki 3.5.1 images answer a malformed `X-Scope-OrgID` with exactly these
+/// strings, and a Grafana datasource shows the string to its user, so Krabka
+/// uses the same words. The message repeats the rejected id, as upstream does.
+/// A header value cannot hold a line break, so the id cannot forge a second line.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum TenantIdError {
+    /// The string has no bytes.
+    ///
+    /// [`TenantId::resolve`] never returns this, because an empty
+    /// header is a missing tenant there. Only [`TenantId::new`] does.
+    #[error("tenant ID is empty")]
+    Empty,
+
+    /// The string holds a character outside the allowed set.
+    #[error("tenant ID '{tenant}' contains unsupported character '{character}'")]
+    UnsupportedCharacter {
+        /// The rejected id. Bytes that are not UTF-8 appear as U+FFFD.
+        tenant: String,
+        /// The first character outside the allowed set.
+        character: char,
+    },
+
+    /// The string is longer than [`MAX_TENANT_ID_LEN`] bytes.
+    #[error("tenant ID is too long: max {MAX_TENANT_ID_LEN} characters")]
+    TooLong,
+
+    /// The string is exactly `.` or exactly `..`.
+    #[error("tenant ID is '.' or '..'")]
+    RelativePathSegment,
+}
+
+/// What a service does with a request that names no tenant.
+///
+/// Each Grafana component makes this choice through its multi-tenancy switch.
+/// Mimir and Loki default the switch on, and reject a request without an
+/// `X-Scope-OrgID` header. Tempo and Pyroscope default it off, and put every
+/// such request under one fixed tenant. A Krabka service picks the variant its
+/// upstream uses, and [`TenantId::resolve`] applies it the same way at every
+/// header and metadata boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TenantPolicy {
+    /// A request without a tenant is rejected.
+    Required,
+    /// A request without a tenant is served as this tenant.
+    Fallback(TenantId),
+}
+
+impl TenantPolicy {
+    /// The fallback policy that uses [`ANONYMOUS_TENANT`].
+    #[must_use]
+    pub fn anonymous() -> Self {
+        Self::Fallback(TenantId::anonymous())
+    }
+}
+
+/// Why a request does not resolve to a tenant.
+///
+/// The variants are separate because upstream reports them differently. A
+/// missing tenant is Grafana's `no org id` error, and a malformed one names the
+/// rule the id broke.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum TenantResolveError {
+    /// The request names no tenant, and the policy is [`TenantPolicy::Required`].
+    #[error("no org id")]
+    Missing,
+
+    /// The request names a tenant that is not a valid tenant id.
+    #[error(transparent)]
+    Invalid(#[from] TenantIdError),
+}
+
+/// A tenant id that is known to be well formed.
+///
+/// Every Krabka signal scopes its blocks, its index and its queries by tenant,
+/// and the tenant name reaches object keys and index prefixes as a path
+/// segment. The value comes from the `X-Scope-OrgID` header of an untrusted
+/// request, so a name that carries a separator or a relative path segment
+/// would write one tenant's data under another tenant's prefix.
+///
+/// [`TenantId::new`] is the only way to build one, so an instance is proof
+/// that the name passed the rules Grafana Mimir's `tenant.ValidTenantID`
+/// applies:
+///
+/// - it is not empty,
+/// - it is at most [`MAX_TENANT_ID_LEN`] bytes,
+/// - it is not exactly `.` and not exactly `..`,
+/// - every byte is an ASCII alphanumeric or one of `! - _ . * ' ( )`.
+///
+/// The type has no `From<String>`, because an infallible conversion would step
+/// around those rules.
+///
+/// A valid id is still not a path segment. Five of the allowed characters need
+/// an escape before they go into an object key. See
+/// [`crate::escape_object_path_segment`].
+///
+/// `Deserialize` runs the same rules, so a tenant id read out of JSON is as
+/// trustworthy as one built in code.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Display, Serialize)]
+#[serde(transparent)]
+pub struct TenantId(String);
+
+impl TenantId {
+    /// Builds a tenant id from `id`, or reports why `id` is not one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenantIdError::Empty`] for an empty string. Otherwise it
+    /// returns the first rule the id breaks, in the order `dskit` checks them:
+    /// [`TenantIdError::UnsupportedCharacter`] for a character outside the
+    /// allowed set, [`TenantIdError::TooLong`] above [`MAX_TENANT_ID_LEN`]
+    /// bytes, and [`TenantIdError::RelativePathSegment`] for `.` and `..`.
+    pub fn new(id: impl Into<String>) -> Result<Self, TenantIdError> {
+        let id = id.into();
+        if id.is_empty() {
+            return Err(TenantIdError::Empty);
+        }
+        // The checks run in `dskit`'s order, so an id that breaks two rules
+        // gets the message upstream gives it: the character first, then the
+        // length, then the relative path segment.
+        if let Some(character) = first_unsupported_character(id.as_bytes()) {
+            return Err(TenantIdError::UnsupportedCharacter {
+                tenant: id,
+                character,
+            });
+        }
+        if id.len() > MAX_TENANT_ID_LEN {
+            return Err(TenantIdError::TooLong);
+        }
+        if id == "." || id == ".." {
+            return Err(TenantIdError::RelativePathSegment);
+        }
+        Ok(Self(id))
+    }
+
+    /// The [`ANONYMOUS_TENANT`] id.
+    ///
+    /// This builds the id without the checks in [`TenantId::new`], because the
+    /// name is a constant that passes them. A unit test holds that fact.
+    #[must_use]
+    pub fn anonymous() -> Self {
+        Self(ANONYMOUS_TENANT.to_owned())
+    }
+
+    /// Resolves the tenant a request names, under `policy`.
+    ///
+    /// `value` is the raw `X-Scope-OrgID` header or gRPC metadata value, or
+    /// `None` when the request carries neither. An empty value counts as no
+    /// value, as it does in Grafana's `dskit`, so a client that sends the header
+    /// with nothing in it gets the same answer as one that omits it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TenantResolveError::Missing`] when the request names no tenant
+    /// and `policy` is [`TenantPolicy::Required`], and
+    /// [`TenantResolveError::Invalid`] when the value is not a valid tenant id.
+    /// A value that is not UTF-8 is invalid, because every allowed byte is ASCII.
+    pub fn resolve(
+        value: Option<&[u8]>,
+        policy: &TenantPolicy,
+    ) -> Result<Self, TenantResolveError> {
+        match value.filter(|value| !value.is_empty()) {
+            Some(value) => match std::str::from_utf8(value) {
+                Ok(id) => Ok(Self::new(id)?),
+                // A Rust string cannot hold these bytes, so the id in the
+                // message is the lossy form, where Mimir repeats the raw bytes.
+                // The character is still taken from the raw bytes, so it is
+                // the one Mimir names.
+                Err(_) => Err(TenantIdError::UnsupportedCharacter {
+                    tenant: String::from_utf8_lossy(value).into_owned(),
+                    character: first_unsupported_character(value)
+                        .unwrap_or(char::REPLACEMENT_CHARACTER),
+                }
+                .into()),
+            },
+            None => match policy {
+                TenantPolicy::Required => Err(TenantResolveError::Missing),
+                TenantPolicy::Fallback(tenant) => Ok(tenant.clone()),
+            },
+        }
+    }
+
+    /// The name, for the many signatures that still take a `&str` tenant.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Takes the name out of the wrapper.
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl FromStr for TenantId {
+    type Err = TenantIdError;
+
+    fn from_str(id: &str) -> Result<Self, Self::Err> {
+        Self::new(id)
+    }
+}
+
+impl<'de> Deserialize<'de> for TenantId {
+    // Hand-written rather than derived: a derived `Deserialize` on a
+    // `#[serde(transparent)]` newtype skips the constructor, and an instance
+    // would then no longer be proof that the name is well formed.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(DeError::custom)
+    }
+}
+
+/// The first byte outside the allowed set, read as the code point of that byte.
+///
+/// `dskit` names the byte at the position of the first unsupported rune, and Go
+/// prints that byte with `%c`, which reads it as a code point. So `unicode-é`
+/// names `Ã`, which is U+00C3 and the first byte of `é`, and not `é` itself. The
+/// pinned Mimir 2.16.1 image answers that way. Every allowed byte is ASCII, so
+/// the first byte outside the set is also the first byte of that rune.
+fn first_unsupported_character(id: &[u8]) -> Option<char> {
+    id.iter()
+        .copied()
+        .find(|byte| !is_allowed_tenant_byte(*byte))
+        .map(char::from)
+}

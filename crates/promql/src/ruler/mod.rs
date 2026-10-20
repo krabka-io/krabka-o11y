@@ -15,7 +15,7 @@ mod schedule;
 #[cfg(test)]
 pub(crate) use alerting::expand_alert_label_map;
 pub(crate) use alerting::{
-    alert_template_variables, evaluate_and_persist_alerting_rule_with_state_and_wal,
+    alert_template_variables, evaluate_alerting_rule_with_state_and_sink,
     expand_alert_label_map_async, template_sample_value,
 };
 pub use alerting::{
@@ -25,9 +25,10 @@ pub use alerting::{
 };
 #[cfg(test)]
 use config::parse_duration;
+#[cfg(test)]
+pub(crate) use evaluation::RulerRuleSetEvaluationRequest;
 pub use evaluation::{
     evaluate_and_persist_ruler_rule_group, evaluate_and_persist_ruler_rule_set,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
     evaluate_and_persist_ruler_rule_set_with_report, evaluate_ruler_rule_group,
     evaluate_ruler_rule_set,
@@ -41,10 +42,56 @@ pub use schedule::{
     filter_ruler_rule_set_for_shard_due_for_eval,
 };
 
+/// The sinks used while evaluating and persisting ruler rules.
+pub struct RulerSinks<'a, W, A, R> {
+    pub wal: &'a W,
+    pub alertmanager: &'a A,
+    pub ruler_state: &'a R,
+}
+
+impl<'a, W, A, R> RulerSinks<'a, W, A, R> {
+    #[must_use]
+    pub const fn new(wal: &'a W, alertmanager: &'a A, ruler_state: &'a R) -> Self {
+        Self {
+            wal,
+            alertmanager,
+            ruler_state,
+        }
+    }
+}
+
+/// The due-time context for evaluating one shard of ruler groups.
+pub struct RulerEvaluationSchedule<'a> {
+    pub group_state: &'a mut RulerGroupState,
+    pub shard: RulerShard,
+    pub eval_time_ms: i64,
+}
+
+/// Recovered alert and scheduling state used by the next ruler evaluation pass.
+#[derive(Clone, Debug, Default)]
+pub struct RulerEvaluationState {
+    pub alert_state: RulerAlertState,
+    pub group_state: RulerGroupState,
+}
+
+impl<'a> RulerEvaluationSchedule<'a> {
+    #[must_use]
+    pub const fn new(
+        group_state: &'a mut RulerGroupState,
+        shard: RulerShard,
+        eval_time_ms: i64,
+    ) -> Self {
+        Self {
+            group_state,
+            shard,
+            eval_time_ms,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
-mod alert_state_key;
 mod alertmanager_alert;
 mod alertmanager_sink;
 mod noop_recording_rule_wal_sink;
@@ -52,29 +99,26 @@ mod noop_ruler_state_sink;
 mod promql_error;
 mod recording_rule_wal_sink;
 mod ruler_alert_state;
-mod ruler_alert_state_record;
 mod ruler_evaluation_report;
 mod ruler_group_evaluation;
 mod ruler_group_state;
-mod ruler_group_state_key;
-mod ruler_group_state_record;
 mod ruler_state_sink;
 mod ruler_wal_error;
+mod state_keys;
+mod state_records;
 
-use alert_state_key::AlertStateKey;
 pub use alertmanager_alert::AlertmanagerAlert;
 pub use alertmanager_sink::AlertmanagerSink;
 use noop_recording_rule_wal_sink::NoopRecordingRuleWalSink;
 use noop_ruler_state_sink::NoopRulerStateSink;
 pub use recording_rule_wal_sink::RecordingRuleWalSink;
 pub use ruler_alert_state::RulerAlertState;
-pub use ruler_alert_state_record::RulerAlertStateRecord;
 pub use ruler_evaluation_report::{
     RulerEvaluationReport, RulerGroupEvaluationStatus, RulerRuleEvaluationStatus,
 };
 pub use ruler_group_evaluation::RulerGroupEvaluation;
 pub use ruler_group_state::RulerGroupState;
-use ruler_group_state_key::RulerGroupStateKey;
-pub use ruler_group_state_record::RulerGroupStateRecord;
 pub use ruler_state_sink::RulerStateSink;
 pub use ruler_wal_error::RulerWalError;
+use state_keys::{AlertStateKey, RulerGroupStateKey};
+pub use state_records::{RulerAlertStateRecord, RulerGroupStateRecord};

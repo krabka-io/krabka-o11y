@@ -1,23 +1,25 @@
 use super::{
-    AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, FrontendRangeRequest, HeaderMap,
-    IntoResponse, MetricStore, Principal, PrometheusApiState, QueryRequestTiming,
-    QueryResponseStats, RangeQueryParams, Response, StdDurationExt, TimeExt, apply_result_limit,
-    authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
+    ApiError, ERASURE_REQUEST_PREFIX, EvaluatedQuery, FrontendRangeRequest, IntoResponse,
+    MetricStore, PerStepSampleStats, QueryDispatchRequest, RangeQueryParams, Response, StepGrid,
+    TimeExt, authorized_query_tenant, check_range_resolution, collect_query_sample_stats,
     duration_param, enforce_query_range_limit, execute_range_query_frontend, has_erasure_requests,
-    success_response, success_response_with_stats, timestamp_ms, validate_timestamp_range,
+    timestamp_ms, validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
-    state: &Arc<PrometheusApiState<S>>,
-    headers: &HeaderMap,
-    principal: &Principal,
-    params: RangeQueryParams,
-    timing: QueryRequestTiming,
+    request: QueryDispatchRequest<'_, S, RangeQueryParams>,
 ) -> Response {
+    let QueryDispatchRequest {
+        state,
+        headers,
+        principal,
+        params,
+        timing,
+    } = request;
     let preparation_started = std::time::Instant::now();
-    let tenant = match authorized_tenant_from_headers(headers, principal) {
+    let tenant = match authorized_query_tenant(headers, principal) {
         Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+        Err(response) => return response,
     };
     let start_ms = match timestamp_ms(&params.start) {
         Ok(value) => value,
@@ -89,49 +91,39 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
                 .engine_for_tenant(&tenant)
                 .query_range_with_annotations(&tenant, &params.query, start_ms, end_ms, step)
                 .await
-                .map(|(result, annotations)| AnnotatedQueryResult {
-                    result,
-                    annotations,
-                })
         }
     };
-    let (result, samples) = if stats_requested {
-        let (result, samples) = collect_query_sample_stats(
-            per_step_stats,
-            start_ms,
-            end_ms,
-            step.millis_i64(),
-            evaluate,
-        )
-        .await;
-        (result, Some(samples))
+    let evaluated = if stats_requested {
+        let per_step = if per_step_stats {
+            PerStepSampleStats::Include(StepGrid {
+                start: start_ms,
+                end: end_ms,
+                step: step.millis_i64(),
+            })
+        } else {
+            PerStepSampleStats::Omit
+        };
+        let query = collect_query_sample_stats(per_step, evaluate).await;
+        EvaluatedQuery {
+            outcome: query.output,
+            samples: Some(query.stats),
+            preparation,
+            evaluation: std::time::Duration::ZERO,
+        }
     } else {
-        (evaluate.await, None)
-    };
-    let evaluation = eval_started.elapsed();
-    state.record_eval("range", result.is_ok(), evaluation.as_time());
-
-    match result {
-        Ok(AnnotatedQueryResult {
-            mut result,
-            annotations,
-        }) => {
-            apply_result_limit(&mut result, params.limit);
-            match samples {
-                Some(samples) => success_response_with_stats(
-                    result,
-                    QueryResponseStats::new(
-                        samples,
-                        preparation,
-                        evaluation,
-                        timing.queue,
-                        timing.started.elapsed(),
-                    ),
-                    &annotations,
-                ),
-                None => success_response(result, &annotations),
-            }
+        EvaluatedQuery {
+            outcome: evaluate.await,
+            samples: None,
+            preparation,
+            evaluation: std::time::Duration::ZERO,
         }
-        Err(error) => ApiError::from(error).into_response(),
-    }
+    };
+    super::finish_query_evaluation(
+        state,
+        "range",
+        evaluated,
+        eval_started,
+        params.limit,
+        timing,
+    )
 }

@@ -1,0 +1,1 @@
+count_values("status", rate({job="api"}[1m]))

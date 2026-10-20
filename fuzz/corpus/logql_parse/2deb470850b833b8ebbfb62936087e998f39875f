@@ -1,0 +1,1 @@
+krabka_test_wal_consumer_records_total{topic="__krabka_test_wal",partition="3"} 1

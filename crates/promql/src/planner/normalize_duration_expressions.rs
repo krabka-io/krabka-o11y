@@ -1,6 +1,6 @@
 use super::{
-    DurationExprContext, DurationExprParser, Result, consume_ident, is_ident_char, is_zero,
-    matching_delimiter, ms_to_seconds, normalize_range_duration_content, offset_operand,
+    DurationExprContext, DurationExprParser, QueryScan, Result, consume_ident, is_ident_char,
+    is_zero, matching_delimiter, ms_to_seconds, normalize_range_duration_content, offset_operand,
     seconds_to_duration_literal, skip_ws, starts_offset_keyword,
 };
 
@@ -8,34 +8,18 @@ pub(crate) fn normalize_duration_expressions(
     query: &str,
     context: DurationExprContext,
 ) -> Result<String> {
-    let chars = query.chars().collect::<Vec<_>>();
-    let mut out = String::with_capacity(query.len());
-    let mut index = 0;
-    let mut quote = None;
+    let QueryScan {
+        chars,
+        output: mut out,
+        mut index,
+        mut quoted,
+    } = QueryScan::new(query);
 
     while index < chars.len() {
+        if quoted.copy(&chars, &mut index, &mut out) {
+            continue;
+        }
         let ch = chars[index];
-        if let Some(quote_ch) = quote {
-            out.push(ch);
-            if ch == '\\' {
-                if let Some(next) = chars.get(index + 1) {
-                    out.push(*next);
-                    index += 2;
-                    continue;
-                }
-            } else if ch == quote_ch {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-
-        if ch == '"' || ch == '\'' || ch == '`' {
-            quote = Some(ch);
-            out.push(ch);
-            index += 1;
-            continue;
-        }
 
         if cfg!(feature = "experimental-functions")
             && matches!(ch, 's' | 'e')
@@ -79,8 +63,8 @@ pub(crate) fn normalize_duration_expressions(
 
         if starts_offset_keyword(&chars, index) {
             let after_keyword = index + "offset".len();
-            if let Some((operand, end)) = offset_operand(&chars, after_keyword) {
-                let seconds = DurationExprParser::new(&operand, context).parse()?;
+            if let Some(operand) = offset_operand(&chars, after_keyword) {
+                let seconds = DurationExprParser::new(&operand.text, context).parse()?;
                 if !is_zero(seconds) {
                     out.push_str(&chars[index..after_keyword].iter().collect::<String>());
                     out.push(' ');
@@ -91,7 +75,7 @@ pub(crate) fn normalize_duration_expressions(
                         out.push_str(&seconds_to_duration_literal(seconds)?);
                     }
                 }
-                index = end;
+                index = operand.end;
                 continue;
             }
         }

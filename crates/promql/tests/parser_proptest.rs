@@ -21,6 +21,13 @@
 //! `the_formatter_sorts_a_selectors_matchers` pins the one normalization the
 //! generator has to steer around.
 
+#[path = "../../logql/tests/support/seed_splice.rs"]
+mod seed_splice;
+#[path = "../../logql/tests/support/token_salad.rs"]
+mod token_salad;
+#[path = "../../logql/tests/support/unicode_noise.rs"]
+mod unicode_noise;
+
 use krabka_promql::{DurationExprContext, parse_promql, parse_promql_with_duration_context};
 use krabka_units::prelude::*;
 use proptest::prelude::*;
@@ -123,76 +130,11 @@ const TOKENS: &[&str] = &[
     "__name__",
 ];
 
-fn arbitrary_text() -> impl Strategy<Value = String> {
-    prop::collection::vec(
-        prop_oneof![
-            2 => any::<char>(),
-            3 => prop::char::range('\u{0}', '\u{7f}'),
-            1 => Just('\u{10ffff}'),
-            1 => Just('é'),
-            1 => Just('\u{1f600}'),
-        ],
-        0..48,
-    )
-    .prop_map(String::from_iter)
-}
-
-fn token_salad() -> impl Strategy<Value = String> {
-    prop::collection::vec((prop::sample::select(TOKENS), any::<bool>()), 1..14).prop_map(|parts| {
-        let mut out = String::new();
-        for (token, spaced) in parts {
-            out.push_str(token);
-            if spaced {
-                out.push(' ');
-            }
-        }
-        out
-    })
-}
-
-/// A valid seed with one splice applied: a range of it is replaced by a slice
-/// of another seed, or by nothing. Near-miss inputs like these reach error
-/// paths that neither pure noise nor a token salad finds.
-fn mutated_seed() -> impl Strategy<Value = String> {
-    (
-        prop::sample::select(SEED_QUERIES),
-        prop::sample::select(SEED_QUERIES),
-        any::<prop::sample::Index>(),
-        any::<prop::sample::Index>(),
-        any::<prop::sample::Index>(),
-        any::<prop::sample::Index>(),
-    )
-        .prop_map(|(base, donor, cut_a, cut_b, paste_a, paste_b)| {
-            let cut = ordered_char_bounds(base, cut_a, cut_b);
-            let paste = ordered_char_bounds(donor, paste_a, paste_b);
-            let mut out = String::new();
-            out.push_str(&base[..cut.0]);
-            out.push_str(&donor[paste.0..paste.1]);
-            out.push_str(&base[cut.1..]);
-            out
-        })
-}
-
-/// Two ascending char boundaries into `text`, so the generator's own slicing
-/// never splits a multi-byte character.
-fn ordered_char_bounds(
-    text: &str,
-    first: prop::sample::Index,
-    second: prop::sample::Index,
-) -> (usize, usize) {
-    let bounds: Vec<usize> = (0..=text.len())
-        .filter(|at| text.is_char_boundary(*at))
-        .collect();
-    let a = *first.get(&bounds);
-    let b = *second.get(&bounds);
-    (a.min(b), a.max(b))
-}
-
 fn arbitrary_query() -> impl Strategy<Value = String> {
     prop_oneof![
-        2 => arbitrary_text(),
-        3 => token_salad(),
-        3 => mutated_seed(),
+        2 => unicode_noise::arbitrary_text(),
+        3 => token_salad::spaced_token_salad(TOKENS),
+        3 => seed_splice::mutated_seed(SEED_QUERIES),
     ]
 }
 
@@ -221,44 +163,43 @@ fn arb_number() -> impl Strategy<Value = String> {
 /// than a round-trip failure, and
 /// `repeated_matchers_on_one_label_reorder_but_survive` below pins it.
 fn arb_bare_selector() -> impl Strategy<Value = String> {
-    (
-        prop::sample::select(METRICS),
-        prop::sample::subsequence(LABELS.to_vec(), 0..4),
-        prop::collection::vec(
-            (
-                prop::sample::select(&["=", "!=", "=~", "!~"]),
-                prop::sample::select(&["api", "5..", "", "a|b"]),
-            ),
-            LABELS.len(),
-        ),
-    )
-        .prop_map(|(metric, labels, specs)| {
-            let mut out = String::from(metric);
-            if !labels.is_empty() {
-                let rendered: Vec<String> = labels
-                    .iter()
-                    .zip(specs)
-                    .map(|(label, (op, value))| format!("{label}{op}\"{value}\""))
-                    .collect();
-                out.push('{');
-                out.push_str(&rendered.join(", "));
-                out.push('}');
-            }
-            out
-        })
+    any::<[u8; 13]>().prop_map(render_bare_selector)
+}
+
+fn render_bare_selector(entropy: [u8; 13]) -> String {
+    let operations = ["=", "!=", "=~", "!~"];
+    let values = ["api", "5..", "", "a|b"];
+    let mut out = String::from(METRICS[usize::from(entropy[0]) % METRICS.len()]);
+    let mut rendered = Vec::new();
+    for label_index in 0..LABELS.len() {
+        if entropy[label_index + 1] & 1 == 0 {
+            continue;
+        }
+        let operation = operations[usize::from(entropy[label_index + 5]) % operations.len()];
+        let value = values[usize::from(entropy[label_index + 9]) % values.len()];
+        rendered.push(format!("{}{operation}\"{value}\"", LABELS[label_index]));
+    }
+    if !rendered.is_empty() {
+        out.push('{');
+        out.push_str(&rendered.join(", "));
+        out.push('}');
+    }
+    out
 }
 
 /// An instant-vector selector, optionally with an `offset` or `@` modifier.
 fn arb_selector() -> impl Strategy<Value = String> {
-    (
-        arb_bare_selector(),
-        prop::option::of(prop::sample::select(&[
-            " offset 5m",
-            " offset -5m",
-            " @ 1609746000",
-        ])),
-    )
-        .prop_map(|(selector, modifier)| format!("{selector}{}", modifier.unwrap_or("")))
+    any::<[u8; 14]>().prop_map(|entropy| {
+        let mut selector = render_bare_selector(entropy[..13].try_into().expect("13 bytes"));
+        let modifier = match entropy[13] % 4 {
+            0 => "",
+            1 => " offset 5m",
+            2 => " offset -5m",
+            _ => " @ 1609746000",
+        };
+        selector.push_str(modifier);
+        selector
+    })
 }
 
 /// A vector-matching clause, and the group modifier that only a non-set
@@ -286,8 +227,7 @@ fn arb_matching(allow_group: bool) -> impl Strategy<Value = String> {
         )
             .prop_map(|(kind, labels, group_kind)| {
                 let group = group_kind
-                    .map(|group| format!(" {group} ({})", labels[1]))
-                    .unwrap_or_default();
+                    .map_or_else(Default::default, |group| format!(" {group} ({})", labels[1]));
                 format!(" {kind} ({}){group}", labels[0])
             })
             .boxed(),
@@ -458,17 +398,27 @@ fn arb_matrix(vector: impl Strategy<Value = String> + 'static) -> BoxedStrategy<
 /// the round-trip property can compare ASTs exactly.
 #[test]
 fn the_formatter_sorts_a_selectors_matchers() {
-    for (query, want) in [
-        (r#"up{job="api", job="5.."}"#, r#"up{job="5..",job="api"}"#),
-        (
-            r#"up{job="api", instance="a"}"#,
-            r#"up{instance="a",job="api"}"#,
-        ),
-    ] {
-        let rendered = parse_promql(query).expect("the query parses").to_string();
+    struct SelectorFormatCase {
+        query: &'static str,
+        expected: &'static str,
+    }
+    let cases = [
+        SelectorFormatCase {
+            query: r#"up{job="api", job="5.."}"#,
+            expected: r#"up{job="5..",job="api"}"#,
+        },
+        SelectorFormatCase {
+            query: r#"up{job="api", instance="a"}"#,
+            expected: r#"up{instance="a",job="api"}"#,
+        },
+    ];
+    for case in &cases {
+        let rendered = parse_promql(case.query)
+            .expect("the query parses")
+            .to_string();
         let reparsed = parse_promql(&rendered).expect("the rendered form parses");
 
-        assert2::assert!(rendered == want);
+        assert2::assert!(rendered == case.expected);
         assert2::assert!(reparsed.to_string() == rendered);
     }
 }

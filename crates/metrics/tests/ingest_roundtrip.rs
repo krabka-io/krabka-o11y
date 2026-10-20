@@ -12,7 +12,6 @@ use axum::{
     http::{Request, StatusCode},
 };
 use krabka_blockstore::{MeteredObjectStore, read_block};
-use krabka_broker::{Broker, BrokerConfig};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_producer::Producer;
 use krabka_ids::{Offset, PartitionIndex};
@@ -22,7 +21,6 @@ use krabka_metrics::{
     distributor::{DistributorState, KafkaSink},
     metrics::ServiceMetrics,
     run_compactor_consumer_loop,
-    wire::pb,
 };
 use krabka_observability::{
     server_security::{ServerSecurity, authenticate_requests},
@@ -30,8 +28,15 @@ use krabka_observability::{
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
-use prost::Message;
 use tower::ServiceExt as _;
+
+#[path = "../../integration/tests/support/test_broker.rs"]
+mod test_broker;
+
+#[path = "support/up_remote_write.rs"]
+mod up_remote_write;
+
+use self::up_remote_write::remote_write_v1_body;
 
 // Every request goes through the authentication layer, as it does on a served
 // listener. With no credentials file, the layer lets each request through.
@@ -44,11 +49,10 @@ fn router(state: Arc<DistributorState>) -> axum::Router {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_write_v1_lands_as_block() {
-    let tempdir = tempfile::TempDir::new().expect("tempdir");
-    let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let started = test_broker::start_broker().await;
+    let _broker = started.broker;
+    let _tempdir = started.tempdir;
+    let bootstrap = started.bootstrap;
     create_metrics_wal_topic(&bootstrap).await;
 
     let producer = Producer::builder()
@@ -82,7 +86,7 @@ async fn remote_write_v1_lands_as_block() {
         wal_record
             .labels
             .iter()
-            .any(|(name, value)| name == "__name__" && value == "up")
+            .any(|label| label.name == "__name__" && label.value == "up")
     );
     assert!(matches!(
         wal_record.payload,
@@ -167,9 +171,9 @@ async fn remote_write_v1_lands_as_block() {
 /// does not match, scrapes exactly like a handle that was never incremented,
 /// and only a scrape tells them apart.
 async fn check_instruments_moved(metrics: &ServiceMetrics) {
-    let mut buffer = String::new();
-    let registry = metrics.registry.lock().await;
-    prometheus_client::encoding::text::encode(&mut buffer, &registry).expect("encode the registry");
+    let buffer = krabka_observability::service_metrics::encode_registry(&metrics.registry)
+        .await
+        .expect("encode the registry");
 
     for needle in [
         // The compactor consumed the WAL record the distributor produced, and
@@ -250,24 +254,4 @@ async fn inspect_wal_record(bootstrap: &str) -> WalRecord {
         }
     }
     panic!("timed out waiting for metrics WAL record");
-}
-
-fn remote_write_v1_body() -> Vec<u8> {
-    let req = pb::v1::WriteRequest {
-        timeseries: vec![pb::v1::TimeSeries {
-            labels: vec![pb::v1::Label {
-                name: "__name__".into(),
-                value: "up".into(),
-            }],
-            samples: vec![pb::v1::Sample {
-                value: 1.0,
-                timestamp: 100,
-            }],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-    snap::raw::Encoder::new()
-        .compress_vec(&req.encode_to_vec())
-        .expect("snappy compress")
 }

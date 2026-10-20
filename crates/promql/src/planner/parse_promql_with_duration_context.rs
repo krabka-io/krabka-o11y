@@ -1,11 +1,11 @@
 use super::{
-    DurationExprContext, Expr, PromqlError, Result,
+    Call, DurationExprContext, Expr, Function, FunctionArgs, PromqlError, Result, ValueType,
     histogram_trim_operators::{normalize_histogram_trim, restore_histogram_trim},
     info_label_selector::{
         normalize_info_selectors, normalize_start_timestamp, restore_info_selectors,
     },
-    normalize_duration_expressions, parse, parse_experimental_zero_arg_helper,
-    strip_extended_selector_modifiers, wrap_extended_selectors,
+    normalize_duration_expressions, parse, strip_extended_selector_modifiers,
+    wrap_extended_selectors,
 };
 
 /// Parses `PromQL` and first folds Prometheus duration expressions to fixed durations.
@@ -30,12 +30,22 @@ pub fn parse_promql_with_duration_context(
     query: &str,
     context: DurationExprContext,
 ) -> Result<Expr> {
-    let (query, byte_strings) = super::normalize_utf8_strings::normalize_utf8_strings(query)?;
-    let (query, selector_modifier) = strip_extended_selector_modifiers(&query)?;
+    let normalized_strings = super::normalize_utf8_strings::normalize_utf8_strings(query)?;
+    let query = normalized_strings.query;
+    let byte_strings = normalized_strings.byte_strings;
+    let stripped = strip_extended_selector_modifiers(&query)?;
+    let query = stripped.query;
+    let selector_modifier = stripped.modifier;
     let normalized = normalize_duration_expressions(&query, context)?;
-    let (normalized, mut trim_operators) = normalize_histogram_trim(&normalized);
-    let (normalized, info_marker) = normalize_info_selectors(&normalized);
-    let (normalized, mut start_functions) = normalize_start_timestamp(&normalized);
+    let normalized_trim = normalize_histogram_trim(&normalized);
+    let normalized = normalized_trim.query;
+    let mut trim_operators = normalized_trim.operators;
+    let normalized_info = normalize_info_selectors(&normalized);
+    let normalized = normalized_info.query;
+    let info_marker = normalized_info.marker;
+    let normalized_start = normalize_start_timestamp(&normalized);
+    let normalized = normalized_start.query;
+    let mut start_functions = normalized_start.start_functions;
     if !cfg!(feature = "experimental-functions") && start_functions.iter().any(|start| *start) {
         return Err(PromqlError::Parse(
             "function start_timestamp is not enabled".to_string(),
@@ -52,4 +62,17 @@ pub fn parse_promql_with_duration_context(
         }
         Err(error) => parse_experimental_zero_arg_helper(&query).ok_or(PromqlError::Parse(error)),
     }
+}
+
+fn parse_experimental_zero_arg_helper(query: &str) -> Option<Expr> {
+    let name = match query.trim() {
+        "start()" => "start",
+        "end()" => "end",
+        _ => return None,
+    };
+
+    Some(Expr::Call(Call {
+        func: Function::new(name, vec![], 0, ValueType::Scalar, true),
+        args: FunctionArgs::empty_args(),
+    }))
 }

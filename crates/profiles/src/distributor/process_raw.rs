@@ -1,9 +1,14 @@
 use super::{
-    CumulativeProfileCache, DistributorState, ProfileRecord, ProfilesError, TenantId, WalSample,
-    apply_relabel, cap_session_id, enforce_and_reserve_max_series, enforce_ingestion_rate,
-    enforce_limits, extract_symbols, require_service_name, rollback_reserved_series,
-    split_sample_types,
+    CumulativeProfileCache, CumulativeProfileKey, DistributorState, ProfileRecord, ProfilesError,
+    TenantId, WalSample, apply_relabel, cap_session_id, enforce_and_reserve_max_series,
+    enforce_ingestion_rate, enforce_limits, extract_symbols, require_service_name,
+    rollback_reserved_series, split_sample_types,
 };
+
+struct DecodedRecord {
+    record: ProfileRecord,
+    cumulative: bool,
+}
 
 ///
 /// # Errors
@@ -33,7 +38,7 @@ pub async fn process_raw(
                 labels: profile
                     .labels
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|pair| krabka_blockstore::LabelPair::new(pair.name, pair.value))
                     .collect(),
                 profile_type: profile.profile_type,
                 samples: profile
@@ -49,20 +54,49 @@ pub async fn process_raw(
                     .collect(),
                 symbols: symbols.clone(),
             };
-            decoded.push((rec, raw.delta));
+            decoded.push(DecodedRecord {
+                record: rec,
+                cumulative: raw.delta,
+            });
         }
     }
 
-    let mut cumulative_profiles = state.cumulative_profiles.lock().await;
-    let mut next_cumulative_profiles = cumulative_profiles.clone();
+    let has_cumulative = decoded.iter().any(|record| record.cumulative);
+    // Cumulative baselines are a transaction through the WAL acknowledgement.
+    // Limited tenants also serialize reservations: otherwise a failed request
+    // could remove a fingerprint that a concurrent successful request reused.
+    // Ordinary, unlimited ingestion never enters either coordination path.
+    let _tenant_guard = if has_cumulative || limits.max_series != 0 {
+        Some(
+            state
+                .tenant_ingest_lock(tenant.as_str())?
+                .lock_owned()
+                .await,
+        )
+    } else {
+        None
+    };
+    let mut next_cumulative_profiles = CumulativeProfileCache::new();
+    if has_cumulative {
+        let cache = state.cumulative_profiles.lock().await;
+        for decoded in decoded.iter().filter(|record| record.cumulative) {
+            let key = cumulative_key(&decoded.record, tenant.as_str());
+            if let Some(previous) = cache.get(&key) {
+                next_cumulative_profiles
+                    .entry(key)
+                    .or_insert_with(|| previous.clone());
+            }
+        }
+    }
     let reservation_records = decoded
         .iter()
-        .map(|(record, _)| record.clone())
+        .map(|decoded| decoded.record.clone())
         .collect::<Vec<_>>();
     let reserved = enforce_and_reserve_max_series(state, tenant, &reservation_records)?;
     let mut pending = Vec::with_capacity(decoded.len());
-    for (mut record, cumulative) in decoded {
-        if cumulative {
+    for decoded in decoded {
+        let mut record = decoded.record;
+        if decoded.cumulative {
             apply_cumulative_delta(&mut record, tenant.as_str(), &mut next_cumulative_profiles);
         }
         if !record.samples.is_empty() {
@@ -70,7 +104,13 @@ pub async fn process_raw(
         }
     }
     if pending.is_empty() {
-        *cumulative_profiles = next_cumulative_profiles;
+        if has_cumulative {
+            state
+                .cumulative_profiles
+                .lock()
+                .await
+                .extend(next_cumulative_profiles);
+        }
         return Ok(());
     }
 
@@ -98,9 +138,22 @@ pub async fn process_raw(
         return Err(ProfilesError::from(error));
     }
 
-    *cumulative_profiles = next_cumulative_profiles;
+    if has_cumulative {
+        state
+            .cumulative_profiles
+            .lock()
+            .await
+            .extend(next_cumulative_profiles);
+    }
 
     Ok(())
+}
+
+fn cumulative_key(record: &ProfileRecord, tenant: &str) -> CumulativeProfileKey {
+    CumulativeProfileKey {
+        tenant: tenant.to_owned(),
+        labels: record.labels.clone(),
+    }
 }
 
 fn apply_cumulative_delta(
@@ -108,12 +161,11 @@ fn apply_cumulative_delta(
     tenant: &str,
     cache: &mut CumulativeProfileCache,
 ) {
-    let key = (tenant.to_string(), record.labels.clone());
-    let current = record
-        .samples
-        .iter()
-        .map(|sample| (sample.stacktrace_location_refs.clone(), sample.value))
-        .collect::<std::collections::HashMap<_, _>>();
+    let key = cumulative_key(record, tenant);
+    let mut current = std::collections::HashMap::new();
+    for sample in &record.samples {
+        current.insert(sample.stacktrace_location_refs.clone(), sample.value);
+    }
     let previous = cache.insert(key, current);
     let Some(previous) = previous else {
         record.samples.clear();
@@ -140,9 +192,9 @@ mod tests {
     fn record(value: i64) -> ProfileRecord {
         ProfileRecord {
             tenant: "tenant-a".into(),
-            labels: vec![(
-                "__profile_type__".into(),
-                "memory:alloc_space:bytes::".into(),
+            labels: vec![krabka_blockstore::LabelPair::new(
+                "__profile_type__",
+                "memory:alloc_space:bytes::",
             )],
             profile_type: "memory:alloc_space:bytes::".into(),
             samples: vec![WalSample {
@@ -166,7 +218,7 @@ mod tests {
         let mut cache = std::collections::HashMap::new();
         let mut first = record(10);
         apply_cumulative_delta(&mut first, "tenant-a", &mut cache);
-        assert!(first.samples.is_empty());
+        assert_eq!(first.samples.len(), 0);
 
         let mut second = record(16);
         apply_cumulative_delta(&mut second, "tenant-a", &mut cache);

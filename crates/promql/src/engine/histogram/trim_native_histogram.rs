@@ -3,6 +3,11 @@ use super::{
     standard_histogram_bound,
 };
 
+struct BucketBounds {
+    lower: f64,
+    higher: f64,
+}
+
 pub(crate) fn trim_native_histogram(
     histogram: &NativeHistogram,
     bound: f64,
@@ -14,51 +19,75 @@ pub(crate) fn trim_native_histogram(
     let mut changed = false;
     let custom = histogram.is_nhcb();
     for positive in [true, false] {
-        let (spans, counts) = if positive {
-            (&mut out.positive_spans, &mut out.positive_counts)
+        let mut buckets = if positive {
+            spanned_histogram_counts(&out.positive_spans, &out.positive_counts)
         } else {
-            (&mut out.negative_spans, &mut out.negative_counts)
+            spanned_histogram_counts(&out.negative_spans, &out.negative_counts)
         };
-        let mut buckets = spanned_histogram_counts(spans, counts);
-        for (index, observations) in &mut buckets {
-            if *observations == 0.0 {
+        let bucket_indexes = buckets.keys().copied().collect::<Vec<_>>();
+        for index in bucket_indexes {
+            let observations = buckets[&index];
+            if observations == 0.0 {
                 continue;
             }
-            let (lower, higher) = if custom {
-                (
-                    trim_custom_bound(
-                        *index - 1,
+            let bounds = if custom {
+                BucketBounds {
+                    lower: trim_custom_bound(
+                        index - 1,
                         histogram.custom_values.as_deref().unwrap_or_default(),
                     ),
-                    trim_custom_bound(
-                        *index,
+                    higher: trim_custom_bound(
+                        index,
                         histogram.custom_values.as_deref().unwrap_or_default(),
                     ),
-                )
+                }
             } else if positive {
-                (
-                    standard_histogram_bound(*index - 1, histogram.schema),
-                    standard_histogram_bound(*index, histogram.schema),
-                )
+                BucketBounds {
+                    lower: standard_histogram_bound(index - 1, histogram.schema),
+                    higher: standard_histogram_bound(index, histogram.schema),
+                }
             } else {
-                (
-                    -standard_histogram_bound(*index, histogram.schema),
-                    -standard_histogram_bound(*index - 1, histogram.schema),
-                )
+                BucketBounds {
+                    lower: -standard_histogram_bound(index, histogram.schema),
+                    higher: -standard_histogram_bound(index - 1, histogram.schema),
+                }
             };
-            let (keep, midpoint) = if (upper && higher <= bound) || (!upper && lower >= bound) {
-                (*observations, midpoint(lower, higher, positive, custom))
-            } else if (upper && lower < bound) || (!upper && higher > bound) {
-                partial_bucket(lower, higher, *observations, bound, upper, positive, custom)
-            } else {
-                (0.0, 0.0)
-            };
-            changed |= keep.partial_cmp(observations) != Some(std::cmp::Ordering::Equal);
-            *observations = keep;
-            count += keep;
-            sum += keep * midpoint;
+            let bucket_trim =
+                if (upper && bounds.higher <= bound) || (!upper && bounds.lower >= bound) {
+                    BucketTrim {
+                        keep: observations,
+                        midpoint: midpoint(bounds.lower, bounds.higher, positive, custom),
+                    }
+                } else if (upper && bounds.lower < bound) || (!upper && bounds.higher > bound) {
+                    partial_bucket(
+                        bounds.lower,
+                        bounds.higher,
+                        observations,
+                        bound,
+                        upper,
+                        positive,
+                        custom,
+                    )
+                } else {
+                    BucketTrim {
+                        keep: 0.0,
+                        midpoint: 0.0,
+                    }
+                };
+            changed |=
+                bucket_trim.keep.partial_cmp(&observations) != Some(std::cmp::Ordering::Equal);
+            buckets.insert(index, bucket_trim.keep);
+            count += bucket_trim.keep;
+            sum += bucket_trim.keep * bucket_trim.midpoint;
         }
-        (*spans, *counts) = compact_spanned_histogram_counts(buckets);
+        let compacted = compact_spanned_histogram_counts(buckets);
+        if positive {
+            out.positive_spans = compacted.spans;
+            out.positive_counts = compacted.counts;
+        } else {
+            out.negative_spans = compacted.spans;
+            out.negative_counts = compacted.counts;
+        }
     }
     if histogram.zero_count > 0.0 {
         let positive = histogram.positive_counts.iter().any(|count| *count != 0.0);
@@ -73,25 +102,32 @@ pub(crate) fn trim_native_histogram(
         } else {
             histogram.zero_threshold
         };
-        let (keep, midpoint) = if (upper && bound <= lower) || (!upper && bound >= higher) {
-            (0.0, 0.0)
+        let bucket_trim = if (upper && bound <= lower) || (!upper && bound >= higher) {
+            BucketTrim {
+                keep: 0.0,
+                midpoint: 0.0,
+            }
         } else if (upper && bound >= higher) || (!upper && bound <= lower) {
-            (histogram.zero_count, linear_midpoint(lower, higher))
+            BucketTrim {
+                keep: histogram.zero_count,
+                midpoint: linear_midpoint(lower, higher),
+            }
         } else if upper {
-            (
-                histogram.zero_count * (bound - lower) / (higher - lower),
-                linear_midpoint(lower, bound),
-            )
+            BucketTrim {
+                keep: histogram.zero_count * (bound - lower) / (higher - lower),
+                midpoint: linear_midpoint(lower, bound),
+            }
         } else {
-            (
-                histogram.zero_count * (higher - bound) / (higher - lower),
-                linear_midpoint(bound, higher),
-            )
+            BucketTrim {
+                keep: histogram.zero_count * (higher - bound) / (higher - lower),
+                midpoint: linear_midpoint(bound, higher),
+            }
         };
-        changed |= keep.partial_cmp(&histogram.zero_count) != Some(std::cmp::Ordering::Equal);
-        out.zero_count = keep;
-        count += keep;
-        sum += keep * midpoint;
+        changed |=
+            bucket_trim.keep.partial_cmp(&histogram.zero_count) != Some(std::cmp::Ordering::Equal);
+        out.zero_count = bucket_trim.keep;
+        count += bucket_trim.keep;
+        sum += bucket_trim.keep * bucket_trim.midpoint;
     }
     if !changed {
         return histogram.clone();
@@ -121,6 +157,11 @@ pub(super) fn midpoint(lower: f64, upper: f64, positive: bool, linear: bool) -> 
     }
 }
 
+pub(super) struct BucketTrim {
+    pub(super) keep: f64,
+    pub(super) midpoint: f64,
+}
+
 pub(super) fn partial_bucket(
     lower: f64,
     higher: f64,
@@ -129,36 +170,57 @@ pub(super) fn partial_bucket(
     upper: bool,
     positive: bool,
     linear: bool,
-) -> (f64, f64) {
+) -> BucketTrim {
     if lower.is_infinite() {
         if upper {
             if bound >= higher {
-                return (count, 0.0);
+                return BucketTrim {
+                    keep: count,
+                    midpoint: 0.0,
+                };
             }
             if bound > 0.0 && higher > 0.0 && higher.is_finite() {
-                return (count * bound / higher, bound / 2.0);
+                return BucketTrim {
+                    keep: count * bound / higher,
+                    midpoint: bound / 2.0,
+                };
             }
             if higher <= 0.0 {
-                return (count, bound);
+                return BucketTrim {
+                    keep: count,
+                    midpoint: bound,
+                };
             }
         } else {
             if bound <= lower {
-                return (count, 0.0);
+                return BucketTrim {
+                    keep: count,
+                    midpoint: 0.0,
+                };
             }
             if bound >= 0.0 && higher > bound && higher.is_finite() {
-                return (
-                    count * (1.0 - bound / higher),
-                    linear_midpoint(bound, higher),
-                );
+                return BucketTrim {
+                    keep: count * (1.0 - bound / higher),
+                    midpoint: linear_midpoint(bound, higher),
+                };
             }
         }
-        return (0.0, if higher.is_finite() { higher } else { 0.0 });
+        return BucketTrim {
+            keep: 0.0,
+            midpoint: if higher.is_finite() { higher } else { 0.0 },
+        };
     }
     if higher.is_infinite() {
         if !upper && bound >= lower {
-            return (count, bound);
+            return BucketTrim {
+                keep: count,
+                midpoint: bound,
+            };
         }
-        return (0.0, if lower.is_finite() { lower } else { 0.0 });
+        return BucketTrim {
+            keep: 0.0,
+            midpoint: if lower.is_finite() { lower } else { 0.0 },
+        };
     }
     let below = if bound <= lower {
         0.0
@@ -175,9 +237,15 @@ pub(super) fn partial_bucket(
                     / (lower.abs().log2() - higher.abs().log2()))
     };
     if upper {
-        (below, midpoint(lower, bound, positive, linear))
+        BucketTrim {
+            keep: below,
+            midpoint: midpoint(lower, bound, positive, linear),
+        }
     } else {
-        (count - below, midpoint(bound, higher, positive, linear))
+        BucketTrim {
+            keep: count - below,
+            midpoint: midpoint(bound, higher, positive, linear),
+        }
     }
 }
 
@@ -205,8 +273,11 @@ mod tests {
 
     use super::trim_native_histogram;
 
-    #[test]
-    fn an_untrimmed_histogram_keeps_zero_gaps_and_signed_sum() {
+    #[yare::parameterized(
+        positive = { f64::INFINITY, true },
+        negative = { f64::NEG_INFINITY, false },
+    )]
+    fn an_untrimmed_histogram_keeps_zero_gaps_and_signed_sum(bound: f64, upper: bool) {
         let input = NativeHistogram {
             schema: 0,
             is_float: true,
@@ -225,10 +296,8 @@ mod tests {
             custom_values: None,
             start_timestamp_ms: None,
         };
-        for (bound, upper) in [(f64::INFINITY, true), (f64::NEG_INFINITY, false)] {
-            let actual = trim_native_histogram(&input, bound, upper);
-            assert2::assert!(actual == input);
-            assert2::assert!(actual.sum.to_bits() == (-0.0_f64).to_bits());
-        }
+        let actual = trim_native_histogram(&input, bound, upper);
+        assert2::assert!(actual == input);
+        assert2::assert!(actual.sum.to_bits() == (-0.0_f64).to_bits());
     }
 }

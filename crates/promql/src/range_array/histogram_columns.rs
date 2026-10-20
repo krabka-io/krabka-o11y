@@ -5,6 +5,7 @@ use super::{
     HistogramView, Int8Array, Int64Array, ListArray, StructArray, struct_column,
 };
 
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct HistogramColumns<'a> {
     pub(crate) schemas: &'a Int8Array,
     pub(crate) is_floats: &'a BooleanArray,
@@ -43,23 +44,10 @@ impl<'a> HistogramColumns<'a> {
 
     pub(crate) fn cell(self, offset: u32, len: u32) -> HistogramView<'a> {
         let start = offset as usize;
-        let end = start + len as usize;
         HistogramView {
             row_start: start,
             row_len: len as usize,
-            schemas: &self.schemas.values()[start..end],
-            is_floats: self.is_floats,
-            reset_hints: &self.reset_hints.values()[start..end],
-            zero_thresholds: &self.zero_thresholds.values()[start..end],
-            zero_counts: &self.zero_counts.values()[start..end],
-            counts: &self.counts.values()[start..end],
-            sums: &self.sums.values()[start..end],
-            positive_spans: self.positive_spans,
-            positive_counts: self.positive_counts,
-            negative_spans: self.negative_spans,
-            negative_counts: self.negative_counts,
-            custom_values: self.custom_values,
-            start_timestamps: self.start_timestamps,
+            columns: self,
         }
     }
 }

@@ -3,6 +3,14 @@ use tokio_util::sync::CancellationToken;
 
 use super::{CriticalTaskError, StagedDrain, SupervisedTasks};
 
+fn supervised_wal_consumer() -> (CancellationToken, SupervisedTasks) {
+    let token = CancellationToken::new();
+    let mut tasks = SupervisedTasks::new(token.clone());
+    let task_token = token.clone();
+    tasks.spawn("wal consumer", async move { task_token.cancelled().await });
+    (token, tasks)
+}
+
 /// A supervised task that panics must be reported, by name, as a critical
 /// exit -- the case a dropped `JoinHandle` loses entirely.
 #[tokio::test]
@@ -35,10 +43,7 @@ async fn a_task_that_returns_early_resolves_as_an_unexpected_exit() {
 /// Reporting them would turn every clean stop into a spurious failure.
 #[tokio::test]
 async fn exits_after_cancellation_are_not_reported() {
-    let token = CancellationToken::new();
-    let mut tasks = SupervisedTasks::new(token.clone());
-    let task_token = token.clone();
-    tasks.spawn("wal consumer", async move { task_token.cancelled().await });
+    let (token, mut tasks) = supervised_wal_consumer();
     token.cancel();
 
     let reported = tokio::time::timeout(
@@ -70,10 +75,7 @@ async fn an_empty_supervisor_never_resolves() {
 /// than detaching what was still running.
 #[tokio::test]
 async fn shutdown_cancels_and_drains() {
-    let token = CancellationToken::new();
-    let mut tasks = SupervisedTasks::new(token.clone());
-    let task_token = token.clone();
-    tasks.spawn("wal consumer", async move { task_token.cancelled().await });
+    let (token, tasks) = supervised_wal_consumer();
 
     tasks.shutdown().await;
 

@@ -15,11 +15,9 @@
 
 use std::{error::Error, future::Future, num::NonZeroU32, sync::Arc, time::Duration};
 
-use async_trait::async_trait;
-use futures::stream::BoxStream;
 use object_store::{
-    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, ListResult, MultipartUpload,
-    ObjectMeta, ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
+    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, ListResult, ObjectStore,
+    PutOptions, PutPayload, PutResult, path::Path,
 };
 use tokio::time::sleep;
 use tracing::warn;
@@ -36,7 +34,8 @@ mod tests {
     use assert2::check;
     use futures::StreamExt as _;
     use object_store::{
-        ObjectStore, ObjectStoreExt as _, PutPayload, memory::InMemory, path::Path,
+        MultipartUpload, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutPayload,
+        memory::InMemory, path::Path,
     };
     use parquet::errors::ParquetError;
 
@@ -94,7 +93,7 @@ mod tests {
             }
             self.attempts.fetch_add(1, Ordering::SeqCst);
             self.remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                     (left > 0).then(|| left - 1)
                 })
                 .is_ok()
@@ -121,14 +120,27 @@ mod tests {
         }
     }
 
+    fn retrying_flaky_store(
+        flaky: &Arc<FlakyObjectStore>,
+        metrics: &ObjectStoreMetrics,
+    ) -> Arc<dyn ObjectStore> {
+        RetryingObjectStore::wrap(
+            Arc::clone(flaky) as Arc<dyn ObjectStore>,
+            ObjectStoreRetryPolicy::immediate(4),
+            metrics.clone(),
+        )
+    }
+
     impl std::fmt::Display for FlakyObjectStore {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             formatter.write_str("FlakyObjectStore")
         }
     }
 
-    #[async_trait]
-    impl ObjectStore for FlakyObjectStore {
+    crate::delegate_object_store! {
+        FlakyObjectStore => inner;
+        forward [get_opts, list, delete_stream];
+
         async fn put_opts(
             &self,
             location: &Path,
@@ -152,21 +164,6 @@ mod tests {
             self.inner.put_multipart_opts(location, options).await
         }
 
-        async fn get_opts(
-            &self,
-            location: &Path,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&Path>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
         async fn list_with_delimiter(
             &self,
             prefix: Option<&Path>,
@@ -187,13 +184,6 @@ mod tests {
                 return Err(error);
             }
             self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<Path>>,
-        ) -> BoxStream<'static, object_store::Result<Path>> {
-            self.inner.delete_stream(locations)
         }
     }
 
@@ -216,52 +206,69 @@ mod tests {
     /// the answer.
     #[test]
     fn only_an_indeterminate_backend_failure_is_worth_another_attempt() {
-        let cases: Vec<(&str, ObjectStoreError, bool)> = vec![
-            ("a 5xx, a timeout or a reset connection", timeout(), true),
-            ("a 403 on a credential that was revoked", forbidden(), false),
-            (
-                "a 401 that no amount of waiting authenticates",
-                ObjectStoreError::Unauthenticated {
+        struct ClassificationCase {
+            description: &'static str,
+            error: ObjectStoreError,
+            should_retry: bool,
+        }
+        let cases = vec![
+            ClassificationCase {
+                description: "a 5xx, a timeout or a reset connection",
+                error: timeout(),
+                should_retry: true,
+            },
+            ClassificationCase {
+                description: "a 403 on a credential that was revoked",
+                error: forbidden(),
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a 401 that no amount of waiting authenticates",
+                error: ObjectStoreError::Unauthenticated {
                     path: "blocks/a.parquet".to_string(),
                     source: "401".into(),
                 },
-                false,
-            ),
-            (
-                "a 404, which is this object's answer and not the store's",
-                ObjectStoreError::NotFound {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a 404, which is this object's answer and not the store's",
+                error: ObjectStoreError::NotFound {
                     path: "blocks/a.parquet".to_string(),
                     source: "404".into(),
                 },
-                false,
-            ),
-            (
-                "a failed precondition",
-                ObjectStoreError::Precondition {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a failed precondition",
+                error: ObjectStoreError::Precondition {
                     path: "blocks/a.parquet".to_string(),
                     source: "412".into(),
                 },
-                false,
-            ),
-            (
-                "an object the store refuses to overwrite",
-                ObjectStoreError::AlreadyExists {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "an object the store refuses to overwrite",
+                error: ObjectStoreError::AlreadyExists {
                     path: "blocks/a.parquet".to_string(),
                     source: "409".into(),
                 },
-                false,
-            ),
-            (
-                "a configuration key the backend does not have",
-                ObjectStoreError::UnknownConfigurationKey {
+                should_retry: false,
+            },
+            ClassificationCase {
+                description: "a configuration key the backend does not have",
+                error: ObjectStoreError::UnknownConfigurationKey {
                     store: "S3",
                     key: "nonsense".to_string(),
                 },
-                false,
-            ),
+                should_retry: false,
+            },
         ];
-        for (what, error, want) in cases {
-            check!(is_transient_object_store_error(&error) == want, "{what}");
+        for case in cases {
+            check!(
+                is_transient_object_store_error(&case.error) == case.should_retry,
+                "{}",
+                case.description
+            );
         }
     }
 
@@ -399,23 +406,31 @@ mod tests {
     /// everything under one label would fail here.
     #[tokio::test]
     async fn every_single_shot_operation_retries_under_its_own_label() {
-        let cases: Vec<(FlakyOperation, ObjectStoreOperation)> = vec![
-            (FlakyOperation::Put, ObjectStoreOperation::Put),
-            (
-                FlakyOperation::ListWithDelimiter,
-                ObjectStoreOperation::ListWithDelimiter,
-            ),
-            (FlakyOperation::Copy, ObjectStoreOperation::Copy),
+        struct OperationCase {
+            flaky: FlakyOperation,
+            metric: ObjectStoreOperation,
+        }
+        let cases = vec![
+            OperationCase {
+                flaky: FlakyOperation::Put,
+                metric: ObjectStoreOperation::Put,
+            },
+            OperationCase {
+                flaky: FlakyOperation::ListWithDelimiter,
+                metric: ObjectStoreOperation::ListWithDelimiter,
+            },
+            OperationCase {
+                flaky: FlakyOperation::Copy,
+                metric: ObjectStoreOperation::Copy,
+            },
         ];
 
-        for (flaky_operation, labelled) in cases {
+        for case in cases {
+            let flaky_operation = case.flaky;
+            let labelled = case.metric;
             let flaky = Arc::new(FlakyObjectStore::failing(flaky_operation, 2, timeout));
             let metrics = ObjectStoreMetrics::unregistered();
-            let store = RetryingObjectStore::wrap(
-                Arc::clone(&flaky) as Arc<dyn ObjectStore>,
-                ObjectStoreRetryPolicy::immediate(4),
-                metrics.clone(),
-            );
+            let store = retrying_flaky_store(&flaky, &metrics);
             // The source of the copy has to exist before the copy runs, and
             // putting it is itself an operation the wrapper covers -- so it
             // goes in through the inner store, leaving the counters alone.
@@ -481,11 +496,7 @@ mod tests {
             timeout,
         ));
         let metrics = ObjectStoreMetrics::unregistered();
-        let store = RetryingObjectStore::wrap(
-            Arc::clone(&flaky) as Arc<dyn ObjectStore>,
-            ObjectStoreRetryPolicy::immediate(4),
-            metrics.clone(),
-        );
+        let store = retrying_flaky_store(&flaky, &metrics);
 
         let refused = store.put_multipart(&Path::from("blocks/a.parquet")).await;
 
@@ -544,14 +555,116 @@ mod tests {
     }
 }
 
-mod is_transient_object_store_error;
 mod object_store_retry_policy;
-mod retry_object_store;
 mod retrying_object_store;
 mod transient_object_store_error;
 
-pub use is_transient_object_store_error::is_transient_object_store_error;
 pub use object_store_retry_policy::ObjectStoreRetryPolicy;
-pub use retry_object_store::retry_object_store;
 pub use retrying_object_store::RetryingObjectStore;
 pub use transient_object_store_error::transient_object_store_error;
+
+/// Whether trying this object-store failure again could plausibly succeed.
+///
+/// Only [`ObjectStoreError::Generic`] is transient, and that is not the
+/// hedge it looks like. It is the variant the `object_store` HTTP clients
+/// produce for *every* failure that is not a status code with a meaning of its
+/// own: a connection reset, a request timeout, and a 5xx that survived the
+/// client's own retry budget all arrive here. The statuses that do have a
+/// meaning are mapped to their own variants on the way out -- 401 to
+/// [`Unauthenticated`], 403 to [`PermissionDenied`], 404 to [`NotFound`], 409
+/// to [`AlreadyExists`], 412 to [`Precondition`] -- and none of them will read
+/// differently in two seconds' time. Retrying them spends the budget that the
+/// next transient failure needs and delays the report of the real fault.
+///
+/// Everything else is permanent, a variant this build has never heard of
+/// included: `Error` is `#[non_exhaustive]`, and guessing that an unknown
+/// failure is worth another go is the guess that turns into a spin.
+///
+/// # How this relates to [`BlockReadFailure::skip_reason`]
+///
+/// The two classifiers answer different questions and agree where they
+/// overlap. `skip_reason` asks *whose fault is this block*: a `NotFound` is
+/// that one object's problem and a scan may leave it out, while anything else
+/// says nothing about the block and must fail the query. This asks *would
+/// another attempt help*.
+///
+/// They agree that `NotFound` is not a store outage. They part company on the
+/// rest of the backend errors, which `skip_reason` lumps together as "not this
+/// block's fault, propagate": here a 500 and a 403 are opposites, because one
+/// is worth waiting out and the other never will be. That split is the whole
+/// point of this function, and it is finer than the logs compactor's
+/// `block_store_error_is_object_store`, which retries *any* object-store
+/// error, a revoked credential included.
+///
+/// [`Unauthenticated`]: ObjectStoreError::Unauthenticated
+/// [`PermissionDenied`]: ObjectStoreError::PermissionDenied
+/// [`NotFound`]: ObjectStoreError::NotFound
+/// [`AlreadyExists`]: ObjectStoreError::AlreadyExists
+/// [`Precondition`]: ObjectStoreError::Precondition
+/// [`BlockReadFailure::skip_reason`]: crate::BlockReadFailure::skip_reason
+#[must_use]
+pub fn is_transient_object_store_error(error: &ObjectStoreError) -> bool {
+    matches!(error, ObjectStoreError::Generic { .. })
+}
+
+/// Runs `attempt` until it succeeds, fails permanently, or runs out of budget.
+///
+/// `attempt` must be re-runnable and must land in the same place every time.
+/// Every block key in this repository is derived from the data being written
+/// -- tenant, partition, WAL offset range, window bounds -- and none of the
+/// writes are conditional, so a repeated attempt overwrites the object the
+/// previous one half-wrote rather than adding a second block beside it. An
+/// operation that allocated a fresh name per attempt would need a different
+/// mechanism, and must not use this one.
+///
+/// Every retry this function fires moves `metrics.operation_retries_total`
+/// for `operation`. That counter is the only thing a store which degrades and
+/// then succeeds on the second attempt moves: the caller gets its result, the
+/// role does not exit, and without the counter the degradation is invisible.
+///
+/// # Errors
+/// Returns the last error `attempt` produced: the first permanent one, or the
+/// transient one that exhausted `policy.max_attempts`.
+pub async fn retry_object_store<T, E, Op, Fut>(
+    policy: ObjectStoreRetryPolicy,
+    operation: ObjectStoreOperation,
+    metrics: &ObjectStoreMetrics,
+    mut attempt: Op,
+) -> Result<T, E>
+where
+    Op: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: Error + 'static,
+{
+    let mut backoff = policy.initial_backoff;
+    let mut attempts_left = policy.max_attempts.get();
+    loop {
+        let error = match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        attempts_left -= 1;
+        if transient_object_store_error(&error).is_none() {
+            return Err(error);
+        }
+        if attempts_left == 0 {
+            warn!(
+                operation = operation.as_str(),
+                attempts = policy.max_attempts.get(),
+                %error,
+                "object-store retry budget exhausted; failing the operation"
+            );
+            return Err(error);
+        }
+        metrics.record_retry(operation);
+        warn!(
+            operation = operation.as_str(),
+            attempts_left,
+            backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+            %error,
+            "transient object-store failure; retrying"
+        );
+        sleep(backoff).await;
+        backoff = backoff.saturating_mul(2).min(policy.max_backoff);
+    }
+}

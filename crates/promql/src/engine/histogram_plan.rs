@@ -1,5 +1,5 @@
 use futures::{FutureExt, future::BoxFuture};
-use promql_parser::parser::{Call, Expr};
+use promql_parser::parser::{Call, VectorSelector};
 
 #[cfg(feature = "experimental-functions")]
 use super::histogram::apply_histogram_quantiles;
@@ -8,7 +8,7 @@ use super::planner_support::string_literal_value;
 use super::{
     PromqlEngine,
     histogram::{
-        HistogramAccessor, apply_histogram_accessor, apply_histogram_fraction,
+        FractionBounds, HistogramAccessor, apply_histogram_accessor, apply_histogram_fraction,
         apply_histogram_quantile,
     },
     planned::PlannedInstant,
@@ -23,6 +23,21 @@ use crate::{
 };
 
 impl<S: MetricStore> PromqlEngine<S> {
+    pub(super) async fn eval_instant_vector_selector(
+        &self,
+        tenant: &str,
+        selector: &VectorSelector,
+        time_ms: i64,
+    ) -> Result<Option<Vec<InstantSample>>> {
+        let QueryResult::InstantVector(samples) = self
+            .eval_instant_selector(tenant, selector, time_ms)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(samples))
+    }
+
     /// Plans a `histogram_quantile(phi, v)` call onto the operator path.
     ///
     /// This method resolves `phi` to a scalar. It selects the inner
@@ -73,7 +88,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         // handles classic buckets, native histograms, and the mixed-schema warning
         // uniformly, so a native / mixed inner is parity-exact here — no fallback.
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, vector_arg, time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(tenant, vector_arg, time_ms))
             .await?
         else {
             return Ok(None);
@@ -129,7 +144,11 @@ impl<S: MetricStore> PromqlEngine<S> {
             quantiles.push(value);
         }
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, &call.args.args[0], time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(
+                tenant,
+                &call.args.args[0],
+                time_ms,
+            ))
             .await?
         else {
             return Ok(None);
@@ -164,8 +183,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         let [arg] = call.args.args.as_slice() else {
             return Ok(None);
         };
-        let Some(samples) =
-            with_histogram_stats(self.histogram_fold_inner_vector(tenant, arg, time_ms)).await?
+        let Some(samples) = with_histogram_stats(
+            self.histogram_fold_inner_vector(super::InnerVectorQuery::new(tenant, arg, time_ms)),
+        )
+        .await?
         else {
             return Ok(None);
         };
@@ -209,13 +230,15 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(None);
         };
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, vector_arg, time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(tenant, vector_arg, time_ms))
             .await?
         else {
             return Ok(None);
         };
         Ok(Some(PlannedInstant::Precomputed(apply_histogram_fraction(
-            lower, upper, samples, time_ms,
+            FractionBounds { lower, upper },
+            samples,
+            time_ms,
         )?)))
     }
 
@@ -241,36 +264,12 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// planner cannot evaluate.
     pub(super) fn histogram_fold_inner_vector<'a>(
         &'a self,
-        tenant: &'a str,
-        value_arg: &'a Expr,
-        time_ms: i64,
+        query: super::InnerVectorQuery<'a>,
     ) -> BoxFuture<'a, Result<Option<Vec<InstantSample>>>> {
-        async move {
-            let mut inner = value_arg;
-            while let Expr::Paren(paren) = inner {
-                inner = &paren.expr;
-            }
-
-            if let Expr::VectorSelector(selector) = inner {
-                let QueryResult::InstantVector(samples) = self
-                    .eval_instant_selector(tenant, selector, time_ms)
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                return Ok(Some(samples));
-            }
-
-            let Some(planned) = self.plan_instant_expr(tenant, inner, time_ms).await? else {
-                return Ok(None);
-            };
-            let QueryResult::InstantVector(samples) =
-                self.assemble_planned_instant(planned, time_ms).await?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(samples))
-        }
-        .boxed()
+        self.resolve_inner_vector(query, |engine, tenant, selector, time_ms| {
+            engine
+                .eval_instant_vector_selector(tenant, selector, time_ms)
+                .boxed()
+        })
     }
 }

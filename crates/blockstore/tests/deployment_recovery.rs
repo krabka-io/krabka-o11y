@@ -76,14 +76,9 @@ async fn put(store: &Arc<dyn ObjectStore>, path: &str, bytes: &[u8]) {
 }
 
 async fn paths(store: &Arc<dyn ObjectStore>) -> Vec<String> {
-    let mut paths = futures::TryStreamExt::try_collect::<Vec<_>>(store.list(None))
+    krabka_blockstore::sorted_object_paths(store.as_ref())
         .await
         .expect("list")
-        .into_iter()
-        .map(|meta| meta.location.to_string())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -224,8 +219,11 @@ async fn a_sealed_cut_names_every_part_by_digest_and_restores_every_part() {
             .collect::<Vec<_>>()
             == [("logs-querier-state", 1, 0), ("metrics", 3, 0)]
     );
-    for (live, target) in live_parts().await.iter().zip(&targets) {
-        check!(paths(&target.store).await == paths(&live.store).await);
+    let live = live_parts().await;
+    for index in 0..targets.len() {
+        let target = &targets[index];
+        let source = &live[index];
+        check!(paths(&target.store).await == paths(&source.store).await);
     }
 
     // A repeated restore resumes and copies nothing.
@@ -324,7 +322,12 @@ async fn a_restore_refuses_a_partial_or_mixed_set_before_it_writes() {
         .expect("backup");
         backup
     }
-    async fn other_cut_part() -> Vec<(String, Vec<u8>)> {
+    struct BackupObjectPayload {
+        path: String,
+        bytes: Vec<u8>,
+    }
+
+    async fn other_cut_part() -> Vec<BackupObjectPayload> {
         let other = store();
         let mut other_plan = plan(live_parts().await);
         other_plan.cut_id = "cut-2".into();
@@ -341,7 +344,10 @@ async fn a_restore_refuses_a_partial_or_mixed_set_before_it_writes() {
                     .bytes()
                     .await
                     .expect("bytes");
-                objects.push((path, bytes.to_vec()));
+                objects.push(BackupObjectPayload {
+                    path,
+                    bytes: bytes.to_vec(),
+                });
             }
         }
         objects
@@ -385,8 +391,8 @@ async fn a_restore_refuses_a_partial_or_mixed_set_before_it_writes() {
                 .await
                 .expect("delete"),
             Damage::PartOfAnotherCut => {
-                for (path, bytes) in other_cut_part().await {
-                    put(&backup, &path, &bytes).await;
+                for object in other_cut_part().await {
+                    put(&backup, &object.path, &object.bytes).await;
                 }
             }
             Damage::UnlistedObject => put(&backup, "parts/profiles/blocks/x.parquet", b"x").await,
@@ -445,6 +451,11 @@ struct MarkerTail {
     records: u64,
 }
 
+struct MarkerTailCase {
+    records: u64,
+    sealed: bool,
+}
+
 #[async_trait]
 impl BrokerState for MarkerTail {
     async fn capture(&self) -> Result<BrokerSnapshot, String> {
@@ -464,18 +475,31 @@ impl BrokerState for MarkerTail {
 
 #[tokio::test]
 async fn a_block_builder_behind_only_transaction_markers_is_drained() {
-    for (records, sealed) in [(0, true), (1, false)] {
+    for case in [
+        MarkerTailCase {
+            records: 0,
+            sealed: true,
+        },
+        MarkerTailCase {
+            records: 1,
+            sealed: false,
+        },
+    ] {
         let backup = store();
         let result = backup_deployment(
             &MarkerTail {
                 snapshot: snapshot(4, 3),
-                records,
+                records: case.records,
             },
             &backup,
             &plan(live_parts().await),
         )
         .await;
-        check!(result.is_ok() == sealed, "{records} pending records");
+        check!(
+            result.is_ok() == case.sealed,
+            "{} pending records",
+            case.records
+        );
     }
 }
 

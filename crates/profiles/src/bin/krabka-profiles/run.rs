@@ -1,8 +1,8 @@
 use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
 
 use super::{
-    Arc, AuditService, CancellationToken, Cli, ProcessSecurity, ServiceMetrics, Target,
-    krabka_product, require_role_topics, role_shutdown_token, run_all, run_block_builder,
+    Arc, AuditService, CancellationToken, Cli, ProcessSecurity, ReadRoleInputs, ServiceMetrics,
+    Target, krabka_product, require_role_topics, role_shutdown_token, run_all, run_block_builder,
     run_compactor, run_distributor, run_querier, run_query_frontend, run_symbolizer,
 };
 
@@ -15,11 +15,10 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // its broker, so `/ready` there reports the rest of the start rather than
     // "a listener exists". The roles with a data port echo the same gates on
     // it.
-    let readiness = RoleReadiness::new();
-    if cli.target != Target::All {
-        readiness.track_wal_consumer(metrics.wal_consumer.clone());
-    }
-    readiness.track_object_store(metrics.object_store.clone());
+    let readiness = RoleReadiness::from_metrics(
+        (cli.target != Target::All).then(|| metrics.wal_consumer.clone()),
+        metrics.object_store.clone(),
+    );
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(
         cli.admin_listen_addr,
         krabka_profiles::metrics::metrics_router(metrics.registry.clone())
@@ -56,15 +55,17 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             audit_stop.clone(),
         ) => started?,
     };
-    let (audit_handle, audit_writer) = audit.into_parts();
+    let audit_parts = audit.into_parts();
     let mut audit_tasks = SupervisedTasks::new(audit_stop);
-    if let Some(writer) = audit_writer {
+    if let Some(writer) = audit_parts.writer {
         audit_tasks.adopt("profiles audit writer", writer);
     }
     // Profiles has no destructive admin operation. Its audit trail is the
     // refused credentials and the denied tenants that the listeners report.
     let security = ProcessSecurity {
-        server: loaded.server.with_security_events(Arc::new(audit_handle)),
+        server: loaded
+            .server
+            .with_security_events(Arc::new(audit_parts.handle)),
         wal: loaded.wal,
     };
 
@@ -83,9 +84,25 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             Target::BlockBuilder => {
                 run_block_builder(cli, metrics, readiness, shutdown, security.wal).await?;
             }
-            Target::Querier => run_querier(cli, metrics, readiness, shutdown, security).await?,
+            Target::Querier => {
+                run_querier(ReadRoleInputs {
+                    cli,
+                    metrics,
+                    readiness,
+                    shutdown,
+                    security,
+                })
+                .await?;
+            }
             Target::QueryFrontend => {
-                run_query_frontend(cli, metrics, readiness, shutdown, security).await?;
+                run_query_frontend(ReadRoleInputs {
+                    cli,
+                    metrics,
+                    readiness,
+                    shutdown,
+                    security,
+                })
+                .await?;
             }
             Target::Compactor => run_compactor(cli, metrics, readiness, shutdown).await?,
             Target::Symbolizer => run_symbolizer(cli, metrics, shutdown).await?,

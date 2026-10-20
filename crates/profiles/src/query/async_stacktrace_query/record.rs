@@ -20,6 +20,17 @@ pub(super) struct Record {
     pub result_generation: Option<u64>,
 }
 
+#[derive(Debug)]
+pub(super) struct LoadedRecord {
+    pub(super) record: Record,
+    pub(super) version: UpdateVersion,
+}
+
+struct VersionedMetadataObject {
+    generation: u64,
+    location: Path,
+}
+
 // Payloads expire, but the small immutable seal remains for the lifetime of
 // this query ID. Removing it would reopen generation keys to suspended owners.
 // ponytail: one seal per expired query; compact only with an equivalent durable
@@ -36,6 +47,17 @@ pub(super) fn expiry_path(tenant: &TenantId, id: &str) -> Path {
     Path::from(format!("profiles-admin/{tenant}/async/{id}/expired.json"))
 }
 
+async fn decode_json_object<T: serde::de::DeserializeOwned>(
+    object: object_store::GetResult,
+) -> Result<T, ConnectError> {
+    let bytes = object
+        .bytes()
+        .await
+        .map_err(|error| storage_error(&error))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| ConnectError::new(super::Code::Internal, error.to_string()))
+}
+
 pub(super) async fn is_expired<S: ProfileStore>(
     state: &QuerierState<S>,
     tenant: &TenantId,
@@ -46,13 +68,7 @@ pub(super) async fn is_expired<S: ProfileStore>(
         Err(object_store::Error::NotFound { .. }) => return Ok(false),
         Err(error) => return Err(storage_error(&error)),
     };
-    let seal: ExpirySeal = serde_json::from_slice(
-        &object
-            .bytes()
-            .await
-            .map_err(|error| storage_error(&error))?,
-    )
-    .map_err(|error| ConnectError::new(super::Code::Internal, error.to_string()))?;
+    let seal: ExpirySeal = decode_json_object(object).await?;
     if seal.version != 1 || seal.tenant != tenant.as_str() || seal.id != id {
         return Err(ConnectError::new(
             super::Code::Internal,
@@ -128,7 +144,7 @@ pub(super) async fn load<S: ProfileStore>(
     state: &QuerierState<S>,
     tenant: &TenantId,
     id: &str,
-) -> Result<(Record, UpdateVersion), ConnectError> {
+) -> Result<LoadedRecord, ConnectError> {
     if is_expired(state, tenant, id).await? {
         return Err(not_found());
     }
@@ -139,7 +155,7 @@ pub(super) async fn load<S: ProfileStore>(
         .try_collect::<Vec<_>>()
         .await
         .map_err(|error| storage_error(&error))?;
-    let (generation, location) = objects
+    let metadata_object = objects
         .into_iter()
         .filter_map(|object| {
             let generation = object
@@ -148,24 +164,22 @@ pub(super) async fn load<S: ProfileStore>(
                 .strip_suffix(".json")?
                 .parse::<u64>()
                 .ok()?;
-            (object.location == metadata_path(tenant, id, generation))
-                .then_some((generation, object.location))
+            (object.location == metadata_path(tenant, id, generation)).then_some(
+                VersionedMetadataObject {
+                    generation,
+                    location: object.location,
+                },
+            )
         })
-        .max_by_key(|(generation, _)| *generation)
+        .max_by_key(|entry| entry.generation)
         .ok_or_else(|| ConnectError::new(super::Code::NotFound, "async query not found"))?;
     let object = state
         .admin_store
-        .get(&location)
+        .get(&metadata_object.location)
         .await
         .map_err(|error| storage_error(&error))?;
-    let record: Record = serde_json::from_slice(
-        &object
-            .bytes()
-            .await
-            .map_err(|error| storage_error(&error))?,
-    )
-    .map_err(|error| ConnectError::new(super::Code::Internal, error.to_string()))?;
-    if record.version != 1 || record.generation != generation {
+    let record: Record = decode_json_object(object).await?;
+    if record.version != 1 || record.generation != metadata_object.generation {
         return Err(ConnectError::new(
             super::Code::Internal,
             "unsupported async metadata version or generation",
@@ -180,13 +194,13 @@ pub(super) async fn load<S: ProfileStore>(
     if is_expired(state, tenant, id).await? {
         return Err(not_found());
     }
-    Ok((
+    Ok(LoadedRecord {
         record,
-        UpdateVersion {
+        version: UpdateVersion {
             e_tag: None,
-            version: Some(generation.to_string()),
+            version: Some(metadata_object.generation.to_string()),
         },
-    ))
+    })
 }
 
 pub(super) async fn write<S: ProfileStore>(
@@ -254,12 +268,11 @@ pub(super) async fn renew<S: ProfileStore>(
     if is_expired(state, tenant, id).await? {
         return Ok(false);
     }
-    let (mut record, version) = load(state, tenant, id).await?;
-    if record.owner != state.async_runtime.owner
-        || record.status != AsyncQueryStatus::InProgress as i32
-    {
+    let Some(loaded) = owned_in_progress_record(state, tenant, id).await? else {
         return Ok(false);
-    }
+    };
+    let mut record = loaded.record;
+    let version = loaded.version;
     record.heartbeat_ms = if release { 1 } else { now_ms() };
     write(state, &record, PutMode::Update(version)).await
 }
@@ -272,15 +285,28 @@ pub(super) async fn terminal<S: ProfileStore>(
     status: i32,
     error: String,
 ) -> Result<(), ConnectError> {
-    let (mut record, version) = load(state, tenant, id).await?;
-    if record.owner != state.async_runtime.owner
-        || record.status != AsyncQueryStatus::InProgress as i32
-    {
+    let Some(loaded) = owned_in_progress_record(state, tenant, id).await? else {
         return Ok(());
-    }
+    };
+    let mut record = loaded.record;
+    let version = loaded.version;
     record.status = status;
     record.error = error;
     record.heartbeat_ms = now_ms();
     write(state, &record, PutMode::Update(version)).await?;
     Ok(())
+}
+
+async fn owned_in_progress_record<S: ProfileStore>(
+    state: &QuerierState<S>,
+    tenant: &TenantId,
+    id: &str,
+) -> Result<Option<LoadedRecord>, ConnectError> {
+    let loaded = load(state, tenant, id).await?;
+    if loaded.record.owner != state.async_runtime.owner
+        || loaded.record.status != AsyncQueryStatus::InProgress as i32
+    {
+        return Ok(None);
+    }
+    Ok(Some(loaded))
 }

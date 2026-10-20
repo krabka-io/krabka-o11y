@@ -1,4 +1,18 @@
-use super::{Bytes, ProduceError, WalBatchError, WalRecord};
+use super::{Bytes, WalBatchError, WalRecord};
+
+/// Errors raised while appending to the metrics WAL.
+#[derive(Debug, thiserror::Error)]
+pub enum ProduceError {
+    #[error("wal append failed: {0}")]
+    Append(String),
+}
+
+/// A WAL record and the partitioning key that selects its partition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalBatchRecord {
+    pub key: Bytes,
+    pub record: WalRecord,
+}
 
 /// Testable sink for metrics WAL records.
 #[async_trait::async_trait]
@@ -19,12 +33,12 @@ pub trait WalSink: Send + Sync {
     /// a partial batch as the partial batch it is.
     async fn append_batch(
         &self,
-        records: Vec<(Bytes, WalRecord)>,
+        records: Vec<WalBatchRecord>,
     ) -> Result<(), WalBatchError<ProduceError>> {
         let total = records.len();
-        for (appended, (key, record)) in records.into_iter().enumerate() {
-            if let Err(source) = self.append(key, record).await {
-                return Err(WalBatchError::new(appended, total, source));
+        for batch_entry in records.into_iter().enumerate() {
+            if let Err(source) = self.append(batch_entry.1.key, batch_entry.1.record).await {
+                return Err(WalBatchError::new(batch_entry.0, total, source));
             }
         }
         Ok(())

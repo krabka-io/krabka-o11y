@@ -74,9 +74,7 @@ impl FieldFilter {
                 .is_some_and(|candidate| {
                     num_traits::ToPrimitive::to_f64(&candidate)
                         .zip(num_traits::ToPrimitive::to_f64(expected))
-                        .is_some_and(|(candidate, expected)| {
-                            self.op.compare_numbers(candidate, expected)
-                        })
+                        .is_some_and(|values| self.op.compare_numbers(values.0, values.1))
                 }),
             FieldValue::Bytes(expected) => parse_bytes_literal(&candidate)
                 .is_some_and(|candidate| self.op.compare_sizes(candidate, *expected)),

@@ -28,8 +28,12 @@ fn a_refresh_cannot_restore_an_acknowledged_cancellation() {
     .unwrap();
 
     let refresh = state.delete_requests.clone();
-    let (read_tx, read_rx) = mpsc::channel();
-    let (resume_tx, resume_rx) = mpsc::channel();
+    let read_channel = mpsc::channel();
+    let read_tx = read_channel.0;
+    let read_rx = read_channel.1;
+    let resume_channel = mpsc::channel();
+    let resume_tx = resume_channel.0;
+    let resume_rx = resume_channel.1;
     let reader = thread::spawn(move || {
         refresh
             .refresh_from(|path| {

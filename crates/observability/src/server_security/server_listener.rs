@@ -8,8 +8,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     PeerAddr, ServerSecurity, ServerSecurityError, ServerStream,
-    handle_accept_error::handle_accept_error, listener_mode::ListenerMode,
-    run_tls_accept_loop::run_tls_accept_loop, warn_about_posture::warn_about_posture,
+    listener_mode::ListenerMode,
+    tls_accept::{handle_accept_error, run_tls_accept_loop},
+    warn_about_posture::warn_about_posture,
 };
 
 /// The most finished TLS handshakes that wait for `accept` at one time.
@@ -59,7 +60,9 @@ impl ServerListener {
                 mode: ListenerMode::Plain(listener),
             });
         };
-        let (sender, handshaken) = mpsc::channel(HANDSHAKEN_QUEUE);
+        let channel = mpsc::channel(HANDSHAKEN_QUEUE);
+        let sender = channel.0;
+        let handshaken = channel.1;
         let stop = CancellationToken::new();
         tokio::spawn(run_tls_accept_loop(
             listener,
@@ -93,19 +96,19 @@ impl Listener for ServerListener {
         match &mut self.mode {
             ListenerMode::Plain(listener) => loop {
                 match TcpListener::accept(listener).await {
-                    Ok((tcp, socket)) => {
+                    Ok(connection) => {
                         let peer = PeerAddr {
-                            socket,
+                            socket: connection.1,
                             client_identity: None,
                         };
-                        return (ServerStream::Plain(tcp), peer);
+                        return (ServerStream::Plain(connection.0), peer);
                     }
                     Err(error) => handle_accept_error(error).await,
                 }
             },
             ListenerMode::Tls { handshaken, .. } => {
                 if let Some(connection) = handshaken.recv().await {
-                    return connection;
+                    return (connection.stream, connection.peer);
                 }
                 // The accept task owns the only sender, and it ends only when
                 // this listener drops its guard. A closed channel here means

@@ -19,7 +19,7 @@ pub(super) fn parse(mut layout: &str, zone: &str, mut value: &str) -> Option<Tem
     let mut abbreviation = String::new();
     let mut explicit_utc = false;
     while !layout.is_empty() {
-        let Some((token, length)) = layout::token(layout) else {
+        let Some(token_match) = layout::token(layout) else {
             let ch = layout.chars().next()?;
             if ch == ' ' {
                 if !value.is_empty() && !value.starts_with(' ') {
@@ -33,8 +33,8 @@ pub(super) fn parse(mut layout: &str, zone: &str, mut value: &str) -> Option<Tem
             layout = &layout[ch.len_utf8()..];
             continue;
         };
-        layout = &layout[length..];
-        match token {
+        layout = &layout[token_match.length..];
+        match token_match.token {
             Token::Year => year = i32::try_from(digits(&mut value, 4, true)?).ok()?,
             Token::Year2 => {
                 let y = digits(&mut value, 2, true)?;
@@ -69,9 +69,12 @@ pub(super) fn parse(mut layout: &str, zone: &str, mut value: &str) -> Option<Tem
                 }
                 year_day = Some(digits(&mut value, 3, !space)?);
             }
-            Token::Hour(twelve, zero) => {
-                hour = digits(&mut value, 2, zero && twelve)?;
-                if hour >= 24 || (twelve && hour > 12) {
+            Token::Hour {
+                twelve_hour,
+                zero_pad,
+            } => {
+                hour = digits(&mut value, 2, zero_pad && twelve_hour)?;
+                if hour >= 24 || (twelve_hour && hour > 12) {
                     return None;
                 }
             }
@@ -91,7 +94,8 @@ pub(super) fn parse(mut layout: &str, zone: &str, mut value: &str) -> Option<Tem
                 }
             }
             Token::AmPm(upper) => {
-                let (am, pm) = if upper { ("AM", "PM") } else { ("am", "pm") };
+                let am = if upper { "AM" } else { "am" };
+                let pm = if upper { "PM" } else { "pm" };
                 if let Some(rest) = value.strip_prefix(am) {
                     value = rest;
                     am_pm = Some(false);
@@ -209,13 +213,14 @@ fn resolve_location(
     }
     if let Some(offset) = offset {
         let seconds = seconds - i64::from(offset);
-        let (name, actual_offset) = location.zone(seconds);
-        let location =
-            if offset == actual_offset && (abbreviation.is_empty() || abbreviation == name) {
-                location
-            } else {
-                Location::fixed(abbreviation, offset)
-            };
+        let actual_zone = location.zone(seconds);
+        let location = if offset == actual_zone.offset
+            && (abbreviation.is_empty() || abbreviation == actual_zone.name)
+        {
+            location
+        } else {
+            Location::fixed(abbreviation, offset)
+        };
         return TemplateTime {
             seconds,
             nanos,
@@ -246,9 +251,8 @@ fn resolve_location(
     }
     // Go time.Date resolves DST overlaps/gaps by looking up the naive UTC
     // clock first, then retrying its adjusted instant if the offset changes.
-    let (_, offset) = location.zone(seconds);
-    let candidate = seconds - i64::from(offset);
-    let (_, adjusted) = location.zone(candidate);
+    let candidate = seconds - i64::from(location.zone(seconds).offset);
+    let adjusted = location.zone(candidate).offset;
     TemplateTime {
         seconds: seconds - i64::from(adjusted),
         nanos,
@@ -306,8 +310,8 @@ fn fraction(value: &mut &str, exact: Option<usize>) -> Option<u32> {
 }
 fn next_fraction(mut layout: &str) -> bool {
     while !layout.is_empty() {
-        if let Some((token, _)) = layout::token(layout) {
-            return matches!(token, Token::Fraction { .. });
+        if let Some(token_match) = layout::token(layout) {
+            return matches!(token_match.token, Token::Fraction { .. });
         }
         let ch = layout.chars().next().expect("nonempty layout");
         layout = &layout[ch.len_utf8()..];

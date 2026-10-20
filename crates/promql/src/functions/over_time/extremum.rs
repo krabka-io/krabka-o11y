@@ -14,12 +14,6 @@ impl Extremum {
     /// replaces a NaN running value. A NaN candidate never replaces a non-NaN
     /// running value, because `NaN > _` and `NaN < _` are both false.
     pub(crate) fn should_replace(self, running: f64, candidate: f64) -> bool {
-        if running.is_nan() {
-            return true;
-        }
-        match self {
-            Self::Min => running > candidate,
-            Self::Max => running < candidate,
-        }
+        crate::functions::extremum_should_replace(matches!(self, Self::Min), running, candidate)
     }
 }

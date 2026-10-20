@@ -151,8 +151,8 @@ pub(crate) fn instant_expr_is_plannable(expr: &Expr) -> bool {
             // param falls back inside `plan_subquery_range_call`. This is what lets
             // nested subqueries and subquery calls inside an aggregate/binary route
             // through the planner.
-            if let Some((subquery, _)) = match_subquery_range_call(call) {
-                return instant_expr_is_plannable(&subquery.expr);
+            if let Some(call) = match_subquery_range_call(call) {
+                return instant_expr_is_plannable(&call.subquery.expr);
             }
             // The float UTILITY functions handled by `plan_util_call`.
             util_call_is_plannable(call)

@@ -70,12 +70,13 @@ mod grid_point;
 mod grid_vectors;
 mod leaf_lookup;
 mod leaf_memo;
-mod step_vector_cache;
 mod step_vector_cache_inner;
 
 pub(super) use grid_point::GridPoint;
 pub(super) use grid_vectors::GridVectors;
 pub(super) use leaf_lookup::LeafLookup;
 pub(super) use leaf_memo::LeafMemo;
-pub(super) use step_vector_cache::StepVectorCache;
 pub(super) use step_vector_cache_inner::StepVectorCacheInner;
+
+/// The range driver cache shared across its step loop.
+pub(crate) type StepVectorCache = Arc<Mutex<StepVectorCacheInner>>;

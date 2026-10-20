@@ -1,5 +1,10 @@
 use super::*;
 
+struct AnnotationExpectation {
+    key: &'static str,
+    expected: &'static str,
+}
+
 #[tokio::test]
 async fn byte_alert_templates_and_replayed_state_preserve_series_identity() {
     let values = [
@@ -10,7 +15,10 @@ async fn byte_alert_templates_and_replayed_state_preserve_series_identity() {
     ];
     let mut store = InMemoryMetricStore::new();
     for bytes in &values {
-        let mut labels = crate::PromqlLabels::from_pairs([("__name__", "byte_input")]);
+        let mut labels = crate::PromqlLabels::from_pairs([krabka_metrics::MetricLabelPair::new(
+            "__name__",
+            "byte_input",
+        )]);
         labels.insert("raw", crate::PromqlString::from(bytes.clone()));
         store.push_float("tenant-a", labels, 60_000, 2.0);
     }
@@ -35,13 +43,14 @@ annotations:
 "#,
     )
     .unwrap();
-    let wal = RecordingSink::default();
-    let alerts = RecordingAlertmanagerSink::default();
-    let states = RecordingRulerStateSink::default();
+    let sinks = super::RecordingRulerSinks::default();
+    let wal = sinks.wal;
+    let alerts = sinks.alertmanager;
+    let states = sinks.ruler_state;
     let mut state = super::super::RulerAlertState::default();
-    let pending = super::super::alerting::evaluate_and_persist_alerting_rule_with_state_and_wal(
+    let pending = super::super::alerting::evaluate_alerting_rule_with_state_and_sink(
         &engine,
-        (&wal, &alerts, &states),
+        super::super::RulerSinks::new(&wal, &alerts, &states),
         &mut state,
         &tenant_id("tenant-a"),
         &rule,
@@ -55,7 +64,11 @@ annotations:
     let mut expected = values
         .iter()
         .map(|bytes| {
-            let mut labels = crate::PromqlLabels::from_pairs([("alertname", "ByteAlert")]);
+            let mut labels =
+                crate::PromqlLabels::from_pairs([krabka_metrics::MetricLabelPair::new(
+                    "alertname",
+                    "ByteAlert",
+                )]);
             labels.insert("raw", crate::PromqlString::from(bytes.clone()));
             labels.insert("copied", crate::PromqlString::from(bytes.clone()));
             labels.insert("from_query", crate::PromqlString::from(bytes.clone()));
@@ -84,9 +97,9 @@ annotations:
         .collect::<Vec<_>>();
     let mut restarted = super::super::RulerAlertState::default();
     restarted.apply_records(restored);
-    let firing = super::super::alerting::evaluate_and_persist_alerting_rule_with_state_and_wal(
+    let firing = super::super::alerting::evaluate_alerting_rule_with_state_and_sink(
         &engine,
-        (&wal, &alerts, &states),
+        super::super::RulerSinks::new(&wal, &alerts, &states),
         &mut restarted,
         &tenant_id("tenant-a"),
         &rule,
@@ -107,18 +120,37 @@ annotations:
             failed.starts_with("<error expanding template: ") && failed.ends_with('>'),
             "{failed}"
         );
-        for (key, expected) in [
-            ("dependent", "2"),
-            ("skipped", "skipped"),
-            ("clock", "120"),
-            ("fresh_samples", "false"),
-            ("same_sample", "true"),
-            ("scalar_query", "7"),
+        for expectation in [
+            AnnotationExpectation {
+                key: "dependent",
+                expected: "2",
+            },
+            AnnotationExpectation {
+                key: "skipped",
+                expected: "skipped",
+            },
+            AnnotationExpectation {
+                key: "clock",
+                expected: "120",
+            },
+            AnnotationExpectation {
+                key: "fresh_samples",
+                expected: "false",
+            },
+            AnnotationExpectation {
+                key: "same_sample",
+                expected: "true",
+            },
+            AnnotationExpectation {
+                key: "scalar_query",
+                expected: "7",
+            },
         ] {
             assert2::assert!(
-                alert.annotations[key] == expected,
-                "{key}: {:?}",
-                alert.annotations[key]
+                alert.annotations[expectation.key] == expectation.expected,
+                "{}: {:?}",
+                expectation.key,
+                alert.annotations[expectation.key]
             );
         }
     }
@@ -151,9 +183,9 @@ annotations:
     let prior_alerts = alerts.alerts();
     let before = restarted.active_since_ms.clone();
     let before_keep_firing = restarted.keep_firing_until_ms.clone();
-    let error = super::super::alerting::evaluate_and_persist_alerting_rule_with_state_and_wal(
+    let error = super::super::alerting::evaluate_alerting_rule_with_state_and_sink(
         &engine,
-        (&wal, &alerts, &states),
+        super::super::RulerSinks::new(&wal, &alerts, &states),
         &mut restarted,
         &tenant_id("tenant-a"),
         &collision_rule,
@@ -176,7 +208,10 @@ async fn histogram_alerts_expand_typed_values_and_queries_without_dropping_serie
     let mut store = InMemoryMetricStore::new();
     store.push_histogram(
         "tenant-a",
-        crate::PromqlLabels::from_pairs([("__name__", "native_input"), ("job", "api")]),
+        crate::PromqlLabels::from_pairs([
+            krabka_metrics::MetricLabelPair::new("__name__", "native_input"),
+            krabka_metrics::MetricLabelPair::new("job", "api"),
+        ]),
         60_000,
         krabka_metrics::NativeHistogram {
             schema: -53,

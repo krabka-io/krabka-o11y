@@ -44,9 +44,20 @@ tools/bench.sh --quick             # every benchmark, a few seconds each
 tools/bench.sh --quick index_prune # one benchmark
 ```
 
+`tools/bench.sh --quick template_regex` renders each pre-parsed template over
+100,000 log lines. It measures `count`, `regexReplaceAll` and
+`regexReplaceAllLiteral` with simple and complex patterns. Parsing stays outside
+the timed loop; the first render initializes the regex cache.
+
 `--quick` is the mode for a local run. A full run is minutes of wall clock per target.
 
 The results go to `benches/target/criterion`. Criterion writes an HTML report at `benches/target/criterion/report/index.html`, which the `bench` job uploads as an artifact.
+
+`KRABKA_BENCH_FILTER=selector_regex tools/bench.sh --quick traceql_filter`
+measures scalar and three-element array selectors at 100, 1,000 and 10,000 spans.
+Each case compares per-value regex compilation with preparation once per scan.
+Preparation is inside the timed iteration. Valid and invalid patterns have separate cases.
+These measurements isolate matcher cost; they do not measure complete query latency.
 
 `tools/bench.sh --quick profile_query` exercises complete profile queries at
 1,000, 10,000, 100,000 and 1,000,000 samples. The fixture repeats 256 stack IDs
@@ -92,6 +103,15 @@ benches/target/release/examples/log_stream_query_profile 20000 1 all_exact
 This driver verifies one complete response before its timed queries. Whole
 process captures include fixture creation and that verification query.
 
+`tools/bench.sh --quick log_metric_windows` measures complete Parquet-backed
+`count_over_time` range queries at 10,000, 100,000 and 1,000,000 rows crossed
+with 60, 360 and 5,760 evaluation steps. Every case uses a one-minute range
+and fifteen-second steps, so a row contributes to at most four windows.
+Rows span the evaluation interval. Each complete response is checked against
+counts from the input timestamp ledger before measurement. Fixture writing
+and planning stay outside timing; scans, window accumulation and response
+construction are timed without a frontend cache.
+
 `tools/bench.sh --quick log_query_frontend` adds production Loki HTTP handlers
 to the same four stream counts. Requests use real Parquet and tenant manifests
 on a private local filesystem, a one-hour index cache, and a disabled result
@@ -121,6 +141,29 @@ benches/target/release/examples/log_query_frontend_profile 100000 1 single
 
 This driver also verifies once before its timed requests. CPU and allocation
 captures include fixture creation and that verification request.
+
+`metrics_otlp_http_profile` measures the production OTLP metrics HTTP router at
+100, 1,000 and 10,000 points per metric for gauges, cumulative sums, delta sums,
+classic histograms, exponential histograms and summaries:
+
+```bash
+cargo run --manifest-path benches/Cargo.toml --release --example metrics_otlp_http_profile -- 5
+```
+
+The CSV reports mean HTTP latency in microseconds, allocation count, total bytes
+allocated and peak live bytes for one request. Allocation counting runs separately
+from latency timing and is disabled during timed requests; the instrumented
+allocator remains linked. A current-thread Tokio runtime keeps the complete handler on
+the thread measured by `allocation-counter`. Fixture encoding, router creation
+and a warmup request stay outside measurement. The warmup checks the accepted WAL
+record count. Requests traverse authentication, protobuf decoding, partial-success
+translation under the tenant accumulator lock, limit checks, WAL conversion and
+response encoding. A counting sink acknowledges records without retaining them;
+network sockets and broker I/O are excluded. Delta state persists across requests.
+
+The [issue 369 comparison](../qualification/metrics-otlp-http-369.md) records
+before/after HTTP timings and allocations with an explicitly documented local
+build profile.
 
 ## Where they run
 
@@ -181,6 +224,12 @@ tools/bench-ratchet.py --confirm verdict.json --json confirm.json
 The rerun calls `tools/bench.sh` once for each bench target, with a filter that holds only the regressed ids. It writes to `benches/target/criterion-confirm`, so the first run stays as it was. Two limits keep it small: `--confirm-limit` (default 8) reruns only the worst regressions, and `--confirm-timeout` (default 900 seconds) is the time for all the reruns together. At that limit, the rerun stops `tools/bench.sh` and every process it started. The exit code is 1 when a regression occurs again, 4 when none does, and 3 when a benchmark was not rerun and none of the reruns regressed.
 
 The rerun uses the `tolerance` and `noise_ceiling` that the first verdict records. If you give `--tolerance` or `--noise-ceiling` with a different value, the command stops with exit 2.
+
+The benchmark-ratchet workflow measures one Criterion group per remote invocation,
+with a 55-minute timeout below BuildBuddy's one-hour free-tier limit. It derives
+the shards from the benchmark sources and validates them against the baseline
+and Cargo targets, including groups that share a target (`index_load` and
+`index_prune`). Every group retains its inventory and numeric checks.
 
 The benchmark-ratchet workflow runs this step after exit 1, with a limit of four benchmarks and ten minutes. The step is a second `bb remote` invocation with runner recycling off, so it does not run in the container that measured the first run. The first step prints the verdict to its log, and the second step reads it from there. The workflow reports exit 4 as runner variance and passes.
 

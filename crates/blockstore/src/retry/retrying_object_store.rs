@@ -1,7 +1,7 @@
 use super::{
-    Arc, BoxStream, CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
-    ObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, Path,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, async_trait, retry_object_store,
+    Arc, CopyOptions, GetOptions, GetResult, ListResult, ObjectStore, ObjectStoreMetrics,
+    ObjectStoreOperation, ObjectStoreRetryPolicy, Path, PutOptions, PutPayload, PutResult,
+    retry_object_store,
 };
 
 /// An [`ObjectStore`] that retries its single-shot operations when the backend
@@ -64,8 +64,10 @@ impl std::fmt::Display for RetryingObjectStore {
     }
 }
 
-#[async_trait]
-impl ObjectStore for RetryingObjectStore {
+crate::delegate_object_store! {
+    RetryingObjectStore => inner;
+    forward [put_multipart_opts, list, delete_stream];
+
     async fn put_opts(
         &self,
         location: &Path,
@@ -84,14 +86,6 @@ impl ObjectStore for RetryingObjectStore {
         .await
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
     async fn get_opts(
         &self,
         location: &Path,
@@ -104,10 +98,6 @@ impl ObjectStore for RetryingObjectStore {
             || self.inner.get_opts(location, options.clone()),
         )
         .await
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
     }
 
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
@@ -133,12 +123,5 @@ impl ObjectStore for RetryingObjectStore {
             || self.inner.copy_opts(from, to, options.clone()),
         )
         .await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
     }
 }

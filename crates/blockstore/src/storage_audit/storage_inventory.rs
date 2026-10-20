@@ -1,5 +1,11 @@
 use super::{BTreeMap, ListedObject, ObjectMeta, ObjectRole, StorageSignal};
 
+#[derive(Clone, Copy)]
+pub struct InventoryObjectRef<'a> {
+    pub key: &'a String,
+    pub listed: &'a ListedObject,
+}
+
 /// Every classified object of one listing, by key.
 #[derive(Clone, Debug, Default)]
 pub struct StorageInventory {
@@ -16,18 +22,16 @@ impl StorageInventory {
     }
 
     /// The objects of `signal`, in key order.
-    pub fn of_signal(
-        &self,
-        signal: StorageSignal,
-    ) -> impl Iterator<Item = (&String, &ListedObject)> {
-        self.objects
-            .iter()
-            .filter(move |(_, listed)| listed.object.signal == signal)
+    pub fn of_signal(&self, signal: StorageSignal) -> impl Iterator<Item = InventoryObjectRef<'_>> {
+        self.objects.keys().filter_map(move |key| {
+            let listed = &self.objects[key];
+            (listed.object.signal == signal).then_some(InventoryObjectRef { key, listed })
+        })
     }
 
     /// The blocks of `signal`, in key order.
-    pub fn blocks(&self, signal: StorageSignal) -> impl Iterator<Item = (&String, &ListedObject)> {
+    pub fn blocks(&self, signal: StorageSignal) -> impl Iterator<Item = InventoryObjectRef<'_>> {
         self.of_signal(signal)
-            .filter(|(_, listed)| matches!(listed.object.role, ObjectRole::Block(_)))
+            .filter(|entry| matches!(entry.listed.object.role, ObjectRole::Block(_)))
     }
 }

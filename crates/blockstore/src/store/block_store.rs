@@ -7,6 +7,17 @@ use super::{
     read_block_row_groups_cached, require_blocks, row_group_metadata, scan_filter,
 };
 
+struct ScanCandidates {
+    fingerprints: std::collections::BTreeSet<SeriesFingerprint>,
+    blocks: Vec<String>,
+}
+
+/// A registered `DataFusion` table and the session that owns it.
+pub struct RegisteredTable {
+    pub context: SessionContext,
+    pub table: String,
+}
+
 /// Owns the object store, its `DataFusion` URL prefix, the in-memory index,
 /// and the read caches every scan through this store shares.
 #[derive(Clone)]
@@ -139,7 +150,7 @@ impl BlockStore {
         min_ts: i64,
         max_ts: i64,
         schema: SchemaRef,
-    ) -> Result<(SessionContext, String)> {
+    ) -> Result<RegisteredTable> {
         let ctx = self.session_context();
         self.register_scan_table(
             &ctx,
@@ -153,15 +164,15 @@ impl BlockStore {
             },
         )
         .await?;
-        Ok((ctx, TABLE_NAME.to_string()))
+        Ok(RegisteredTable {
+            context: ctx,
+            table: TABLE_NAME.to_string(),
+        })
     }
 
     /// The blocks the index offers for `request`, and the series they were
     /// resolved from.
-    fn scan_candidates(
-        &self,
-        request: &ScanTableRequest<'_>,
-    ) -> Result<(std::collections::BTreeSet<SeriesFingerprint>, Vec<String>)> {
+    fn scan_candidates(&self, request: &ScanTableRequest<'_>) -> Result<ScanCandidates> {
         let fingerprints = self.index.resolve(request.tenant, request.matchers)?;
         let candidates = self.index.candidate_blocks(
             request.tenant,
@@ -170,7 +181,10 @@ impl BlockStore {
             request.max_ts,
         );
         tracing::Span::current().record("candidates", candidates.len());
-        Ok((fingerprints, candidates))
+        Ok(ScanCandidates {
+            fingerprints,
+            blocks: candidates,
+        })
     }
 
     #[instrument(
@@ -205,15 +219,15 @@ impl BlockStore {
         ctx: &SessionContext,
         request: ScanTableRequest<'_>,
     ) -> Result<bool> {
-        let (fingerprints, candidates) = self.scan_candidates(&request)?;
+        let candidates = self.scan_candidates(&request)?;
         let blocks = require_blocks(
             &self.store,
-            &candidates,
+            &candidates.blocks,
             self.block_read_max,
             &self.metadata_cache(),
         )
         .await?;
-        self.register_blocks(ctx, &request, &fingerprints, blocks)
+        self.register_blocks(ctx, &request, &candidates.fingerprints, blocks)
     }
 
     /// Registers the blocks the index offers, leaving out the ones that cannot
@@ -235,19 +249,7 @@ impl BlockStore {
     /// Returns an error when the object store fails for a reason that is not
     /// one block's fault, when a block exceeds the read cap, or when the
     /// readable blocks cannot be registered.
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(
-            table = %request.table_name,
-            tenant = %request.tenant,
-            matchers = request.matchers.len(),
-            min_ts = request.min_ts,
-            max_ts = request.max_ts,
-            candidates = tracing::field::Empty,
-        ),
-        err
-    )]
+    #[instrument(level = "debug", skip_all, err)]
     pub async fn register_scan_table_skipping_unreadable(
         &self,
         ctx: &SessionContext,
@@ -278,17 +280,17 @@ impl BlockStore {
         request: ScanTableRequest<'_>,
         selected: Option<&std::collections::BTreeSet<SeriesFingerprint>>,
     ) -> Result<ScanReport> {
-        let (mut fingerprints, mut candidates) = if request.matchers.is_empty() {
+        let mut candidates = if request.matchers.is_empty() {
             if let Some(selected) = selected {
-                (
-                    selected.clone(),
-                    self.index.candidate_blocks(
+                ScanCandidates {
+                    fingerprints: selected.clone(),
+                    blocks: self.index.candidate_blocks(
                         request.tenant,
                         selected,
                         request.min_ts,
                         request.max_ts,
                     ),
-                )
+                }
             } else {
                 self.scan_candidates(&request)?
             }
@@ -296,25 +298,28 @@ impl BlockStore {
             self.scan_candidates(&request)?
         };
         if let Some(selected) = selected {
-            fingerprints.retain(|fingerprint| selected.contains(fingerprint));
-            candidates = self.index.candidate_blocks(
+            candidates
+                .fingerprints
+                .retain(|fingerprint| selected.contains(fingerprint));
+            candidates.blocks = self.index.candidate_blocks(
                 request.tenant,
-                &fingerprints,
+                &candidates.fingerprints,
                 request.min_ts,
                 request.max_ts,
             );
         }
-        let (readable, skipped) = probe_blocks(
+        let probed = probe_blocks(
             &self.store,
-            &candidates,
+            &candidates.blocks,
             self.block_read_max,
             &self.metadata_cache(),
         )
         .await?;
-        let registered = self.register_blocks(ctx, &request, &fingerprints, readable)?;
+        let registered =
+            self.register_blocks(ctx, &request, &candidates.fingerprints, probed.readable)?;
         Ok(ScanReport {
             registered,
-            skipped,
+            skipped: probed.skipped,
         })
     }
 
@@ -401,7 +406,7 @@ impl BlockStore {
         &self,
         keys: &[String],
         schema: SchemaRef,
-    ) -> Result<(SessionContext, String)> {
+    ) -> Result<RegisteredTable> {
         require_blocks(
             &self.store,
             keys,
@@ -411,7 +416,10 @@ impl BlockStore {
         .await?;
         let ctx = self.session_context();
         self.register_block_keys(&ctx, keys, schema).await?;
-        Ok((ctx, TABLE_NAME.to_string()))
+        Ok(RegisteredTable {
+            context: ctx,
+            table: TABLE_NAME.to_string(),
+        })
     }
 
     /// Scans the named blocks, leaving out the ones that cannot be read and
@@ -431,15 +439,16 @@ impl BlockStore {
         keys: &[String],
         schema: SchemaRef,
     ) -> Result<BlockScan> {
-        let (readable, skipped) = probe_blocks(
+        let probed = probe_blocks(
             &self.store,
             keys,
             self.block_read_max,
             &self.metadata_cache(),
         )
         .await?;
-        tracing::Span::current().record("skipped", skipped.len());
-        let readable = readable
+        tracing::Span::current().record("skipped", probed.skipped.len());
+        let readable = probed
+            .readable
             .into_iter()
             .map(|block| block.object_key)
             .collect::<Vec<_>>();
@@ -450,7 +459,7 @@ impl BlockStore {
             table: TABLE_NAME.to_string(),
             report: ScanReport {
                 registered,
-                skipped,
+                skipped: probed.skipped,
             },
         })
     }
@@ -489,14 +498,17 @@ impl BlockStore {
         object_key: &str,
         row_groups: &[usize],
         schema: SchemaRef,
-    ) -> Result<(SessionContext, String)> {
+    ) -> Result<RegisteredTable> {
         let ctx = self.session_context();
         ctx.register_object_store(&self.base, self.store.clone());
 
         if row_groups.is_empty() {
             let empty = MemTable::try_new(schema, vec![vec![]])?;
             ctx.register_table(TABLE_NAME, Arc::new(empty))?;
-            return Ok((ctx, TABLE_NAME.to_string()));
+            return Ok(RegisteredTable {
+                context: ctx,
+                table: TABLE_NAME.to_string(),
+            });
         }
 
         let batches = read_block_row_groups_cached(
@@ -514,7 +526,10 @@ impl BlockStore {
         };
         let table = MemTable::try_new(schema, partitions)?;
         ctx.register_table(TABLE_NAME, Arc::new(table))?;
-        Ok((ctx, TABLE_NAME.to_string()))
+        Ok(RegisteredTable {
+            context: ctx,
+            table: TABLE_NAME.to_string(),
+        })
     }
 }
 

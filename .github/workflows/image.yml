@@ -53,6 +53,13 @@ permissions:
   attestations: write
 
 jobs:
+  release-tests:
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag
+    uses: ./.github/workflows/release-tests.yml
+    with:
+      ref: ${{ inputs.release_tag || github.ref }}
+    secrets: inherit
+
   release-gate:
     name: qualified release gate
     runs-on: ubuntu-latest
@@ -108,8 +115,8 @@ jobs:
 
   image:
     name: build · publish
-    if: ${{ !inputs.release_tag }}
-    needs: [manifests, release-gate]
+    if: ${{ !cancelled() && !inputs.release_tag && needs.manifests.result == 'success' && needs.release-gate.result == 'success' && (needs.release-tests.result == 'success' || needs.release-tests.result == 'skipped') }}
+    needs: [manifests, release-gate, release-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:
@@ -194,8 +201,8 @@ jobs:
 
   release:
     name: release · qualify published digest
-    if: ${{ always() && needs.release-gate.result == 'success' && (startsWith(github.ref, 'refs/tags/') && needs.image.result == 'success' || inputs.release_tag && inputs.release_digest) }}
-    needs: [image, release-gate]
+    if: ${{ !cancelled() && needs.release-tests.result == 'success' && needs.release-gate.result == 'success' && (startsWith(github.ref, 'refs/tags/') && needs.image.result == 'success' || inputs.release_tag && inputs.release_digest) }}
+    needs: [image, release-gate, release-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:

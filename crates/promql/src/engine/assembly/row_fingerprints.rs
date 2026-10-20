@@ -1,3 +1,5 @@
+use arrow::{array::GenericByteArray, datatypes::ByteArrayType};
+
 use super::{Array, BinaryArray, RecordBatch, SeriesFingerprint, StringArray};
 
 /// The reconstructed fingerprint of every row of a planner-path output batch.
@@ -31,25 +33,34 @@ pub(crate) fn row_fingerprints(
     let mut out: Vec<SeriesFingerprint> = Vec::with_capacity(batch.num_rows());
     for row in 0..batch.num_rows() {
         let reused = out.last().copied().filter(|_| {
-            text_columns.iter().all(|column| {
-                let previous = row.saturating_sub(1);
-                match (column.is_null(previous), column.is_null(row)) {
-                    (true, true) => true,
-                    (false, false) => column.value(previous) == column.value(row),
-                    _ => false,
-                }
-            }) && byte_columns.iter().all(|column| {
-                let previous = row.saturating_sub(1);
-                match (column.is_null(previous), column.is_null(row)) {
-                    (true, true) => true,
-                    (false, false) => column.value(previous) == column.value(row),
-                    _ => false,
-                }
-            })
+            text_columns
+                .iter()
+                .all(|column| repeats_previous_row(column, row))
+                && byte_columns
+                    .iter()
+                    .all(|column| repeats_previous_row(column, row))
         });
         out.push(reused.unwrap_or_else(|| labels_at(batch, row).fingerprint()));
     }
     out
+}
+
+/// Whether `column` holds the same value, or the same null, at `row` as at the
+/// row before it. Row 0 compares with itself.
+fn repeats_previous_row<T: ByteArrayType>(column: &GenericByteArray<T>, row: usize) -> bool
+where
+    T::Native: PartialEq,
+{
+    let previous = row.saturating_sub(1);
+    let previous_is_null = column.is_null(previous);
+    let current_is_null = column.is_null(row);
+    if previous_is_null {
+        current_is_null
+    } else if current_is_null {
+        false
+    } else {
+        column.value(previous) == column.value(row)
+    }
 }
 
 #[cfg(test)]

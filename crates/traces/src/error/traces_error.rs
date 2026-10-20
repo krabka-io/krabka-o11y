@@ -50,7 +50,8 @@ pub enum TracesError {
 
 impl From<krabka_observability::wal_produce::WalBatchError<TracesError>> for TracesError {
     fn from(error: krabka_observability::wal_produce::WalBatchError<TracesError>) -> Self {
-        let (appended, total) = (error.appended(), error.total());
+        let appended = error.appended();
+        let total = error.total();
         Self::ProduceBatch {
             appended,
             total,

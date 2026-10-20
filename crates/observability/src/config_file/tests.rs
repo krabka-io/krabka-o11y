@@ -16,6 +16,11 @@ use super::{
     file_argument_overrides, yaml_scalar,
 };
 
+struct InvalidValueCase {
+    body: &'static str,
+    wanted_kind: &'static str,
+}
+
 /// A command with one argument of every shape `file_argument_overrides`
 /// branches on: a plain value, a repeatable value, both switch actions, a
 /// counted switch, and a positional the file must not be able to set.
@@ -150,25 +155,48 @@ fn a_key_that_names_no_flag_of_this_binary_is_refused() {
 #[test]
 fn a_value_of_the_wrong_kind_names_the_kind_the_flag_needs() {
     let cases = [
-        ("verbose: \"yes\"\n", "a boolean"),
-        ("quiet: 1\n", "a boolean"),
-        ("verbosity: \"loud\"\n", "a whole number"),
-        ("verbosity: -1\n", "a whole number"),
+        InvalidValueCase {
+            body: "verbose: \"yes\"\n",
+            wanted_kind: "a boolean",
+        },
+        InvalidValueCase {
+            body: "quiet: 1\n",
+            wanted_kind: "a boolean",
+        },
+        InvalidValueCase {
+            body: "verbosity: \"loud\"\n",
+            wanted_kind: "a whole number",
+        },
+        InvalidValueCase {
+            body: "verbosity: -1\n",
+            wanted_kind: "a whole number",
+        },
         // A value the flag takes one of, and an item inside a sequence of
         // them: both reach the scalar renderer, and neither is a scalar.
-        ("target: {a: b}\n", "a string, a number or a boolean"),
-        ("tenant:\n  - [nested]\n", "a string, a number or a boolean"),
+        InvalidValueCase {
+            body: "target: {a: b}\n",
+            wanted_kind: "a string, a number or a boolean",
+        },
+        InvalidValueCase {
+            body: "tenant:\n  - [nested]\n",
+            wanted_kind: "a string, a number or a boolean",
+        },
     ];
-    for (body, wanted_kind) in cases {
-        let refused = overrides(body, &[]).expect_err("this value is the wrong kind");
+    for case in cases {
+        let refused = overrides(case.body, &[]).expect_err("this value is the wrong kind");
         check!(
             let ConfigFileError::UnsupportedValue { .. } = &refused,
-            "{body:?} is refused as an unsupported value"
+            "{:?} is refused as an unsupported value",
+            case.body
         );
         if let ConfigFileError::UnsupportedValue { wanted, .. } = &refused {
-            check!(*wanted == wanted_kind, "{body:?}");
+            check!(*wanted == case.wanted_kind, "{:?}", case.body);
         }
-        check!(refused.to_string().contains(wanted_kind), "{body:?}");
+        check!(
+            refused.to_string().contains(case.wanted_kind),
+            "{:?}",
+            case.body
+        );
     }
 }
 

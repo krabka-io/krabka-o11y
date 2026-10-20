@@ -1,41 +1,17 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::{WalLogRecord, apply_loki_stream_options};
+use crate::{LokiStreamOptions, WalLogRecord, apply_loki_stream_options};
 
 #[tokio::test]
 pub(crate) async fn object_store_stream_query_batches_cold_block_reads() {
-    let store = RecordingObjectStore::new().with_get_delay(Duration::from_millis(25));
-    let prefix = ObjectPath::from("observability/logs");
+    let FourColdApiBlocks {
+        store,
+        prefix,
+        label_index,
+        block_index,
+    } = FourColdApiBlocks::write().await;
     let tenant = "tenant-a";
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
-    let mut block_index = BlockIndex::default();
-
-    for block_id in 0_i64..4 {
-        let start_ns = block_id * 10;
-        let end_ns = start_ns + 9;
-        let block = write_log_block_to_object_store(
-            &store,
-            &prefix,
-            &BlockKey::new(
-                tenant,
-                0,
-                start_ns,
-                end_ns,
-                TimeRange::new(start_ns, end_ns).unwrap(),
-            ),
-            vec![LogRow::new(
-                api,
-                end_ns,
-                format!("api error {block_id}"),
-                BTreeMap::new(),
-            )],
-        )
-        .await
-        .unwrap();
-        block_index.insert(block);
-    }
 
     let plan = plan_stream_query(
         tenant,
@@ -56,12 +32,19 @@ pub(crate) async fn object_store_stream_query_batches_cold_block_reads() {
             frontier: &CompactionFrontier::new(i64::MAX),
             delete_filters: &[],
         },
-        StreamScanOptions::from_stream_options(LokiDirection::Forward, Some(100), None, None),
+        StreamScanOptions::from_stream_options(
+            LokiStreamOptions {
+                direction: LokiDirection::Forward,
+                limit: Some(100),
+                interval: None,
+            },
+            None,
+        ),
     )
     .await
     .unwrap();
 
-    assert_eq!(scan.scanned_blocks.len(), 4);
+    check!(scan.scanned_blocks.len() == 4);
     assert!(
         store.max_active_gets() > 1,
         "expected cold block reads to overlap, max_active_gets={}",
@@ -69,24 +52,76 @@ pub(crate) async fn object_store_stream_query_batches_cold_block_reads() {
     );
 }
 
-type ColdLimitRow = (&'static str, i64, i64, i64, &'static str);
-type HotLimitRow = (&'static str, i64, &'static str);
+struct ColdLimitRow {
+    app: &'static str,
+    start: i64,
+    end: i64,
+    timestamp: i64,
+    line: &'static str,
+}
 
-async fn check_limit_scan(
-    cold: &[ColdLimitRow],
-    hot: &[HotLimitRow],
-    options: (LokiDirection, Option<usize>, Option<i64>, Option<i64>),
-    query: &str,
-    expected: &[HotLimitRow],
+struct HotLimitRow {
+    app: &'static str,
+    timestamp: i64,
+    line: &'static str,
+}
+
+fn cold_row(
+    app: &'static str,
+    start: i64,
+    end: i64,
+    timestamp: i64,
+    line: &'static str,
+) -> ColdLimitRow {
+    ColdLimitRow {
+        app,
+        start,
+        end,
+        timestamp,
+        line,
+    }
+}
+
+fn hot_row(app: &'static str, timestamp: i64, line: &'static str) -> HotLimitRow {
+    HotLimitRow {
+        app,
+        timestamp,
+        line,
+    }
+}
+
+/// One limited scan over cold blocks and hot rows, and the entries and block
+/// count it must come back with.
+struct LimitScanCase<'a> {
+    cold: &'a [ColdLimitRow],
+    hot: &'a [HotLimitRow],
+    options: LokiStreamOptions,
+    end_exclusive: Option<i64>,
+    query: &'a str,
+    expected: &'a [HotLimitRow],
     expected_scanned: usize,
-) {
+}
+
+async fn check_limit_scan(case: LimitScanCase<'_>) {
+    let LimitScanCase {
+        cold,
+        hot,
+        options,
+        end_exclusive,
+        query,
+        expected,
+        expected_scanned,
+    } = case;
     let store = RecordingObjectStore::new().with_get_delay(Duration::from_millis(25));
     let prefix = ObjectPath::from("observability/logs");
     let tenant = "tenant-a";
     let mut labels = LabelIndex::default();
     let mut blocks = BlockIndex::default();
-    for (offset, &(app, start, end, timestamp, line)) in cold.iter().enumerate() {
-        let fingerprint = labels.insert_series(tenant, krabka_blockstore::labels([("app", app)]));
+    for (offset, row) in cold.iter().enumerate() {
+        let fingerprint = labels.insert_series(
+            tenant,
+            krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", row.app)]),
+        );
         let offset = i64::try_from(offset).unwrap();
         let block = write_log_block_to_object_store(
             &store,
@@ -96,9 +131,14 @@ async fn check_limit_scan(
                 0,
                 offset,
                 offset,
-                TimeRange::new(start, end).unwrap(),
+                TimeRange::new(row.start, row.end).unwrap(),
             ),
-            vec![LogRow::new(fingerprint, timestamp, line, BTreeMap::new())],
+            vec![LogRow::new(
+                fingerprint,
+                row.timestamp,
+                row.line,
+                BTreeMap::new(),
+            )],
         )
         .await
         .unwrap();
@@ -106,11 +146,11 @@ async fn check_limit_scan(
     }
     let hot = hot
         .iter()
-        .map(|&(app, timestamp_ns, line)| WalLogRecord {
+        .map(|row| WalLogRecord {
             tenant: tenant.into(),
-            labels: krabka_blockstore::labels([("app", app)]),
-            timestamp_ns,
-            line: line.into(),
+            labels: krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", row.app)]),
+            timestamp_ns: row.timestamp,
+            line: row.line.into(),
             structured_metadata: BTreeMap::new(),
             position: None,
         })
@@ -123,7 +163,6 @@ async fn check_limit_scan(
         &blocks,
     )
     .unwrap();
-    let (direction, limit, interval, end) = options;
     let scan = execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options(
         Arc::new(store.clone()),
         &prefix,
@@ -134,173 +173,246 @@ async fn check_limit_scan(
             frontier: &CompactionFrontier::new(i64::MIN),
             delete_filters: &[],
         },
-        StreamScanOptions::from_stream_options(direction, limit, interval, end)
+        StreamScanOptions::from_stream_options(options, end_exclusive)
             .with_block_fetch_concurrency(NonZeroUsize::new(2).unwrap()),
     )
     .await
     .unwrap();
-    let actual = apply_loki_stream_options(scan.value, direction, limit, interval, end);
+    let actual = apply_loki_stream_options(scan.value, options, end_exclusive);
     // The response ledger is independently assigned, including every label,
     // line, stream and entry order. It does not use the scan or limit helpers.
     let mut entries: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
-    for &(app, timestamp, line) in expected {
+    for row in expected {
         entries
-            .entry(app)
+            .entry(row.app)
             .or_default()
-            .push(json!([timestamp.to_string(), line]));
+            .push(json!([row.timestamp.to_string(), row.line]));
     }
     let result = entries
-        .into_iter()
-        .map(|(app, values)| json!({"stream":{"app":app},"values":values}))
+        .keys()
+        .map(|app| json!({"stream":{"app":app},"values":entries[app]}))
         .collect::<Vec<_>>();
     check!(actual == json!({"status":"success","data":{"resultType":"streams","result":result}}));
     check!(scan.scanned_blocks.len() == expected_scanned);
-    if expected_scanned > 1 && limit.is_some_and(|limit| limit > 1) {
+    if expected_scanned > 1 && options.limit.is_some_and(|limit| limit > 1) {
         check!(store.max_active_gets() > 1);
     }
+}
+
+async fn check_backward_single_result(
+    cold: &[ColdLimitRow],
+    query: &str,
+    end_exclusive: Option<i64>,
+    expected: &[HotLimitRow],
+    expected_scanned: usize,
+) {
+    check_limit_scan(LimitScanCase {
+        cold,
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive,
+        query,
+        expected,
+        expected_scanned,
+    })
+    .await;
+}
+
+async fn check_hot_limit_scan(direction: LokiDirection, hot_instance: &'static str) {
+    check_limit_scan(LimitScanCase {
+        cold: &[cold_row("a", 10, 10, 10, "error cold")],
+        hot: &[hot_row(hot_instance, 10, "error hot")],
+        options: LokiStreamOptions {
+            direction,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive: None,
+        query: r#"{app="a"} |= "error""#,
+        expected: &[hot_row("a", 10, "error cold")],
+        expected_scanned: 1,
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn limited_cold_hot_scan_matches_independent_timestamp_ledger() {
     let query = r#"{app=~"a|b"} |= "error""#;
-    check_limit_scan(
-        &[
-            ("a", 1, 100, 100, "error first"),
-            ("a", 2, 3, 2, "error earlier"),
+    check_limit_scan(LimitScanCase {
+        cold: &[
+            cold_row("a", 1, 100, 100, "error first"),
+            cold_row("a", 2, 3, 2, "error earlier"),
         ],
-        &[],
-        (LokiDirection::Forward, Some(1), None, None),
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive: None,
         query,
-        &[("a", 2, "error earlier")],
-        2,
-    )
+        expected: &[hot_row("a", 2, "error earlier")],
+        expected_scanned: 2,
+    })
     .await;
-    check_limit_scan(
-        &[
-            ("a", 1, 100, 1, "error first"),
-            ("a", 90, 99, 99, "error later"),
+    check_limit_scan(LimitScanCase {
+        cold: &[
+            cold_row("a", 1, 100, 1, "error first"),
+            cold_row("a", 90, 99, 99, "error later"),
         ],
-        &[],
-        (LokiDirection::Backward, Some(1), None, None),
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive: None,
         query,
-        &[("a", 99, "error later")],
-        2,
-    )
+        expected: &[hot_row("a", 99, "error later")],
+        expected_scanned: 2,
+    })
     .await;
-    check_limit_scan(
-        &[("a", 100, 100, 100, "error cold")],
-        &[("a", 2, "error hot")],
-        (LokiDirection::Forward, Some(1), None, None),
+    check_limit_scan(LimitScanCase {
+        cold: &[cold_row("a", 100, 100, 100, "error cold")],
+        hot: &[hot_row("a", 2, "error hot")],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive: None,
         query,
-        &[("a", 2, "error hot")],
-        0,
-    )
+        expected: &[hot_row("a", 2, "error hot")],
+        expected_scanned: 0,
+    })
     .await;
-    check_limit_scan(
-        &[("a", 100, 100, 100, "error cold")],
-        &[("a", 1, "error hot")],
-        (LokiDirection::Backward, Some(1), None, None),
+    check_limit_scan(LimitScanCase {
+        cold: &[cold_row("a", 100, 100, 100, "error cold")],
+        hot: &[hot_row("a", 1, "error hot")],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(1),
+            interval: None,
+        },
+        end_exclusive: None,
         query,
-        &[("a", 100, "error cold")],
-        1,
-    )
+        expected: &[hot_row("a", 100, "error cold")],
+        expected_scanned: 1,
+    })
     .await;
     for direction in [LokiDirection::Forward, LokiDirection::Backward] {
-        check_limit_scan(
-            &[("a", 10, 10, 10, "error cold")],
-            &[("b", 10, "error hot")],
-            (direction, Some(1), None, None),
-            query,
-            &[("a", 10, "error cold")],
-            1,
-        )
-        .await;
-        check_limit_scan(
-            &[("a", 10, 10, 10, "error cold")],
-            &[("a", 10, "error hot")],
-            (direction, Some(1), None, None),
-            query,
-            &[("a", 10, "error cold")],
-            1,
-        )
-        .await;
+        check_hot_limit_scan(direction, "b").await;
+        check_hot_limit_scan(direction, "a").await;
     }
 }
 
 #[tokio::test]
 async fn limited_cold_scan_prunes_only_beyond_the_timestamp_boundary() {
     let cold = [
-        ("a", 1, 9, 1, "error one"),
-        ("a", 11, 19, 11, "error eleven"),
-        ("a", 21, 29, 21, "error twenty-one"),
-        ("a", 31, 39, 31, "error thirty-one"),
+        cold_row("a", 1, 9, 1, "error one"),
+        cold_row("a", 11, 19, 11, "error eleven"),
+        cold_row("a", 21, 29, 21, "error twenty-one"),
+        cold_row("a", 31, 39, 31, "error thirty-one"),
     ];
     let query = r#"{app="a"} |= "error""#;
-    check_limit_scan(
-        &cold,
-        &[],
-        (LokiDirection::Forward, Some(2), None, None),
+    check_limit_scan(LimitScanCase {
+        cold: &cold,
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: Some(2),
+            interval: None,
+        },
+        end_exclusive: None,
         query,
-        &[("a", 1, "error one"), ("a", 11, "error eleven")],
-        2,
-    )
-    .await;
-    check_limit_scan(
-        &cold,
-        &[],
-        (LokiDirection::Backward, Some(2), None, None),
-        query,
-        &[("a", 31, "error thirty-one"), ("a", 21, "error twenty-one")],
-        2,
-    )
-    .await;
-    check_limit_scan(
-        &cold,
-        &[],
-        (LokiDirection::Forward, Some(0), None, None),
-        query,
-        &[],
-        0,
-    )
-    .await;
-    check_limit_scan(
-        &cold,
-        &[],
-        (LokiDirection::Forward, Some(1), Some(1), None),
-        query,
-        &[("a", 1, "error one")],
-        4,
-    )
-    .await;
-    check_limit_scan(
-        &cold,
-        &[],
-        (LokiDirection::Forward, None, None, None),
-        query,
-        &[
-            ("a", 1, "error one"),
-            ("a", 11, "error eleven"),
-            ("a", 21, "error twenty-one"),
-            ("a", 31, "error thirty-one"),
+        expected: &[
+            hot_row("a", 1, "error one"),
+            hot_row("a", 11, "error eleven"),
         ],
-        4,
-    )
+        expected_scanned: 2,
+    })
     .await;
-    check_limit_scan(
-        &cold,
-        &[],
-        (LokiDirection::Backward, Some(1), None, None),
-        r#"{app="a"} |= "error" | distinct app"#,
-        &[("a", 1, "error one")],
-        4,
-    )
-    .await;
-    check_limit_scan(
-        &cold,
-        &[],
-        (LokiDirection::Backward, Some(1), None, Some(20)),
+    check_limit_scan(LimitScanCase {
+        cold: &cold,
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(2),
+            interval: None,
+        },
+        end_exclusive: None,
         query,
-        &[("a", 11, "error eleven")],
+        expected: &[
+            hot_row("a", 31, "error thirty-one"),
+            hot_row("a", 21, "error twenty-one"),
+        ],
+        expected_scanned: 2,
+    })
+    .await;
+    check_limit_scan(LimitScanCase {
+        cold: &cold,
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: Some(0),
+            interval: None,
+        },
+        end_exclusive: None,
+        query,
+        expected: &[],
+        expected_scanned: 0,
+    })
+    .await;
+    check_limit_scan(LimitScanCase {
+        cold: &cold,
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: Some(1),
+            interval: Some(1),
+        },
+        end_exclusive: None,
+        query,
+        expected: &[hot_row("a", 1, "error one")],
+        expected_scanned: 4,
+    })
+    .await;
+    check_limit_scan(LimitScanCase {
+        cold: &cold,
+        hot: &[],
+        options: LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: None,
+            interval: None,
+        },
+        end_exclusive: None,
+        query,
+        expected: &[
+            hot_row("a", 1, "error one"),
+            hot_row("a", 11, "error eleven"),
+            hot_row("a", 21, "error twenty-one"),
+            hot_row("a", 31, "error thirty-one"),
+        ],
+        expected_scanned: 4,
+    })
+    .await;
+    check_backward_single_result(
+        &cold,
+        r#"{app="a"} |= "error" | distinct app"#,
+        None,
+        &[hot_row("a", 1, "error one")],
+        4,
+    )
+    .await;
+    check_backward_single_result(
+        &cold,
+        query,
+        Some(20),
+        &[hot_row("a", 11, "error eleven")],
         3,
     )
     .await;

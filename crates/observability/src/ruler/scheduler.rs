@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use std::collections::{BTreeMap, HashMap};
 
 use prost::Message as _;
@@ -12,12 +14,19 @@ use crate::{
     },
 };
 
+#[derive(Eq, Hash, PartialEq)]
+struct RuleGroupKey {
+    tenant: String,
+    namespace: String,
+    group_name: String,
+}
+
 pub(crate) fn spawn_logs_ruler(state: QuerierState, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let alertmanager = std::env::var("KRABKA_OBSERVABILITY_ALERTMANAGER_URL").ok();
         let remote_write = std::env::var("KRABKA_OBSERVABILITY_RULER_REMOTE_WRITE_URL").ok();
         let client = reqwest::Client::new();
-        let mut last = HashMap::<(String, String, String), i64>::new();
+        let mut last = HashMap::<RuleGroupKey, i64>::new();
         loop {
             tokio::select! {
                 () = shutdown.cancelled() => return,
@@ -30,16 +39,26 @@ pub(crate) fn spawn_logs_ruler(state: QuerierState, shutdown: CancellationToken)
                 .lock()
                 .expect("Loki rule store lock poisoned")
                 .clone();
-            for (tenant, namespaces) in rules {
+            for tenant_entry in rules {
+                let tenant = tenant_entry.0;
+                let namespaces = tenant_entry.1;
                 let Ok(tenant_id) = TenantId::new(&tenant) else {
                     continue;
                 };
-                for (namespace, groups) in namespaces {
-                    for (group_name, group) in groups {
+                for namespace_entry in namespaces {
+                    let namespace = namespace_entry.0;
+                    let groups = namespace_entry.1;
+                    for group_entry in groups {
+                        let group_name = group_entry.0;
+                        let group = group_entry.1;
                         let interval = prometheus_rule_group_interval_seconds(&group)
                             .max(1)
                             .saturating_mul(1_000_000_000);
-                        let key = (tenant.clone(), namespace.clone(), group_name);
+                        let key = RuleGroupKey {
+                            tenant: tenant.clone(),
+                            namespace: namespace.clone(),
+                            group_name,
+                        };
                         if !evaluation_due(last.get(&key).copied(), now, interval) {
                             continue;
                         }
@@ -164,26 +183,34 @@ async fn evaluate_recording_rule(
         else {
             continue;
         };
-        let mut labels = BTreeMap::from([("__name__".to_string(), record.to_string())]);
+        let mut labels = BTreeMap::new();
+        labels.insert("__name__".to_string(), record.to_string());
         if let Some(metric) = series.get("metric").and_then(serde_json::Value::as_object) {
-            labels.extend(metric.iter().filter_map(|(name, value)| {
-                value
-                    .as_str()
-                    .map(|value| (name.clone(), value.to_string()))
-            }));
+            for entry in metric {
+                if let Some(value) = entry.1.as_str() {
+                    labels.insert(entry.0.clone(), value.to_string());
+                }
+            }
         }
         if let Some(configured) = fields
             .get(serde_yaml_key("labels"))
             .and_then(serde_yaml::Value::as_mapping)
         {
-            labels.extend(configured.iter().filter_map(|(name, value)| {
-                Some((name.as_str()?.to_string(), value.as_str()?.to_string()))
-            }));
+            for entry in configured {
+                if let Some(name) = entry.0.as_str()
+                    && let Some(value) = entry.1.as_str()
+                {
+                    labels.insert(name.to_string(), value.to_string());
+                }
+            }
         }
         timeseries.push(TimeSeries {
             labels: labels
                 .into_iter()
-                .map(|(name, value)| Label { name, value })
+                .map(|entry| Label {
+                    name: entry.0,
+                    value: entry.1,
+                })
                 .collect(),
             samples: vec![Sample {
                 value,

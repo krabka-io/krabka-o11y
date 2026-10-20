@@ -1,6 +1,7 @@
 use super::{
-    BTreeMap, BTreeSet, BlockLevel, BlockStoreError, BloomShard, ByteReader, Result,
-    ShardedTraceBloom, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats,
+    BTreeMap, BTreeSet, BlockStoreError, BloomShard, Result, ShardBlockBounds, ShardedTraceBloom,
+    TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats, decode_shard_header,
+    dictionary_entry, read_shard_block_prefix,
 };
 
 /// Decodes one shard payload into the tenant it names and its block records.
@@ -14,10 +15,7 @@ use super::{
 /// Returns [`BlockStoreError::InvalidBlock`] when the bytes are not a trace
 /// shard of the current format version, when they end early, or when a bloom
 /// they carry could not be used without panicking.
-pub(crate) fn decode_trace_shard(
-    object_key: &str,
-    bytes: &[u8],
-) -> Result<(String, Vec<TraceBlockStats>)> {
+pub(crate) fn decode_trace_shard(object_key: &str, bytes: &[u8]) -> Result<Vec<TraceBlockStats>> {
     decode(bytes).map_err(|error| match error {
         BlockStoreError::InvalidBlock(message) => {
             BlockStoreError::InvalidBlock(format!("trace index shard `{object_key}`: {message}"))
@@ -26,57 +24,45 @@ pub(crate) fn decode_trace_shard(
     })
 }
 
-fn decode(bytes: &[u8]) -> Result<(String, Vec<TraceBlockStats>)> {
-    let mut reader = ByteReader::new(bytes);
-    if reader.take(TRACE_SHARD_MAGIC.len(), "the magic")? != TRACE_SHARD_MAGIC {
-        return Err(BlockStoreError::InvalidBlock(
-            "is not a trace index shard".to_string(),
-        ));
-    }
-    let version = reader.u8("the format version")?;
-    if version != TRACE_SHARD_FORMAT_VERSION {
-        return Err(BlockStoreError::InvalidBlock(format!(
-            "is format version {version}, expected {TRACE_SHARD_FORMAT_VERSION}"
-        )));
-    }
-
-    let tenant = reader.string("the tenant name")?;
-
-    let dictionary_len = reader.count("dictionary entries")?;
-    let mut dictionary = Vec::with_capacity(dictionary_len);
-    for _ in 0..dictionary_len {
-        dictionary.push(reader.string("a dictionary entry")?);
-    }
+fn decode(bytes: &[u8]) -> Result<Vec<TraceBlockStats>> {
+    let header = decode_shard_header(
+        bytes,
+        &TRACE_SHARD_MAGIC,
+        TRACE_SHARD_FORMAT_VERSION,
+        "a trace index shard",
+    )?;
+    let mut reader = header.reader;
+    let dictionary = header.dictionary;
 
     let block_count = reader.count("blocks")?;
     let mut blocks = Vec::with_capacity(block_count);
     let mut previous_min = 0_i64;
     for _ in 0..block_count {
-        let object_key = reader.string("a block object key")?;
-        let min_ts = previous_min.wrapping_add(reader.ivarint("a block start")?);
-        let max_ts = min_ts.wrapping_add(reader.ivarint("a block span")?);
+        let block = read_shard_block_prefix(&mut reader, previous_min)?;
+        let object_key = block.object_key;
+        let ShardBlockBounds { min_ts, max_ts } = block.bounds;
         previous_min = min_ts;
-        let row_count = reader.count_unbounded("a block row count")?;
-        let level = BlockLevel(
-            u32::try_from(reader.uvarint("a block level")?).map_err(|_| {
-                BlockStoreError::InvalidBlock("names a compaction level beyond u32".to_string())
-            })?,
-        );
+        let row_count = block.row_count;
+        let level = block.level;
 
         let tag_name_count = reader.count("tag names of a block")?;
         let mut tag_names = BTreeSet::new();
         for _ in 0..tag_name_count {
-            tag_names.insert(entry(&dictionary, reader.uvarint("a tag name id")?)?.to_string());
+            tag_names.insert(
+                dictionary_entry(&dictionary, reader.uvarint("a tag name id")?)?.to_string(),
+            );
         }
 
         let tag_count = reader.count("tag value sets of a block")?;
         let mut tag_values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for _ in 0..tag_count {
-            let tag = entry(&dictionary, reader.uvarint("a tag name id")?)?.to_string();
+            let tag = dictionary_entry(&dictionary, reader.uvarint("a tag name id")?)?.to_string();
             let value_count = reader.count("values of a tag")?;
             let mut values = BTreeSet::new();
             for _ in 0..value_count {
-                values.insert(entry(&dictionary, reader.uvarint("a tag value id")?)?.to_string());
+                values.insert(
+                    dictionary_entry(&dictionary, reader.uvarint("a tag value id")?)?.to_string(),
+                );
             }
             tag_values.insert(tag, values);
         }
@@ -126,17 +112,5 @@ fn decode(bytes: &[u8]) -> Result<(String, Vec<TraceBlockStats>)> {
         ));
     }
 
-    Ok((tenant, blocks))
-}
-
-fn entry(dictionary: &[String], id: u64) -> Result<&str> {
-    usize::try_from(id)
-        .ok()
-        .and_then(|id| dictionary.get(id))
-        .map(String::as_str)
-        .ok_or_else(|| {
-            BlockStoreError::InvalidBlock(format!(
-                "names dictionary entry {id}, which is not there"
-            ))
-        })
+    Ok(blocks)
 }

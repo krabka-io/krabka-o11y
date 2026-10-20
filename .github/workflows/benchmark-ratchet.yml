@@ -19,12 +19,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  benchmark-ratchet:
+  select:
     runs-on: ubuntu-latest
-    # Two remote runs at most: the measurement, up to 2 hours, and the
-    # confirmation, up to 75 minutes.
-    timeout-minutes: 210
+    timeout-minutes: 5
+    outputs:
+      shards: ${{ steps.shards.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: shards
+        name: select every benchmark group
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import pathlib
+          import runpy
+          import sys
+          import tomllib
+
+          sys.path.insert(0, "tools")
+          ratchet = runpy.run_path("tools/bench-ratchet.py")
+          targets = ratchet["bench_targets"]("benches/benches")
+          baseline = ratchet["read_baseline"](pathlib.Path("tools/bench-baseline.txt"))
+          groups = {name.split("/", 1)[0] for name in baseline}
+          manifest = tomllib.loads(pathlib.Path("benches/Cargo.toml").read_text())
+          declared = {bench["name"] for bench in manifest["bench"]}
+          if groups != set(targets) or declared != set(targets.values()):
+              raise SystemExit("benchmark groups, baseline and Cargo targets disagree")
+          if not groups or any(not ratchet["BENCHMARK_ID"].fullmatch(name)
+                               for name in groups | declared):
+              raise SystemExit("benchmark shard names must be nonempty safe identifiers")
+          shards = [{"group": group, "target": targets[group]} for group in sorted(groups)]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("shards=" + json.dumps(shards, separators=(",", ":")), file=output)
+          PYTHON
+  benchmark-ratchet:
+    name: benchmark ratchet · ${{ matrix.shard.group }}
+    needs: select
+    runs-on: ubuntu-latest
+    # BuildBuddy's free tier kills each remote run after one hour. Measure one
+    # Criterion group per invocation, including index_load in index_prune.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: ${{ fromJSON(needs.select.outputs.shards) }}
     env:
+      BENCH_GROUP: ${{ matrix.shard.group }}
+      BENCH_TARGET: ${{ matrix.shard.target }}
       BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
     steps:
       - uses: actions/checkout@v7
@@ -38,10 +81,13 @@ jobs:
           bb remote \
             --os=linux \
             --arch=amd64 \
-            --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
+            --container_image=docker://docker.io/library/rust@sha256:e259494b14672950a909b4c54527e19d29cae6ebf980672114c8bb85e5594e4a \
             --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             --run_from_commit="${GITHUB_SHA}" \
-            --timeout=2h \
+            --env=KRABKA_BENCH_GROUP="${BENCH_GROUP}" \
+            --env=KRABKA_BENCH_TARGET="${BENCH_TARGET}" \
+            --env=KRABKA_BENCH_FILTER="^${BENCH_GROUP}/" \
+            --timeout=55m \
             --disable_retry \
             --runner_exec_properties=dockerUser=root \
             --runner_exec_properties=EstimatedCPU=16 \
@@ -50,8 +96,8 @@ jobs:
             --script='
               status=0
               verdict="$BUILDBUDDY_ARTIFACTS_DIRECTORY/verdict.json"
-              tools/bench.sh &&
-                tools/bench-ratchet.py ${{ inputs.record && '--record' || '--json "$verdict"' }} || status=$?
+              tools/bench.sh "$KRABKA_BENCH_TARGET" &&
+                tools/bench-ratchet.py --bench "$KRABKA_BENCH_GROUP" ${{ inputs.record && '--record' || '--json "$verdict"' }} || status=$?
               # The runner step reads the ratchet exit code and the verdict
               # back out of these lines, and does not depend on bb remote
               # passing the exit code through.
@@ -104,11 +150,12 @@ jobs:
           bb remote \
             --os=linux \
             --arch=amd64 \
-            --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
+            --container_image=docker://docker.io/library/rust@sha256:e259494b14672950a909b4c54527e19d29cae6ebf980672114c8bb85e5594e4a \
             --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             --env=KRABKA_FIRST_VERDICT="$(cat verdict.b64)" \
             --run_from_commit="${GITHUB_SHA}" \
-            --timeout=75m \
+            --env=KRABKA_BENCH_TARGET="${BENCH_TARGET}" \
+            --timeout=55m \
             --disable_retry \
             --runner_exec_properties=dockerUser=root \
             --runner_exec_properties=recycle-runner=false \
@@ -123,7 +170,8 @@ jobs:
               # so that --confirm-timeout bounds the measurement and not a
               # cold build.
               CARGO_PROFILE_BENCH_DEBUG=0 cargo bench \
-                --manifest-path benches/Cargo.toml --locked --no-run || exit 1
+                --manifest-path benches/Cargo.toml --locked \
+                --bench "$KRABKA_BENCH_TARGET" --no-run || exit 1
               # At most four benchmarks, the worst first, for at most ten
               # minutes.
               tools/bench-ratchet.py --confirm "$first" \

@@ -152,7 +152,9 @@ pub(crate) async fn async_stacktrace_query<S: ProfileStore + 'static>(
         let id = asynchronous.request_id;
         uuid::Uuid::parse_str(&id)
             .map_err(|e| ConnectError::new(Code::Internal, format!("invalid request ID: {e}")))?;
-        let (metadata, _) = record::load(&state, &tenant, &id).await?;
+        let record::LoadedRecord {
+            record: metadata, ..
+        } = record::load(&state, &tenant, &id).await?;
         if metadata.status != AsyncQueryStatus::InProgress as i32 {
             return committed_response(&state, &tenant, &id, &metadata).await;
         }
@@ -166,7 +168,9 @@ pub(crate) async fn async_stacktrace_query<S: ProfileStore + 'static>(
                 return Ok(failed_response(&id, message));
             }
             // A concurrent heartbeat or result publication wins the failed CAS.
-            let (current, _) = record::load(&state, &tenant, &id).await?;
+            let record::LoadedRecord {
+                record: current, ..
+            } = record::load(&state, &tenant, &id).await?;
             return committed_response(&state, &tenant, &id, &current).await;
         }
         return Ok(pending_response(&id));
@@ -396,7 +400,9 @@ async fn relinquish_lease<S: ProfileStore>(
         if record::renew(state, tenant, id, true).await? {
             return Ok(());
         }
-        let (current, _) = record::load(state, tenant, id).await?;
+        let record::LoadedRecord {
+            record: current, ..
+        } = record::load(state, tenant, id).await?;
         if current.owner != state.async_runtime.owner
             || current.status != AsyncQueryStatus::InProgress as i32
         {
@@ -417,13 +423,18 @@ async fn persist_result<S: ProfileStore>(
         .as_ref()
         .ok_or_else(|| ConnectError::new(Code::Internal, "missing async result metadata"))?;
     for _ in 0..16 {
-        let (metadata, version) = record::load(state, tenant, id).await?;
+        let record::LoadedRecord {
+            record: metadata,
+            version,
+        } = record::load(state, tenant, id).await?;
         if publish_result(state, metadata, version, response).await? {
             return Ok(());
         }
         // A heartbeat may win the generation. Retry only while we still own
         // an in-progress query; an adoption or terminal outcome fences us.
-        let (current, _) = record::load(state, tenant, id).await?;
+        let record::LoadedRecord {
+            record: current, ..
+        } = record::load(state, tenant, id).await?;
         if current.owner != state.async_runtime.owner
             || current.status != AsyncQueryStatus::InProgress as i32
         {
@@ -697,18 +708,22 @@ mod tests {
         let fresh = "22222222-2222-4222-8222-222222222222";
         publish_pending(&first, &tenant, stale, 1, 0).await;
         publish_pending(&first, &tenant, fresh, record::now_ms(), 0).await;
-        let (a, b) = tokio::join!(maintenance::adopt(&first), maintenance::adopt(&second));
-        a.unwrap();
-        b.unwrap();
+        let joined = tokio::join!(maintenance::adopt(&first), maintenance::adopt(&second));
+        joined.0.unwrap();
+        joined.1.unwrap();
         let completed = completed(Arc::clone(&first), &tenant, stale).await;
         check!(completed.r#async.unwrap().status == AsyncQueryStatus::Success as i32);
-        let (claimed, _) = record::load(&first, &tenant, stale).await.unwrap();
+        let record::LoadedRecord {
+            record: claimed, ..
+        } = record::load(&first, &tenant, stale).await.unwrap();
         check!(claimed.adoptions == 1);
         check!(
             claimed.owner == first.async_runtime.owner
                 || claimed.owner == second.async_runtime.owner
         );
-        let (untouched, _) = record::load(&first, &tenant, fresh).await.unwrap();
+        let record::LoadedRecord {
+            record: untouched, ..
+        } = record::load(&first, &tenant, fresh).await.unwrap();
         check!(untouched.adoptions == 0);
         check!(untouched.owner == "lost-owner");
         // A stale owner cannot renew or overwrite the winning worker's result.
@@ -723,7 +738,11 @@ mod tests {
         .await
         .unwrap();
         check!(
-            record::load(&first, &tenant, stale).await.unwrap().0.status
+            record::load(&first, &tenant, stale)
+                .await
+                .unwrap()
+                .record
+                .status
                 == AsyncQueryStatus::Success as i32
         );
         first.shutdown_async_queries().await;
@@ -739,8 +758,20 @@ mod tests {
             "44444444-4444-4444-8444-444444444444",
             "55555555-5555-4555-8555-555555555555",
         ];
-        for (index, id) in ids.iter().enumerate() {
-            publish_pending(&state, &tenant, id, 1, if index == 0 { 3 } else { 0 }).await;
+        let mut first = true;
+        for id in ids {
+            publish_pending(
+                &state,
+                &tenant,
+                id,
+                1,
+                if std::mem::replace(&mut first, false) {
+                    3
+                } else {
+                    0
+                },
+            )
+            .await;
         }
         state
             .admin_store
@@ -778,18 +809,21 @@ mod tests {
         let second = Arc::new(QuerierState::empty().with_admin_store(store.clone()));
         let tenant: TenantId = "tenant-a".parse().unwrap();
         let id = "88888888-8888-4888-8888-888888888888";
-        publish_pending(&first, &tenant, id, 1, 0).await;
-        let (mut initial, version) = record::load(&first, &tenant, id).await.unwrap();
-        initial.owner.clone_from(&first.async_runtime.owner);
-        check!(
-            record::write(&first, &initial, PutMode::Update(version))
-                .await
-                .unwrap()
-        );
         // Force the TOCTOU interleaving: A reads, B takes ownership, then A
         // stages its answer and tries to publish the old metadata generation.
-        let (observed_by_first, first_version) = record::load(&first, &tenant, id).await.unwrap();
-        let (mut adopted, second_version) = record::load(&second, &tenant, id).await.unwrap();
+        let observed = claimed_pending(
+            &first,
+            &tenant,
+            StalePending {
+                id,
+                heartbeat_ms: 1,
+            },
+        )
+        .await;
+        let record::LoadedRecord {
+            record: mut adopted,
+            version: second_version,
+        } = record::load(&second, &tenant, id).await.unwrap();
         adopted.owner.clone_from(&second.async_runtime.owner);
         adopted.adoptions += 1;
         adopted.heartbeat_ms = record::now_ms();
@@ -804,9 +838,9 @@ mod tests {
             .flamegraph
             .get_or_insert_with(Default::default)
             .total = 11;
-        let staged_generation = observed_by_first.generation + 1;
+        let staged_generation = observed.record.generation + 1;
         check!(
-            !publish_result(&first, observed_by_first, first_version, &stale_answer)
+            !publish_result(&first, observed.record, observed.version, &stale_answer)
                 .await
                 .unwrap()
         );
@@ -823,7 +857,9 @@ mod tests {
             check!(response.r#async.unwrap().status == AsyncQueryStatus::InProgress as i32);
             check!(response.flamegraph.is_none());
         }
-        let (current, _) = record::load(&second, &tenant, id).await.unwrap();
+        let record::LoadedRecord {
+            record: current, ..
+        } = record::load(&second, &tenant, id).await.unwrap();
         check!(current.owner == second.async_runtime.owner);
         check!(current.result_generation.is_none());
         let mut winning_answer = stale_answer.clone();
@@ -841,7 +877,9 @@ mod tests {
                 .unwrap();
             check!(response == winning_answer);
         }
-        let (published, _) = record::load(&second, &tenant, id).await.unwrap();
+        let record::LoadedRecord {
+            record: published, ..
+        } = record::load(&second, &tenant, id).await.unwrap();
         check!(published.result_generation == Some(staged_generation + 1));
     }
 
@@ -852,9 +890,76 @@ mod tests {
         inner: Arc<dyn object_store::ObjectStore>,
         location: Path,
         armed: std::sync::atomic::AtomicBool,
-        fail_put: bool,
+        resumed: ResumedPut,
         entered: tokio::sync::Notify,
         resume: tokio::sync::Notify,
+    }
+
+    /// What the one put a [`SuspendedPutStore`] holds back does once resumed.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum ResumedPut {
+        /// It reaches the inner store.
+        Lands,
+        /// It fails with an injected error, and the inner store never sees it.
+        Fails,
+    }
+
+    /// Which generation-2 object of a query a [`SuspendedPutStore`] holds
+    /// back.
+    #[derive(Clone, Copy)]
+    enum GatedObject {
+        Completed,
+        Metadata,
+    }
+
+    struct GatedPublicationCase {
+        object: GatedObject,
+        resumed: ResumedPut,
+    }
+
+    /// The generation-2 publication of query `id` that a
+    /// [`SuspendedPutStore`] holds back, and how its held put ends.
+    struct GenerationTwoGate<'a> {
+        tenant: &'a TenantId,
+        id: &'a str,
+        object: GatedObject,
+        resumed: ResumedPut,
+    }
+
+    struct OldPathFixture {
+        path: Path,
+        is_old: bool,
+    }
+
+    impl SuspendedPutStore {
+        /// A store over `inner` that suspends the first put to `location`
+        /// until `resume` is notified, and ends it as `resumed` says.
+        fn armed_at(
+            inner: Arc<dyn object_store::ObjectStore>,
+            location: Path,
+            resumed: ResumedPut,
+        ) -> Self {
+            Self {
+                inner,
+                location,
+                armed: std::sync::atomic::AtomicBool::new(true),
+                resumed,
+                entered: tokio::sync::Notify::new(),
+                resume: tokio::sync::Notify::new(),
+            }
+        }
+
+        /// A store over `inner` that holds back the object `gate` names.
+        fn gating_generation_two(
+            inner: Arc<dyn object_store::ObjectStore>,
+            gate: &GenerationTwoGate<'_>,
+        ) -> Self {
+            let location = match gate.object {
+                GatedObject::Completed => completed_path(gate.tenant, gate.id, 2),
+                GatedObject::Metadata => record::metadata_path(gate.tenant, gate.id, 2),
+            };
+            Self::armed_at(inner, location, gate.resumed)
+        }
     }
 
     impl std::fmt::Display for SuspendedPutStore {
@@ -876,7 +981,7 @@ mod tests {
             {
                 self.entered.notify_one();
                 self.resume.notified().await;
-                if self.fail_put {
+                if self.resumed == ResumedPut::Fails {
                     return Err(object_store::Error::Generic {
                         store: "suspended conditional put",
                         source: Box::new(std::io::Error::other("injected publication failure")),
@@ -937,36 +1042,39 @@ mod tests {
     #[tokio::test]
     async fn expiry_fences_uploads_suspended_before_and_after_the_generation_seal_check() {
         use futures::TryStreamExt as _;
-        for gate_metadata in [false, true] {
+        for object in [GatedObject::Completed, GatedObject::Metadata] {
             let directory = tempfile::tempdir().unwrap();
             let backend: Arc<dyn object_store::ObjectStore> = Arc::new(
                 object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
             );
             let tenant: TenantId = "tenant-a".parse().unwrap();
             let id = "88888888-8888-4888-8888-888888888888";
-            let gate = Arc::new(SuspendedPutStore {
-                inner: Arc::clone(&backend),
-                location: if gate_metadata {
-                    record::metadata_path(&tenant, id, 2)
-                } else {
-                    completed_path(&tenant, id, 2)
+            let gate = Arc::new(SuspendedPutStore::gating_generation_two(
+                Arc::clone(&backend),
+                &GenerationTwoGate {
+                    tenant: &tenant,
+                    id,
+                    object,
+                    resumed: ResumedPut::Lands,
                 },
-                armed: std::sync::atomic::AtomicBool::new(true),
-                fail_put: false,
-                entered: tokio::sync::Notify::new(),
-                resume: tokio::sync::Notify::new(),
-            });
+            ));
             let first = Arc::new(QuerierState::empty().with_admin_store(gate.clone()));
             let second = Arc::new(QuerierState::empty().with_admin_store(Arc::clone(&backend)));
             publish_pending(&first, &tenant, id, 1, 0).await;
-            let (mut initial, version) = record::load(&first, &tenant, id).await.unwrap();
+            let record::LoadedRecord {
+                record: mut initial,
+                version,
+            } = record::load(&first, &tenant, id).await.unwrap();
             initial.owner.clone_from(&first.async_runtime.owner);
             check!(
                 record::write(&first, &initial, PutMode::Update(version))
                     .await
                     .unwrap()
             );
-            let (saved, version) = record::load(&first, &tenant, id).await.unwrap();
+            let record::LoadedRecord {
+                record: saved,
+                version,
+            } = record::load(&first, &tenant, id).await.unwrap();
             let mut stale_answer = pending_response(id);
             stale_answer.r#async.as_mut().unwrap().status = AsyncQueryStatus::Success as i32;
             stale_answer
@@ -980,7 +1088,10 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
                 .await
                 .unwrap();
-            let (mut adopted, version) = record::load(&second, &tenant, id).await.unwrap();
+            let record::LoadedRecord {
+                record: mut adopted,
+                version,
+            } = record::load(&second, &tenant, id).await.unwrap();
             adopted.owner.clone_from(&second.async_runtime.owner);
             adopted.adoptions += 1;
             check!(
@@ -1006,12 +1117,15 @@ mod tests {
             let expiry = record::load(&second, &tenant, id)
                 .await
                 .unwrap()
-                .0
+                .record
                 .heartbeat_ms
                 + 1_800_001;
             check!(
                 maintenance::cleanup(&second, expiry).await.unwrap()
-                    == if gate_metadata { 7 } else { 6 }
+                    == match object {
+                        GatedObject::Completed => 6,
+                        GatedObject::Metadata => 7,
+                    }
             );
             let seal_path = record::expiry_path(&tenant, id);
             let seal_bytes = backend
@@ -1091,7 +1205,7 @@ mod tests {
             let tenant: TenantId = "tenant-a".parse().unwrap();
             let id = "99999999-9999-4999-8999-999999999999";
             publish_pending(&state, &tenant, id, 1, 0).await;
-            let (mut metadata, version) = record::load(&state, &tenant, id).await.unwrap();
+            let record::LoadedRecord { record: mut metadata, version } = record::load(&state, &tenant, id).await.unwrap();
             metadata.status = AsyncQueryStatus::Success as i32;
             let seal = record::expiry_path(&tenant, id);
             state.admin_store.put(&seal, bytes.clone().into()).await.unwrap();
@@ -1124,7 +1238,9 @@ mod tests {
                 .await
                 .is_ok()
         );
-        let (expired, _) = record::load(&state, &tenant, id).await.unwrap();
+        let record::LoadedRecord {
+            record: expired, ..
+        } = record::load(&state, &tenant, id).await.unwrap();
         check!(
             maintenance::fail_record(&state, expired, "adoption exhausted".into())
                 .await
@@ -1141,7 +1257,7 @@ mod tests {
         let terminal_expiry = record::load(&state, &tenant, id)
             .await
             .unwrap()
-            .0
+            .record
             .heartbeat_ms
             + 1_800_001;
         check!(maintenance::cleanup(&state, terminal_expiry).await.unwrap() == 3);
@@ -1149,16 +1265,40 @@ mod tests {
         check!(record::load(&state, &tenant, id).await.unwrap_err().code() == Code::NotFound);
     }
 
-    async fn owned_pending(state: &QuerierState, tenant: &TenantId, id: &str) -> record::Record {
-        publish_pending(state, tenant, id, record::now_ms(), 0).await;
-        let (mut metadata, version) = record::load(state, tenant, id).await.unwrap();
+    /// A pending query to publish, and the heartbeat its lost owner last wrote.
+    struct StalePending<'a> {
+        id: &'a str,
+        heartbeat_ms: i64,
+    }
+
+    /// Publishes `pending` under a lost owner, has `state` claim it, and
+    /// loads the claimed record with its version.
+    async fn claimed_pending(
+        state: &QuerierState,
+        tenant: &TenantId,
+        pending: StalePending<'_>,
+    ) -> record::LoadedRecord {
+        let StalePending { id, heartbeat_ms } = pending;
+        publish_pending(state, tenant, id, heartbeat_ms, 0).await;
+        let record::LoadedRecord {
+            record: mut metadata,
+            version,
+        } = record::load(state, tenant, id).await.unwrap();
         metadata.owner.clone_from(&state.async_runtime.owner);
         check!(
             record::write(state, &metadata, PutMode::Update(version))
                 .await
                 .unwrap()
         );
-        record::load(state, tenant, id).await.unwrap().0
+        record::load(state, tenant, id).await.unwrap()
+    }
+
+    async fn owned_pending(state: &QuerierState, tenant: &TenantId, id: &str) -> record::Record {
+        let pending = StalePending {
+            id,
+            heartbeat_ms: record::now_ms(),
+        };
+        claimed_pending(state, tenant, pending).await.record
     }
 
     fn prepared_success(id: &str) -> SelectMergeStacktracesResponse {
@@ -1193,11 +1333,11 @@ mod tests {
                     .unwrap()
                     == response
             );
-            let terminal = record::load(&reopened, &tenant, id).await.unwrap().0;
+            let terminal = record::load(&reopened, &tenant, id).await.unwrap().record;
             check!(terminal.generation == 2);
             check!(terminal.adoptions == 0);
             maintenance::adopt(&reopened).await.unwrap();
-            check!(record::load(&reopened, &tenant, id).await.unwrap().0 == terminal);
+            check!(record::load(&reopened, &tenant, id).await.unwrap().record == terminal);
             reopened.shutdown_async_queries().await;
         }
     }
@@ -1206,23 +1346,33 @@ mod tests {
     async fn shutdown_joins_suspended_publication_and_relinquishes_failed_publication() {
         let tenant: TenantId = "tenant-a".parse().unwrap();
         let id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        for (gate_metadata, fail_put) in [(false, false), (true, false), (false, true)] {
+        for case in [
+            GatedPublicationCase {
+                object: GatedObject::Completed,
+                resumed: ResumedPut::Lands,
+            },
+            GatedPublicationCase {
+                object: GatedObject::Metadata,
+                resumed: ResumedPut::Lands,
+            },
+            GatedPublicationCase {
+                object: GatedObject::Completed,
+                resumed: ResumedPut::Fails,
+            },
+        ] {
             let directory = tempfile::tempdir().unwrap();
             let backend: Arc<dyn object_store::ObjectStore> = Arc::new(
                 object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
             );
-            let gate = Arc::new(SuspendedPutStore {
-                inner: Arc::clone(&backend),
-                location: if gate_metadata {
-                    record::metadata_path(&tenant, id, 2)
-                } else {
-                    completed_path(&tenant, id, 2)
+            let gate = Arc::new(SuspendedPutStore::gating_generation_two(
+                Arc::clone(&backend),
+                &GenerationTwoGate {
+                    tenant: &tenant,
+                    id,
+                    object: case.object,
+                    resumed: case.resumed,
                 },
-                armed: std::sync::atomic::AtomicBool::new(true),
-                fail_put,
-                entered: tokio::sync::Notify::new(),
-                resume: tokio::sync::Notify::new(),
-            });
+            ));
             let state = Arc::new(QuerierState::empty().with_admin_store(gate.clone()));
             let initial = owned_pending(&state, &tenant, id).await;
             check!(reserve(&state, &tenant, id).await);
@@ -1257,11 +1407,11 @@ mod tests {
             let reopened = Arc::new(QuerierState::empty().with_admin_store(Arc::new(
                 object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
             )));
-            if fail_put {
+            if case.resumed == ResumedPut::Fails {
                 let mut relinquished = initial;
                 relinquished.generation = 2;
                 relinquished.heartbeat_ms = 1;
-                check!(record::load(&reopened, &tenant, id).await.unwrap().0 == relinquished);
+                check!(record::load(&reopened, &tenant, id).await.unwrap().record == relinquished);
                 check!(
                     async_stacktrace_query(Arc::clone(&reopened), tenant.clone(), request(id))
                         .await
@@ -1283,7 +1433,7 @@ mod tests {
                     record::load(&reopened, &tenant, id)
                         .await
                         .unwrap()
-                        .0
+                        .record
                         .adoptions
                         == 1
                 );
@@ -1294,9 +1444,9 @@ mod tests {
                         .unwrap()
                         == expected
                 );
-                let terminal = record::load(&reopened, &tenant, id).await.unwrap().0;
+                let terminal = record::load(&reopened, &tenant, id).await.unwrap().record;
                 maintenance::adopt(&reopened).await.unwrap();
-                check!(record::load(&reopened, &tenant, id).await.unwrap().0 == terminal);
+                check!(record::load(&reopened, &tenant, id).await.unwrap().record == terminal);
             }
             reopened.shutdown_async_queries().await;
         }
@@ -1329,6 +1479,18 @@ mod tests {
         inner: super::super::InMemoryProfileStore,
         entered: std::sync::atomic::AtomicUsize,
         permit: tokio::sync::Semaphore,
+    }
+
+    impl GatedStore {
+        /// An empty store whose gate holds every query until a test adds a
+        /// permit.
+        fn closed() -> Self {
+            Self {
+                inner: super::super::InMemoryProfileStore::new(),
+                entered: std::sync::atomic::AtomicUsize::new(0),
+                permit: tokio::sync::Semaphore::new(0),
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -1395,7 +1557,7 @@ mod tests {
             names: &[String],
             start: i64,
             end: i64,
-        ) -> Result<Vec<Vec<(String, String)>>, krabka_pprof::ProfileError> {
+        ) -> Result<Vec<Vec<krabka_pprof::ProfileLabel>>, krabka_pprof::ProfileError> {
             self.inner.series(tenant, matchers, names, start, end).await
         }
         async fn stats(
@@ -1422,19 +1584,12 @@ mod tests {
     async fn shutdown_finishes_the_in_flight_heartbeat_before_relinquishing_ownership() {
         let tenant: TenantId = "tenant-a".parse().unwrap();
         let id = "99999999-9999-4999-8999-999999999999";
-        let gate = Arc::new(SuspendedPutStore {
-            inner: Arc::new(object_store::memory::InMemory::new()),
-            location: record::metadata_path(&tenant, id, 1),
-            armed: std::sync::atomic::AtomicBool::new(true),
-            fail_put: false,
-            entered: tokio::sync::Notify::new(),
-            resume: tokio::sync::Notify::new(),
-        });
-        let store = Arc::new(GatedStore {
-            inner: super::super::InMemoryProfileStore::new(),
-            entered: std::sync::atomic::AtomicUsize::new(0),
-            permit: tokio::sync::Semaphore::new(0),
-        });
+        let gate = Arc::new(SuspendedPutStore::armed_at(
+            Arc::new(object_store::memory::InMemory::new()),
+            record::metadata_path(&tenant, id, 1),
+            ResumedPut::Lands,
+        ));
+        let store = Arc::new(GatedStore::closed());
         let state = Arc::new(QuerierState::new(Arc::clone(&store)).with_admin_store(gate.clone()));
         state
             .admin_store
@@ -1482,7 +1637,7 @@ mod tests {
         let mut expected = metadata;
         expected.generation = 2;
         expected.heartbeat_ms = 1;
-        check!(record::load(&state, &tenant, id).await.unwrap().0 == expected);
+        check!(record::load(&state, &tenant, id).await.unwrap().record == expected);
         check!(state.async_query_slots.lock().await.is_empty());
         check!(store.permit.available_permits() == 0);
     }
@@ -1493,11 +1648,7 @@ mod tests {
         let admin: Arc<dyn object_store::ObjectStore> = Arc::new(
             object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
         );
-        let store = Arc::new(GatedStore {
-            inner: super::super::InMemoryProfileStore::new(),
-            entered: std::sync::atomic::AtomicUsize::new(0),
-            permit: tokio::sync::Semaphore::new(0),
-        });
+        let store = Arc::new(GatedStore::closed());
         let policy = AsyncQueryPolicy {
             heartbeat_interval: Duration::from_millis(5),
             lease_timeout: Duration::from_secs(1),
@@ -1515,10 +1666,13 @@ mod tests {
             .unwrap();
         let id = submission.r#async.unwrap().request_id;
         entered(&store, 1).await;
-        let (before, _) = record::load(&first, &tenant, &id).await.unwrap();
+        let record::LoadedRecord { record: before, .. } =
+            record::load(&first, &tenant, &id).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let (current, _) = record::load(&first, &tenant, &id).await.unwrap();
+                let record::LoadedRecord {
+                    record: current, ..
+                } = record::load(&first, &tenant, &id).await.unwrap();
                 if current.heartbeat_ms > before.heartbeat_ms {
                     break;
                 }
@@ -1559,7 +1713,7 @@ mod tests {
             record::load(&replacement, &tenant, &id)
                 .await
                 .unwrap()
-                .0
+                .record
                 .heartbeat_ms
                 == 1
         );
@@ -1585,7 +1739,7 @@ mod tests {
             record::load(&replacement, &tenant, &id)
                 .await
                 .unwrap()
-                .0
+                .record
                 .adoptions
                 == 1
         );
@@ -1595,11 +1749,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrency_slots_are_per_tenant_and_are_released_on_shutdown() {
-        let store = Arc::new(GatedStore {
-            inner: super::super::InMemoryProfileStore::new(),
-            entered: std::sync::atomic::AtomicUsize::new(0),
-            permit: tokio::sync::Semaphore::new(0),
-        });
+        let store = Arc::new(GatedStore::closed());
         let state = Arc::new(QuerierState::new_with_limits(
             Arc::clone(&store),
             super::super::Limits {
@@ -1646,7 +1796,14 @@ mod tests {
         let _router = super::super::router(Arc::clone(&state));
         let result = completed(Arc::clone(&state), &tenant, id).await;
         check!(result.r#async.unwrap().status == AsyncQueryStatus::Success as i32);
-        check!(record::load(&state, &tenant, id).await.unwrap().0.adoptions == 1);
+        check!(
+            record::load(&state, &tenant, id)
+                .await
+                .unwrap()
+                .record
+                .adoptions
+                == 1
+        );
         state.shutdown_async_queries().await;
         check!(state.async_query_slots.lock().await.is_empty());
     }
@@ -1659,7 +1816,10 @@ mod tests {
             let bad = "11111111-1111-4111-8111-111111111111";
             let healthy = "22222222-2222-4222-8222-222222222222";
             publish_pending(&state, &tenant, bad, 1, 0).await;
-            let (mut invalid_record, _) = record::load(&state, &tenant, bad).await.unwrap();
+            let record::LoadedRecord {
+                record: mut invalid_record,
+                ..
+            } = record::load(&state, &tenant, bad).await.unwrap();
             invalid_record.generation = 1;
             if invalid == "future version" {
                 invalid_record.version = 2;
@@ -1704,7 +1864,9 @@ mod tests {
             // newer invalid generation must reject that query, not the scan.
             maintenance::adopt(&state).await.unwrap();
             let response = completed(Arc::clone(&state), &tenant, healthy).await;
-            let (current, _) = record::load(&state, &tenant, healthy).await.unwrap();
+            let record::LoadedRecord {
+                record: current, ..
+            } = record::load(&state, &tenant, healthy).await.unwrap();
             check!(
                 (
                     response.r#async.as_ref().unwrap().status,
@@ -1795,25 +1957,56 @@ mod tests {
         ));
         let unrelated = Path::from("profiles-admin/tenant-a/settings.json");
         let fixtures = [
-            (request_path(&tenant, old), true),
-            (completed_path(&tenant, old, 1), true),
-            (request_path(&tenant, fresh), false),
-            (completed_path(&tenant, fresh, 1), false),
-            (request_path(&tenant, mixed), false),
-            (completed_path(&tenant, mixed, 1), true),
-            (request_path(&tenant, malformed), true),
-            (malformed_metadata.clone(), true),
-            (unrelated.clone(), true),
+            OldPathFixture {
+                path: request_path(&tenant, old),
+                is_old: true,
+            },
+            OldPathFixture {
+                path: completed_path(&tenant, old, 1),
+                is_old: true,
+            },
+            OldPathFixture {
+                path: request_path(&tenant, fresh),
+                is_old: false,
+            },
+            OldPathFixture {
+                path: completed_path(&tenant, fresh, 1),
+                is_old: false,
+            },
+            OldPathFixture {
+                path: request_path(&tenant, mixed),
+                is_old: false,
+            },
+            OldPathFixture {
+                path: completed_path(&tenant, mixed, 1),
+                is_old: true,
+            },
+            OldPathFixture {
+                path: request_path(&tenant, malformed),
+                is_old: true,
+            },
+            OldPathFixture {
+                path: malformed_metadata.clone(),
+                is_old: true,
+            },
+            OldPathFixture {
+                path: unrelated.clone(),
+                is_old: true,
+            },
         ];
-        for (path, is_old) in &fixtures {
-            admin.put(path, b"fixture".to_vec().into()).await.unwrap();
+        for fixture in &fixtures {
+            admin
+                .put(&fixture.path, b"fixture".to_vec().into())
+                .await
+                .unwrap();
             // Actual filesystem metadata is the independent storage clock.
             // Fresh objects sit exactly at the cutoff, proving strict expiry
             // without depending on elapsed wall time or sleeping.
-            std::fs::File::open(directory.path().join(path.as_ref()))
+            std::fs::File::open(directory.path().join(fixture.path.as_ref()))
                 .unwrap()
                 .set_modified(
-                    std::time::UNIX_EPOCH + Duration::from_secs(if *is_old { 1 } else { 990 }),
+                    std::time::UNIX_EPOCH
+                        + Duration::from_secs(if fixture.is_old { 1 } else { 990 }),
                 )
                 .unwrap();
         }
@@ -1860,7 +2053,10 @@ mod tests {
         expected.sort();
         check!(remaining == expected);
         check!(record::load(&state, &tenant, old).await.unwrap_err().code() == Code::NotFound);
-        let (mut delayed_initial, _) = record::load(&state, &tenant, active).await.unwrap();
+        let record::LoadedRecord {
+            record: mut delayed_initial,
+            ..
+        } = record::load(&state, &tenant, active).await.unwrap();
         delayed_initial.id = old.into();
         check!(
             !record::write(&state, &delayed_initial, PutMode::Create)
@@ -1873,7 +2069,7 @@ mod tests {
             record::load(&state, &tenant, active)
                 .await
                 .unwrap()
-                .0
+                .record
                 .status
                 == AsyncQueryStatus::InProgress as i32
         );

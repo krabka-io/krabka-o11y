@@ -1,5 +1,4 @@
 use krabka_blockstore::{ERASURE_REQUEST_PREFIX, Labels, list_erasure_requests};
-use krabka_observability::server_security::{ClientAuth, ServerSecurityArgs};
 use krabka_query_frontend::{CacheKey, ExecutionOptions, QueryCache};
 use object_store::memory::InMemory;
 
@@ -31,12 +30,46 @@ impl RangeQueryCache for UnusableCache {
     }
 }
 
+/// An API state over an empty metric store, and the in-memory object store it
+/// persists erasure requests to.
+struct ErasureFixture {
+    state: Arc<PrometheusApiState<InMemoryMetricStore>>,
+    erasure_store: Arc<dyn object_store::ObjectStore>,
+}
+
+impl ErasureFixture {
+    fn over_empty_store() -> Self {
+        let erasure_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let state = Arc::new(
+            PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
+                .with_erasure_store(Arc::clone(&erasure_store)),
+        );
+        Self {
+            state,
+            erasure_store,
+        }
+    }
+}
+
+async fn one_erasure_request(
+    store: &Arc<dyn object_store::ObjectStore>,
+) -> Vec<krabka_blockstore::ErasureRequest> {
+    let requests = list_erasure_requests(store, ERASURE_REQUEST_PREFIX)
+        .await
+        .unwrap();
+    check!(requests.len() == 1);
+    requests
+}
+
 #[tokio::test]
 async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
     let mut metric_store = InMemoryMetricStore::new();
     metric_store.push_float(
         "tenant-a",
-        Labels::from_pairs([("__name__", "requests_total"), ("user", "7")]),
+        Labels::from_pairs([
+            krabka_blockstore::LabelPair::new("__name__", "requests_total"),
+            krabka_blockstore::LabelPair::new("user", "7"),
+        ]),
         1_000,
         1.0,
     );
@@ -68,20 +101,17 @@ async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
         .await
         .unwrap();
     check!(response.status() == StatusCode::NO_CONTENT);
-    let requests = list_erasure_requests(&erasure_store, ERASURE_REQUEST_PREFIX)
-        .await
-        .unwrap();
-    check!(requests.len() == 1);
+    let requests = one_erasure_request(&erasure_store).await;
     check!(requests[0].tenant == "tenant-a");
     check!(requests[0].selector == "{user=\"7\"}");
     check!(requests[0].matcher_sets.len() == 1);
 
-    let (status, _) = annotated_query_body(
+    let response = annotated_query_body(
         Arc::clone(&state),
         "/api/v1/query_range?query=requests_total&start=1&end=1&step=1",
     )
     .await;
-    check!(status == StatusCode::OK);
+    check!(response.status == StatusCode::OK);
 
     let response = app
         .oneshot(
@@ -93,19 +123,15 @@ async fn prometheus_admin_routes_persist_tombstones_until_compaction() {
         .await
         .unwrap();
     check!(response.status() == StatusCode::NO_CONTENT);
-    let requests = list_erasure_requests(&erasure_store, ERASURE_REQUEST_PREFIX)
-        .await
-        .unwrap();
-    check!(requests.len() == 1);
+    let _requests = one_erasure_request(&erasure_store).await;
 }
 
 #[tokio::test]
 async fn delete_series_validates_every_selector_before_persisting() {
-    let erasure_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_erasure_store(Arc::clone(&erasure_store)),
-    );
+    let ErasureFixture {
+        state,
+        erasure_store,
+    } = ErasureFixture::over_empty_store();
     let response = prometheus_router(state)
         .oneshot(
             axum::http::Request::post("/api/v1/admin/tsdb/delete_series")
@@ -137,25 +163,11 @@ async fn delete_series_requires_an_admin_principal() {
         "principals:\n  - name: reader\n    token_sha256: [\"fd66d679ee99eef3efa2ef4127680aea063ca35c6b394cacad365fdeec1203be\"]\n    tenants: [\"tenant-a\"]\n",
     )
     .unwrap();
-    let security = ServerSecurityArgs {
-        server_tls_cert_path: None,
-        server_tls_key_path: None,
-        server_tls_client_ca_path: None,
-        server_tls_client_auth: ClientAuth::NoClientCert,
-        server_tls_handshake_timeout: secs(10),
-        auth_credentials_config: Some(credentials),
-        internal_client_token_path: None,
-        internal_client_tls_cert_path: None,
-        internal_client_tls_key_path: None,
-        internal_client_tls_ca_path: None,
-    }
-    .load()
-    .unwrap();
-    let erasure_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
-            .with_erasure_store(Arc::clone(&erasure_store)),
-    );
+    let security = super::server_security_args(credentials).load().unwrap();
+    let ErasureFixture {
+        state,
+        erasure_store,
+    } = ErasureFixture::over_empty_store();
     let app = authenticate_requests(super::super::prometheus_router(state), &security);
     let response = app
         .oneshot(

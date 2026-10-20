@@ -8,7 +8,9 @@ pub(crate) fn client_allows_utf8_label_names(headers: &HeaderMap) -> bool {
         .flat_map(|value| value.split(','))
         .flat_map(|media_type| media_type.split(';').skip(1))
         .filter_map(|parameter| parameter.trim().split_once('='))
-        .any(|(name, value)| {
+        .any(|parameter| {
+            let name = parameter.0;
+            let value = parameter.1;
             name.trim().eq_ignore_ascii_case("allow-utf8-labelnames") && value.trim() == "true"
         })
 }

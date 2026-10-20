@@ -22,6 +22,19 @@ use crate::{
 };
 
 impl<S: MetricStore> PromqlEngine<S> {
+    async fn label_ops_call_inner_vector(
+        &self,
+        tenant: &str,
+        call: &Call,
+        time_ms: i64,
+    ) -> Result<Option<Vec<InstantSample>>> {
+        let Some(value_arg) = call.args.args.first() else {
+            return Ok(None);
+        };
+        self.label_ops_inner_vector(super::InnerVectorQuery::new(tenant, value_arg, time_ms))
+            .await
+    }
+
     /// Plans a per-row scalar-math `Call` onto a `Projection(f(value))`.
     ///
     /// The projection runs over the evaluated inner instant vector of the call.
@@ -167,16 +180,20 @@ impl<S: MetricStore> PromqlEngine<S> {
                 if call.args.args.len() != 5 {
                     return Ok(None);
                 }
-                let (Some(dst), Some(replacement), Some(src), Some(regex)) = (
-                    super::string_literal_value(call, 1),
-                    super::string_literal_value(call, 2),
-                    super::string_literal_value(call, 3),
-                    super::string_literal_value(call, 4),
-                ) else {
+                let Some(dst) = super::string_literal_value(call, 1) else {
+                    return Ok(None);
+                };
+                let Some(replacement) = super::string_literal_value(call, 2) else {
+                    return Ok(None);
+                };
+                let Some(src) = super::string_literal_value(call, 3) else {
+                    return Ok(None);
+                };
+                let Some(regex) = super::string_literal_value(call, 4) else {
                     return Ok(None);
                 };
                 let Some(samples) = self
-                    .label_ops_inner_vector(tenant, &call.args.args[0], time_ms)
+                    .label_ops_call_inner_vector(tenant, call, time_ms)
                     .await?
                 else {
                     return Ok(None);
@@ -191,10 +208,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                 if call.args.args.len() < 3 {
                     return Ok(None);
                 }
-                let (Some(dst), Some(separator)) = (
-                    super::string_literal_value(call, 1),
-                    super::string_literal_value(call, 2),
-                ) else {
+                let Some(dst) = super::string_literal_value(call, 1) else {
+                    return Ok(None);
+                };
+                let Some(separator) = super::string_literal_value(call, 2) else {
                     return Ok(None);
                 };
                 let mut src_labels = Vec::with_capacity(call.args.args.len() - 3);
@@ -205,7 +222,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     src_labels.push(label);
                 }
                 let Some(samples) = self
-                    .label_ops_inner_vector(tenant, &call.args.args[0], time_ms)
+                    .label_ops_call_inner_vector(tenant, call, time_ms)
                     .await?
                 else {
                     return Ok(None);
@@ -218,7 +235,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     return Ok(None);
                 }
                 let Some(samples) = self
-                    .label_ops_inner_vector(tenant, &call.args.args[0], time_ms)
+                    .label_ops_call_inner_vector(tenant, call, time_ms)
                     .await?
                 else {
                     return Ok(None);
@@ -243,7 +260,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     label_names.push(label.utf8().unwrap_or("").to_owned());
                 }
                 let Some(samples) = self
-                    .label_ops_inner_vector(tenant, &call.args.args[0], time_ms)
+                    .label_ops_call_inner_vector(tenant, call, time_ms)
                     .await?
                 else {
                     return Ok(None);
@@ -276,30 +293,19 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// `sort_desc` drop it, and the calendar family ignores it.
     pub(super) fn label_ops_inner_vector<'a>(
         &'a self,
-        tenant: &'a str,
-        value_arg: &'a Expr,
-        time_ms: i64,
+        query: super::InnerVectorQuery<'a>,
     ) -> BoxFuture<'a, Result<Option<Vec<InstantSample>>>> {
-        async move {
-            let mut inner = value_arg;
-            while let Expr::Paren(paren) = inner {
-                inner = &paren.expr;
-            }
-
-            if let Expr::VectorSelector(selector) = inner {
-                if self
+        self.resolve_inner_vector(query, |engine, tenant, selector, time_ms| {
+            async move {
+                if engine
                     .selector_has_histogram_series(tenant, selector, time_ms)
                     .await?
                 {
-                    let QueryResult::InstantVector(samples) = self
-                        .eval_instant_selector(tenant, selector, time_ms)
-                        .await?
-                    else {
-                        return Ok(None);
-                    };
-                    return Ok(Some(samples));
+                    return engine
+                        .eval_instant_vector_selector(tenant, selector, time_ms)
+                        .await;
                 }
-                let samples = self
+                let samples = engine
                     .scalar_math_selector_samples(tenant, selector, time_ms)
                     .await?
                     .into_iter()
@@ -310,22 +316,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                         drop_name: false,
                     })
                     .collect();
-                return Ok(Some(samples));
+                Ok(Some(samples))
             }
-
-            // A nested plannable inner expression: recurse and assemble it,
-            // applying that shape's own drop semantics before transforming.
-            let Some(planned) = self.plan_instant_expr(tenant, inner, time_ms).await? else {
-                return Ok(None);
-            };
-            let QueryResult::InstantVector(samples) =
-                self.assemble_planned_instant(planned, time_ms).await?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(samples))
-        }
-        .boxed()
+            .boxed()
+        })
     }
 
     /// Evaluates the inner instant-vector argument of a scalar-math call.
@@ -383,15 +377,10 @@ impl<S: MetricStore> PromqlEngine<S> {
             // A nested plannable inner expression: recurse, then assemble it to
             // an instant vector (applying that shape's own drop semantics — e.g.
             // rate's no-value suppression) before feeding the values to `f`.
-            let Some(planned) = self.plan_instant_expr(tenant, inner, time_ms).await? else {
-                return Ok(None);
-            };
-            let QueryResult::InstantVector(inner_samples) =
-                self.assemble_planned_instant(planned, time_ms).await?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(float_scalar_math_values(inner_samples)))
+            Ok(self
+                .planned_instant_vector(tenant, inner, time_ms)
+                .await?
+                .map(float_scalar_math_values))
         }
         .boxed()
     }
@@ -422,26 +411,26 @@ impl<S: MetricStore> PromqlEngine<S> {
             .scan_float_row_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
             .await?;
 
-        let mut latest_by_fp: BTreeMap<SeriesFingerprint, (i64, f64)> = BTreeMap::new();
+        let mut latest_by_fp: BTreeMap<SeriesFingerprint, super::selector_eval::LatestSample<f64>> =
+            BTreeMap::new();
         for row in rows {
-            if row.ts_ms <= start_ms || row.ts_ms > eval_time_ms {
-                continue;
-            }
-            latest_by_fp
-                .entry(row.fp)
-                .and_modify(|latest| {
-                    if row.ts_ms > latest.0 {
-                        *latest = (row.ts_ms, row.value);
-                    }
-                })
-                .or_insert((row.ts_ms, row.value));
+            super::selector_eval::retain_latest_by_fingerprint(
+                &mut latest_by_fp,
+                row.fp,
+                row.ts_ms,
+                row.value,
+                start_ms,
+                eval_time_ms,
+            );
         }
 
         let mut samples = Vec::with_capacity(latest_by_fp.len());
-        for (fp, (ts_ms, value)) in latest_by_fp {
+        for entry in latest_by_fp {
+            let fp = entry.0;
+            let sample = entry.1;
             // Drop a stale-NaN marker (the series has no value), matching
             // `eval_instant_selector`; a genuine NaN is kept.
-            if is_stale_nan(value) {
+            if is_stale_nan(sample.value) {
                 continue;
             }
             let Some(labels) = labels_by_fp.get(&fp) else {
@@ -449,8 +438,8 @@ impl<S: MetricStore> PromqlEngine<S> {
             };
             samples.push(ScalarMathLabeledValue {
                 labels: (**labels).clone(),
-                ts_ms,
-                value,
+                ts_ms: sample.timestamp_ms,
+                value: sample.value,
             });
         }
         Ok(samples)

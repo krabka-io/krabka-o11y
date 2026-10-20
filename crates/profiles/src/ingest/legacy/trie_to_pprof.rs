@@ -7,7 +7,7 @@ pub(crate) fn trie_to_pprof(
     limits: LegacyDecodeLimits,
 ) -> Result<PprofProfile, ProfilesError> {
     let mut pos = 0;
-    let mut stacks = BTreeMap::<Vec<(String, i32)>, i64>::new();
+    let mut stacks = BTreeMap::<Vec<super::LegacyStackFrame>, i64>::new();
     let mut node_count = 0_usize;
     let mut path_bytes = 0_usize;
 
@@ -103,11 +103,7 @@ pub(crate) fn trie_to_pprof(
             })?;
             let key_str = std::str::from_utf8(&key)
                 .map_err(|err| ProfilesError::Decode(format!("trie key is not UTF-8: {err}")))?;
-            let frames = key_str
-                .split(';')
-                .filter(|frame| !frame.is_empty())
-                .map(|frame| (frame.to_string(), 0))
-                .collect::<Vec<_>>();
+            let frames = super::legacy_stack_frames(key_str);
             if frames.is_empty() {
                 return Err(ProfilesError::Decode(
                     "trie profile has an empty stack".to_string(),

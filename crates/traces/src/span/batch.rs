@@ -1,6 +1,6 @@
 //! Build span block `RecordBatch` values from internal spans.
 
-use std::collections::HashMap;
+use std::{borrow::Borrow, collections::HashMap};
 
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
@@ -11,6 +11,169 @@ use krabka_units::prelude::*;
 
 use super::{AttrValue, KeyValue, Span, nested_set::assign_nested_set};
 use crate::error::TracesError;
+
+pub(crate) fn block_attr_value(value: &AttrValue) -> BlockAttrValue {
+    match value {
+        AttrValue::Str(value) => BlockAttrValue::Str(vec![value.clone()]),
+        AttrValue::Int(value) => BlockAttrValue::Int(vec![*value]),
+        AttrValue::Double(value) => BlockAttrValue::Double(vec![*value]),
+        AttrValue::Bool(value) => BlockAttrValue::Bool(vec![*value]),
+        AttrValue::Unsupported(value) => BlockAttrValue::Unsupported(value.clone()),
+        AttrValue::Array(values) if values.is_empty() => BlockAttrValue::Str(Vec::new()),
+        AttrValue::Array(values)
+            if values
+                .iter()
+                .all(|value| matches!(value, AttrValue::Str(_))) =>
+        {
+            BlockAttrValue::Str(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        AttrValue::Str(value) => value.clone(),
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        }
+        AttrValue::Array(values)
+            if values
+                .iter()
+                .all(|value| matches!(value, AttrValue::Int(_))) =>
+        {
+            BlockAttrValue::Int(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        AttrValue::Int(value) => *value,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        }
+        AttrValue::Array(values)
+            if values
+                .iter()
+                .all(|value| matches!(value, AttrValue::Double(_))) =>
+        {
+            BlockAttrValue::Double(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        AttrValue::Double(value) => *value,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        }
+        AttrValue::Array(values)
+            if values
+                .iter()
+                .all(|value| matches!(value, AttrValue::Bool(_))) =>
+        {
+            BlockAttrValue::Bool(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        AttrValue::Bool(value) => *value,
+                        _ => unreachable!(),
+                    })
+                    .collect(),
+            )
+        }
+        AttrValue::Array(_) | AttrValue::Bytes(_) => {
+            BlockAttrValue::Unsupported(value.otlp_json().to_string())
+        }
+    }
+}
+
+pub(crate) fn block_kind(kind: super::SpanKind) -> SpanKind {
+    match kind {
+        super::SpanKind::Unspecified => SpanKind::Unspecified,
+        super::SpanKind::Internal => SpanKind::Internal,
+        super::SpanKind::Server => SpanKind::Server,
+        super::SpanKind::Client => SpanKind::Client,
+        super::SpanKind::Producer => SpanKind::Producer,
+        super::SpanKind::Consumer => SpanKind::Consumer,
+    }
+}
+
+pub(crate) fn block_status(status: super::StatusCode) -> StatusCode {
+    match status {
+        super::StatusCode::Unset => StatusCode::Unset,
+        super::StatusCode::Ok => StatusCode::Ok,
+        super::StatusCode::Error => StatusCode::Error,
+    }
+}
+
+pub(crate) fn push_span_attr(attrs: &mut Vec<SpanAttr>, key: String, value: &AttrValue) {
+    let explicit_array = matches!(value, AttrValue::Array(_));
+    let value = block_attr_value(value);
+    let is_array = explicit_array && !matches!(value, BlockAttrValue::Unsupported(_));
+    if let Some(existing) = attrs
+        .iter_mut()
+        .find(|attr| attr.key == key && same_block_attr_type(&attr.value, &value))
+    {
+        extend_block_attr_value(&mut existing.value, value);
+        existing.is_array = true;
+        return;
+    }
+    attrs.push(SpanAttr {
+        key,
+        is_array,
+        value,
+    });
+}
+
+/// Build rows for one trace, keeping whole-trace metadata when its window is clipped.
+/// Callers can then pack several traces without mixing their root columns.
+pub(crate) fn span_rows_for_window<'a>(
+    row_spans: &[impl Borrow<Span>],
+    trace_spans: impl Iterator<Item = &'a Span> + Clone,
+) -> Vec<SpanRow> {
+    // Nested-set intervals and child counts describe the rows themselves, so
+    // they are computed over `row_spans`. Trace-level columns describe the
+    // whole trace, so they come from `trace_spans`.
+    let nested = assign_nested_set(row_spans);
+    let child_counts = child_counts(&nested);
+    let root = root_info(trace_spans);
+    row_spans
+        .iter()
+        .map(Borrow::borrow)
+        .zip(nested)
+        .zip(child_counts)
+        .map(|entry| {
+            let span = entry.0.0;
+            let nested_set = entry.0.1;
+            let child_count = entry.1;
+            SpanRow {
+                trace_id: span.trace_id,
+                span_id: span.span_id,
+                parent_span_id: span.parent_span_id,
+                nested_set: BlockNestedSet {
+                    nested_set_left: nested_set.left,
+                    nested_set_right: nested_set.right,
+                    parent_id: nested_set.parent_id,
+                },
+                child_count,
+                root_service_name: Some(root.service_name.clone()),
+                root_span_name: Some(root.span_name.clone()),
+                trace_start_unix_nano: root.start_ns,
+                trace_duration: root.duration,
+                name: Some(span.name.clone()),
+                kind: block_kind(span.kind),
+                start_unix_nano: span.start_ns,
+                duration: Time::from_nanos(span.duration_ns),
+                status_code: block_status(span.status),
+                status_message: Some(span.status_message.clone()),
+                instrumentation_name: Some(span.instrumentation_scope.clone()),
+                instrumentation_version: Some(span.instrumentation_version.clone()),
+                attrs: span_attrs(span),
+                events: span_events(span),
+                links: span_links(span),
+            }
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -257,28 +420,11 @@ mod tests {
     #[test]
     fn explicit_arrays_keep_empty_and_singleton_identity_in_blocks() {
         let mut value = span(1, None, "api");
-        value.span_attrs = vec![
-            KeyValue {
-                key: "empty".into(),
-                value: AttrValue::Array(Vec::new()),
-            },
-            KeyValue {
-                key: "one".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7)]),
-            },
-            KeyValue {
-                key: "many".into(),
-                value: AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
-            },
-            KeyValue {
-                key: "scalar".into(),
-                value: AttrValue::Int(7),
-            },
-            KeyValue {
-                key: "mixed".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
-            },
-        ];
+        value.span_attrs = crate::span::test_span::array_shape_attrs();
+        // A scalar between `many` and `mixed`, so `mixed` stays at index 4.
+        value
+            .span_attrs
+            .insert(3, KeyValue::new("scalar", AttrValue::Int(7)));
         let attrs = span_attrs(&value);
         check!(
             attrs.iter().find(|attr| attr.key == "empty").unwrap().value
@@ -305,15 +451,29 @@ mod tests {
         let keys = keys.as_any().downcast_ref::<StringArray>().unwrap();
         let flags = col::<ListArray>(&batch, SCOL_ATTR_IS_ARRAY).value(0);
         let flags = flags.as_any().downcast_ref::<BooleanArray>().unwrap();
-        for (key, expected) in [
-            ("empty", true),
-            ("one", true),
-            ("many", true),
-            ("scalar", false),
-            ("mixed", false),
+        #[derive(bon::Builder)]
+        struct ArrayFlagCase {
+            key: &'static str,
+            expected: bool,
+        }
+        for case in [
+            ArrayFlagCase::builder().key("empty").expected(true).build(),
+            ArrayFlagCase::builder().key("one").expected(true).build(),
+            ArrayFlagCase::builder().key("many").expected(true).build(),
+            ArrayFlagCase::builder()
+                .key("scalar")
+                .expected(false)
+                .build(),
+            ArrayFlagCase::builder()
+                .key("mixed")
+                .expected(false)
+                .build(),
         ] {
-            let index = keys.iter().position(|value| value == Some(key)).unwrap();
-            check!(flags.value(index) == expected, "{key}");
+            let index = keys
+                .iter()
+                .position(|value| value == Some(case.key))
+                .unwrap();
+            check!(flags.value(index) == case.expected, "{}", case.key);
         }
     }
 
@@ -353,40 +513,164 @@ mod tests {
     }
 }
 
-mod block_attr_value;
-mod block_kind;
-mod block_status;
-mod child_counts;
-mod event_attrs;
-mod extend_block_attr_value;
-mod push_span_attr;
-mod resource_attr_prefix;
 mod root_info;
-mod same_block_attr_type;
-mod service_name;
-mod span_attrs;
-mod span_batch;
-mod span_batch_for_window;
-mod span_batch_with_promoted_attrs;
-mod span_events;
-mod span_links;
-mod span_rows_for_window;
 
-use block_attr_value::block_attr_value;
-use block_kind::block_kind;
-use block_status::block_status;
-use child_counts::child_counts;
-use event_attrs::event_attrs;
-use extend_block_attr_value::extend_block_attr_value;
-use push_span_attr::push_span_attr;
-pub use resource_attr_prefix::RESOURCE_ATTR_PREFIX;
 use root_info::root_info;
-use same_block_attr_type::same_block_attr_type;
-use service_name::service_name;
-use span_attrs::span_attrs;
-pub use span_batch::span_batch;
-pub use span_batch_for_window::span_batch_for_window;
-pub use span_batch_with_promoted_attrs::span_batch_with_promoted_attrs;
-use span_events::span_events;
-use span_links::span_links;
-pub(crate) use span_rows_for_window::span_rows_for_window;
+
+pub const RESOURCE_ATTR_PREFIX: &str = "__resource.";
+
+pub(crate) fn event_attrs(attrs: &[KeyValue]) -> Vec<SpanAttr> {
+    let mut values = Vec::new();
+    for attr in attrs {
+        push_span_attr(&mut values, attr.key.clone(), &attr.value);
+    }
+    values
+}
+
+pub(crate) fn same_block_attr_type(lhs: &BlockAttrValue, rhs: &BlockAttrValue) -> bool {
+    matches!(
+        (lhs, rhs),
+        (BlockAttrValue::Str(_), BlockAttrValue::Str(_))
+            | (BlockAttrValue::Int(_), BlockAttrValue::Int(_))
+            | (BlockAttrValue::Double(_), BlockAttrValue::Double(_))
+            | (BlockAttrValue::Bool(_), BlockAttrValue::Bool(_))
+    )
+}
+
+pub(crate) fn service_name(attrs: &[KeyValue]) -> Option<String> {
+    attrs.iter().find_map(|attr| {
+        (attr.key == "service.name").then(|| match &attr.value {
+            AttrValue::Str(value) => Some(value.clone()),
+            _ => None,
+        })?
+    })
+}
+
+/// Build one span-block `RecordBatch` from spans of one trace.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn span_batch(spans: &[Span]) -> Result<RecordBatch, TracesError> {
+    span_batch_with_promoted_attrs(spans, &[])
+}
+
+pub(crate) fn span_events(span: &Span) -> Vec<SpanEvent> {
+    span.events
+        .iter()
+        .map(|event| SpanEvent {
+            name: event.name.clone(),
+            time_since_start: Time::from_nanos(event.time_unix_nano.saturating_sub(span.start_ns)),
+            attrs: event_attrs(&event.attrs),
+        })
+        .collect()
+}
+
+pub(crate) fn span_links(span: &Span) -> Vec<SpanLink> {
+    span.links
+        .iter()
+        .map(|link| SpanLink {
+            linked_trace_id: link.trace_id,
+            linked_span_id: link.span_id,
+            attrs: event_attrs(&link.attrs),
+        })
+        .collect()
+}
+
+pub(crate) fn child_counts(nested: &[crate::span::nested_set::NestedSet]) -> Vec<i32> {
+    // Single O(n) pass: tally how many nodes name each `parent_id`, then each
+    // node's child count is the tally for its own `left` interval.
+    let mut counts: HashMap<i32, i32> = HashMap::with_capacity(nested.len());
+    for node in nested {
+        let count = counts.entry(node.parent_id).or_insert(0);
+        *count = count.saturating_add(1);
+    }
+    nested
+        .iter()
+        .map(|node| counts.get(&node.left).copied().unwrap_or(0))
+        .collect()
+}
+
+pub(crate) fn extend_block_attr_value(existing: &mut BlockAttrValue, next: BlockAttrValue) {
+    match existing {
+        BlockAttrValue::Str(existing) => match next {
+            BlockAttrValue::Str(next) => existing.extend(next),
+            _ => unreachable!("same_block_attr_type guards extension"),
+        },
+        BlockAttrValue::Int(existing) => match next {
+            BlockAttrValue::Int(next) => existing.extend(next),
+            _ => unreachable!("same_block_attr_type guards extension"),
+        },
+        BlockAttrValue::Double(existing) => match next {
+            BlockAttrValue::Double(next) => existing.extend(next),
+            _ => unreachable!("same_block_attr_type guards extension"),
+        },
+        BlockAttrValue::Bool(existing) => match next {
+            BlockAttrValue::Bool(next) => existing.extend(next),
+            _ => unreachable!("same_block_attr_type guards extension"),
+        },
+        BlockAttrValue::Unsupported(_) => {
+            unreachable!("same_block_attr_type guards extension")
+        }
+    }
+}
+
+pub(crate) fn span_attrs(span: &Span) -> Vec<SpanAttr> {
+    let mut attrs = Vec::new();
+    for attr in &span.resource_attrs {
+        push_span_attr(
+            &mut attrs,
+            format!("{RESOURCE_ATTR_PREFIX}{}", attr.key),
+            &attr.value,
+        );
+    }
+    for attr in &span.span_attrs {
+        // Reserve the `__resource.` namespace for true resource attributes. A
+        // client span attribute keyed under this prefix would otherwise be
+        // indistinguishable downstream from a resource-scoped attribute,
+        // letting a client spoof `resource.`-scoped values (TraceQL scope
+        // bypass / tenant data-integrity). Drop such span attributes.
+        if attr.key.starts_with(RESOURCE_ATTR_PREFIX) {
+            continue;
+        }
+        push_span_attr(&mut attrs, attr.key.clone(), &attr.value);
+    }
+    attrs
+}
+
+/// Build one span-block `RecordBatch` whose rows are `row_spans` but whose
+/// trace-level columns are computed over `trace_spans`.
+///
+/// Use this when a query window clips a trace. `row_spans` is the in-window
+/// subset. `trace_spans` is the trace's full span set, so that
+/// `root_service_name`, `root_span_name`, `trace_start_unix_nano` and
+/// `trace_duration_nanos` reflect the whole trace rather than only the window.
+/// Pass the same slice for both to materialize a complete trace.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn span_batch_for_window(
+    row_spans: &[Span],
+    trace_spans: &[Span],
+    promoted_attrs: &[PromotedSpanAttr],
+) -> Result<RecordBatch, TracesError> {
+    let rows = span_rows_for_window(row_spans, trace_spans.iter());
+
+    encode_span_rows_with_promoted_attrs(&rows, promoted_attrs)
+        .map_err(|err| TracesError::Block(err.to_string()))
+}
+
+/// Build one span-block `RecordBatch` from spans of one trace with configured
+/// attributes duplicated into dedicated columns.
+///
+/// `spans` must be the complete per-trace span set. The trace-level columns,
+/// which are the root service and name, the start and the duration, are
+/// computed over exactly these spans.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn span_batch_with_promoted_attrs(
+    spans: &[Span],
+    promoted_attrs: &[PromotedSpanAttr],
+) -> Result<RecordBatch, TracesError> {
+    span_batch_for_window(spans, spans, promoted_attrs)
+}

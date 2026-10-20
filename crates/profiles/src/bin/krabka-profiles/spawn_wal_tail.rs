@@ -22,14 +22,14 @@ pub(crate) fn spawn_wal_tail(
     wal_security: Option<ClientSecurity>,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
-    let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
+    let client_policy = client_resource_policy(cli);
     let config = krabka_profiles::hot_store::WalTailConfig {
         bootstrap: cli.bootstrap.clone(),
         group_id: cli.query_wal_tail_group_id.clone(),
         wal_topic: cli.wal_topic.clone(),
         poll_timeout: cli.wal_poll_timeout,
-        client_dispatch_queue_capacity,
-        client_frame_max,
+        client_dispatch_queue_capacity: client_policy.client_dispatch_queue_capacity,
+        client_frame_max: client_policy.client_frame_max,
         metrics,
         catch_up: Some(catch_up),
         security: wal_security,

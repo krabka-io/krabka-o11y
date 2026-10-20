@@ -12,26 +12,17 @@ use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, TracePartial},
     config::FrontendConfig,
-    job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
+    job::{BlockMetaInfo, MockCatalog},
     merge::TraceStatus,
-    wire::{
-        Metrics, OtlpSpanJson, ResourceSpansJson, ScopeSpansJson, TraceByIdResponseJson,
-        TraceEnvelopeJson,
-    },
+    wire::{Metrics, OtlpSpanJson, TraceByIdResponseJson, TraceEnvelopeJson},
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
+#[path = "support/mod.rs"]
+mod support;
+
 fn block(id: &str, start: i64, end: i64) -> BlockMetaInfo {
-    BlockMetaInfo {
-        block_id: id.to_string(),
-        start_ns: start,
-        end_ns: end,
-        size: ByteSize::from_bytes(100),
-        row_groups: vec![RowGroupInfo {
-            index: 0,
-            compressed: ByteSize::from_bytes(100),
-        }],
-    }
+    support::block_info(id, start, end)
 }
 
 fn otlp_span(id: &str) -> OtlpSpanJson {
@@ -45,15 +36,9 @@ fn otlp_span(id: &str) -> OtlpSpanJson {
 
 fn body(span_ids: &[&str]) -> TraceByIdResponseJson {
     TraceByIdResponseJson {
-        trace: TraceEnvelopeJson {
-            resource_spans: vec![ResourceSpansJson {
-                resource: serde_json::Value::Null,
-                scope_spans: vec![ScopeSpansJson {
-                    scope: serde_json::Value::Null,
-                    spans: span_ids.iter().map(|id| otlp_span(id)).collect(),
-                }],
-            }],
-        },
+        trace: TraceEnvelopeJson::of_unscoped_spans(
+            span_ids.iter().map(|id| otlp_span(id)).collect(),
+        ),
         status: "COMPLETE".to_string(),
         message: String::new(),
     }
@@ -69,6 +54,20 @@ fn trace_partial(body: TraceByIdResponseJson) -> TracePartial {
     }
 }
 
+fn frontend(
+    backend: MockQuerier,
+    catalog: MockCatalog,
+    config: FrontendConfig,
+    members: &[&str],
+) -> QueryFrontend<MockQuerier, MockCatalog> {
+    QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        config,
+        MembershipView::fixed(members.iter().copied()),
+    )
+}
+
 #[tokio::test]
 async fn trace_split_across_queriers_reassembles() {
     // 2 queriers: A holds spans 01,02; B holds spans 02,03 (02 overlaps).
@@ -82,14 +81,14 @@ async fn trace_split_across_queriers_reassembles() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["qa:3200", "qb:3200"]),
-    );
+    let qf = frontend(backend, catalog, cfg, &["qa:3200", "qb:3200"]);
 
-    let (trace, metrics, status, warnings) = qf
+    let krabka_traces::frontend::TraceByIdResult {
+        trace,
+        metrics,
+        status,
+        warnings,
+    } = qf
         .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
         .await
         .unwrap();
@@ -114,14 +113,14 @@ async fn oversized_trace_is_partial() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["qa:3200"]),
-    );
+    let qf = frontend(backend, catalog, cfg, &["qa:3200"]);
 
-    let (trace, _m, status, warnings) = qf
+    let krabka_traces::frontend::TraceByIdResult {
+        trace,
+        status,
+        warnings,
+        ..
+    } = qf
         .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
         .await
         .unwrap();
@@ -139,13 +138,8 @@ async fn missing_trace_is_none() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(
-        Arc::new(backend),
-        Arc::new(catalog),
-        cfg,
-        MembershipView::fixed(["qa:3200", "qb:3200"]),
-    );
-    let (trace, _m, status, _w) = qf
+    let qf = frontend(backend, catalog, cfg, &["qa:3200", "qb:3200"]);
+    let krabka_traces::frontend::TraceByIdResult { trace, status, .. } = qf
         .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
         .await
         .unwrap();

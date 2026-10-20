@@ -24,10 +24,11 @@ impl ClientIdentity {
     /// Returns an [`X509Error`] when the certificate or its subject
     /// alternative name extension does not parse.
     pub fn from_der(der: &[u8]) -> Result<Self, X509Error> {
-        let (_, certificate) = X509Certificate::from_der(der).map_err(|error| match error {
+        let parsed = X509Certificate::from_der(der).map_err(|error| match error {
             x509_parser::nom::Err::Error(error) | x509_parser::nom::Err::Failure(error) => error,
             x509_parser::nom::Err::Incomplete(_) => X509Error::InvalidCertificate,
         })?;
+        let certificate = parsed.1;
         let common_name = certificate
             .subject()
             .iter_common_name()

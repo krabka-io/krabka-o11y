@@ -10,82 +10,147 @@ use crate::{error::ProfilesError, ingest::RawProfile, wire::pb};
 
 #[cfg(test)]
 mod tests {
+    struct ServiceNameCase {
+        label: &'static str,
+        attributes: Vec<pb::opentelemetry::proto::common::v1::KeyValue>,
+        expected: &'static str,
+    }
 
-    /// `resolve_service_name` reads `service.name` from the resource, and
-    /// falls back to a fixed placeholder for every way that can fail. Each way
-    /// is checked separately, since they reach the fallback by different
-    /// routes and a guard removed from one is invisible to the others.
-    #[test]
-    fn a_missing_service_name_falls_back_rather_than_erroring() {
-        use pb::opentelemetry::proto::{
-            common::v1::{AnyValue, KeyValue, any_value::Value},
-            resource::v1::Resource,
-        };
+    struct ServiceNameFallbackCase {
+        label: &'static str,
+        resource_profiles: pb::otlp_profiles::ResourceProfiles,
+    }
 
-        let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
-            resource: Some(Resource {
-                attributes: attrs,
-                ..Resource::default()
+    /// A resource-profiles message whose resource carries `attributes`.
+    fn resource_profiles_with(
+        attributes: Vec<pb::opentelemetry::proto::common::v1::KeyValue>,
+    ) -> pb::otlp_profiles::ResourceProfiles {
+        pb::otlp_profiles::ResourceProfiles {
+            resource: Some(pb::opentelemetry::proto::resource::v1::Resource {
+                attributes,
+                ..Default::default()
             }),
-            ..pb::otlp_profiles::ResourceProfiles::default()
-        };
-        let attr = |key: &str, value: Option<Value>| KeyValue {
+            ..Default::default()
+        }
+    }
+
+    /// A resource attribute named `key` holding `value`, or holding an
+    /// `AnyValue` with nothing in it when `value` is `None`.
+    fn attribute(
+        key: &str,
+        value: Option<pb::opentelemetry::proto::common::v1::any_value::Value>,
+    ) -> pb::opentelemetry::proto::common::v1::KeyValue {
+        use pb::opentelemetry::proto::common::v1::{AnyValue, KeyValue};
+
+        KeyValue {
             key: key.to_string(),
             value: Some(AnyValue { value }),
-        };
+        }
+    }
 
-        // The name is found and returned as written.
-        check!(
-            super::resolve_service_name(&with_attrs(vec![attr(
-                "service.name",
-                Some(Value::StringValue("checkout".into()))
-            )])) == "checkout"
-        );
+    /// A resource attribute named `key` holding the string `value`.
+    fn string_attribute(key: &str, value: &str) -> pb::opentelemetry::proto::common::v1::KeyValue {
+        use pb::opentelemetry::proto::common::v1::any_value::Value;
 
-        // Found among others rather than only as the first attribute.
-        check!(
-            super::resolve_service_name(&with_attrs(vec![
-                attr("host.name", Some(Value::StringValue("box".into()))),
-                attr("service.name", Some(Value::StringValue("checkout".into()))),
-            ])) == "checkout"
-        );
+        attribute(key, Some(Value::StringValue(value.to_string())))
+    }
 
-        // Every route to the fallback.
-        check!(
-            super::resolve_service_name(&pb::otlp_profiles::ResourceProfiles::default())
-                == "unknown_service",
-            "no resource at all"
-        );
-        check!(
-            super::resolve_service_name(&with_attrs(Vec::new())) == "unknown_service",
-            "a resource with no attributes"
-        );
-        check!(
-            super::resolve_service_name(&with_attrs(vec![attr(
-                "host.name",
-                Some(Value::StringValue("box".into()))
-            )])) == "unknown_service",
-            "the wrong key"
-        );
-        check!(
-            super::resolve_service_name(&with_attrs(vec![attr("service.name", None)]))
-                == "unknown_service",
-            "the key with no value"
-        );
-        check!(
-            super::resolve_service_name(&with_attrs(vec![attr(
-                "service.name",
-                Some(Value::IntValue(7))
-            )])) == "unknown_service",
-            "a value that is not a string"
-        );
-        check!(
-            super::resolve_service_name(&with_attrs(vec![attr(
-                "service.name",
-                Some(Value::StringValue(String::new()))
-            )])) == "unknown_service",
-            "an empty name is not a name"
-        );
+    /// The service name comes from the `service.name` resource attribute, and
+    /// is returned as written. The key is matched, not the position.
+    #[test]
+    fn the_service_name_is_read_from_its_resource_attribute() {
+        for case in [
+            ServiceNameCase {
+                label: "the only attribute",
+                attributes: vec![string_attribute("service.name", "checkout")],
+                expected: "checkout",
+            },
+            ServiceNameCase {
+                label: "after another attribute",
+                attributes: vec![
+                    string_attribute("host.name", "box"),
+                    string_attribute("service.name", "checkout"),
+                ],
+                expected: "checkout",
+            },
+            ServiceNameCase {
+                label: "the only attribute, another name",
+                attributes: vec![string_attribute("service.name", "payments")],
+                expected: "payments",
+            },
+            ServiceNameCase {
+                label: "after an attribute with another key",
+                attributes: vec![
+                    string_attribute("other", "first"),
+                    string_attribute("service.name", "payments"),
+                ],
+                expected: "payments",
+            },
+        ] {
+            check!(
+                super::resolve_service_name(&resource_profiles_with(case.attributes))
+                    == case.expected,
+                "{}",
+                case.label
+            );
+        }
+    }
+
+    /// `resolve_service_name` falls back to a fixed placeholder for every way
+    /// reading `service.name` from the resource can fail. Each way is checked
+    /// separately, since they reach the fallback by different routes and a
+    /// guard removed from one is invisible to the others. A profile filed
+    /// under an empty or absent name is unattributable, so everything that is
+    /// not a non-empty string falls back.
+    #[test]
+    fn a_missing_service_name_falls_back_rather_than_erroring() {
+        use pb::opentelemetry::proto::common::v1::any_value::Value;
+
+        for case in [
+            ServiceNameFallbackCase {
+                label: "no resource at all",
+                resource_profiles: pb::otlp_profiles::ResourceProfiles::default(),
+            },
+            ServiceNameFallbackCase {
+                label: "a resource with no attributes",
+                resource_profiles: resource_profiles_with(Vec::new()),
+            },
+            ServiceNameFallbackCase {
+                label: "the wrong key",
+                resource_profiles: resource_profiles_with(vec![string_attribute(
+                    "host.name",
+                    "box",
+                )]),
+            },
+            ServiceNameFallbackCase {
+                label: "a different key",
+                resource_profiles: resource_profiles_with(vec![string_attribute("host.name", "h")]),
+            },
+            ServiceNameFallbackCase {
+                label: "the key with no value",
+                resource_profiles: resource_profiles_with(vec![attribute("service.name", None)]),
+            },
+            ServiceNameFallbackCase {
+                label: "a value that is not a string",
+                resource_profiles: resource_profiles_with(vec![attribute(
+                    "service.name",
+                    Some(Value::IntValue(7)),
+                )]),
+            },
+            ServiceNameFallbackCase {
+                label: "an empty name is not a name",
+                resource_profiles: resource_profiles_with(vec![string_attribute(
+                    "service.name",
+                    "",
+                )]),
+            },
+        ] {
+            check!(
+                super::resolve_service_name(&case.resource_profiles) == "unknown_service",
+                "{} should fall back",
+                case.label
+            );
+        }
     }
 
     /// `otlp_profile_to_pprof` renumbers OTLP's zero-based table indexes into
@@ -341,84 +406,13 @@ mod tests {
         check!(err.contains("references missing location"), "got: {err}");
     }
 
-    /// The service name comes from the `service.name` resource attribute.
-    /// Everything that is not a non-empty string there falls back to the
-    /// placeholder, because a profile filed under an empty or absent name is
-    /// unattributable.
-    #[test]
-    fn the_service_name_falls_back_whenever_it_is_not_a_usable_string() {
-        use pb::opentelemetry::proto::{
-            common::v1::{AnyValue, KeyValue, any_value::Value},
-            resource::v1::Resource,
-        };
-
-        let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
-            resource: Some(Resource {
-                attributes: attrs,
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let attr = |key: &str, value: Option<Value>| KeyValue {
-            key: key.to_string(),
-            value: Some(AnyValue { value }),
-        };
-
-        check!(
-            super::resolve_service_name(&with_attrs(vec![attr(
-                "service.name",
-                Some(Value::StringValue("payments".to_string()))
-            )])) == "payments"
-        );
-
-        // The key is matched, not the position.
-        check!(
-            super::resolve_service_name(&with_attrs(vec![
-                attr("other", Some(Value::StringValue("first".to_string()))),
-                attr(
-                    "service.name",
-                    Some(Value::StringValue("payments".to_string()))
-                ),
-            ])) == "payments"
-        );
-
-        // Each way the attribute can be present but unusable.
-        for (name, rp) in [
-            (
-                "no resource at all",
-                pb::otlp_profiles::ResourceProfiles::default(),
-            ),
-            ("no attributes", with_attrs(vec![])),
-            (
-                "a different key",
-                with_attrs(vec![attr(
-                    "host.name",
-                    Some(Value::StringValue("h".into())),
-                )]),
-            ),
-            (
-                "an empty name",
-                with_attrs(vec![attr(
-                    "service.name",
-                    Some(Value::StringValue(String::new())),
-                )]),
-            ),
-            (
-                "a non-string value",
-                with_attrs(vec![attr("service.name", Some(Value::IntValue(7)))]),
-            ),
-            ("no value", with_attrs(vec![attr("service.name", None)])),
-        ] {
-            check!(
-                super::resolve_service_name(&rp) == "unknown_service",
-                "{name} should fall back"
-            );
-        }
-    }
     use assert2::{assert, check};
 
     use super::*;
-    use crate::wire::pb;
+    use crate::{
+        test_support::{otlp_single_frame_dictionary, otlp_value_type},
+        wire::pb,
+    };
 
     #[test]
     fn otlp_resolves_dictionary_into_rawprofile() {
@@ -428,21 +422,12 @@ mod tests {
                 resource::v1::Resource,
             },
             otlp_profiles::{
-                Function, KeyValueAndUnit, Line, Link, Location, Profile, ProfilesDictionary,
-                ResourceProfiles, Sample, ScopeProfiles, Stack, ValueType,
+                KeyValueAndUnit, Link, Profile, ProfilesDictionary, ResourceProfiles, Sample,
+                ScopeProfiles,
             },
         };
 
         let dict = ProfilesDictionary {
-            string_table: vec![
-                String::new(),
-                "samples".into(),
-                "count".into(),
-                "main".into(),
-                "target".into(),
-                "all".into(),
-                "env".into(),
-            ],
             attribute_table: vec![
                 KeyValueAndUnit {
                     key_strindex: 4,
@@ -459,37 +444,23 @@ mod tests {
                     unit_strindex: 0,
                 },
             ],
-            function_table: vec![Function {
-                name_strindex: 3,
-                ..Default::default()
-            }],
             link_table: vec![Link {
                 trace_id: vec![0xaa; 16],
                 span_id: 42_u64.to_be_bytes().to_vec(),
             }],
-            location_table: vec![Location {
-                address: 0x40,
-                lines: vec![Line {
-                    function_index: 0,
-                    line: 1,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-            stack_table: vec![Stack {
-                location_indices: vec![0],
-            }],
-            ..Default::default()
+            ..otlp_single_frame_dictionary(vec![
+                String::new(),
+                "samples".into(),
+                "count".into(),
+                "main".into(),
+                "target".into(),
+                "all".into(),
+                "env".into(),
+            ])
         };
         let profile = Profile {
-            sample_type: Some(ValueType {
-                type_strindex: 1,
-                unit_strindex: 2,
-            }),
-            period_type: Some(ValueType {
-                type_strindex: 1,
-                unit_strindex: 2,
-            }),
+            sample_type: Some(otlp_value_type()),
+            period_type: Some(otlp_value_type()),
             samples: vec![Sample {
                 stack_index: 0,
                 link_index: 0,
@@ -533,14 +504,14 @@ mod tests {
         let out = decode_otlp(&req).unwrap();
 
         assert!(out.len() == 1);
-        for (name, want) in [
-            ("__name__", "samples"),
-            ("env", "prod"),
-            ("__profile_id__", "abcd"),
-            ("process.pid", "42"),
-            ("process.executable.name", "worker"),
+        for label in [
+            krabka_blockstore::LabelPair::new("__name__", "samples"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("__profile_id__", "abcd"),
+            krabka_blockstore::LabelPair::new("process.pid", "42"),
+            krabka_blockstore::LabelPair::new("process.executable.name", "worker"),
         ] {
-            check!(out[0].labels.get(name) == Some(want));
+            check!(out[0].labels.get(&label.name) == Some(label.value.as_str()));
         }
         check!(!out[0].profile.sample_types().is_empty());
         let split = crate::ingest::split_sample_types(&out[0]).unwrap();
@@ -553,30 +524,77 @@ mod tests {
 
 mod attribute_label;
 mod decode_otlp;
-mod hex_lower;
-mod intern_string;
 mod otlp_profile_to_pprof;
 mod otlp_sample_links;
-mod otlp_sample_timestamps;
-mod profile_labels;
 mod resolve_service_name;
 mod sample_labels;
-mod string_table;
-mod table_ref;
-mod table_ref_checked;
-mod value_type;
 
 use attribute_label::attribute_label;
 pub use decode_otlp::decode_otlp;
-use hex_lower::hex_lower;
-use intern_string::intern_string;
+use krabka_blockstore::encode_lower_hex;
 use otlp_profile_to_pprof::otlp_profile_to_pprof;
 use otlp_sample_links::otlp_sample_links;
-use otlp_sample_timestamps::otlp_sample_timestamps;
-use profile_labels::profile_labels;
 use resolve_service_name::resolve_service_name;
 use sample_labels::sample_labels;
-use string_table::string_table;
-use table_ref::table_ref;
-use table_ref_checked::table_ref_checked;
-use value_type::value_type;
+
+pub(crate) fn profile_labels(
+    profile: &pb::otlp_profiles::Profile,
+    dict: &pb::otlp_profiles::ProfilesDictionary,
+) -> Result<Vec<krabka_blockstore::LabelPair>, ProfilesError> {
+    profile
+        .attribute_indices
+        .iter()
+        .map(|idx| attribute_label(*idx, dict))
+        .collect()
+}
+
+pub(crate) fn string_table(dict: &pb::otlp_profiles::ProfilesDictionary) -> Vec<String> {
+    if dict.string_table.is_empty() {
+        vec![String::new()]
+    } else {
+        dict.string_table.clone()
+    }
+}
+
+pub(crate) fn table_ref(index: i32, len: usize) -> u64 {
+    table_ref_checked(index, len, "").unwrap_or(0)
+}
+
+pub(crate) fn value_type(value: pb::otlp_profiles::ValueType) -> krabka_pprof::proto::ValueType {
+    krabka_pprof::proto::ValueType {
+        r#type: i64::from(value.type_strindex),
+        unit: i64::from(value.unit_strindex),
+    }
+}
+
+pub(crate) fn otlp_sample_timestamps(
+    profile: &pb::otlp_profiles::Profile,
+) -> Result<Vec<Vec<i64>>, ProfilesError> {
+    profile
+        .samples
+        .iter()
+        .map(|sample| {
+            sample
+                .timestamps_unix_nano
+                .iter()
+                .map(|timestamp| {
+                    i64::try_from(*timestamp).map_err(|_| {
+                        ProfilesError::Invalid("OTLP sample timestamp overflows i64".to_string())
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+pub(crate) fn table_ref_checked(
+    index: i32,
+    len: usize,
+    message: &str,
+) -> Result<u64, ProfilesError> {
+    let idx = usize::try_from(index).map_err(|_| ProfilesError::Invalid(message.to_string()))?;
+    if idx >= len {
+        return Err(ProfilesError::Invalid(message.to_string()));
+    }
+    Ok(u64::try_from(idx + 1).unwrap_or(u64::MAX))
+}

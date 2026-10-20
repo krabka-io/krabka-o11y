@@ -10,6 +10,12 @@ const COMPACTION_DURATION_BUCKETS: [f64; 11] = [
     0.01, 0.1, 0.5, 1.0, 5.0, 15.0, 60.0, 180.0, 600.0, 1800.0, 3600.0,
 ];
 
+struct CompactionCounterRegistration<'a> {
+    name: &'static str,
+    help: &'static str,
+    counter: &'a Counter,
+}
+
 /// The compaction instruments, as a cheaply-clonable bundle of handles.
 #[derive(Clone, Debug)]
 pub struct CompactionMetrics {
@@ -53,44 +59,48 @@ impl CompactionMetrics {
              which is where the writes actually happen.",
             this.blocks.clone(),
         );
-        for (name, help, counter) in [
-            (
-                "deletion_sweeps",
-                "Block deletion passes run.",
-                &this.deletion_sweeps,
-            ),
-            (
-                "deleted_blocks",
-                "Data blocks deleted.",
-                &this.deleted_blocks,
-            ),
-            (
-                "deleted_sidecars",
-                "Block sidecars deleted.",
-                &this.deleted_sidecars,
-            ),
-            (
-                "deletion_failures",
-                "Block objects that could not be deleted.",
-                &this.deletion_failures,
-            ),
-            (
-                "orphan_sweeps",
-                "Orphan reconciliation passes run.",
-                &this.orphan_sweeps,
-            ),
-            (
-                "orphans_deleted",
-                "Orphaned block objects deleted.",
-                &this.orphans_deleted,
-            ),
-            (
-                "orphan_failures",
-                "Orphaned block objects that could not be deleted.",
-                &this.orphan_failures,
-            ),
+        for registration in [
+            CompactionCounterRegistration {
+                name: "deletion_sweeps",
+                help: "Block deletion passes run.",
+                counter: &this.deletion_sweeps,
+            },
+            CompactionCounterRegistration {
+                name: "deleted_blocks",
+                help: "Data blocks deleted.",
+                counter: &this.deleted_blocks,
+            },
+            CompactionCounterRegistration {
+                name: "deleted_sidecars",
+                help: "Block sidecars deleted.",
+                counter: &this.deleted_sidecars,
+            },
+            CompactionCounterRegistration {
+                name: "deletion_failures",
+                help: "Block objects that could not be deleted.",
+                counter: &this.deletion_failures,
+            },
+            CompactionCounterRegistration {
+                name: "orphan_sweeps",
+                help: "Orphan reconciliation passes run.",
+                counter: &this.orphan_sweeps,
+            },
+            CompactionCounterRegistration {
+                name: "orphans_deleted",
+                help: "Orphaned block objects deleted.",
+                counter: &this.orphans_deleted,
+            },
+            CompactionCounterRegistration {
+                name: "orphan_failures",
+                help: "Orphaned block objects that could not be deleted.",
+                counter: &this.orphan_failures,
+            },
         ] {
-            registry.register(name, help, counter.clone());
+            registry.register(
+                registration.name,
+                registration.help,
+                registration.counter.clone(),
+            );
         }
 
         this
@@ -126,6 +136,22 @@ impl CompactionMetrics {
             .get_or_create(&CompactionStatusLabel::for_outcome(ok))
             .inc();
         self.duration.observe(elapsed.secs_f64());
+    }
+
+    /// Runs one compaction pass and records it with
+    /// [`record_run`](Self::record_run), whichever way it ends.
+    ///
+    /// # Errors
+    ///
+    /// Returns the pass's own error, after recording it as a failed run.
+    pub async fn time_run<Pass, Output, PassError>(&self, pass: Pass) -> Result<Output, PassError>
+    where
+        Pass: Future<Output = Result<Output, PassError>>,
+    {
+        let started = std::time::Instant::now();
+        let outcome = pass.await;
+        self.record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
+        outcome
     }
 
     /// Records the `blocks` a pass wrote.

@@ -29,7 +29,7 @@ use datafusion::{
     physical_plan::ExecutionPlan,
     prelude::{Expr, ParquetReadOptions, SessionConfig, SessionContext, col, lit},
 };
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, stream};
 use krabka_units::prelude::{ByteSize, ByteSizeExt};
 use object_store::ObjectStore;
 use tracing::instrument;
@@ -66,45 +66,75 @@ mod tests {
     use super::*;
     use crate::{
         labels::Labels,
+        log_line_schema::log_line_schema,
         matcher::{LabelMatcher, MatchOp},
     };
 
-    fn log_schema() -> SchemaRef {
-        Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]))
+    struct StoreRootCase {
+        base: &'static str,
+        key: &'static str,
     }
 
-    async fn seeded_store() -> (BlockStore, SchemaRef) {
+    fn memory_block_store() -> BlockStore {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let mut bs = BlockStore::new(object_store, base);
-        let schema = log_schema();
+        BlockStore::new(object_store, url::Url::parse("memory:///").unwrap())
+    }
 
-        let mut api = Labels::new();
-        api.insert("app", "api");
-        let fp = api.fingerprint();
+    fn app_labels(app: &str) -> Labels {
+        let mut labels = Labels::new();
+        labels.insert("app", app);
+        labels
+    }
 
+    struct SeededStore {
+        block_store: BlockStore,
+        schema: SchemaRef,
+    }
+
+    async fn seeded_store() -> SeededStore {
+        let mut bs = memory_block_store();
+        write_two_line_block(
+            &mut bs,
+            TwoLineBlock {
+                labels: &app_labels("api"),
+                object_key: "blocks/b1.parquet",
+                lines: ["hello", "world"],
+            },
+        )
+        .await;
+        SeededStore {
+            block_store: bs,
+            schema: log_line_schema(),
+        }
+    }
+
+    /// One indexed block of a single series: two log lines at 100 and 200.
+    struct TwoLineBlock<'a> {
+        labels: &'a Labels,
+        object_key: &'a str,
+        lines: [&'a str; 2],
+    }
+
+    /// Writes `block` for tenant `t` and indexes its series and block.
+    async fn write_two_line_block(bs: &mut BlockStore, block: TwoLineBlock<'_>) {
+        let schema = log_line_schema();
+        let fp = block.labels.fingerprint();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
                 Arc::new(UInt64Array::from(vec![fp, fp])),
                 Arc::new(Int64Array::from(vec![100_i64, 200])),
-                Arc::new(StringArray::from(vec!["hello", "world"])),
+                Arc::new(StringArray::from(block.lines.to_vec())),
             ],
         )
         .unwrap();
-
         let meta = bs
             .writer()
-            .write_block("t", "blocks/b1.parquet", schema.clone(), &[batch])
+            .write_block("t", block.object_key, schema, &[batch])
             .await
             .unwrap();
-        bs.index_mut().add_series("t", fp, &api);
+        bs.index_mut().add_series("t", fp, block.labels);
         bs.index_mut().add_block(&meta);
-        (bs, schema)
     }
 
     #[tokio::test]
@@ -125,13 +155,17 @@ mod tests {
 
     #[tokio::test]
     async fn scan_returns_rows_for_matching_series() {
-        let (bs, schema) = seeded_store().await;
+        let seeded = seeded_store().await;
+        let bs = seeded.block_store;
+        let schema = seeded.schema;
         let matchers = [LabelMatcher::new("app", MatchOp::Eq, "api")];
 
-        let (ctx, table) = bs
+        let registered = bs
             .scan_context("t", &matchers, 0, 1_000, schema)
             .await
             .unwrap();
+        let ctx = &registered.context;
+        let table = &registered.table;
 
         let df = ctx
             .sql(&format!("SELECT line FROM {table} ORDER BY timestamp"))
@@ -165,16 +199,17 @@ mod tests {
 
     /// Two series in one block, spread over four timestamps each, so a scan can
     /// narrow by series, by window, or by both.
-    async fn two_series_store() -> (BlockStore, SchemaRef, Labels, Labels) {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let mut bs = BlockStore::new(object_store, base);
-        let schema = log_schema();
+    struct TwoSeriesStore {
+        block_store: BlockStore,
+        schema: SchemaRef,
+    }
 
-        let mut api = Labels::new();
-        api.insert("app", "api");
-        let mut web = Labels::new();
-        web.insert("app", "web");
+    async fn two_series_store() -> TwoSeriesStore {
+        let mut bs = memory_block_store();
+        let schema = log_line_schema();
+
+        let api = app_labels("api");
+        let web = app_labels("web");
 
         let fps = [api.fingerprint(); 4]
             .into_iter()
@@ -200,15 +235,20 @@ mod tests {
         bs.index_mut().add_series("t", api.fingerprint(), &api);
         bs.index_mut().add_series("t", web.fingerprint(), &web);
         bs.index_mut().add_block(&meta);
-        (bs, schema, api, web)
+        TwoSeriesStore {
+            block_store: bs,
+            schema,
+        }
     }
 
     async fn scanned_lines(bs: &BlockStore, schema: SchemaRef, app: &str) -> Vec<String> {
         let matchers = [LabelMatcher::new("app", MatchOp::Eq, app)];
-        let (ctx, table) = bs
+        let registered = bs
             .scan_context("t", &matchers, 200, 300, schema)
             .await
             .unwrap();
+        let ctx = &registered.context;
+        let table = &registered.table;
         let df = ctx
             .sql(&format!("SELECT line FROM {table} ORDER BY line"))
             .await
@@ -280,7 +320,9 @@ mod tests {
         bs.index_mut().add_block(&meta);
 
         let matchers = [LabelMatcher::new("app", MatchOp::Eq, "api")];
-        let (ctx, table) = bs.scan_context("t", &matchers, 0, 9, schema).await.unwrap();
+        let registered = bs.scan_context("t", &matchers, 0, 9, schema).await.unwrap();
+        let ctx = &registered.context;
+        let table = &registered.table;
         let plan = ctx
             .sql(&format!("SELECT timestamp FROM {table}"))
             .await
@@ -309,7 +351,9 @@ mod tests {
         // The block holds eight rows; the scan asks for one series over two of
         // the four timestamps. Without the pushed-down predicate every row of
         // the block would come back and the caller would filter afterwards.
-        let (bs, schema, _api, _web) = two_series_store().await;
+        let series = two_series_store().await;
+        let bs = series.block_store;
+        let schema = series.schema;
         assert2::assert!(scanned_lines(&bs, schema.clone(), "api").await == ["a2", "a3"]);
         assert2::assert!(scanned_lines(&bs, schema, "web").await == ["w2", "w3"]);
     }
@@ -351,7 +395,8 @@ mod tests {
     async fn index_returns_the_stores_own_populated_index() {
         // The accessor must hand back the store's real index, not a fresh
         // default one: the seeded `app=api` series must resolve.
-        let (bs, _schema) = seeded_store().await;
+        let seeded = seeded_store().await;
+        let bs = seeded.block_store;
         let mut api = Labels::new();
         api.insert("app", "api");
         let got = bs
@@ -363,7 +408,8 @@ mod tests {
 
     #[tokio::test]
     async fn cloned_blockstore_shares_index_until_mutated() {
-        let (bs, _schema) = seeded_store().await;
+        let seeded = seeded_store().await;
+        let bs = seeded.block_store;
         let cloned = bs.clone();
         assert2::assert!(Arc::ptr_eq(&bs.index, &cloned.index));
 
@@ -390,60 +436,76 @@ mod tests {
 
     #[tokio::test]
     async fn scan_block_keys_reads_named_blocks() {
-        let (bs, schema) = seeded_store().await;
-        let (ctx, table) = bs
+        let seeded = seeded_store().await;
+        let bs = seeded.block_store;
+        let schema = seeded.schema;
+        let registered = bs
             .scan_block_keys(&["blocks/b1.parquet".to_string()], schema)
             .await
             .unwrap();
+        let ctx = &registered.context;
+        let table = &registered.table;
         // Table name is the fixed logical name, not a stub string.
         assert2::assert!(table == "logs");
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(ctx, table).await;
         assert2::assert!(total == 2);
     }
 
     #[tokio::test]
     async fn named_block_scan_resolves_keys_from_the_registered_store_root() {
-        for (base, key) in [
-            ("memory:///evaluation/team", "evaluation/team/block.parquet"),
-            (
-                "memory://bucket/evaluation/team",
-                "evaluation/team/trace block.parquet",
-            ),
+        for case in [
+            StoreRootCase {
+                base: "memory:///evaluation/team",
+                key: "evaluation/team/block.parquet",
+            },
+            StoreRootCase {
+                base: "memory://bucket/evaluation/team",
+                key: "evaluation/team/trace block.parquet",
+            },
         ] {
-            let (mut bs, schema) = seeded_store().await;
+            let seeded = seeded_store().await;
+            let mut bs = seeded.block_store;
+            let schema = seeded.schema;
             bs.object_store()
                 .copy(
                     &ObjectPath::from("blocks/b1.parquet"),
-                    &ObjectPath::from(key),
+                    &ObjectPath::from(case.key),
                 )
                 .await
                 .unwrap();
-            bs.base = Url::parse(base).unwrap();
+            bs.base = Url::parse(case.base).unwrap();
 
-            let (ctx, table) = bs.scan_block_keys(&[key.to_owned()], schema).await.unwrap();
-            assert2::assert!(table_lines(&ctx, &table).await == ["hello", "world"]);
+            let registered = bs
+                .scan_block_keys(&[case.key.to_owned()], schema)
+                .await
+                .unwrap();
+            let ctx = &registered.context;
+            let table = &registered.table;
+            assert2::assert!(table_lines(ctx, table).await == ["hello", "world"]);
         }
     }
 
     #[tokio::test]
     async fn scan_block_row_groups_reads_selected_groups() {
-        let (bs, schema) = seeded_store().await;
-        let (ctx, table) = bs
+        let seeded = seeded_store().await;
+        let bs = seeded.block_store;
+        let schema = seeded.schema;
+        let registered = bs
             .scan_block_row_groups("blocks/b1.parquet", &[0], schema)
             .await
             .unwrap();
+        let ctx = &registered.context;
+        let table = &registered.table;
         assert2::assert!(table == "logs");
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(ctx, table).await;
         assert2::assert!(total == 2);
     }
 
     #[tokio::test]
     async fn block_read_max_reaches_metadata_row_groups_and_empty_like() {
-        let (bs, schema) = seeded_store().await;
+        let seeded = seeded_store().await;
+        let bs = seeded.block_store;
+        let schema = seeded.schema;
         let capped = BlockStore::new_with_block_read_max(
             bs.object_store(),
             url::Url::parse("memory:///").unwrap(),
@@ -495,25 +557,36 @@ mod tests {
         other_gets: AtomicUsize,
     }
 
+    struct RequestSnapshot {
+        heads: usize,
+        suffix_gets: usize,
+        other_gets: usize,
+    }
+
+    struct CountedTestStore {
+        store: Arc<dyn ObjectStore>,
+        requests: Arc<Requests>,
+    }
+
     impl Requests {
-        fn snapshot(&self) -> (usize, usize, usize) {
-            (
-                self.heads.load(Ordering::Relaxed),
-                self.suffix_gets.load(Ordering::Relaxed),
-                self.other_gets.load(Ordering::Relaxed),
-            )
+        fn snapshot(&self) -> RequestSnapshot {
+            RequestSnapshot {
+                heads: self.heads.load(Ordering::Relaxed),
+                suffix_gets: self.suffix_gets.load(Ordering::Relaxed),
+                other_gets: self.other_gets.load(Ordering::Relaxed),
+            }
         }
     }
 
     impl TestStore {
-        fn counting(inner: Arc<dyn ObjectStore>) -> (Arc<dyn ObjectStore>, Arc<Requests>) {
+        fn counting(inner: Arc<dyn ObjectStore>) -> CountedTestStore {
             let requests = Arc::new(Requests::default());
             let store = Arc::new(Self {
                 inner,
                 requests: Arc::clone(&requests),
                 unreachable: false,
             });
-            (store, requests)
+            CountedTestStore { store, requests }
         }
 
         fn unreachable(inner: Arc<dyn ObjectStore>) -> Arc<dyn ObjectStore> {
@@ -540,24 +613,9 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
-    impl ObjectStore for TestStore {
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: object_store::PutPayload,
-            opts: object_store::PutOptions,
-        ) -> object_store::Result<object_store::PutResult> {
-            self.inner.put_opts(location, payload, opts).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &ObjectPath,
-            opts: object_store::PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-            self.inner.put_multipart_opts(location, opts).await
-        }
+    crate::delegate_object_store! {
+        TestStore => inner;
+        forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
 
         async fn get_opts(
             &self,
@@ -590,81 +648,53 @@ mod tests {
                 .fetch_add(ranges.len(), Ordering::Relaxed);
             self.inner.get_ranges(location, ranges).await
         }
-
-        fn delete_stream(
-            &self,
-            locations: futures::stream::BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
-        {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<object_store::ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: object_store::CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
     }
 
     /// One block per series, both indexed, so a test can break one and still
     /// have something the scan should return.
-    async fn two_block_store(object_store: Arc<dyn ObjectStore>) -> (BlockStore, Vec<String>) {
+    struct TwoBlockStore {
+        block_store: BlockStore,
+        keys: Vec<String>,
+    }
+
+    async fn two_block_store(object_store: Arc<dyn ObjectStore>) -> TwoBlockStore {
         let base = url::Url::parse("memory:///").unwrap();
         let mut bs = BlockStore::new(object_store, base);
-        let schema = log_schema();
 
         let mut api = Labels::new();
         api.insert("app", "api");
         let mut web = Labels::new();
         web.insert("app", "web");
 
-        for (labels, key, lines) in [
-            (&api, "blocks/b1.parquet", ["a1", "a2"]),
-            (&web, "blocks/b2.parquet", ["w1", "w2"]),
+        for block in [
+            TwoLineBlock {
+                labels: &api,
+                object_key: "blocks/b1.parquet",
+                lines: ["a1", "a2"],
+            },
+            TwoLineBlock {
+                labels: &web,
+                object_key: "blocks/b2.parquet",
+                lines: ["w1", "w2"],
+            },
         ] {
-            let fp = labels.fingerprint();
-            let batch = RecordBatch::try_new(
-                schema.clone(),
-                vec![
-                    Arc::new(UInt64Array::from(vec![fp, fp])),
-                    Arc::new(Int64Array::from(vec![100_i64, 200])),
-                    Arc::new(StringArray::from(lines.to_vec())),
-                ],
-            )
-            .unwrap();
-            let meta = bs
-                .writer()
-                .write_block("t", key, schema.clone(), &[batch])
-                .await
-                .unwrap();
-            bs.index_mut().add_series("t", fp, labels);
-            bs.index_mut().add_block(&meta);
+            write_two_line_block(&mut bs, block).await;
         }
 
-        (
-            bs,
-            vec![
+        TwoBlockStore {
+            block_store: bs,
+            keys: vec![
                 "blocks/b1.parquet".to_string(),
                 "blocks/b2.parquet".to_string(),
             ],
-        )
+        }
+    }
+
+    /// Counts the rows a `SELECT line` over `table` returns.
+    async fn table_line_count(ctx: &SessionContext, table: &str) -> usize {
+        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
+        let batches = df.collect().await.unwrap();
+        batches.iter().map(RecordBatch::num_rows).sum()
     }
 
     async fn table_lines(ctx: &SessionContext, table: &str) -> Vec<String> {
@@ -691,12 +721,32 @@ mod tests {
             .collect()
     }
 
-    fn skipped_keys(report: &ScanReport) -> Vec<(String, crate::BlockSkipReason)> {
+    struct SkippedBlockKey {
+        object_key: String,
+        reason: crate::BlockSkipReason,
+    }
+
+    impl PartialEq for SkippedBlockKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.object_key == other.object_key && self.reason == other.reason
+        }
+    }
+
+    fn skipped_keys(report: &ScanReport) -> Vec<SkippedBlockKey> {
         report
             .skipped
             .iter()
-            .map(|block| (block.object_key.clone(), block.reason))
+            .map(|block| SkippedBlockKey {
+                object_key: block.object_key.clone(),
+                reason: block.reason,
+            })
             .collect()
+    }
+
+    struct BlockSkipCase {
+        description: &'static str,
+        reason: crate::BlockSkipReason,
+        replacement: Option<Vec<u8>>,
     }
 
     /// The two ways a single block goes bad in ordinary operation. A missing
@@ -706,18 +756,29 @@ mod tests {
     /// a later compactor replaced.
     #[tokio::test]
     async fn a_scan_answers_from_the_readable_blocks_and_reports_the_rest() {
-        let cases: [(&str, crate::BlockSkipReason, Option<Vec<u8>>); 2] = [
-            ("the object is gone", crate::BlockSkipReason::Missing, None),
-            (
-                "the object is not a parquet block",
-                crate::BlockSkipReason::Corrupt,
-                Some(b"PAR1 this is not a parquet file at all".to_vec()),
-            ),
+        let cases = [
+            BlockSkipCase {
+                description: "the object is gone",
+                reason: crate::BlockSkipReason::Missing,
+                replacement: None,
+            },
+            BlockSkipCase {
+                description: "the object is not a parquet block",
+                reason: crate::BlockSkipReason::Corrupt,
+                replacement: Some(b"PAR1 this is not a parquet file at all".to_vec()),
+            },
         ];
 
-        for (case, reason, replacement) in cases {
+        for BlockSkipCase {
+            description,
+            reason,
+            replacement,
+        } in cases
+        {
             let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-            let (bs, keys) = two_block_store(store).await;
+            let paired = two_block_store(store).await;
+            let bs = paired.block_store;
+            let keys = paired.keys;
             let broken = ObjectPath::from("blocks/b2.parquet");
             match replacement {
                 None => bs.object_store().delete(&broken).await.unwrap(),
@@ -730,23 +791,27 @@ mod tests {
             }
 
             let scan = bs
-                .scan_block_keys_skipping_unreadable(&keys, log_schema())
+                .scan_block_keys_skipping_unreadable(&keys, log_line_schema())
                 .await
                 .unwrap();
 
             assert2::assert!(
                 table_lines(&scan.ctx, &scan.table).await == ["a1", "a2"],
-                "{case}"
+                "{description}"
             );
             assert2::assert!(
-                skipped_keys(&scan.report) == [("blocks/b2.parquet".to_string(), reason)],
-                "{case}"
+                skipped_keys(&scan.report)
+                    == [SkippedBlockKey {
+                        object_key: "blocks/b2.parquet".to_string(),
+                        reason,
+                    }],
+                "{description}"
             );
-            assert2::assert!(scan.report.is_partial(), "{case}");
-            assert2::assert!(scan.report.registered, "{case}");
+            assert2::assert!(scan.report.is_partial(), "{description}");
+            assert2::assert!(scan.report.registered, "{description}");
             assert2::assert!(
                 scan.report.warnings()[0].contains("blocks/b2.parquet"),
-                "{case}"
+                "{description}"
             );
         }
     }
@@ -755,7 +820,8 @@ mod tests {
     #[tokio::test]
     async fn an_indexed_scan_skips_the_block_the_index_still_names() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (bs, _keys) = two_block_store(store).await;
+        let paired = two_block_store(store).await;
+        let bs = paired.block_store;
         bs.object_store()
             .delete(&ObjectPath::from("blocks/b2.parquet"))
             .await
@@ -771,7 +837,7 @@ mod tests {
                     matchers: &[LabelMatcher::new("app", MatchOp::Re, "api|web")],
                     min_ts: 0,
                     max_ts: 1_000,
-                    schema: log_schema(),
+                    schema: log_line_schema(),
                 },
             )
             .await
@@ -780,10 +846,10 @@ mod tests {
         assert2::assert!(table_lines(&ctx, TABLE_NAME).await == ["a1", "a2"]);
         assert2::assert!(
             skipped_keys(&report)
-                == [(
-                    "blocks/b2.parquet".to_string(),
-                    crate::BlockSkipReason::Missing
-                )]
+                == [SkippedBlockKey {
+                    object_key: "blocks/b2.parquet".to_string(),
+                    reason: crate::BlockSkipReason::Missing,
+                }]
         );
     }
 
@@ -797,19 +863,21 @@ mod tests {
     #[tokio::test]
     async fn the_strict_scan_still_fails_on_one_unreadable_block() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (bs, keys) = two_block_store(store).await;
+        let paired = two_block_store(store).await;
+        let bs = paired.block_store;
+        let keys = paired.keys;
         bs.object_store()
             .delete(&ObjectPath::from("blocks/b2.parquet"))
             .await
             .unwrap();
 
-        let got = bs.scan_block_keys(&keys, log_schema()).await;
+        let got = bs.scan_block_keys(&keys, log_line_schema()).await;
         let Err(error) = got else {
             panic!("a scan over a missing block must not answer as if it were empty");
         };
-        let (object_key, failure) = error.unreadable_block().expect("the error names the block");
-        assert2::assert!(object_key == "blocks/b2.parquet");
-        assert2::assert!(failure.is_missing());
+        let unreadable = error.unreadable_block().expect("the error names the block");
+        assert2::assert!(unreadable.object_key == "blocks/b2.parquet");
+        assert2::assert!(unreadable.failure.is_missing());
     }
 
     /// A store that cannot be reached says nothing about any block in it.
@@ -818,21 +886,28 @@ mod tests {
     #[tokio::test]
     async fn an_unreachable_store_is_reported_as_a_failure_not_a_skip() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (bs, keys) = two_block_store(Arc::clone(&store)).await;
+        let paired = two_block_store(Arc::clone(&store)).await;
+        let bs = paired.block_store;
+        let keys = paired.keys;
         let unreachable = BlockStore::new(
             TestStore::unreachable(store),
             url::Url::parse("memory:///").unwrap(),
         );
 
         let got = unreachable
-            .scan_block_keys_skipping_unreadable(&keys, log_schema())
+            .scan_block_keys_skipping_unreadable(&keys, log_line_schema())
             .await;
         let Err(error) = got else {
             panic!("an unreachable store must not answer");
         };
         assert2::assert!(error.skipped_block() == None);
         assert2::assert!(!error.is_block_missing());
-        assert2::assert!(error.unreadable_block().map(|(key, _)| key) == Some(keys[0].as_str()));
+        assert2::assert!(
+            error
+                .unreadable_block()
+                .map(|unreadable| unreadable.object_key)
+                == Some(keys[0].as_str())
+        );
         drop(bs);
     }
 
@@ -841,14 +916,18 @@ mod tests {
     /// of the same blocks must not pay for it again.
     #[tokio::test]
     async fn a_second_scan_does_not_re_read_the_footers() {
-        let (store, requests) = TestStore::counting(Arc::new(InMemory::new()));
-        let (bs, keys) = two_block_store(store).await;
+        let counted = TestStore::counting(Arc::new(InMemory::new()));
+        let store = counted.store;
+        let requests = counted.requests;
+        let paired = two_block_store(store).await;
+        let bs = paired.block_store;
+        let keys = paired.keys;
 
         let first = bs
-            .scan_block_keys(&keys, log_schema())
+            .scan_block_keys(&keys, log_line_schema())
             .await
             .unwrap()
-            .0
+            .context
             .sql(&format!("SELECT line FROM {TABLE_NAME}"))
             .await
             .unwrap()
@@ -858,22 +937,22 @@ mod tests {
         let after_first = requests.snapshot();
 
         let second = bs
-            .scan_block_keys(&keys, log_schema())
+            .scan_block_keys(&keys, log_line_schema())
             .await
             .unwrap()
-            .0
+            .context
             .sql(&format!("SELECT line FROM {TABLE_NAME}"))
             .await
             .unwrap()
             .collect()
             .await
             .unwrap();
-        let (heads, suffix_gets, other_gets) = requests.snapshot();
-        let second_scan = (
-            heads - after_first.0,
-            suffix_gets - after_first.1,
-            other_gets - after_first.2,
-        );
+        let second_snapshot = requests.snapshot();
+        let second_scan = RequestSnapshot {
+            heads: second_snapshot.heads - after_first.heads,
+            suffix_gets: second_snapshot.suffix_gets - after_first.suffix_gets,
+            other_gets: second_snapshot.other_gets - after_first.other_gets,
+        };
 
         // Same answer, and the footer reads the first scan paid for are not
         // repeated. The `head`s remain: they are what validates the cached
@@ -888,8 +967,10 @@ mod tests {
         // tail read. The first scan makes 4 bounded reads, a footer and a
         // column chunk per block. The second makes 2, the column chunks the
         // query actually wants.
-        assert2::assert!((after_first.1, after_first.2) == (0, 4));
-        assert2::assert!((second_scan.1, second_scan.2) == (0, 2));
+        assert2::assert!(after_first.suffix_gets == 0);
+        assert2::assert!(after_first.other_gets == 4);
+        assert2::assert!(second_scan.suffix_gets == 0);
+        assert2::assert!(second_scan.other_gets == 2);
         assert2::assert!(!bs.metadata_cache().is_empty());
     }
 
@@ -900,13 +981,16 @@ mod tests {
     #[tokio::test]
     async fn a_rewritten_block_invalidates_its_cached_footer() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (bs, _keys) = two_block_store(Arc::clone(&store)).await;
+        let paired = two_block_store(Arc::clone(&store)).await;
+        let bs = paired.block_store;
         let keys = vec!["blocks/b1.parquet".to_string()];
 
-        let (ctx, table) = bs.scan_block_keys(&keys, log_schema()).await.unwrap();
-        assert2::assert!(table_lines(&ctx, &table).await == ["a1", "a2"]);
+        let registered = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
+        let ctx = &registered.context;
+        let table = &registered.table;
+        assert2::assert!(table_lines(ctx, table).await == ["a1", "a2"]);
 
-        let schema = log_schema();
+        let schema = log_line_schema();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
@@ -921,8 +1005,10 @@ mod tests {
             .await
             .unwrap();
 
-        let (ctx, table) = bs.scan_block_keys(&keys, log_schema()).await.unwrap();
-        assert2::assert!(table_lines(&ctx, &table).await == ["r1", "r2", "r3"]);
+        let registered = bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
+        let ctx = &registered.context;
+        let table = &registered.table;
+        assert2::assert!(table_lines(ctx, table).await == ["r1", "r2", "r3"]);
     }
 
     /// The cache is bounded, and the bound is configuration rather than a
@@ -943,8 +1029,10 @@ mod tests {
     #[tokio::test]
     async fn clones_share_the_footer_cache() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (bs, keys) = two_block_store(store).await;
-        bs.scan_block_keys(&keys, log_schema()).await.unwrap();
+        let paired = two_block_store(store).await;
+        let bs = paired.block_store;
+        let keys = paired.keys;
+        bs.scan_block_keys(&keys, log_line_schema()).await.unwrap();
 
         let clone = bs.clone();
         assert2::assert!(clone.metadata_cache().len() == bs.metadata_cache().len());
@@ -954,40 +1042,88 @@ mod tests {
 
     #[tokio::test]
     async fn scan_with_no_matching_blocks_returns_empty_shape() {
-        let (bs, schema) = seeded_store().await;
+        let seeded = seeded_store().await;
+        let bs = seeded.block_store;
+        let schema = seeded.schema;
         let matchers = [LabelMatcher::new("app", MatchOp::Eq, "absent")];
 
-        let (ctx, table) = bs
+        let registered = bs
             .scan_context("t", &matchers, 0, 1_000, schema)
             .await
             .unwrap();
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let ctx = &registered.context;
+        let table = &registered.table;
+        let total = table_line_count(ctx, table).await;
         assert2::assert!(total == 0);
     }
 }
 
-mod block_probe_concurrency;
-mod block_scan;
 mod block_store;
-mod max_fingerprint_in_list;
 mod probe_blocks;
 mod probed_block_table;
-mod require_blocks;
 mod scan_filter;
 mod scan_report;
-mod scan_table_request;
-mod table_name;
 
-use block_probe_concurrency::BLOCK_PROBE_CONCURRENCY;
-pub use block_scan::BlockScan;
-pub use block_store::BlockStore;
-use max_fingerprint_in_list::MAX_FINGERPRINT_IN_LIST;
+pub use block_store::{BlockStore, RegisteredTable};
 use probe_blocks::probe_blocks;
 use probed_block_table::ProbedBlockTable;
-use require_blocks::require_blocks;
 use scan_filter::scan_filter;
 pub use scan_report::ScanReport;
-pub use scan_table_request::ScanTableRequest;
-use table_name::TABLE_NAME;
+
+/// How many blocks a scan probes at once before registering them.
+pub(crate) const BLOCK_PROBE_CONCURRENCY: usize = 16;
+
+/// Largest resolved fingerprint set still emitted as a series `IN` predicate.
+pub(crate) const MAX_FINGERPRINT_IN_LIST: usize = 1_024;
+
+/// A registered scan: its context, table name, and what it could not read.
+#[derive(Clone)]
+pub struct BlockScan {
+    /// The session the table is registered in.
+    pub ctx: SessionContext,
+    /// The registered table's name.
+    pub table: String,
+    /// What was skipped, if anything.
+    pub report: ScanReport,
+}
+
+/// One named `DataFusion` table registration request over indexed blocks.
+pub struct ScanTableRequest<'a> {
+    pub table_name: &'a str,
+    pub tenant: &'a str,
+    pub matchers: &'a [LabelMatcher],
+    pub min_ts: i64,
+    pub max_ts: i64,
+    pub schema: SchemaRef,
+}
+
+pub(crate) const TABLE_NAME: &str = "logs";
+
+/// Fails unless every one of `keys` is readable.
+///
+/// `DataFusion` resolves each path it is given as a listing, so a key with no
+/// object behind it contributes no files and no error: the scan returns the
+/// other blocks' rows and says nothing. That is a wrong answer delivered
+/// confidently, and it is why this runs before the keys reach `DataFusion`
+/// rather than being left to it.
+///
+/// The footer each probe reads is cached, so on a warm store the check costs
+/// one `head` per block, and one footer read per block the first time. The scan
+/// reads the blocks with the `ObjectMeta` and footer this returns, so it does
+/// not `head` them again.
+///
+/// # Errors
+/// Returns [`BlockStoreError::BlockUnreadable`](crate::BlockStoreError::BlockUnreadable)
+/// for the first block that cannot be read.
+#[instrument(level = "debug", skip_all, fields(keys = keys.len()), err)]
+pub(crate) async fn require_blocks(
+    store: &Arc<dyn ObjectStore>,
+    keys: &[String],
+    max_bytes: ByteSize,
+    cache: &BlockMetadataCache,
+) -> Result<Vec<ProbedBlock>> {
+    probe_blocks::probe_keys(store, keys, max_bytes, cache)
+        .await
+        .into_iter()
+        .collect()
+}

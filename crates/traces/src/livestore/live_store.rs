@@ -1,19 +1,26 @@
+use krabka_traceql::{TagCatalog, TagNameGroups, TagNameSets};
+
 use super::{
     BTreeMap, BTreeSet, EVENT_TAGS, INTRINSIC_TAGS, LINK_TAGS, LiveResult, LiveSource, MemTable,
     RecordBatch, Span, SpanRecord, TracesError, UnixNano, collect_event_values,
     collect_link_values, collect_span_intrinsic_value, collect_trace_intrinsic_values,
-    in_time_range, order_spans, scoped_attribute_tag, span_rows_for_window, trace_spans,
-    typed_value_parts,
+    in_time_range, order_spans, span_rows_for_window, trace_spans, typed_value_parts,
 };
 
 const SPAN_BATCH_ROWS: usize = 8_192;
+
+// Arrival slots preserve duplicate spans and stable query ordering, while allowing
+// expiration to remove an individual span without scanning or shifting a trace.
+type TraceSpans = BTreeMap<usize, Span>;
+type Expiration = (i64, String, [u8; 16], usize);
 
 /// In-memory recent span store keyed by tenant and trace id.
 #[derive(Debug)]
 pub struct LiveStore {
     pub(crate) retention_ns: i64,
     pub(crate) max_start_ns: i64,
-    pub(crate) by_tenant: BTreeMap<String, BTreeMap<[u8; 16], Vec<Span>>>,
+    expirations: BTreeSet<Expiration>,
+    pub(crate) by_tenant: BTreeMap<String, BTreeMap<[u8; 16], TraceSpans>>,
 }
 
 impl LiveStore {
@@ -25,6 +32,7 @@ impl LiveStore {
             retention_ns,
             max_start_ns: i64::MIN,
             by_tenant: BTreeMap::new(),
+            expirations: BTreeSet::new(),
         }
     }
 
@@ -40,12 +48,18 @@ impl LiveStore {
         {
             return;
         }
-        self.by_tenant
-            .entry(rec.tenant)
+        let spans = self
+            .by_tenant
+            .entry(rec.tenant.clone())
             .or_default()
             .entry(rec.span.trace_id)
-            .or_default()
-            .push(rec.span);
+            .or_default();
+        let slot = spans.last_key_value().map_or(0, |(slot, _)| slot + 1);
+        if self.retention_ns != i64::MAX {
+            self.expirations
+                .insert((rec.span.start_ns, rec.tenant, rec.span.trace_id, slot));
+        }
+        spans.insert(slot, rec.span);
     }
 
     /// Return recent spans for one trace, ordered by start time and span id.
@@ -55,8 +69,7 @@ impl LiveStore {
             .by_tenant
             .get(tenant)
             .and_then(|traces| traces.get(trace_id))
-            .cloned()
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |spans| spans.values().cloned().collect());
         order_spans(&mut spans);
         spans
     }
@@ -82,7 +95,7 @@ impl LiveStore {
         if let Some(traces) = self.by_tenant.get(tenant) {
             for spans in traces.values() {
                 let mut in_range = spans
-                    .iter()
+                    .values()
                     .filter(|span| in_time_range(span, UnixNano(start_ns), UnixNano(end_ns)))
                     .collect::<Vec<_>>();
                 if in_range.is_empty() {
@@ -91,7 +104,7 @@ impl LiveStore {
                 order_spans(&mut in_range);
                 // Nested sets describe this trace's selected rows; root columns
                 // describe its complete span set, even when the window clips it.
-                for row in span_rows_for_window(&in_range, spans) {
+                for row in span_rows_for_window(&in_range, spans.values()) {
                     rows.push(row);
                     if rows.len() == SPAN_BATCH_ROWS {
                         batches.push(
@@ -117,13 +130,24 @@ impl LiveStore {
             return;
         }
         let cutoff = self.max_start_ns.saturating_sub(self.retention_ns);
-        self.by_tenant.retain(|_, traces| {
-            traces.retain(|_, spans| {
-                spans.retain(|span| span.start_ns >= cutoff);
-                !spans.is_empty()
-            });
-            !traces.is_empty()
-        });
+        // Only visit expired entries. A frontier advance with no expiration
+        // checks the first key, regardless of the number of retained spans.
+        while self
+            .expirations
+            .first()
+            .is_some_and(|entry| entry.0 < cutoff)
+        {
+            let (_, tenant, trace_id, slot) = self.expirations.pop_first().unwrap();
+            let traces = self.by_tenant.get_mut(&tenant).expect("indexed tenant");
+            let spans = traces.get_mut(&trace_id).expect("indexed trace");
+            spans.remove(&slot);
+            if spans.is_empty() {
+                traces.remove(&trace_id);
+            }
+            if traces.is_empty() {
+                self.by_tenant.remove(&tenant);
+            }
+        }
     }
 }
 
@@ -148,6 +172,17 @@ impl LiveSource for LiveStore {
         Ok((!spans.is_empty()).then(|| trace_spans(trace_id, &spans)))
     }
 
+    fn block_builder_frontier_ns(&self, _tenant: &str) -> i64 {
+        if self.max_start_ns == i64::MIN {
+            0
+        } else {
+            self.max_start_ns
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TagCatalog for LiveStore {
     async fn tag_names(
         &self,
         tenant: &str,
@@ -155,84 +190,46 @@ impl LiveSource for LiveStore {
         start_ns: i64,
         end_ns: i64,
     ) -> LiveResult<Vec<krabka_traceql::ScopedTag>> {
-        let mut resource = BTreeSet::new();
-        let mut span = BTreeSet::new();
-        let mut event = BTreeSet::new();
-        let mut link = BTreeSet::new();
-        let mut instrumentation = BTreeSet::new();
+        let mut tags = TagNameSets::default();
         let mut has_spans = false;
         if let Some(traces) = self.by_tenant.get(tenant) {
             for item in traces
                 .values()
-                .flatten()
+                .flat_map(|spans| spans.values())
                 .filter(|item| in_time_range(item, UnixNano(start_ns), UnixNano(end_ns)))
             {
                 has_spans = true;
-                resource.extend(item.resource_attrs.iter().map(|attr| attr.key.clone()));
-                span.extend(item.span_attrs.iter().map(|attr| attr.key.clone()));
+                tags.resource
+                    .extend(item.resource_attrs.iter().map(|attr| attr.key.clone()));
+                tags.span
+                    .extend(item.span_attrs.iter().map(|attr| attr.key.clone()));
                 for event_record in &item.events {
-                    event.extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
-                    event.extend(event_record.attrs.iter().map(|attr| attr.key.clone()));
+                    tags.event
+                        .extend(EVENT_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.event
+                        .extend(event_record.attrs.iter().map(|attr| attr.key.clone()));
                 }
                 for link_record in &item.links {
-                    link.extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
-                    link.extend(link_record.attrs.iter().map(|attr| attr.key.clone()));
+                    tags.link
+                        .extend(LINK_TAGS.iter().map(|tag| (*tag).to_string()));
+                    tags.link
+                        .extend(link_record.attrs.iter().map(|attr| attr.key.clone()));
                 }
-                if !item.instrumentation_scope.is_empty() {
-                    instrumentation.insert("instrumentation:name".to_string());
-                }
-                if !item.instrumentation_version.is_empty() {
-                    instrumentation.insert("instrumentation:version".to_string());
-                }
+                tags.add_instrumentation(
+                    &item.instrumentation_scope,
+                    &item.instrumentation_version,
+                );
             }
         }
 
-        let mut out = Vec::new();
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Resource)) && !resource.is_empty()
-        {
-            out.push(krabka_traceql::ScopedTag {
-                scope: krabka_traceql::TagScope::Resource,
-                tags: resource.into_iter().collect(),
-            });
+        Ok(TagNameGroups {
+            resource: tags.resource,
+            span: tags.span,
+            event: tags.event,
+            link: tags.link,
+            instrumentation: tags.instrumentation,
         }
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Span)) && !span.is_empty() {
-            out.push(krabka_traceql::ScopedTag {
-                scope: krabka_traceql::TagScope::Span,
-                tags: span.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Event)) && !event.is_empty() {
-            out.push(krabka_traceql::ScopedTag {
-                scope: krabka_traceql::TagScope::Event,
-                tags: event.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Link)) && !link.is_empty() {
-            out.push(krabka_traceql::ScopedTag {
-                scope: krabka_traceql::TagScope::Link,
-                tags: link.into_iter().collect(),
-            });
-        }
-        if matches!(scope, None | Some(krabka_traceql::TagScope::Intrinsic)) && has_spans {
-            out.push(krabka_traceql::ScopedTag {
-                scope: krabka_traceql::TagScope::Intrinsic,
-                tags: INTRINSIC_TAGS
-                    .iter()
-                    .map(|tag| (*tag).to_string())
-                    .collect(),
-            });
-        }
-        if matches!(
-            scope,
-            None | Some(krabka_traceql::TagScope::Instrumentation)
-        ) && !instrumentation.is_empty()
-        {
-            out.push(krabka_traceql::ScopedTag {
-                scope: krabka_traceql::TagScope::Instrumentation,
-                tags: instrumentation.into_iter().collect(),
-            });
-        }
-        Ok(out)
+        .into_scoped_tags(scope, has_spans, INTRINSIC_TAGS))
     }
 
     async fn tag_values(
@@ -242,20 +239,22 @@ impl LiveSource for LiveStore {
         start_ns: i64,
         end_ns: i64,
     ) -> LiveResult<Vec<krabka_traceql::TypedValue>> {
-        let tag = tag.strip_prefix('.').unwrap_or(tag);
-        let (attr_tag, attr_scope) = scoped_attribute_tag(tag);
+        let parsed_tag = krabka_traceql::TagScope::parse_attribute_tag(tag);
+        let tag = parsed_tag.tag;
+        let attr_tag = parsed_tag.attribute.tag;
+        let attr_scope = parsed_tag.attribute.scope;
         let mut values = BTreeSet::new();
         if let Some(traces) = self.by_tenant.get(tenant) {
             for spans in traces.values() {
                 let in_range = spans
-                    .iter()
+                    .values()
                     .filter(|span| in_time_range(span, UnixNano(start_ns), UnixNano(end_ns)))
                     .collect::<Vec<_>>();
                 collect_trace_intrinsic_values(&in_range, tag, &mut values);
             }
             for span in traces
                 .values()
-                .flatten()
+                .flat_map(|spans| spans.values())
                 .filter(|item| in_time_range(item, UnixNano(start_ns), UnixNano(end_ns)))
             {
                 if matches!(attr_scope, None | Some(krabka_traceql::TagScope::Resource)) {
@@ -278,24 +277,68 @@ impl LiveSource for LiveStore {
                 collect_event_values(span, tag, &mut values);
                 collect_link_values(span, tag, &mut values);
                 if tag == "instrumentation:name" && !span.instrumentation_scope.is_empty() {
-                    values.insert(("string".into(), span.instrumentation_scope.clone()));
+                    values.insert(krabka_traceql::TypedValue::new(
+                        "string",
+                        span.instrumentation_scope.clone(),
+                    ));
                 }
                 if tag == "instrumentation:version" && !span.instrumentation_version.is_empty() {
-                    values.insert(("string".into(), span.instrumentation_version.clone()));
+                    values.insert(krabka_traceql::TypedValue::new(
+                        "string",
+                        span.instrumentation_version.clone(),
+                    ));
                 }
             }
         }
-        Ok(values
-            .into_iter()
-            .map(|(type_, value)| krabka_traceql::TypedValue { type_, value })
-            .collect())
+        Ok(values.into_iter().collect())
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use assert2::assert;
+
+    use super::*;
+
+    #[test]
+    fn expiration_index_is_bounded_and_empty_tenants_are_pruned() {
+        let mut store = LiveStore::new(10);
+        for time in 0..1_000 {
+            store.ingest(SpanRecord {
+                tenant: format!("tenant-{time}"),
+                span: Span {
+                    start_ns: time,
+                    ..Span::default()
+                },
+            });
+            assert!(store.expirations.len() == store.by_tenant.len());
+            assert!(store.expirations.len() <= 11);
+        }
+        store.ingest(SpanRecord {
+            tenant: "last".into(),
+            span: Span {
+                start_ns: i64::MAX,
+                ..Span::default()
+            },
+        });
+        assert!(store.by_tenant.len() == 1);
+        assert!(store.expirations.len() == 1);
+        assert!(store.by_tenant.contains_key("last"));
     }
 
-    fn block_builder_frontier_ns(&self, _tenant: &str) -> i64 {
-        if self.max_start_ns == i64::MIN {
-            0
-        } else {
-            self.max_start_ns
+    #[test]
+    fn unbounded_retention_does_not_build_an_expiration_index() {
+        let mut store = LiveStore::new(i64::MAX);
+        for time in [i64::MIN, 0, i64::MAX, -1] {
+            store.ingest(SpanRecord {
+                tenant: "t".into(),
+                span: Span {
+                    start_ns: time,
+                    ..Span::default()
+                },
+            });
         }
+        assert!(store.expirations.is_empty());
+        assert!(store.trace_by_id("t", &[0; 16]).len() == 4);
     }
 }

@@ -1,27 +1,57 @@
 use super::{
     ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
-    Response, State, authorized_tenant_from_headers, json, prometheus_alerts_json,
-    success_data_response,
+    RequestAuth, Response, State, json, prometheus_alerts_json, success_data_response,
+    tenant_ruler_rules, tenant_ruler_rules::TenantRuleSnapshot,
 };
 
-pub(crate) async fn alerts<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+#[allow(clippy::result_large_err)]
+pub(super) fn tenant_ruler_rules_for_request<S: MetricStore>(
+    state: &PrometheusApiState<S>,
+    headers: &HeaderMap,
+    principal: &Principal,
+) -> Result<TenantRuleSnapshot, Response> {
+    tenant_ruler_rules(state, RequestAuth { headers, principal })
+        .map_err(IntoResponse::into_response)
+}
+
+macro_rules! tenant_rules_or_return {
+    ($state:expr, $headers:expr, $principal:expr) => {
+        match $crate::http_api::rules::alerts::tenant_ruler_rules_for_request(
+            $state, $headers, $principal,
+        ) {
+            Ok(tenant_rules) => tenant_rules,
+            Err(response) => return response,
+        }
     };
-    let rules = match state.ruler_rules.read() {
-        Ok(rules) => rules.get(&tenant).cloned().unwrap_or_default(),
-        Err(_) => return ApiError::internal("ruler rules lock poisoned").into_response(),
+}
+
+pub(super) use tenant_rules_or_return;
+
+macro_rules! tenant_rule_handler {
+    ($name:ident, $state:ident, $snapshot:ident, $body:block) => {
+        pub(crate) async fn $name<S: MetricStore>(
+            State(state): State<Arc<PrometheusApiState<S>>>,
+            Extension(principal): Extension<Principal>,
+            headers: HeaderMap,
+        ) -> Response {
+            let $snapshot = $crate::http_api::rules::alerts::tenant_rules_or_return!(
+                &state, &headers, &principal
+            );
+            #[allow(unused_variables)]
+            let $state = state;
+            $body
+        }
     };
-    let alerts = match prometheus_alerts_json(&state, &tenant, rules).await {
+}
+
+pub(super) use tenant_rule_handler;
+
+tenant_rule_handler!(alerts, state, snapshot, {
+    let alerts = match prometheus_alerts_json(&state, &snapshot.tenant, snapshot.rules).await {
         Ok(alerts) => alerts,
         Err(error) => return ApiError::from(error).into_response(),
     };
     success_data_response(json!({
         "alerts": alerts,
     }))
-}
+});

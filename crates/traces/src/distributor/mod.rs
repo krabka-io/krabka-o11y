@@ -1,30 +1,29 @@
 //! Distributor role: push-door HTTP routes into the traces WAL.
 
-use std::{collections::BTreeMap, io::Read, net::SocketAddr, sync::Arc};
+use std::{io::Read, net::SocketAddr, sync::Arc};
 
 use axum::{
     Router,
     body::Bytes,
-    extract::{Extension, State},
+    extract::Extension,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
 use flate2::read::GzDecoder;
 use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
-use krabka_client_producer::{Header, Producer, ProducerRecord};
+use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_observability::{
     server_security::{
         GrpcAuthenticationLayer, Principal, ServerListener, ServerSecurity, authorize_tenant,
         grpc_incoming, serve_router,
     },
-    wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
+    wal_produce::{
+        ProduceWindow, WalBatchError, wal_record_headers, write_batch_pipelined,
+        write_batch_serially,
+    },
 };
-use krabka_units::{
-    ByteSize,
-    convert::{ByteSizeExt as _, StdDurationExt as _},
-    mebibytes,
-};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _, mebibytes};
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{
         ExportTraceServiceRequest, ExportTraceServiceResponse,
@@ -40,9 +39,15 @@ use tonic::{
 };
 use tracing::Instrument as _;
 
+/// A bound listener and the task that keeps it serving.
+pub struct RunningServer {
+    pub bound_addr: SocketAddr,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
 use crate::{
     error::{TracesError, tempo_error_response},
-    limits::{IngestEnforcer, LimitError, Limits, OverridesProvider},
+    limits::{IngestEnforcer, LimitError, Limits, MeasuredAttribute, OverridesProvider},
     metrics::ServiceMetrics,
     span::{AttrValue, KeyValue, Span},
     wal::{SpanRecord, TRACES_WAL_TOPIC, partition_key},
@@ -78,6 +83,10 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::*;
+    use crate::wire::{
+        jaeger::thrift_fixture::encode_binary_sample_batch,
+        jaeger_grpc::post_spans_fixture::{checkout_grpc_span, checkout_post_spans_request},
+    };
 
     // The push doors read their principal from the request extensions, where
     // the authentication layer puts it. The tests drive the router behind the
@@ -152,11 +161,32 @@ mod tests {
 
     /// A case name, the raw tenant header or none, and the tenant the push is
     /// stored as, or none when the push is rejected.
-    type TenantHeaderCase = (&'static str, Option<&'static [u8]>, Option<&'static str>);
+    struct TenantHeaderCase {
+        name: &'static str,
+        header: Option<&'static [u8]>,
+        stored_tenant: Option<&'static str>,
+    }
 
     #[derive(Default)]
     struct RecordingSink {
         records: Mutex<Vec<SpanRecord>>,
+    }
+
+    struct DistributorTestState {
+        state: Arc<DistributorState>,
+        sink: Arc<RecordingSink>,
+    }
+
+    struct ResponseWithSink {
+        response: Response,
+        sink: Arc<RecordingSink>,
+    }
+
+    struct ThreeTenantResponses {
+        first: Response,
+        second: Response,
+        other_tenant: Response,
+        sink: Arc<RecordingSink>,
     }
 
     #[async_trait::async_trait]
@@ -181,24 +211,32 @@ mod tests {
         }
     }
 
-    fn test_state() -> (Arc<DistributorState>, Arc<RecordingSink>) {
+    #[allow(clippy::needless_pass_by_value)]
+    fn assert_accepted_push(response: Response, sink: &RecordingSink, span_name: &str) {
+        check!(response.status() == StatusCode::ACCEPTED);
+        assert2::assert!(sink.count() == 1);
+        assert2::assert!(sink.span_name(0) == span_name.to_string());
+    }
+
+    fn test_state() -> DistributorTestState {
         test_state_with_limits(crate::limits::Limits::default())
     }
 
-    fn test_state_with_limits(
-        limits: crate::limits::Limits,
-    ) -> (Arc<DistributorState>, Arc<RecordingSink>) {
+    fn test_state_with_limits(limits: crate::limits::Limits) -> DistributorTestState {
         test_state_with_overrides(crate::limits::OverridesProvider::new(limits))
     }
 
     fn test_state_with_overrides(
         overrides: crate::limits::OverridesProvider,
-    ) -> (Arc<DistributorState>, Arc<RecordingSink>) {
+    ) -> DistributorTestState {
         let sink = Arc::new(RecordingSink::default());
         let mut state = DistributorState::new(sink.clone());
         state.overrides = overrides;
         state.max_decompressed = mebibytes(1);
-        (Arc::new(state), sink)
+        DistributorTestState {
+            state: Arc::new(state),
+            sink,
+        }
     }
 
     fn otlp_body() -> Vec<u8> {
@@ -252,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_returns_200_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -272,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_returns_export_response_protobuf() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -300,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_accepts_application_protobuf_content_type() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -319,7 +357,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_accepts_case_insensitive_gzip_encoding() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -338,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_push_rejects_declared_non_protobuf_content_type() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -357,7 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn otlp_grpc_export_appends_and_returns_success() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let service = OtlpGrpcService::new(state);
         let mut req = GrpcRequest::new(ExportTraceServiceRequest {
             resource_spans: TracesData::decode(otlp_body().as_slice())
@@ -377,44 +415,31 @@ mod tests {
 
     #[tokio::test]
     async fn jaeger_grpc_post_spans_appends_and_returns_success() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let service = JaegerGrpcService::new(state);
-        let mut req = GrpcRequest::new(crate::wire::jaeger_grpc::api_v2::PostSpansRequest {
-            batch: Some(crate::wire::jaeger_grpc::api_v2::Batch {
-                process: Some(crate::wire::jaeger_grpc::api_v2::Process {
-                    service_name: "checkout".into(),
-                    tags: Vec::new(),
+        let mut req = GrpcRequest::new(checkout_post_spans_request(
+            crate::wire::jaeger_grpc::api_v2::Span {
+                start_time: Some(prost_types::Timestamp {
+                    seconds: 1,
+                    nanos: 2_000,
                 }),
-                spans: vec![crate::wire::jaeger_grpc::api_v2::Span {
-                    trace_id: vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: vec![0, 0, 0, 0, 0, 0, 0, 3],
-                    operation_name: "GET /grpc".into(),
-                    start_time: Some(prost_types::Timestamp {
-                        seconds: 1,
-                        nanos: 2_000,
-                    }),
-                    duration: Some(prost_types::Duration {
-                        seconds: 0,
-                        nanos: 25_000,
-                    }),
-                    tags: vec![
-                        crate::wire::jaeger_grpc::api_v2::KeyValue {
-                            key: "span.kind".into(),
-                            v_type: crate::wire::jaeger_grpc::api_v2::ValueType::String.into(),
-                            v_str: "server".into(),
-                            ..Default::default()
-                        },
-                        crate::wire::jaeger_grpc::api_v2::KeyValue {
-                            key: "error".into(),
-                            v_type: crate::wire::jaeger_grpc::api_v2::ValueType::Bool.into(),
-                            v_bool: true,
-                            ..Default::default()
-                        },
-                    ],
-                    ..Default::default()
-                }],
-            }),
-        });
+                tags: vec![
+                    crate::wire::jaeger_grpc::api_v2::KeyValue {
+                        key: "span.kind".into(),
+                        v_type: crate::wire::jaeger_grpc::api_v2::ValueType::String.into(),
+                        v_str: "server".into(),
+                        ..Default::default()
+                    },
+                    crate::wire::jaeger_grpc::api_v2::KeyValue {
+                        key: "error".into(),
+                        v_type: crate::wire::jaeger_grpc::api_v2::ValueType::Bool.into(),
+                        v_bool: true,
+                        ..Default::default()
+                    },
+                ],
+                ..checkout_grpc_span()
+            },
+        ));
         req.metadata_mut()
             .insert(TENANT_HEADER, "tenant-a".parse().unwrap());
         req.extensions_mut().insert(Principal::Unauthenticated);
@@ -429,7 +454,7 @@ mod tests {
 
     #[tokio::test]
     async fn tempo_push_uses_anonymous_tenant_when_header_absent() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -446,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn zipkin_push_returns_202_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let body = r#"[{"traceId":"0000000000000001","id":"0000000000000002","name":"x","timestamp":1,"duration":1}]"#;
         let resp = router(state)
             .oneshot(
@@ -466,7 +491,7 @@ mod tests {
 
     #[tokio::test]
     async fn jaeger_push_returns_202_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -480,14 +505,12 @@ mod tests {
             )
             .await
             .unwrap();
-        check!(resp.status() == StatusCode::ACCEPTED);
-        assert2::assert!(sink.count() == 1);
-        assert2::assert!(sink.span_name(0) == "GET /".to_string());
+        assert_accepted_push(resp, &sink, "GET /");
     }
 
     #[tokio::test]
     async fn jaeger_binary_thrift_push_returns_202_and_appends() {
-        let (state, sink) = test_state();
+        let DistributorTestState { state, sink } = test_state();
         let resp = router(state)
             .oneshot(
                 Request::builder()
@@ -495,15 +518,13 @@ mod tests {
                     .uri("/api/traces")
                     .header("content-type", "application/vnd.apache.thrift.binary")
                     .header(TENANT_HEADER, "t")
-                    .body(Body::from(jaeger_binary_batch()))
+                    .body(Body::from(encode_binary_sample_batch()))
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        check!(resp.status() == StatusCode::ACCEPTED);
-        assert2::assert!(sink.count() == 1);
-        assert2::assert!(sink.span_name(0) == "GET /binary".to_string());
+        assert_accepted_push(resp, &sink, "GET /binary");
     }
 
     /// A datagram names no tenant, so the policy alone decides where its spans
@@ -512,34 +533,48 @@ mod tests {
     #[tokio::test]
     async fn a_jaeger_compact_datagram_takes_the_tenant_its_policy_gives() {
         let datagram = crate::wire::jaeger::test_support::encode_sample_batch();
+        struct DatagramPolicyCase {
+            name: &'static str,
+            policy: TenantPolicy,
+            stored_tenant: Option<&'static str>,
+        }
         let cases = [
-            ("anonymous", TenantPolicy::anonymous(), Some("anonymous")),
-            (
-                "fallback",
-                TenantPolicy::Fallback(TenantId::new("tenant-a").unwrap()),
-                Some("tenant-a"),
-            ),
-            ("required", TenantPolicy::Required, None),
+            DatagramPolicyCase {
+                name: "anonymous",
+                policy: TenantPolicy::anonymous(),
+                stored_tenant: Some("anonymous"),
+            },
+            DatagramPolicyCase {
+                name: "fallback",
+                policy: TenantPolicy::Fallback(TenantId::new("tenant-a").unwrap()),
+                stored_tenant: Some("tenant-a"),
+            },
+            DatagramPolicyCase {
+                name: "required",
+                policy: TenantPolicy::Required,
+                stored_tenant: None,
+            },
         ];
 
-        for (name, policy, stored) in cases {
+        for case in cases {
             let sink = Arc::new(RecordingSink::default());
             let mut state = DistributorState::new(sink.clone());
-            state.tenant_policy = policy;
+            state.tenant_policy = case.policy;
 
             let result = handle_jaeger_compact_datagram(&state, &datagram).await;
 
-            if let Some(tenant) = stored {
-                check!(result.is_ok(), "{name}");
-                check!(sink.count() == 1, "{name}");
-                check!(sink.tenant(0) == tenant, "{name}");
-                check!(sink.span_name(0) == "GET /", "{name}");
+            if let Some(tenant) = case.stored_tenant {
+                check!(result.is_ok(), "{}", case.name);
+                check!(sink.count() == 1, "{}", case.name);
+                check!(sink.tenant(0) == tenant, "{}", case.name);
+                check!(sink.span_name(0) == "GET /", "{}", case.name);
             } else {
                 check!(
                     let Err(TracesError::Tenant(TenantResolveError::Missing)) = result,
-                    "{name}"
+                    "{}",
+                    case.name
                 );
-                check!(sink.count() == 0, "{name}");
+                check!(sink.count() == 0, "{}", case.name);
             }
         }
     }
@@ -551,62 +586,118 @@ mod tests {
     #[tokio::test]
     async fn the_jaeger_thrift_door_resolves_its_tenant_like_every_door() {
         let cases: [TenantHeaderCase; 5] = [
-            ("absent", None, Some("anonymous")),
-            ("empty", Some(b""), Some("anonymous")),
-            ("named", Some(b"tenant-a"), Some("tenant-a")),
-            ("separator", Some(b"a/b"), None),
-            ("not UTF-8", Some(b"\xff"), None),
+            TenantHeaderCase {
+                name: "absent",
+                header: None,
+                stored_tenant: Some("anonymous"),
+            },
+            TenantHeaderCase {
+                name: "empty",
+                header: Some(b""),
+                stored_tenant: Some("anonymous"),
+            },
+            TenantHeaderCase {
+                name: "named",
+                header: Some(b"tenant-a"),
+                stored_tenant: Some("tenant-a"),
+            },
+            TenantHeaderCase {
+                name: "separator",
+                header: Some(b"a/b"),
+                stored_tenant: None,
+            },
+            TenantHeaderCase {
+                name: "not UTF-8",
+                header: Some(b"\xff"),
+                stored_tenant: None,
+            },
         ];
 
-        for (name, value, stored) in cases {
-            let (state, sink) = test_state();
+        for case in cases {
+            let DistributorTestState { state, sink } = test_state();
             let mut request = Request::builder()
                 .method("POST")
                 .uri("/api/traces")
                 .header("content-type", "application/vnd.apache.thrift.binary");
-            if let Some(value) = value {
+            if let Some(value) = case.header {
                 request = request.header(TENANT_HEADER, HeaderValue::from_bytes(value).unwrap());
             }
             let resp = router(state)
-                .oneshot(request.body(Body::from(jaeger_binary_batch())).unwrap())
+                .oneshot(
+                    request
+                        .body(Body::from(encode_binary_sample_batch()))
+                        .unwrap(),
+                )
                 .await
                 .unwrap();
 
-            if let Some(tenant) = stored {
-                check!(resp.status() == StatusCode::ACCEPTED, "{name}");
-                check!(sink.count() == 1, "{name}");
-                check!(sink.tenant(0) == tenant, "{name}");
+            if let Some(tenant) = case.stored_tenant {
+                check!(resp.status() == StatusCode::ACCEPTED, "{}", case.name);
+                check!(sink.count() == 1, "{}", case.name);
+                check!(sink.tenant(0) == tenant, "{}", case.name);
             } else {
-                let expected = TenantId::resolve(value, &TenantPolicy::anonymous())
+                let expected = TenantId::resolve(case.header, &TenantPolicy::anonymous())
                     .expect_err("the case is malformed")
                     .to_string();
-                check!(resp.status() == StatusCode::BAD_REQUEST, "{name}");
+                check!(resp.status() == StatusCode::BAD_REQUEST, "{}", case.name);
                 let body = resp.into_body().collect().await.unwrap().to_bytes();
-                check!(body.as_ref() == expected.as_bytes(), "{name}");
-                check!(sink.count() == 0, "{name}");
+                check!(body.as_ref() == expected.as_bytes(), "{}", case.name);
+                check!(sink.count() == 0, "{}", case.name);
             }
         }
     }
 
+    async fn post_otlp(app: Router, tenant: Option<&str>, body: Vec<u8>) -> Response {
+        let mut request = Request::builder().method("POST").uri("/v1/traces");
+        if let Some(tenant) = tenant {
+            request = request.header(TENANT_HEADER, tenant);
+        }
+        app.oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    // Push one two-span request, with no tenant header, under `limits`.
+    async fn post_two_spans_with_limits(limits: crate::limits::Limits) -> ResponseWithSink {
+        let test_state = test_state_with_limits(limits);
+        let response = post_otlp(router(test_state.state), None, otlp_body_with_spans(2)).await;
+        ResponseWithSink {
+            response,
+            sink: test_state.sink,
+        }
+    }
+
+    // The response body is Tempo's error JSON, and its message mentions `needle`.
+    async fn check_error_body_mentions(resp: Response, needle: &str) {
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        check!(json["status"] == "error");
+        check!(
+            json["error"]
+                .as_str()
+                .is_some_and(|message| message.contains(needle))
+        );
+    }
+
+    async fn expect_two_spans_rejected(limits: crate::limits::Limits, error_message: Option<&str>) {
+        let ResponseWithSink { response, sink } = post_two_spans_with_limits(limits).await;
+        assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
+        if let Some(error_message) = error_message {
+            check_error_body_mentions(response, error_message).await;
+        }
+        assert2::assert!(sink.count() == 0);
+    }
+
     #[tokio::test]
     async fn over_span_limit_is_400() {
-        let limits = crate::limits::Limits {
-            max_spans_per_request: 1,
-            ..crate::limits::Limits::default()
-        };
-        let (state, sink) = test_state_with_limits(limits);
-        let resp = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        assert2::assert!(sink.count() == 0);
+        expect_two_spans_rejected(
+            crate::limits::Limits {
+                max_spans_per_request: 1,
+                ..crate::limits::Limits::default()
+            },
+            None,
+        )
+        .await;
     }
 
     /// A request of exactly the cap is appended. The cap and its refusal differ
@@ -618,17 +709,10 @@ mod tests {
             max_spans_per_request: 2,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
-        let resp = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let ResponseWithSink {
+            response: resp,
+            sink,
+        } = post_two_spans_with_limits(limits).await;
 
         check!(resp.status() == StatusCode::OK);
         check!(sink.count() == 2);
@@ -636,33 +720,14 @@ mod tests {
 
     #[tokio::test]
     async fn shared_trace_span_limit_is_enforced_before_append() {
-        let limits = crate::limits::Limits {
-            max_spans_per_trace: 1,
-            ..crate::limits::Limits::default()
-        };
-        let (state, sink) = test_state_with_limits(limits);
-
-        let resp = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        check!(json["status"] == "error");
-        check!(
-            json["error"]
-                .as_str()
-                .is_some_and(|message| message.contains("max spans per trace"))
-        );
-        check!(sink.count() == 0);
+        expect_two_spans_rejected(
+            crate::limits::Limits {
+                max_spans_per_trace: 1,
+                ..crate::limits::Limits::default()
+            },
+            Some("max spans per trace"),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -675,32 +740,11 @@ overrides:
 ",
         )
         .unwrap();
-        let (state, sink) = test_state_with_overrides(overrides);
+        let DistributorTestState { state, sink } = test_state_with_overrides(overrides);
         let app = router(state);
 
-        let tight = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-tight")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let loose = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-loose")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let tight = post_otlp(app.clone(), Some("tenant-tight"), otlp_body_with_spans(2)).await;
+        let loose = post_otlp(app, Some("tenant-loose"), otlp_body_with_spans(2)).await;
 
         check!(tight.status() == StatusCode::BAD_REQUEST);
         check!(loose.status() == StatusCode::OK);
@@ -709,116 +753,42 @@ overrides:
         assert2::assert!(sink.tenant(1) == "tenant-loose".to_string());
     }
 
-    #[tokio::test]
-    async fn shared_ingest_rate_limit_is_per_tenant() {
+    // Push one span for `tenant-a` twice and then once for `tenant-b`, under a
+    // one-span-per-second rate limit.
+    async fn push_twice_then_other_tenant() -> ThreeTenantResponses {
         let limits = crate::limits::Limits {
             ingestion_rate: per_sec(1),
             ingestion_burst_spans: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
+        let DistributorTestState { state, sink } = test_state_with_limits(limits);
         let app = router(state);
 
-        let first = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let second = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let other_tenant = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-b")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let first = post_otlp(app.clone(), Some("tenant-a"), otlp_body()).await;
+        let second = post_otlp(app.clone(), Some("tenant-a"), otlp_body()).await;
+        let other_tenant = post_otlp(app, Some("tenant-b"), otlp_body()).await;
+        ThreeTenantResponses {
+            first,
+            second,
+            other_tenant,
+            sink,
+        }
+    }
+
+    /// The second push for `tenant-a` is refused with Tempo's rate-limit
+    /// error, while `tenant-b` still has its own budget.
+    #[tokio::test]
+    async fn ingest_rate_limit_is_per_tenant() {
+        let ThreeTenantResponses {
+            first,
+            second,
+            other_tenant,
+            sink,
+        } = push_twice_then_other_tenant().await;
 
         assert2::assert!(first.status() == StatusCode::OK);
         assert2::assert!(second.status() == StatusCode::TOO_MANY_REQUESTS);
-        let body = second.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        check!(json["status"] == "error");
-        check!(
-            json["error"]
-                .as_str()
-                .is_some_and(|message| message.contains("ingestion rate"))
-        );
-        check!(other_tenant.status() == StatusCode::OK);
-        assert2::assert!(sink.count() == 2);
-        assert2::assert!(sink.tenant(0) == "tenant-a".to_string());
-        assert2::assert!(sink.tenant(1) == "tenant-b".to_string());
-    }
-
-    #[tokio::test]
-    async fn ingest_rate_limit_is_per_tenant() {
-        let limits = crate::limits::Limits {
-            ingestion_rate: per_sec(1),
-            ingestion_burst_spans: 1,
-            ..crate::limits::Limits::default()
-        };
-        let (state, sink) = test_state_with_limits(limits);
-        let app = router(state);
-
-        let first = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let second = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let other_tenant = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-b")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        check!(first.status() == StatusCode::OK);
-        check!(second.status() == StatusCode::TOO_MANY_REQUESTS);
+        check_error_body_mentions(second, "ingestion rate").await;
         check!(other_tenant.status() == StatusCode::OK);
         assert2::assert!(sink.count() == 2);
         assert2::assert!(sink.tenant(0) == "tenant-a".to_string());
@@ -831,7 +801,7 @@ overrides:
             max_spans_per_request: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_limits(limits);
+        let DistributorTestState { state, sink } = test_state_with_limits(limits);
         let service = OtlpGrpcService::new(state);
         let mut req = GrpcRequest::new(ExportTraceServiceRequest {
             resource_spans: TracesData::decode(otlp_body_with_spans(2).as_slice())
@@ -846,6 +816,19 @@ overrides:
         assert2::assert!(sink.count() == 0);
     }
 
+    // A 1 ns internal span named `x`, with no attributes.
+    fn internal_x_span() -> Span {
+        Span {
+            trace_id: [1; 16],
+            span_id: [2; 8],
+            name: "x".into(),
+            kind: crate::span::SpanKind::Internal,
+            duration_ns: 1,
+            status: crate::span::StatusCode::Unset,
+            ..Span::default()
+        }
+    }
+
     #[test]
     fn validate_shared_rejects_large_attribute_values() {
         let limits = crate::limits::Limits {
@@ -853,24 +836,11 @@ overrides:
             ..crate::limits::Limits::default()
         };
         let span = Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            parent_span_id: None,
-            name: "x".into(),
-            kind: crate::span::SpanKind::Internal,
-            start_ns: 0,
-            duration_ns: 1,
-            status: crate::span::StatusCode::Unset,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "k".into(),
                 value: AttrValue::Str("api".into()),
             }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            ..internal_x_span()
         };
         assert2::assert!(validate_shared(&[span], &limits).is_err());
     }
@@ -882,24 +852,11 @@ overrides:
             ..crate::limits::Limits::default()
         };
         let span = Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            parent_span_id: None,
-            name: "x".into(),
-            kind: crate::span::SpanKind::Internal,
-            start_ns: 0,
-            duration_ns: 1,
-            status: crate::span::StatusCode::Unset,
-            status_message: String::new(),
-            resource_attrs: Vec::new(),
             span_attrs: vec![KeyValue {
                 key: "too-large".into(),
                 value: AttrValue::Bool(true),
             }],
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            ..internal_x_span()
         };
 
         assert2::assert!(validate_shared(&[span], &limits).is_err());
@@ -920,13 +877,7 @@ overrides:
             start_ns: 0,
             duration_ns: 1,
             status: crate::span::StatusCode::Unset,
-            status_message: String::new(),
-            resource_attrs: Vec::new(),
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            ..Span::default()
         };
         let second = Span {
             span_id: [2; 8],
@@ -939,82 +890,6 @@ overrides:
 
         assert2::assert!(validate_shared(&[first.clone(), other_trace], &limits).is_ok());
         assert2::assert!(validate_shared(&[first, second], &limits).is_err());
-    }
-
-    fn jaeger_binary_batch() -> Vec<u8> {
-        const T_STOP: u8 = 0;
-        const T_BOOL: u8 = 2;
-        const T_I32: u8 = 8;
-        const T_I64: u8 = 10;
-        const T_BINARY: u8 = 11;
-        const T_STRUCT: u8 = 12;
-        const T_LIST: u8 = 15;
-
-        fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-            out.push(type_);
-            out.extend_from_slice(&id.to_be_bytes());
-        }
-        fn string(out: &mut Vec<u8>, value: &str) {
-            out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-            out.extend_from_slice(value.as_bytes());
-        }
-        fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-            field(out, T_BINARY, id);
-            string(out, value);
-        }
-        fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-            field(out, T_I32, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-            field(out, T_I64, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn bool_field(out: &mut Vec<u8>, id: i16, value: bool) {
-            field(out, T_BOOL, id);
-            out.push(u8::from(value));
-        }
-        fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 0);
-            string_field(out, 3, value);
-            out.push(T_STOP);
-        }
-        fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 3);
-            bool_field(out, 5, value);
-            out.push(T_STOP);
-        }
-
-        let mut out = Vec::new();
-        field(&mut out, T_STRUCT, 1);
-        string_field(&mut out, 1, "checkout");
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        key_value_string(&mut out, "process.tag", "present");
-        out.push(T_STOP);
-
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        i64_field(&mut out, 1, 2);
-        i64_field(&mut out, 2, 1);
-        i64_field(&mut out, 3, 3);
-        i64_field(&mut out, 4, 0);
-        string_field(&mut out, 5, "GET /binary");
-        i64_field(&mut out, 8, 1_000);
-        i64_field(&mut out, 9, 25);
-        field(&mut out, T_LIST, 10);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&3_i32.to_be_bytes());
-        key_value_string(&mut out, "span.kind", "server");
-        key_value_string(&mut out, "http.method", "GET");
-        key_value_bool(&mut out, "error", true);
-        out.push(T_STOP);
-        out.push(T_STOP);
-        out
     }
 
     #[test]
@@ -1042,64 +917,48 @@ overrides:
     }
 }
 
-mod append_decoded;
-mod append_decoded_response;
-mod check_shared_attrs;
-mod content_encoding;
-mod decode_body;
 mod distributor_state;
-mod error_response;
-mod grpc_status_from_error;
-mod handle_jaeger_compact_datagram;
-mod is_jaeger_binary_thrift;
+mod grpc_helpers;
+mod http_push;
 mod jaeger_grpc_service;
-mod jaeger_push;
 mod kafka_sink;
-mod limit_error_to_traces_error;
+mod listener;
 mod otlp_grpc_service;
-mod otlp_push;
-mod otlp_success_response;
-mod produce_spans;
-mod record_ingest_response;
-mod request_principal;
-mod require_content_type;
+mod push_request;
+mod push_spans;
+mod request_body;
+mod response_helpers;
 mod router;
 mod serve;
+mod serve_grpc_receiver;
 mod serve_jaeger_compact_udp;
-mod serve_jaeger_grpc;
-mod serve_otlp_grpc;
-mod shared_attr_measured;
-mod validate_shared;
+mod shared_attr_validation;
 mod wal_sink;
-mod zipkin_push;
 
-use append_decoded::append_decoded;
-use append_decoded_response::append_decoded_response;
-use check_shared_attrs::check_shared_attrs;
-use content_encoding::CONTENT_ENCODING;
-use decode_body::decode_body;
 pub use distributor_state::DistributorState;
-use error_response::error_response;
-use grpc_status_from_error::grpc_status_from_error;
-use handle_jaeger_compact_datagram::handle_jaeger_compact_datagram;
-use is_jaeger_binary_thrift::is_jaeger_binary_thrift;
-pub use jaeger_grpc_service::JaegerGrpcService;
-use jaeger_push::jaeger_push;
+use grpc_helpers::{grpc_status_from_error, request_principal};
+use http_push::{jaeger_push, otlp_push, zipkin_push};
+pub use jaeger_grpc_service::{JaegerGrpcService, serve_jaeger_grpc};
 pub use kafka_sink::KafkaSink;
-use limit_error_to_traces_error::limit_error_to_traces_error;
-pub use otlp_grpc_service::OtlpGrpcService;
-use otlp_push::otlp_push;
-use otlp_success_response::otlp_success_response;
-pub use produce_spans::produce_spans;
-use record_ingest_response::record_ingest_response;
-use request_principal::request_principal;
-use require_content_type::require_content_type;
+pub use listener::ReceiverEndpoint;
+use listener::bind_and_spawn_server;
+pub use otlp_grpc_service::{OtlpGrpcService, serve_otlp_grpc};
+use push_request::PushRequest;
+use push_spans::{SpanPush, push_spans};
+#[cfg(test)]
+use request_body::CONTENT_ENCODING;
+use request_body::{decode_body, require_content_type};
+use response_helpers::{
+    append_decoded_response, error_response, limit_error_to_traces_error, otlp_success_response,
+    record_ingest_response,
+};
 pub use router::router;
 pub use serve::serve;
+use serve_grpc_receiver::{GrpcReceiver, serve_grpc_receiver};
+#[cfg(test)]
+use serve_jaeger_compact_udp::handle_jaeger_compact_datagram;
 pub use serve_jaeger_compact_udp::serve_jaeger_compact_udp;
-pub use serve_jaeger_grpc::serve_jaeger_grpc;
-pub use serve_otlp_grpc::serve_otlp_grpc;
-use shared_attr_measured::shared_attr_measured;
-use validate_shared::validate_shared;
-pub use wal_sink::WalSink;
-use zipkin_push::zipkin_push;
+#[cfg(test)]
+use shared_attr_validation::check_shared_attrs;
+use shared_attr_validation::validate_shared;
+pub use wal_sink::{WalSink, produce_spans};

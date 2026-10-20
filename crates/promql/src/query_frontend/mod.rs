@@ -31,20 +31,45 @@ use crate::PromqlError;
 #[cfg(test)]
 mod tests;
 
-mod frontend_range_query;
-mod frontend_range_request;
-mod moment_reduction;
-mod query_frontend_options;
-mod query_shard;
-mod query_shard_execution;
-mod query_shard_reducer;
-mod rank_reduction;
+mod types;
 
-pub use frontend_range_query::FrontendRangeQuery;
-pub use frontend_range_request::FrontendRangeRequest;
-use moment_reduction::MomentReduction;
-pub use query_frontend_options::QueryFrontendOptions;
-pub use query_shard::QueryShard;
-use query_shard_execution::QueryShardExecution;
-use query_shard_reducer::QueryShardReducer;
-use rank_reduction::RankReduction;
+pub use types::{FrontendRangeQuery, FrontendRangeRequest, QueryFrontendOptions, QueryShard};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MomentReduction {
+    Stddev,
+    Stdvar,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RankReduction {
+    Bottom,
+    Top,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QueryShardReducer {
+    First,
+    Sum,
+    Min,
+    Max,
+}
+
+pub(crate) enum QueryShardExecution {
+    Merge(QueryShardReducer),
+    Avg {
+        sum_query: String,
+        count_query: String,
+    },
+    Moments {
+        sum_query: String,
+        count_query: String,
+        sum_squares_query: String,
+        kind: MomentReduction,
+    },
+    Rank {
+        k: usize,
+        kind: RankReduction,
+        modifier: Option<LabelModifier>,
+    },
+}

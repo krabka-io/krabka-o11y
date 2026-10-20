@@ -1,7 +1,0 @@
-use super::{ApiError, rfc3339_to_ms, seconds_to_ms};
-
-pub(crate) fn timestamp_ms(value: &str) -> Result<i64, ApiError> {
-    seconds_to_ms(value)
-        .or_else(|()| rfc3339_to_ms(value))
-        .map_err(|()| ApiError::bad_data("invalid timestamp"))
-}

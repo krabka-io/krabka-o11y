@@ -1,41 +1,47 @@
 //! `TraceQL` span column names and structural interval helpers.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use krabka_blockstore::{CycleSpans, SpanNode};
 use krabka_units::Time;
 
-use crate::result::{AttrValue, EventRef, LinkRef};
+use crate::result::{EventRef, LinkRef};
 
 #[cfg(test)]
 mod tests {
     use arrow::datatypes::DataType;
     use assert2::{assert, check};
-    use krabka_units::nanos;
 
     use super::*;
+    use crate::testkit::span::SpanFixture;
+
+    struct SchemaColumn {
+        name: &'static str,
+        data_type: DataType,
+    }
 
     fn sid(n: u8) -> [u8; 8] {
-        [n, 0, 0, 0, 0, 0, 0, 0]
+        [n; 8]
     }
 
     fn span(id: u8, parent: Option<u8>) -> InputSpan {
-        InputSpan {
-            trace_id: [7; 16],
-            span_id: sid(id),
-            parent_span_id: parent.map(sid),
-            name: format!("span-{id}"),
-            kind: 0,
-            start_unix_nano: i64::from(id) * 100,
-            duration: nanos(10),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            attrs: vec![],
-            events: Vec::new(),
-            links: Vec::new(),
+        SpanFixture {
+            trace: 7,
+            id,
+            parent,
+            ..SpanFixture::default()
         }
+        .input_span()
+    }
+
+    fn four_spans() -> Vec<InputSpan> {
+        vec![
+            span(1, None),
+            span(2, Some(1)),
+            span(3, Some(1)),
+            span(4, Some(3)),
+        ]
     }
 
     fn idx(spans: &[InputSpan], id: u8) -> usize {
@@ -45,16 +51,32 @@ mod tests {
     #[test]
     fn schema_contains_traceql_planning_columns() {
         let schema = span_schema();
-        for (col, want) in [
-            (COL_TRACE_ID, DataType::FixedSizeBinary(16)),
-            (COL_NAME, DataType::Utf8),
-            (COL_NS_LEFT, DataType::Int32),
-            (COL_CHILD_COUNT, DataType::Int32),
-            (COL_TRACE_DURATION, DataType::Int64),
+        for column in [
+            SchemaColumn {
+                name: COL_TRACE_ID,
+                data_type: DataType::FixedSizeBinary(16),
+            },
+            SchemaColumn {
+                name: COL_NAME,
+                data_type: DataType::Utf8,
+            },
+            SchemaColumn {
+                name: COL_NS_LEFT,
+                data_type: DataType::Int32,
+            },
+            SchemaColumn {
+                name: COL_CHILD_COUNT,
+                data_type: DataType::Int32,
+            },
+            SchemaColumn {
+                name: COL_TRACE_DURATION,
+                data_type: DataType::Int64,
+            },
         ] {
             assert!(
-                schema.column_with_name(col).unwrap().1.data_type() == &want,
-                "column: {col}"
+                schema.column_with_name(column.name).unwrap().1.data_type() == &column.data_type,
+                "column: {}",
+                column.name
             );
         }
     }
@@ -66,12 +88,7 @@ mod tests {
 
     #[test]
     fn nested_set_parent_id_is_parent_left() {
-        let spans = vec![
-            span(1, None),
-            span(2, Some(1)),
-            span(3, Some(1)),
-            span(4, Some(3)),
-        ];
+        let spans = four_spans();
         let ns = assign_nested_set(&spans);
         let root_left = ns[idx(&spans, 1)].left;
         check!(ns[idx(&spans, 1)].parent_id == -1); // root: Tempo nestedSetParent sentinel
@@ -82,12 +99,7 @@ mod tests {
 
     #[test]
     fn nested_set_intervals_identify_ancestors() {
-        let spans = vec![
-            span(1, None),
-            span(2, Some(1)),
-            span(3, Some(1)),
-            span(4, Some(3)),
-        ];
+        let spans = four_spans();
         let ns = assign_nested_set(&spans);
         let root = ns[idx(&spans, 1)];
         let peer = ns[idx(&spans, 2)];
@@ -172,68 +184,147 @@ mod tests {
     }
 }
 
-mod assign_nested_set;
-mod attr_prefix;
-mod col_child_count;
-mod col_duration;
-mod col_event_name;
-mod col_event_time_since_start;
-mod col_instrumentation_name;
-mod col_instrumentation_version;
-mod col_kind;
-mod col_link_span_id;
-mod col_link_trace_id;
-mod col_name;
-mod col_ns_left;
-mod col_ns_right;
-mod col_parent_id;
-mod col_parent_span_id;
-mod col_root_service_name;
-mod col_root_span_name;
-mod col_span_id;
-mod col_start;
-mod col_status_code;
-mod col_status_message;
-mod col_trace_duration;
-mod col_trace_id;
-mod col_trace_start;
-mod event_attr_prefix;
 mod input_span;
-mod instrumentation_attr_prefix;
-mod link_attr_prefix;
-mod nested_set;
-mod span_schema;
-mod span_schema_with_attrs;
 
-pub use assign_nested_set::assign_nested_set;
-pub use attr_prefix::ATTR_PREFIX;
-pub use col_child_count::COL_CHILD_COUNT;
-pub use col_duration::COL_DURATION;
-pub use col_event_name::COL_EVENT_NAME;
-pub use col_event_time_since_start::COL_EVENT_TIME_SINCE_START;
-pub use col_instrumentation_name::COL_INSTRUMENTATION_NAME;
-pub use col_instrumentation_version::COL_INSTRUMENTATION_VERSION;
-pub use col_kind::COL_KIND;
-pub use col_link_span_id::COL_LINK_SPAN_ID;
-pub use col_link_trace_id::COL_LINK_TRACE_ID;
-pub use col_name::COL_NAME;
-pub use col_ns_left::COL_NS_LEFT;
-pub use col_ns_right::COL_NS_RIGHT;
-pub use col_parent_id::COL_PARENT_ID;
-pub use col_parent_span_id::COL_PARENT_SPAN_ID;
-pub use col_root_service_name::COL_ROOT_SERVICE_NAME;
-pub use col_root_span_name::COL_ROOT_SPAN_NAME;
-pub use col_span_id::COL_SPAN_ID;
-pub use col_start::COL_START;
-pub use col_status_code::COL_STATUS_CODE;
-pub use col_status_message::COL_STATUS_MESSAGE;
-pub use col_trace_duration::COL_TRACE_DURATION;
-pub use col_trace_id::COL_TRACE_ID;
-pub use col_trace_start::COL_TRACE_START;
-pub use event_attr_prefix::EVENT_ATTR_PREFIX;
 pub use input_span::InputSpan;
-pub use instrumentation_attr_prefix::INSTRUMENTATION_ATTR_PREFIX;
-pub use link_attr_prefix::LINK_ATTR_PREFIX;
-pub use nested_set::NestedSet;
-pub use span_schema::span_schema;
-pub use span_schema_with_attrs::span_schema_with_attrs;
+
+pub const ATTR_PREFIX: &str = "attr.";
+
+pub const COL_CHILD_COUNT: &str = "child_count";
+
+pub const COL_DURATION: &str = "duration_nanos";
+
+pub const COL_EVENT_NAME: &str = "event_name";
+
+pub const COL_EVENT_TIME_SINCE_START: &str = "event_time_since_start_nanos";
+
+pub const COL_INSTRUMENTATION_NAME: &str = "instrumentation_name";
+
+pub const COL_INSTRUMENTATION_VERSION: &str = "instrumentation_version";
+
+pub const COL_KIND: &str = "kind";
+
+pub const COL_LINK_SPAN_ID: &str = "link_span_id";
+
+pub const COL_LINK_TRACE_ID: &str = "link_trace_id";
+
+pub const COL_NAME: &str = "name";
+
+pub const COL_NS_LEFT: &str = "nested_set_left";
+
+pub const COL_NS_RIGHT: &str = "nested_set_right";
+
+pub const COL_PARENT_ID: &str = "parent_id";
+
+pub const COL_PARENT_SPAN_ID: &str = "parent_span_id";
+
+pub const COL_ROOT_SERVICE_NAME: &str = "root_service_name";
+
+pub const COL_ROOT_SPAN_NAME: &str = "root_span_name";
+
+pub const COL_SPAN_ID: &str = "span_id";
+
+pub const COL_START: &str = "start_unix_nano";
+
+pub const COL_STATUS_CODE: &str = "status_code";
+
+pub const COL_STATUS_MESSAGE: &str = "status_message";
+
+pub const COL_TRACE_DURATION: &str = "trace_duration_nanos";
+
+pub const COL_TRACE_ID: &str = "trace_id";
+
+pub const COL_TRACE_START: &str = "trace_start_unix_nano";
+
+pub const EVENT_ATTR_PREFIX: &str = "__event.";
+
+pub const INSTRUMENTATION_ATTR_PREFIX: &str = "__instrumentation.";
+
+pub const LINK_ATTR_PREFIX: &str = "__link.";
+
+#[must_use]
+pub fn span_schema() -> SchemaRef {
+    span_schema_with_attrs(&[])
+}
+
+/// One span's nested-set assignment, aligned by index with the input spans.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NestedSet {
+    pub left: i32,
+    pub right: i32,
+    pub parent_id: i32,
+}
+
+impl From<krabka_blockstore::NestedSet> for NestedSet {
+    fn from(block: krabka_blockstore::NestedSet) -> Self {
+        Self {
+            left: block.nested_set_left,
+            right: block.nested_set_right,
+            parent_id: block.parent_id,
+        }
+    }
+}
+
+/// Assigns nested-set intervals to `spans`, aligned by index.
+///
+/// Delegates to [`krabka_blockstore::assign_nested_set`], which owns the
+/// traversal, the Tempo `-1` root sentinel, and the cycle handling.
+#[must_use]
+pub fn assign_nested_set(spans: &[InputSpan]) -> Vec<NestedSet> {
+    let nodes: Vec<SpanNode> = spans
+        .iter()
+        .map(|span| SpanNode {
+            span_id: span.span_id,
+            parent_span_id: span.parent_span_id,
+        })
+        .collect();
+    krabka_blockstore::assign_nested_set(&nodes, CycleSpans::AssignIntervals)
+        .into_iter()
+        .map(NestedSet::from)
+        .collect()
+}
+
+#[derive(Clone, Debug)]
+pub struct AttributeColumn {
+    pub key: String,
+    pub data_type: DataType,
+}
+
+#[must_use]
+pub fn span_schema_with_attrs(attr_cols: &[AttributeColumn]) -> SchemaRef {
+    let mut fields = vec![
+        Field::new(COL_TRACE_ID, DataType::FixedSizeBinary(16), false),
+        Field::new(COL_SPAN_ID, DataType::FixedSizeBinary(8), false),
+        Field::new(COL_PARENT_SPAN_ID, DataType::FixedSizeBinary(8), true),
+        Field::new(COL_NS_LEFT, DataType::Int32, false),
+        Field::new(COL_NS_RIGHT, DataType::Int32, false),
+        Field::new(COL_PARENT_ID, DataType::Int32, false),
+        Field::new(COL_CHILD_COUNT, DataType::Int32, false),
+        Field::new(COL_ROOT_SERVICE_NAME, DataType::Utf8, true),
+        Field::new(COL_ROOT_SPAN_NAME, DataType::Utf8, true),
+        Field::new(COL_TRACE_START, DataType::Int64, false),
+        Field::new(COL_TRACE_DURATION, DataType::Int64, false),
+        Field::new(COL_NAME, DataType::Utf8, true),
+        Field::new(COL_KIND, DataType::Int32, false),
+        Field::new(COL_START, DataType::Int64, false),
+        Field::new(COL_DURATION, DataType::Int64, false),
+        Field::new(COL_STATUS_CODE, DataType::Int32, false),
+        Field::new(COL_STATUS_MESSAGE, DataType::Utf8, true),
+        Field::new(COL_INSTRUMENTATION_NAME, DataType::Utf8, true),
+        Field::new(COL_INSTRUMENTATION_VERSION, DataType::Utf8, true),
+        Field::new(COL_EVENT_NAME, DataType::Utf8, true),
+        Field::new(COL_EVENT_TIME_SINCE_START, DataType::Int64, true),
+        Field::new(COL_LINK_TRACE_ID, DataType::FixedSizeBinary(16), true),
+        Field::new(COL_LINK_SPAN_ID, DataType::FixedSizeBinary(8), true),
+    ];
+
+    fields.extend(attr_cols.iter().map(|column| {
+        Field::new(
+            format!("{ATTR_PREFIX}{}", column.key),
+            column.data_type.clone(),
+            true,
+        )
+    }));
+
+    Arc::new(Schema::new(fields))
+}

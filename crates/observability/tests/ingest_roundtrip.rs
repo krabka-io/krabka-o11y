@@ -11,9 +11,13 @@
 //! This is that check, and it is an ordinary `bazel test` target because the
 //! broker runs in this process rather than in a container.
 
+#[path = "support/loki_push_body.rs"]
+mod loki_push_body;
+#[path = "support/wal_broker.rs"]
+mod wal_broker;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -24,10 +28,6 @@ use axum::{
 };
 use krabka_blockstore::{
     BlockKey, TimeRange, labels, read_log_block_from_object_store, series_fingerprint,
-};
-use krabka_broker::{Broker, BrokerConfig, authorizer::SimpleAclAuthorizer};
-use krabka_client_admin::{
-    AclEntry, AclOperation, AdminClient, CreateTopicSpec, PatternType, PermissionType, ResourceType,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::{
@@ -40,6 +40,8 @@ use krabka_units::{days, secs};
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
+
+use self::wal_broker::{WalBroker, start_wal_broker};
 
 /// The tenant every step of the round trip is scoped to.
 const TENANT: &str = "tenant-a";
@@ -60,16 +62,12 @@ const BROKER_DEADLINE: Duration = Duration::from_secs(20);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() {
-    let broker_dir = tempfile::tempdir().expect("broker tempdir");
-    let mut broker_config = BrokerConfig::for_tests(broker_dir.path().to_path_buf());
-    broker_config.authorizer = Arc::new(SimpleAclAuthorizer::new(
-        std::iter::once("ANONYMOUS".to_owned()).collect(),
-    ));
-    let broker = Broker::start(broker_config).await.expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
-    let wal_topic = ServiceConfig::default().wal_topic;
-    create_wal_topic(&bootstrap, &wal_topic).await;
-    grant_tenant_wal_access_for_test(&bootstrap, &wal_topic, TENANT).await;
+    let WalBroker {
+        handle: _broker,
+        dir: _broker_dir,
+        bootstrap,
+        wal_topic,
+    } = start_wal_broker(TENANT).await;
 
     // 1. The real HTTP door. Same router the distributor role serves, same
     //    Loki push body a client would send, and a sink that produces to the
@@ -97,7 +95,7 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
                 .uri("/loki/api/v1/push")
                 .header("content-type", "application/json")
                 .header("X-Scope-OrgID", tenant)
-                .body(Body::from(push_body().to_string()))
+                .body(Body::from(loki_push_body::push_body().to_string()))
                 .expect("push request"),
         )
     };
@@ -156,9 +154,9 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     check!(
         descriptors[0].fingerprints
             == BTreeSet::from([series_fingerprint(&labels([
-                ("app", "api"),
-                ("env", "prod"),
-                ("service_name", "api"),
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
             ]))])
     );
 
@@ -265,9 +263,9 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
 /// call. Only a scrape after real work separates them, so this reads the
 /// encoded text rather than the handles.
 async fn check_compactor_instruments_moved(metrics: &ServiceMetrics, wal_topic: &str) {
-    let mut buffer = String::new();
-    let registry = metrics.registry.lock().await;
-    prometheus_client::encoding::text::encode(&mut buffer, &registry).expect("encode the registry");
+    let buffer = krabka_observability::service_metrics::encode_registry(&metrics.registry)
+        .await
+        .expect("encode the registry");
 
     for needle in [
         // Two WAL records were produced above, and the compactor read both.
@@ -315,18 +313,6 @@ async fn check_compactor_instruments_moved(metrics: &ServiceMetrics, wal_topic: 
 
 /// The push body: two entries in one stream, one of them carrying structured
 /// metadata, so the WAL assertion covers both shapes of record.
-fn push_body() -> Value {
-    json!({
-        "streams": [{
-            "stream": {"app": "api", "env": "prod"},
-            "values": [
-                ["10", "api error", {"trace_id": "abc"}],
-                ["20", "api recovered"],
-            ],
-        }],
-    })
-}
-
 /// What the broker must hand back for that body, whole records rather than a
 /// chain of field assertions.
 ///
@@ -334,35 +320,45 @@ fn push_body() -> Value {
 /// that both entries landed on one partition in the order they were pushed.
 fn expected_wal_records() -> Vec<WalLogRecord> {
     vec![
-        WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-            timestamp_ns: 10,
-            line: "api error".to_string(),
-            structured_metadata: BTreeMap::from([
+        expected_wal_record(
+            10,
+            "api error",
+            BTreeMap::from([
                 ("trace_id".to_string(), "abc".to_string()),
                 ("detected_level".to_string(), "error".to_string()),
             ]),
-            position: Some(WalPosition {
-                partition: PartitionIndex(0),
-                offset: Offset(0),
-            }),
-        },
-        WalLogRecord {
-            tenant: TENANT.to_string(),
-            labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
-            timestamp_ns: 20,
-            line: "api recovered".to_string(),
-            structured_metadata: BTreeMap::from([(
-                "detected_level".to_string(),
-                "unknown".to_string(),
-            )]),
-            position: Some(WalPosition {
-                partition: PartitionIndex(0),
-                offset: Offset(1),
-            }),
-        },
+            0,
+        ),
+        expected_wal_record(
+            20,
+            "api recovered",
+            BTreeMap::from([("detected_level".to_string(), "unknown".to_string())]),
+            1,
+        ),
     ]
+}
+
+fn expected_wal_record(
+    timestamp_ns: i64,
+    line: &str,
+    structured_metadata: BTreeMap<String, String>,
+    offset: i64,
+) -> WalLogRecord {
+    WalLogRecord {
+        tenant: TENANT.to_string(),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("service_name", "api"),
+        ]),
+        timestamp_ns,
+        line: line.to_string(),
+        structured_metadata,
+        position: Some(WalPosition {
+            partition: PartitionIndex(0),
+            offset: Offset(offset),
+        }),
+    }
 }
 
 /// One `ServiceConfig` shape for both roles the round trip runs.
@@ -386,53 +382,6 @@ fn roundtrip_config(
         index_prefix: Some(INDEX_PREFIX.to_string()),
         ..ServiceConfig::default()
     }
-}
-
-/// Grants `tenant` every operation on the WAL topic.
-///
-/// The pinned in-process broker runs an authorizer and answers `DescribeAcls`
-/// with the ACLs it holds, so the logs path reads its ACLs as configured. With
-/// no ACL at all it would refuse every tenant, as Kafka's authorizer does. A
-/// broker that answers `SECURITY_DISABLED` instead allows every tenant.
-async fn grant_tenant_wal_access_for_test(bootstrap: &str, wal_topic: &str, tenant: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    let outcomes = admin
-        .create_acls(&[AclEntry {
-            resource_type: ResourceType::Topic,
-            resource_name: wal_topic.to_string(),
-            pattern_type: PatternType::Literal,
-            principal: format!("User:{tenant}"),
-            host: "*".to_string(),
-            operation: AclOperation::All,
-            permission_type: PermissionType::Allow,
-        }])
-        .await
-        .expect("create the tenant's WAL topic ACL");
-    assert!(
-        outcomes.iter().all(|outcome| outcome.error.is_none()),
-        "{outcomes:?}"
-    );
-}
-
-async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: wal_topic.to_string(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
-        )
-        .await
-        .expect("create observability wal topic");
 }
 
 /// Polls the WAL topic until `expected` records have arrived, then decodes them

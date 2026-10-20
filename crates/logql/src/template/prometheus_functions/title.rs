@@ -7,27 +7,32 @@ pub(super) fn format(bytes: &[u8]) -> Vec<u8> {
     let mut output = Vec::new();
     let mut mid_word = false;
     let mut previous_mid = false;
-    for (ch, span) in super::super::format_template_printf::raw::runes(bytes) {
-        let code = u32::from(ch);
-        let index = data::RANGES.partition_point(|(_, end, _)| *end < code);
-        let flags = data::RANGES[index].2;
+    for rune in super::super::format_template_printf::raw::runes(bytes) {
+        let code = u32::from(rune.character);
+        let index = data::RANGES.partition_point(|range| range.end < code);
+        let flags = data::RANGES
+            .get(index)
+            .filter(|range| range.start <= code)
+            .map_or(0, |range| range.flags);
         let is_mid = flags & 4 != 0;
         if previous_mid && is_mid {
             mid_word = false;
         }
         if flags & 1 != 0 {
             if mid_word {
-                output.extend(&bytes[span]);
+                output.extend(&bytes[rune.range]);
             } else {
-                if let Ok(index) = data::MAPPINGS.binary_search_by_key(&code, |(code, _)| *code) {
-                    output.extend(data::MAPPINGS[index].1.as_bytes());
+                if let Ok(index) =
+                    data::MAPPINGS.binary_search_by_key(&code, |mapping| mapping.code)
+                {
+                    output.extend(data::MAPPINGS[index].replacement.as_bytes());
                 } else {
-                    output.extend(&bytes[span]);
+                    output.extend(&bytes[rune.range]);
                 }
                 mid_word = true;
             }
         } else {
-            output.extend(&bytes[span]);
+            output.extend(&bytes[rune.range]);
             if flags & 2 != 0 {
                 mid_word = false;
             }

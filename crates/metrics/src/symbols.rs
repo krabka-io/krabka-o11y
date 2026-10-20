@@ -57,7 +57,19 @@ mod tests {
         let env = t.intern("env");
         let prod = t.intern("prod");
         let labels = t.resolve_label_refs(&[app, api, env, prod]).unwrap();
-        assert!(labels == vec![("app".into(), "api".into()), ("env".into(), "prod".into())]);
+        assert!(
+            labels
+                == vec![
+                    ResolvedLabel {
+                        name: "app".into(),
+                        value: "api".into()
+                    },
+                    ResolvedLabel {
+                        name: "env".into(),
+                        value: "prod".into()
+                    },
+                ]
+        );
     }
 
     #[test]
@@ -96,8 +108,28 @@ mod tests {
     }
 }
 
-mod symbol_error;
 mod symbol_table;
 
-pub use symbol_error::SymbolError;
-pub use symbol_table::SymbolTable;
+pub use symbol_table::{ResolvedLabel, SymbolTable};
+
+/// Errors raised by symbol-table operations.
+#[derive(Debug, thiserror::Error)]
+pub enum SymbolError {
+    #[error("symbols[0] must be the empty string")]
+    FirstNotEmpty,
+
+    #[error("duplicate symbol `{0}`")]
+    DuplicateSymbol(String),
+
+    #[error("label_refs length {0} is not even")]
+    OddRefs(usize),
+
+    #[error("symbol ref {0} out of range (len {1})")]
+    OutOfRange(u32, usize),
+
+    #[error("duplicate label `{0}`")]
+    DuplicateLabel(String),
+
+    #[error("symbol table length {0} exceeds u32 refs")]
+    TooManySymbols(usize),
+}

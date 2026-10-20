@@ -9,12 +9,28 @@ use crate::http::handlers::query_execution::format_float_sample;
 const WIDTH: usize = 27_183;
 const DEPTH: usize = 7;
 
+struct SketchHeapEntry {
+    labels: Vec<u8>,
+    sample: Value,
+}
+
+struct ApproxCandidate {
+    count: f64,
+    labels: Vec<u8>,
+    sample: Value,
+}
+
+struct HashPair {
+    first: u32,
+    second: u32,
+}
+
 pub(crate) fn apply_approx_metric_selection(value: &mut Value, limit: usize, heap_size: usize) {
     let Some(series) = value["data"]["result"].as_array_mut() else {
         return;
     };
     let mut sketch = Sketch::new(WIDTH, DEPTH);
-    let mut heap: Vec<(Vec<u8>, Value)> = Vec::new();
+    let mut heap: Vec<SketchHeapEntry> = Vec::new();
     let mut retained = BTreeSet::new();
     for sample in std::mem::take(series) {
         let bytes = label_bytes(&sample["metric"]);
@@ -23,30 +39,42 @@ pub(crate) fn apply_approx_metric_selection(value: &mut Value, limit: usize, hea
         };
         sketch.add(&bytes, count);
         if retained.insert(bytes.clone()) {
-            heap.push((bytes, sample));
+            heap.push(SketchHeapEntry {
+                labels: bytes,
+                sample,
+            });
             sift_up(&mut heap, &sketch);
-        } else if heap.first().is_some_and(|(key, _)| key == &bytes) {
+        } else if heap.first().is_some_and(|entry| entry.labels == bytes) {
             sift_down(&mut heap, &sketch);
         }
         if heap.len() > heap_size {
-            retained.remove(&heap.swap_remove(0).0);
+            retained.remove(&heap.swap_remove(0).labels);
             sift_down(&mut heap, &sketch);
         }
     }
     let mut candidates = heap
         .into_iter()
-        .map(|(bytes, mut sample)| {
-            let count = sketch.count(&bytes);
+        .map(|entry| {
+            let count = sketch.count(&entry.labels);
+            let mut sample = entry.sample;
             sample["value"][1] = Value::String(format_float_sample(count));
-            (count, bytes, sample)
+            ApproxCandidate {
+                count,
+                labels: entry.labels,
+                sample,
+            }
         })
         .collect::<Vec<_>>();
-    candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    candidates.sort_by(|a, b| {
+        b.count
+            .total_cmp(&a.count)
+            .then_with(|| a.labels.cmp(&b.labels))
+    });
     series.extend(
         candidates
             .into_iter()
             .take(limit)
-            .map(|(_, _, sample)| sample),
+            .map(|candidate| candidate.sample),
     );
 }
 
@@ -62,10 +90,11 @@ fn label_bytes(labels: &Value) -> Vec<u8> {
     let mut bytes = vec![0xfe];
     if let Some(labels) = labels.as_object() {
         // serde_json can use insertion order when preserve_order is enabled.
-        let mut labels = labels.iter().collect::<Vec<_>>();
-        labels.sort_unstable_by_key(|(name, _)| *name);
-        for (i, (name, value)) in labels.into_iter().enumerate() {
-            if i != 0 {
+        let mut names = labels.keys().collect::<Vec<_>>();
+        names.sort_unstable();
+        for (index, name) in names.iter().enumerate() {
+            let value = &labels[*name];
+            if index != 0 {
                 bytes.push(0xff);
             }
             bytes.extend_from_slice(name.as_bytes());
@@ -89,20 +118,20 @@ impl Sketch {
         }
     }
     fn add(&mut self, bytes: &[u8], count: f64) {
-        let (first, second) = hashes(bytes);
-        for (row, counters) in self.counters.iter_mut().enumerate() {
-            let position = sketch_position(first, second, row, self.width);
-            counters[position] += count;
+        let hash = hashes(bytes);
+        for row in 0..self.counters.len() {
+            let position = sketch_position(hash.first, hash.second, row, self.width);
+            self.counters[row][position] += count;
         }
     }
     fn count(&self, bytes: &[u8]) -> f64 {
-        let (first, second) = hashes(bytes);
+        let hash = hashes(bytes);
         // Go's source deliberately starts at float64(math.MaxUint64).
         let mut result = 18_446_744_073_709_551_616.0;
-        for (row, counters) in self.counters.iter().enumerate() {
-            let position = sketch_position(first, second, row, self.width);
-            if counters[position] < result {
-                result = counters[position];
+        for row in 0..self.counters.len() {
+            let position = sketch_position(hash.first, hash.second, row, self.width);
+            if self.counters[row][position] < result {
+                result = self.counters[row][position];
             }
         }
         result
@@ -116,7 +145,7 @@ fn sketch_position(first: u32, second: u32, row: usize, width: usize) -> usize {
         % width
 }
 
-fn hashes(bytes: &[u8]) -> (u32, u32) {
+fn hashes(bytes: &[u8]) -> HashPair {
     let mut first = 2_166_136_261_u32;
     let mut second = 0_u32;
     for byte in bytes {
@@ -128,14 +157,14 @@ fn hashes(bytes: &[u8]) -> (u32, u32) {
     second = second.wrapping_add(second << 3);
     second ^= second >> 11;
     second = second.wrapping_add(second << 15);
-    (first, second)
+    HashPair { first, second }
 }
 
-fn sift_up(heap: &mut [(Vec<u8>, Value)], sketch: &Sketch) {
+fn sift_up(heap: &mut [SketchHeapEntry], sketch: &Sketch) {
     let mut index = heap.len() - 1;
     while index != 0 {
         let parent = (index - 1) / 2;
-        if sketch.count(&heap[index].0) >= sketch.count(&heap[parent].0) {
+        if sketch.count(&heap[index].labels) >= sketch.count(&heap[parent].labels) {
             break;
         }
         heap.swap(index, parent);
@@ -143,7 +172,7 @@ fn sift_up(heap: &mut [(Vec<u8>, Value)], sketch: &Sketch) {
     }
 }
 
-fn sift_down(heap: &mut [(Vec<u8>, Value)], sketch: &Sketch) {
+fn sift_down(heap: &mut [SketchHeapEntry], sketch: &Sketch) {
     let mut index = 0_usize;
     while let Some(left) = index
         .checked_mul(2)
@@ -151,13 +180,14 @@ fn sift_down(heap: &mut [(Vec<u8>, Value)], sketch: &Sketch) {
         .filter(|i| *i < heap.len())
     {
         let right = left + 1;
-        let child =
-            if right < heap.len() && sketch.count(&heap[right].0) < sketch.count(&heap[left].0) {
-                right
-            } else {
-                left
-            };
-        if sketch.count(&heap[child].0) >= sketch.count(&heap[index].0) {
+        let child = if right < heap.len()
+            && sketch.count(&heap[right].labels) < sketch.count(&heap[left].labels)
+        {
+            right
+        } else {
+            left
+        };
+        if sketch.count(&heap[child].labels) >= sketch.count(&heap[index].labels) {
             break;
         }
         heap.swap(index, child);
@@ -172,26 +202,37 @@ mod tests {
 
     use super::*;
 
+    struct SketchPositionCase {
+        key: &'static [u8],
+        expected: [usize; DEPTH],
+    }
+
     #[test]
     fn pinned_go_sketch_positions_and_collision_estimates() {
         // Captured by calling NewCountMinSketch/Add/Count in the unmodified
         // Loki 7a40404f32b3e6464c9cfc6cc7dd75a40f3931da vendor graph,
         // with Go 1.26.5. Expectations do not use our hash implementation.
-        let positions: &[(&[u8], [usize; DEPTH])] = &[
-            (b"", [4540; DEPTH]),
-            (b"abc", [12071, 22801, 5278, 16008, 26738, 10285, 21015]),
-            (
-                b"\xfejob\xffapi",
-                [13119, 15199, 17279, 19359, 21439, 23519, 25599],
-            ),
-            (
-                b"\xfejob\xff\xff\x00",
-                [7107, 5749, 4391, 4103, 2745, 2457, 1099],
-            ),
+        let positions = [
+            SketchPositionCase {
+                key: b"",
+                expected: [4540; DEPTH],
+            },
+            SketchPositionCase {
+                key: b"abc",
+                expected: [12071, 22801, 5278, 16008, 26738, 10285, 21015],
+            },
+            SketchPositionCase {
+                key: b"\xfejob\xffapi",
+                expected: [13119, 15199, 17279, 19359, 21439, 23519, 25599],
+            },
+            SketchPositionCase {
+                key: b"\xfejob\xff\xff\x00",
+                expected: [7107, 5749, 4391, 4103, 2745, 2457, 1099],
+            },
         ];
-        for (key, expected) in positions {
+        for case in positions {
             let mut sketch = Sketch::new(WIDTH, DEPTH);
-            sketch.add(key, 3.0);
+            sketch.add(case.key, 3.0);
             let actual = sketch
                 .counters
                 .iter()
@@ -201,12 +242,33 @@ mod tests {
                         .unwrap()
                 })
                 .collect::<Vec<_>>();
-            assert!(actual == expected.to_vec());
-            assert!(sketch.count(key).to_bits() == 3.0_f64.to_bits());
+            assert!(actual == case.expected.to_vec());
+            assert!(sketch.count(case.key).to_bits() == 3.0_f64.to_bits());
         }
         let mut collision = Sketch::new(3, 2);
-        for (key, value) in [(b"a", 3.0), (b"b", 7.0), (b"c", 11.0), (b"a", 5.0)] {
-            collision.add(key, value);
+        struct CollisionEntry {
+            key: &'static [u8],
+            value: f64,
+        }
+        for entry in [
+            CollisionEntry {
+                key: b"a",
+                value: 3.0,
+            },
+            CollisionEntry {
+                key: b"b",
+                value: 7.0,
+            },
+            CollisionEntry {
+                key: b"c",
+                value: 11.0,
+            },
+            CollisionEntry {
+                key: b"a",
+                value: 5.0,
+            },
+        ] {
+            collision.add(entry.key, entry.value);
         }
         assert!(collision.counters == vec![vec![0.0, 15.0, 11.0], vec![15.0, 11.0, 0.0]]);
         assert!(collision.count(b"a").to_bits() == 15.0_f64.to_bits());

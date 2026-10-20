@@ -43,6 +43,21 @@ impl BlockObjectReader {
 }
 
 impl AsyncFileReader for BlockObjectReader {
+    fn get_metadata<'a>(
+        &'a mut self,
+        options: Option<&'a ArrowReaderOptions>,
+    ) -> BoxFuture<'a, parquet::errors::Result<Arc<ParquetMetaData>>> {
+        let size = self.size;
+        async move {
+            ParquetMetaDataReader::new()
+                .with_arrow_reader_options(options)
+                .load_and_finish(self, size)
+                .await
+                .map(Arc::new)
+        }
+        .boxed()
+    }
+
     fn get_bytes(&mut self, range: Range<u64>) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
         async move {
             let result = self
@@ -59,35 +74,21 @@ impl AsyncFileReader for BlockObjectReader {
         &mut self,
         ranges: Vec<Range<u64>>,
     ) -> BoxFuture<'_, parquet::errors::Result<Vec<Bytes>>> {
-        async move {
+        Box::pin(async move {
             try_join_all(ranges.into_iter().map(|range| {
                 let store = Arc::clone(&self.store);
                 let path = self.path.clone();
                 let options = self.get_options(range);
                 async move {
-                    let result = store.get_opts(&path, options).await?;
-                    result.bytes().await
+                    let result = store
+                        .get_opts(&path, options)
+                        .await
+                        .map_err(to_parquet_error)?;
+                    result.bytes().await.map_err(to_parquet_error)
                 }
             }))
             .await
-            .map_err(to_parquet_error)
-        }
-        .boxed()
-    }
-
-    fn get_metadata<'a>(
-        &'a mut self,
-        options: Option<&'a ArrowReaderOptions>,
-    ) -> BoxFuture<'a, parquet::errors::Result<Arc<ParquetMetaData>>> {
-        let size = self.size;
-        async move {
-            ParquetMetaDataReader::new()
-                .with_arrow_reader_options(options)
-                .load_and_finish(self, size)
-                .await
-                .map(Arc::new)
-        }
-        .boxed()
+        })
     }
 }
 

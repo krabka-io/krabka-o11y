@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use super::{
     HistogramRow, PromqlError, Result, SessionContext, decode_native_histograms,
     samples_per_query_exceeded,
@@ -18,7 +20,7 @@ pub(crate) async fn collect_histogram_rows(
     for batch in batches {
         let decoded = decode_native_histograms(&batch)
             .map_err(|error| PromqlError::Store(error.to_string()))?;
-        for (fp, ts_ms, hist) in decoded {
+        for row in decoded {
             // The cap trips on the row that would take the count past it, so the
             // count this row would produce is what the tenant is told.
             if rows.len() >= max_samples {
@@ -27,11 +29,22 @@ pub(crate) async fn collect_histogram_rows(
                     rows.len().saturating_add(1),
                 ));
             }
-            rows.push(HistogramRow { fp, ts_ms, hist });
+            rows.push(HistogramRow {
+                fp: row.fingerprint,
+                ts_ms: row.timestamp_ms,
+                hist: row.hist,
+            });
         }
     }
-    if !rows.is_sorted_by_key(|row| (row.fp, row.ts_ms)) {
-        rows.sort_by_key(|row| (row.fp, row.ts_ms));
+    if rows
+        .windows(2)
+        .any(|pair| compare_rows(&pair[0], &pair[1]) == Ordering::Greater)
+    {
+        rows.sort_by(compare_rows);
     }
     Ok(rows)
+}
+
+fn compare_rows(left: &HistogramRow, right: &HistogramRow) -> Ordering {
+    left.fp.cmp(&right.fp).then(left.ts_ms.cmp(&right.ts_ms))
 }

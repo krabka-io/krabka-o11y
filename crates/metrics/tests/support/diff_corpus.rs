@@ -3,11 +3,34 @@ use std::cmp::Ordering;
 use assert2::assert;
 use serde_json::{Map, Value, json};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SeedPoint {
     pub metric: &'static str,
-    pub labels: &'static [(&'static str, &'static str)],
-    pub samples: &'static [(i64, f64)],
+    pub labels: Vec<SeedLabel>,
+    pub samples: Vec<SeedSample>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeedLabel {
+    pub name: &'static str,
+    pub value: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeedSample {
+    pub timestamp_ms: i64,
+    pub value: f64,
+}
+
+const fn label(name: &'static str, value: &'static str) -> SeedLabel {
+    SeedLabel { name, value }
+}
+
+const fn sample(timestamp_ms: i64, value: f64) -> SeedSample {
+    SeedSample {
+        timestamp_ms,
+        value,
+    }
 }
 
 #[must_use]
@@ -15,53 +38,111 @@ pub fn seed_dataset() -> Vec<SeedPoint> {
     vec![
         SeedPoint {
             metric: "up",
-            labels: &[("job", "api"), ("instance", "a")],
-            samples: &[(0, 1.0), (15_000, 1.0), (30_000, 1.0), (45_000, 1.0)],
+            labels: vec![label("job", "api"), label("instance", "a")],
+            samples: vec![
+                sample(0, 1.0),
+                sample(15_000, 1.0),
+                sample(30_000, 1.0),
+                sample(45_000, 1.0),
+            ],
         },
         SeedPoint {
             metric: "http_requests_total",
-            labels: &[("job", "api"), ("method", "GET"), ("code", "200")],
-            samples: &[(0, 0.0), (15_000, 30.0), (30_000, 75.0), (45_000, 120.0)],
+            labels: vec![
+                label("job", "api"),
+                label("method", "GET"),
+                label("code", "200"),
+            ],
+            samples: vec![
+                sample(0, 0.0),
+                sample(15_000, 30.0),
+                sample(30_000, 75.0),
+                sample(45_000, 120.0),
+            ],
         },
         SeedPoint {
             metric: "http_requests_total",
-            labels: &[("job", "api"), ("method", "POST"), ("code", "500")],
-            samples: &[(0, 0.0), (15_000, 3.0), (30_000, 5.0), (45_000, 8.0)],
+            labels: vec![
+                label("job", "api"),
+                label("method", "POST"),
+                label("code", "500"),
+            ],
+            samples: vec![
+                sample(0, 0.0),
+                sample(15_000, 3.0),
+                sample(30_000, 5.0),
+                sample(45_000, 8.0),
+            ],
         },
         SeedPoint {
             metric: "cpu_temperature_celsius",
-            labels: &[("job", "node"), ("instance", "a")],
-            samples: &[(0, 40.0), (15_000, 42.0), (30_000, 41.5), (45_000, 43.0)],
+            labels: vec![label("job", "node"), label("instance", "a")],
+            samples: vec![
+                sample(0, 40.0),
+                sample(15_000, 42.0),
+                sample(30_000, 41.5),
+                sample(45_000, 43.0),
+            ],
         },
         SeedPoint {
             metric: "http_request_duration_seconds_bucket",
-            labels: &[("job", "api"), ("le", "0.5")],
-            samples: &[(0, 0.0), (15_000, 10.0), (30_000, 25.0), (45_000, 40.0)],
+            labels: vec![label("job", "api"), label("le", "0.5")],
+            samples: vec![
+                sample(0, 0.0),
+                sample(15_000, 10.0),
+                sample(30_000, 25.0),
+                sample(45_000, 40.0),
+            ],
         },
         SeedPoint {
             metric: "http_request_duration_seconds_bucket",
-            labels: &[("job", "api"), ("le", "1")],
-            samples: &[(0, 0.0), (15_000, 20.0), (30_000, 45.0), (45_000, 70.0)],
+            labels: vec![label("job", "api"), label("le", "1")],
+            samples: vec![
+                sample(0, 0.0),
+                sample(15_000, 20.0),
+                sample(30_000, 45.0),
+                sample(45_000, 70.0),
+            ],
         },
         SeedPoint {
             metric: "http_request_duration_seconds_bucket",
-            labels: &[("job", "api"), ("le", "+Inf")],
-            samples: &[(0, 0.0), (15_000, 25.0), (30_000, 55.0), (45_000, 90.0)],
+            labels: vec![label("job", "api"), label("le", "+Inf")],
+            samples: vec![
+                sample(0, 0.0),
+                sample(15_000, 25.0),
+                sample(30_000, 55.0),
+                sample(45_000, 90.0),
+            ],
         },
         SeedPoint {
             metric: "http_request_duration_seconds_sum",
-            labels: &[("job", "api")],
-            samples: &[(0, 0.0), (15_000, 12.0), (30_000, 30.0), (45_000, 60.0)],
+            labels: vec![label("job", "api")],
+            samples: vec![
+                sample(0, 0.0),
+                sample(15_000, 12.0),
+                sample(30_000, 30.0),
+                sample(45_000, 60.0),
+            ],
         },
         SeedPoint {
             metric: "http_request_duration_seconds_count",
-            labels: &[("job", "api")],
-            samples: &[(0, 0.0), (15_000, 25.0), (30_000, 55.0), (45_000, 90.0)],
+            labels: vec![label("job", "api")],
+            samples: vec![
+                sample(0, 0.0),
+                sample(15_000, 25.0),
+                sample(30_000, 55.0),
+                sample(45_000, 90.0),
+            ],
         },
         SeedPoint {
             metric: "native_histogram_marker",
-            labels: &[("job", "api")],
-            samples: &[(0, 1.0), (15_000, 1.0), (30_000, 1.0), (45_000, 1.0)],
+            labels: vec![label("job", "api")],
+            samples: vec![
+                sample(0, 1.0),
+                sample(15_000, 1.0),
+                sample(30_000, 1.0),
+                sample(45_000, 1.0),
+            ],
         },
     ]
 }
@@ -91,57 +172,80 @@ pub fn queries_equal(left: &Value, right: &Value) -> bool {
 }
 
 fn equivalent_value(left: &Value, right: &Value, numeric: bool, string_result: bool) -> bool {
-    match (left, right) {
-        (Value::Object(left), Value::Object(right)) => {
-            let string_result = string_result || left.get("resultType") == Some(&json!("string"));
-            let scalar_result = left.get("resultType") == Some(&json!("scalar"));
-            left.len() == right.len()
-                && left.iter().all(|(key, left)| {
-                    right.get(key).is_some_and(|right| {
-                        if key == "metric" {
-                            return left == right;
-                        }
-                        if key == "result" && scalar_result {
-                            let (Some(left), Some(right)) = (left.as_array(), right.as_array())
-                            else {
-                                return false;
-                            };
-                            return left.len() == 2
-                                && right.len() == 2
-                                && left[0].is_number()
-                                && left[0] == right[0]
-                                && left[1].is_string()
-                                && right[1].is_string()
-                                && equivalent_value(&left[1], &right[1], true, false);
-                        }
-                        let numeric = !string_result
-                            && (numeric
-                                || matches!(
-                                    key.as_str(),
-                                    "value" | "values" | "histogram" | "histograms"
-                                ));
-                        equivalent_value(left, right, numeric, string_result)
+    match left {
+        Value::Object(left_object) => match right {
+            Value::Object(right_object) => {
+                let string_result =
+                    string_result || left_object.get("resultType") == Some(&json!("string"));
+                let scalar_result = left_object.get("resultType") == Some(&json!("scalar"));
+                left_object.len() == right_object.len()
+                    && left_object.iter().all(|entry| {
+                        right_object.get(entry.0).is_some_and(|right_value| {
+                            let left_value = entry.1;
+                            if entry.0 == "metric" {
+                                return left_value == right_value;
+                            }
+                            if entry.0 == "result" && scalar_result {
+                                let Some(left_scalar) = left_value.as_array() else {
+                                    return false;
+                                };
+                                let Some(right_scalar) = right_value.as_array() else {
+                                    return false;
+                                };
+                                return left_scalar.len() == 2
+                                    && right_scalar.len() == 2
+                                    && left_scalar[0].is_number()
+                                    && left_scalar[0] == right_scalar[0]
+                                    && left_scalar[1].is_string()
+                                    && right_scalar[1].is_string()
+                                    && equivalent_value(
+                                        &left_scalar[1],
+                                        &right_scalar[1],
+                                        true,
+                                        false,
+                                    );
+                            }
+                            let numeric = !string_result
+                                && (numeric
+                                    || matches!(
+                                        entry.0.as_str(),
+                                        "value" | "values" | "histogram" | "histograms"
+                                    ));
+                            equivalent_value(left_value, right_value, numeric, string_result)
+                        })
                     })
-                })
-        }
-        (Value::Array(left), Value::Array(right)) => {
-            left.len() == right.len()
-                && left
-                    .iter()
-                    .zip(right)
-                    .all(|(left, right)| equivalent_value(left, right, numeric, string_result))
-        }
-        (Value::String(left), Value::String(right)) if numeric => {
-            if left == right {
-                return true;
             }
-            match (left.parse::<f64>(), right.parse::<f64>()) {
-                (Ok(left), Ok(right)) if left.is_finite() && right.is_finite() => {
-                    (left - right).abs() <= 1e-6
+            _ => false,
+        },
+        Value::Array(left_array) => match right {
+            Value::Array(right_array) => {
+                left_array.len() == right_array.len()
+                    && left_array
+                        .iter()
+                        .zip(right_array)
+                        .all(|entry| equivalent_value(entry.0, entry.1, numeric, string_result))
+            }
+            _ => false,
+        },
+        Value::String(left_string) if numeric => match right {
+            Value::String(right_string) => {
+                if left_string == right_string {
+                    return true;
                 }
-                _ => false,
+                let left_number = left_string.parse::<f64>();
+                let right_number = right_string.parse::<f64>();
+                match left_number {
+                    Ok(left_number) if left_number.is_finite() => match right_number {
+                        Ok(right_number) if right_number.is_finite() => {
+                            (left_number - right_number).abs() <= 1e-6
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                }
             }
-        }
+            _ => false,
+        },
         _ => left == right,
     }
 }
@@ -156,16 +260,16 @@ fn normalize_value(value: &Value) -> Value {
 
 fn normalize_object(object: &Map<String, Value>) -> Value {
     let mut out = Map::new();
-    for (key, value) in object {
-        if is_volatile_field(key) {
+    for entry in object {
+        if is_volatile_field(entry.0) {
             continue;
         }
         out.insert(
-            key.clone(),
-            if key == "metric" {
-                value.clone()
+            entry.0.clone(),
+            if entry.0 == "metric" {
+                entry.1.clone()
             } else {
-                normalize_value(value)
+                normalize_value(entry.1)
             },
         );
     }
@@ -194,8 +298,7 @@ fn series_sort_key(value: &Value) -> String {
     let labels = value
         .get("metric")
         .filter(|metric| metric.is_object())
-        .map(Value::to_string)
-        .unwrap_or_default();
+        .map_or_else(Default::default, Value::to_string);
     let sample = value
         .get("value")
         .or_else(|| value.get("values"))

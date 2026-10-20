@@ -3,34 +3,92 @@
 use assert2::assert;
 use krabka_logql::{LabelMatcher, Labels, LineFilter, LineFilterOp, MatchOp};
 
+struct SelectorRegexCase {
+    pattern: &'static str,
+    candidate: Option<&'static str>,
+    positive: bool,
+    negative: bool,
+    empty: bool,
+}
+
+struct LineRegexCase {
+    pattern: &'static str,
+    line: &'static str,
+    matches: bool,
+}
+
 #[test]
 fn selector_regexes_keep_anchoring_empty_and_missing_label_behavior() {
-    for (pattern, candidate, positive, negative, empty) in [
-        ("api|worker", Some("api"), true, false, false),
-        ("api|worker", Some("xapi"), false, true, false),
-        ("api|worker", Some("worker\n"), false, true, false),
-        (".+", Some("π"), true, false, false),
-        (".*", Some(""), true, false, true),
-        (".*", None, true, true, true),
-        (".+", None, false, true, false),
-        ("(?s).+", Some("api\nworker"), true, false, false),
+    for case in [
+        SelectorRegexCase {
+            pattern: "api|worker",
+            candidate: Some("api"),
+            positive: true,
+            negative: false,
+            empty: false,
+        },
+        SelectorRegexCase {
+            pattern: "api|worker",
+            candidate: Some("xapi"),
+            positive: false,
+            negative: true,
+            empty: false,
+        },
+        SelectorRegexCase {
+            pattern: "api|worker",
+            candidate: Some("worker\n"),
+            positive: false,
+            negative: true,
+            empty: false,
+        },
+        SelectorRegexCase {
+            pattern: ".+",
+            candidate: Some("π"),
+            positive: true,
+            negative: false,
+            empty: false,
+        },
+        SelectorRegexCase {
+            pattern: ".*",
+            candidate: Some(""),
+            positive: true,
+            negative: false,
+            empty: true,
+        },
+        SelectorRegexCase {
+            pattern: ".*",
+            candidate: None,
+            positive: true,
+            negative: true,
+            empty: true,
+        },
+        SelectorRegexCase {
+            pattern: ".+",
+            candidate: None,
+            positive: false,
+            negative: true,
+            empty: false,
+        },
+        SelectorRegexCase {
+            pattern: "(?s).+",
+            candidate: Some("api\nworker"),
+            positive: true,
+            negative: false,
+            empty: false,
+        },
     ] {
-        let labels = candidate.map_or_else(Labels::new, |value| {
-            Labels::from([("app".to_string(), value.to_string())])
+        let labels = case.candidate.map_or_else(Labels::new, |value| {
+            let mut labels = Labels::new();
+            labels.insert("app".to_string(), value.to_string());
+            labels
         });
-        let matcher = LabelMatcher::new("app", MatchOp::RegexEqual, pattern).unwrap();
-        let negated = LabelMatcher::new("app", MatchOp::RegexNotEqual, pattern).unwrap();
+        let matcher = LabelMatcher::new("app", MatchOp::RegexEqual, case.pattern).unwrap();
+        let negated = LabelMatcher::new("app", MatchOp::RegexNotEqual, case.pattern).unwrap();
         for _ in 0..3 {
-            assert!(
-                matcher.clone().matches(&labels) == positive,
-                "{pattern:?} {candidate:?}"
-            );
-            assert!(
-                negated.clone().matches(&labels) == negative,
-                "{pattern:?} {candidate:?}"
-            );
-            assert!(matcher.matches_empty_value() == empty);
-            assert!(negated.matches_empty_value() == !empty);
+            assert!(matcher.clone().matches(&labels) == case.positive);
+            assert!(negated.clone().matches(&labels) == case.negative);
+            assert!(matcher.matches_empty_value() == case.empty);
+            assert!(negated.matches_empty_value() == !case.empty);
         }
     }
     assert!(LabelMatcher::new("app", MatchOp::RegexEqual, "[").is_err());
@@ -43,8 +101,10 @@ fn public_selector_mutation_uses_the_current_operation_and_value() {
     changed.value = "worker".to_string();
     changed.op = MatchOp::RegexNotEqual;
     assert!(changed == LabelMatcher::new("app", MatchOp::RegexNotEqual, "worker").unwrap());
-    let api = Labels::from([("app".to_string(), "api".to_string())]);
-    let worker = Labels::from([("app".to_string(), "worker".to_string())]);
+    let mut api = Labels::new();
+    api.insert("app".to_string(), "api".to_string());
+    let mut worker = Labels::new();
+    worker.insert("app".to_string(), "worker".to_string());
     assert!(original.matches(&api));
     assert!(!original.matches(&worker));
     assert!(changed.matches(&api));
@@ -59,26 +119,48 @@ fn public_selector_mutation_uses_the_current_operation_and_value() {
 
 #[test]
 fn line_regexes_keep_unanchored_matching_negation_and_newline_behavior() {
-    for (pattern, line, matches) in [
-        ("accepted", "prefix accepted suffix", true),
-        ("accepted$", "prefix accepted suffix", false),
-        ("accepted$", "π accepted", true),
-        ("^accepted$", "accepted\n", false),
-        (".+", "\n", false),
-        ("(?s).+", "\n", true),
-        ("", "", true),
+    for case in [
+        LineRegexCase {
+            pattern: "accepted",
+            line: "prefix accepted suffix",
+            matches: true,
+        },
+        LineRegexCase {
+            pattern: "accepted$",
+            line: "prefix accepted suffix",
+            matches: false,
+        },
+        LineRegexCase {
+            pattern: "accepted$",
+            line: "π accepted",
+            matches: true,
+        },
+        LineRegexCase {
+            pattern: "^accepted$",
+            line: "accepted\n",
+            matches: false,
+        },
+        LineRegexCase {
+            pattern: ".+",
+            line: "\n",
+            matches: false,
+        },
+        LineRegexCase {
+            pattern: "(?s).+",
+            line: "\n",
+            matches: true,
+        },
+        LineRegexCase {
+            pattern: "",
+            line: "",
+            matches: true,
+        },
     ] {
-        let filter = LineFilter::new(LineFilterOp::Regex, pattern).unwrap();
-        let negated = LineFilter::new(LineFilterOp::NotRegex, pattern).unwrap();
+        let filter = LineFilter::new(LineFilterOp::Regex, case.pattern).unwrap();
+        let negated = LineFilter::new(LineFilterOp::NotRegex, case.pattern).unwrap();
         for _ in 0..3 {
-            assert!(
-                filter.clone().matches(line) == matches,
-                "{pattern:?} {line:?}"
-            );
-            assert!(
-                negated.clone().matches(line) == !matches,
-                "{pattern:?} {line:?}"
-            );
+            assert!(filter.clone().matches(case.line) == case.matches);
+            assert!(negated.clone().matches(case.line) == !case.matches);
         }
     }
     assert!(LineFilter::new(LineFilterOp::Regex, "[").is_err());

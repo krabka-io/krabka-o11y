@@ -102,12 +102,12 @@ where
                 let tenant = tenant.as_ref();
                 let entries = store.load_all(tenant);
                 let mut keys = BTreeSet::new();
-                for (key, value) in entries {
+                for entry in entries {
                     if generator
-                        .restore_edge_checkpoint(tenant, &key, &value)
+                        .restore_edge_checkpoint(tenant, &entry.key, &entry.value)
                         .is_ok()
                     {
-                        keys.insert(key);
+                        keys.insert(entry.key);
                     }
                 }
                 checkpoint_keys.insert(tenant.to_string(), keys);
@@ -237,17 +237,21 @@ where
             .lock()
             .expect("metrics generator checkpoint key mutex poisoned");
 
-        for (tenant, entries) in checkpoints {
-            let current: BTreeSet<Vec<u8>> = entries.iter().map(|(key, _)| key.clone()).collect();
-            for (key, value) in entries {
-                store.save(&tenant, &key, &value);
+        for checkpoint in checkpoints {
+            let current: BTreeSet<Vec<u8>> = checkpoint
+                .entries
+                .iter()
+                .map(|entry| entry.key.clone())
+                .collect();
+            for entry in checkpoint.entries {
+                store.save(&checkpoint.tenant, &entry.key, &entry.value);
             }
-            if let Some(old_keys) = previous.get(&tenant) {
+            if let Some(old_keys) = previous.get(&checkpoint.tenant) {
                 for old_key in old_keys.difference(&current) {
-                    store.save(&tenant, old_key, b"");
+                    store.save(&checkpoint.tenant, old_key, b"");
                 }
             }
-            previous.insert(tenant, current);
+            previous.insert(checkpoint.tenant, current);
         }
     }
 
@@ -325,14 +329,61 @@ mod tests {
     }
 
     fn service() -> MetricsGenService<MockSpanSource, MockRemoteWriteSink> {
-        let source = Arc::new(MockSpanSource::default());
-        let sink = Arc::new(MockRemoteWriteSink::default());
+        service_at(&MockClock::new(0))
+    }
+
+    async fn service_with_pending_failed_write()
+    -> MetricsGenService<MockSpanSource, MockRemoteWriteSink> {
+        let svc = service();
+        svc.source
+            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
+        svc.poll_once(100).await.unwrap();
+        svc.sink.fail_next();
+        svc
+    }
+
+    // A service with default config and empty mocks, reading time from `clock`.
+    fn service_at(clock: &MockClock) -> MetricsGenService<MockSpanSource, MockRemoteWriteSink> {
         MetricsGenService::new(
             MetricsGenConfig::default(),
-            Arc::new(MockClock::new(0)),
-            source,
-            sink,
+            Arc::new(clock.clone()),
+            Arc::new(MockSpanSource::default()),
+            Arc::new(MockRemoteWriteSink::default()),
         )
+    }
+
+    // Polls `client_span_a` into `svc`, and checks that its edge is pending
+    // and checkpointed in `store`.
+    async fn poll_pending_edge(
+        svc: &MetricsGenService<MockSpanSource, MockRemoteWriteSink>,
+        store: &InMemoryCheckpointStore,
+    ) {
+        svc.source.push_batch(vec![client_span_a()]);
+        assert2::assert!(svc.poll_once(100).await.unwrap() == 1);
+        assert2::assert!(store.load_all("A").len() == 1);
+    }
+
+    async fn service_with_expired_edge() -> (
+        Arc<InMemoryCheckpointStore>,
+        MetricsGenService<MockSpanSource, MockRemoteWriteSink>,
+    ) {
+        let store = Arc::new(InMemoryCheckpointStore::default());
+        let clock = MockClock::new(0);
+        let svc = service_at(&clock).with_checkpoint_store(store.clone());
+        poll_pending_edge(&svc, &store).await;
+        clock.set(11_000_000_000);
+        (store, svc)
+    }
+
+    // Tenant `A`'s client span `0xA`, the caller half of an `A -> A` edge.
+    fn client_span_a() -> SpanRecord {
+        span("A", SpanKind::Client, [0xA; 8], [0; 8])
+    }
+
+    // Tenant `A`'s server span `0xB`, the callee half that pairs with
+    // `client_span_a`.
+    fn server_span_b() -> SpanRecord {
+        span("A", SpanKind::Server, [0xB; 8], [0xA; 8])
     }
 
     #[test]
@@ -367,10 +418,8 @@ mod tests {
     #[tokio::test]
     async fn poll_then_collect_writes_then_commits() {
         let svc = service();
-        svc.source.push_batch(vec![
-            span("A", SpanKind::Client, [0xA; 8], [0; 8]),
-            span("A", SpanKind::Server, [0xB; 8], [0xA; 8]),
-        ]);
+        svc.source
+            .push_batch(vec![client_span_a(), server_span_b()]);
 
         let processed = svc.poll_once(100).await.unwrap();
         assert2::assert!(processed == 2);
@@ -391,12 +440,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_keeps_consuming_while_a_flush_is_pending() {
-        let svc = service();
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
-        svc.poll_once(100).await.unwrap();
-        // A failed write leaves a payload pending (sink down).
-        svc.sink.fail_next();
+        let svc = service_with_pending_failed_write().await;
         assert2::assert!(svc.collect_once().await.is_err());
 
         // With a payload pending, polling MUST still consume spans. Previously
@@ -410,11 +454,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_does_not_commit_when_write_fails() {
-        let svc = service();
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
-        svc.poll_once(100).await.unwrap();
-        svc.sink.fail_next();
+        let svc = service_with_pending_failed_write().await;
 
         let result = svc.collect_once().await;
 
@@ -424,11 +464,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_retries_pending_payload_after_write_failure() {
-        let svc = service();
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0; 8])]);
-        svc.poll_once(100).await.unwrap();
-        svc.sink.fail_next();
+        let svc = service_with_pending_failed_write().await;
 
         check!(svc.collect_once().await.is_err());
         check!(svc.source.commits() == 0);
@@ -477,36 +513,16 @@ mod tests {
         let store = Arc::new(InMemoryCheckpointStore::default());
         let svc = service().with_checkpoint_store(store.clone());
 
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Client, [0xA; 8], [0; 8])]);
-        assert2::assert!(svc.poll_once(100).await.unwrap() == 1);
-        assert2::assert!(store.load_all("A").len() == 1);
+        poll_pending_edge(&svc, &store).await;
 
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0xA; 8])]);
+        svc.source.push_batch(vec![server_span_b()]);
         assert2::assert!(svc.poll_once(100).await.unwrap() == 1);
         assert2::assert!(store.load_all("A").is_empty());
     }
 
     #[tokio::test]
     async fn collect_tombstones_checkpoints_for_expired_edges() {
-        let store = Arc::new(InMemoryCheckpointStore::default());
-        let clock = MockClock::new(0);
-        let source = Arc::new(MockSpanSource::default());
-        let sink = Arc::new(MockRemoteWriteSink::default());
-        let svc = MetricsGenService::new(
-            MetricsGenConfig::default(),
-            Arc::new(clock.clone()),
-            source.clone(),
-            sink,
-        )
-        .with_checkpoint_store(store.clone());
-
-        source.push_batch(vec![span("A", SpanKind::Client, [0xA; 8], [0; 8])]);
-        assert2::assert!(svc.poll_once(100).await.unwrap() == 1);
-        assert2::assert!(store.load_all("A").len() == 1);
-
-        clock.set(11_000_000_000);
+        let (store, svc) = service_with_expired_edge().await;
         assert2::assert!(svc.collect_once().await.unwrap() == 1);
 
         assert2::assert!(store.load_all("A").is_empty());
@@ -514,27 +530,12 @@ mod tests {
 
     #[tokio::test]
     async fn collect_keeps_expired_edge_checkpoint_when_write_fails() {
-        let store = Arc::new(InMemoryCheckpointStore::default());
-        let clock = MockClock::new(0);
-        let source = Arc::new(MockSpanSource::default());
-        let sink = Arc::new(MockRemoteWriteSink::default());
-        let svc = MetricsGenService::new(
-            MetricsGenConfig::default(),
-            Arc::new(clock.clone()),
-            source.clone(),
-            sink.clone(),
-        )
-        .with_checkpoint_store(store.clone());
-
-        source.push_batch(vec![span("A", SpanKind::Client, [0xA; 8], [0; 8])]);
-        assert2::assert!(svc.poll_once(100).await.unwrap() == 1);
-        assert2::assert!(store.load_all("A").len() == 1);
+        let (store, svc) = service_with_expired_edge().await;
 
         // Advance past the edge TTL so the collect expires it, but force the sink
         // write to fail. The unpaired-span accounting is carried in the (pending)
         // payload, so the expired-edge checkpoint MUST survive for retry — never
         // tombstone before the payload is durably written and committed.
-        clock.set(11_000_000_000);
         svc.sink.fail_next();
         check!(svc.collect_once().await.is_err());
         check!(svc.source.commits() == 0);
@@ -559,15 +560,12 @@ mod tests {
     async fn checkpointed_edges_are_restored_on_restart() {
         let store = Arc::new(InMemoryCheckpointStore::default());
         let svc = service().with_checkpoint_store(store.clone());
-        svc.source
-            .push_batch(vec![span("A", SpanKind::Client, [0xA; 8], [0; 8])]);
+        svc.source.push_batch(vec![client_span_a()]);
         assert2::assert!(svc.poll_once(100).await.unwrap() == 1);
 
         let store_for_restore: Arc<dyn EdgeCheckpointStore> = store.clone();
         let restarted = service().with_checkpoint_store_for_tenants(&store_for_restore, ["A"]);
-        restarted
-            .source
-            .push_batch(vec![span("A", SpanKind::Server, [0xB; 8], [0xA; 8])]);
+        restarted.source.push_batch(vec![server_span_b()]);
         assert2::assert!(restarted.poll_once(100).await.unwrap() == 1);
         assert2::assert!(restarted.collect_once().await.unwrap() == 1);
 
@@ -586,7 +584,7 @@ mod tests {
         let store = Arc::new(InMemoryCheckpointStore::default());
         let svc = service().with_checkpoint_store(store.clone());
         svc.source.push_batch(vec![
-            span("A", SpanKind::Client, [0xA; 8], [0; 8]),
+            client_span_a(),
             span("B", SpanKind::Client, [0xC; 8], [0; 8]),
         ]);
         assert2::assert!(svc.poll_once(100).await.unwrap() == 2);
@@ -594,7 +592,7 @@ mod tests {
         let store_for_restore: Arc<dyn EdgeCheckpointStore> = store.clone();
         let restarted = service().with_checkpoint_store_restoring_all_tenants(&store_for_restore);
         restarted.source.push_batch(vec![
-            span("A", SpanKind::Server, [0xB; 8], [0xA; 8]),
+            server_span_b(),
             span("B", SpanKind::Server, [0xD; 8], [0xC; 8]),
         ]);
         assert2::assert!(restarted.poll_once(100).await.unwrap() == 2);

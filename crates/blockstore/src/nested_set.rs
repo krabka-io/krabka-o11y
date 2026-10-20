@@ -29,7 +29,7 @@ mod tests {
             },
         ];
 
-        let sets = assign_nested_set(&spans);
+        let sets = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         assert2::check!(sets.len() == 2);
         // The self-parenting span encloses its real child.
         assert2::check!(sets[0].nested_set_left < sets[1].nested_set_left);
@@ -58,7 +58,7 @@ mod tests {
             },
         ];
 
-        let sets = assign_nested_set(&spans);
+        let sets = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         // Both are roots, in span order: the self-parent is first.
         assert2::check!(
             (sets[0].nested_set_left, sets[0].nested_set_right) == (1, 2),
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn root_has_sentinel_parent_id() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         // -1 = Tempo's no-parent sentinel (so `nestedSetParent < 0` finds roots).
         assert2::assert!(ns[idx(&spans, 1)].parent_id == -1);
     }
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn child_parent_id_equals_parent_left() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         let p_left = ns[idx(&spans, 3)].nested_set_left;
         let root_left = ns[idx(&spans, 1)].nested_set_left;
         assert2::assert!(ns[idx(&spans, 4)].parent_id == p_left);
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn ancestor_interval_strictly_contains_descendants() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         let r = ns[idx(&spans, 1)];
         for id in [2_u8, 3, 4] {
             let d = ns[idx(&spans, id)];
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn orphan_is_treated_as_root() {
         let spans = vec![node(5, Some(99))];
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         assert2::assert!(ns[0].parent_id == -1); // dangling parent → root sentinel
         assert2::assert!(ns[0].nested_set_left < ns[0].nested_set_right);
     }
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn left_lt_right_for_every_node() {
         let spans = sample_tree();
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         for n in &ns {
             assert2::assert!(n.nested_set_left < n.nested_set_right);
         }
@@ -155,14 +155,12 @@ mod tests {
 
     #[test]
     fn cyclic_parentage_assigns_every_node_a_valid_interval() {
-        for (_name, spans) in [
-            ("two-node cycle", vec![node(1, Some(2)), node(2, Some(1))]),
-            (
-                "three-node cycle",
-                vec![node(1, Some(3)), node(2, Some(1)), node(3, Some(2))],
-            ),
-        ] {
-            let ns = assign_nested_set(&spans);
+        let cases = [
+            vec![node(1, Some(2)), node(2, Some(1))],
+            vec![node(1, Some(3)), node(2, Some(1)), node(3, Some(2))],
+        ];
+        for spans in &cases {
+            let ns = assign_nested_set(spans, CycleSpans::AssignIntervals);
             let mut lefts: Vec<i32> = ns.iter().map(|n| n.nested_set_left).collect();
             lefts.sort_unstable();
             lefts.dedup();
@@ -174,10 +172,12 @@ mod tests {
 
     #[test]
     fn cyclic_parentage_assignment_completes() {
-        let (tx, rx) = mpsc::channel();
+        let channel = mpsc::channel();
+        let tx = channel.0;
+        let rx = channel.1;
         std::thread::spawn(move || {
             let spans = vec![node(1, None), node(2, Some(3)), node(3, Some(2))];
-            let _ = tx.send(assign_nested_set(&spans));
+            let _ = tx.send(assign_nested_set(&spans, CycleSpans::AssignIntervals));
         });
 
         let ns = rx
@@ -188,10 +188,112 @@ mod tests {
     }
 }
 
-mod assign_nested_set;
-mod nested_set_type;
-mod span_node;
+/// What [`assign_nested_set`] does with spans their parent links leave
+/// unreachable because of a cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CycleSpans {
+    /// Seed each unreached span as an extra root and assign valid intervals.
+    AssignIntervals,
+    /// Leave unreached spans with zeroed nested-set columns.
+    LeaveUnassigned,
+}
 
-pub use assign_nested_set::assign_nested_set;
-pub use nested_set_type::NestedSet;
-pub use span_node::SpanNode;
+/// The three nested-set columns for one span.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NestedSet {
+    pub nested_set_left: i32,
+    pub nested_set_right: i32,
+    pub parent_id: i32,
+}
+
+/// One span's tree linkage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpanNode {
+    pub span_id: [u8; 8],
+    pub parent_span_id: Option<[u8; 8]>,
+}
+
+/// Assigns nested-set intervals by DFS preorder over the trace forest.
+///
+/// Roots are numbered in span order. `cycle_spans` decides what happens to
+/// spans that no root reaches because their parent links form a cycle.
+#[must_use]
+pub fn assign_nested_set(spans: &[SpanNode], cycle_spans: CycleSpans) -> Vec<NestedSet> {
+    enum Frame {
+        Enter { idx: usize, parent_left: i32 },
+        Exit { idx: usize },
+    }
+
+    let mut pos: HashMap<[u8; 8], usize> = HashMap::new();
+    for (i, span) in spans.iter().enumerate() {
+        pos.insert(span.span_id, i);
+    }
+
+    let mut children = vec![Vec::new(); spans.len()];
+    let mut roots = Vec::new();
+    for (i, span) in spans.iter().enumerate() {
+        match span.parent_span_id.and_then(|p| pos.get(&p).copied()) {
+            Some(parent_idx) if parent_idx != i => children[parent_idx].push(i),
+            _ => roots.push(i),
+        }
+    }
+
+    let mut out = vec![
+        NestedSet {
+            nested_set_left: 0,
+            nested_set_right: 0,
+            parent_id: 0,
+        };
+        spans.len()
+    ];
+    let mut counter = 1_i32;
+    let mut visited = vec![false; spans.len()];
+
+    // DFS from the discovered roots. Under cyclic/garbage parentage (e.g.
+    // A.parent=B, B.parent=A) a node can be neither a root nor a descendant of
+    // one, so it would keep `{0, 0, 0}` and collide with real roots. With
+    // `AssignIntervals`, sweep every span afterwards and seed each unreached
+    // one as an additional root so every node gets a valid `left < right`
+    // interval.
+    let cycle_sweep = match cycle_spans {
+        CycleSpans::AssignIntervals => 0..spans.len(),
+        CycleSpans::LeaveUnassigned => 0..0,
+    };
+    let mut stack = Vec::new();
+    for root in roots.iter().copied().chain(cycle_sweep) {
+        stack.push(Frame::Enter {
+            idx: root,
+            // Root span, or cycle-orphaned span re-seeded as a root:
+            // nestedSetParent = -1 (Tempo's no-parent sentinel; left values
+            // start at 1 so it never collides with a real parent's left).
+            parent_left: -1,
+        });
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Enter { idx, parent_left } => {
+                    if visited[idx] {
+                        continue;
+                    }
+                    visited[idx] = true;
+                    let left = counter;
+                    counter += 1;
+                    out[idx].nested_set_left = left;
+                    out[idx].parent_id = parent_left;
+                    stack.push(Frame::Exit { idx });
+                    for &child in children[idx].iter().rev() {
+                        stack.push(Frame::Enter {
+                            idx: child,
+                            parent_left: left,
+                        });
+                    }
+                }
+                Frame::Exit { idx } => {
+                    out[idx].nested_set_right = counter;
+                    counter += 1;
+                }
+            }
+        }
+    }
+
+    out
+}

@@ -25,8 +25,8 @@ impl Authenticator {
         let events = self.events.events();
         let credential = match PresentedCredential::from_request(headers, peer) {
             Ok(credential) => credential,
-            Err((attempted, reason)) => {
-                events.authentication_failed(source, attempted, reason);
+            Err(failure) => {
+                events.authentication_failed(source, failure.method, failure.reason);
                 return None;
             }
         };

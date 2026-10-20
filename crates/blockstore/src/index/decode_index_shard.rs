@@ -1,7 +1,7 @@
 use super::{
-    BTreeMap, BlockEntry, BlockLevel, BlockList, BlockListRepr, BlockStoreError, ByteReader,
-    INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, Index, Labels, Result, SeriesFingerprint,
-    TenantIndex,
+    BTreeMap, BlockEntry, BlockList, BlockListRepr, BlockStoreError, INDEX_SHARD_FORMAT_VERSION,
+    INDEX_SHARD_MAGIC, Index, Labels, Result, SeriesFingerprint, ShardBlockBounds, TenantIndex,
+    decode_shard_header,
 };
 
 /// Decodes one shard into a single-tenant [`Index`].
@@ -24,26 +24,15 @@ pub(crate) fn decode_index_shard(object_key: &str, bytes: &[u8]) -> Result<Index
 }
 
 fn decode(bytes: &[u8]) -> Result<Index> {
-    let mut reader = ByteReader::new(bytes);
-    if reader.take(INDEX_SHARD_MAGIC.len(), "the magic")? != INDEX_SHARD_MAGIC {
-        return Err(BlockStoreError::InvalidBlock(
-            "is not an index shard".to_string(),
-        ));
-    }
-    let version = reader.u8("the format version")?;
-    if version != INDEX_SHARD_FORMAT_VERSION {
-        return Err(BlockStoreError::InvalidBlock(format!(
-            "is format version {version}, expected {INDEX_SHARD_FORMAT_VERSION}"
-        )));
-    }
-
-    let tenant = reader.string("the tenant name")?;
-
-    let dictionary_len = reader.count("dictionary entries")?;
-    let mut dictionary = Vec::with_capacity(dictionary_len);
-    for _ in 0..dictionary_len {
-        dictionary.push(reader.string("a dictionary entry")?);
-    }
+    let header = decode_shard_header(
+        bytes,
+        &INDEX_SHARD_MAGIC,
+        INDEX_SHARD_FORMAT_VERSION,
+        "an index shard",
+    )?;
+    let mut reader = header.reader;
+    let tenant = header.tenant;
+    let dictionary = header.dictionary;
     let mut tenant_index = TenantIndex::default();
 
     let series_count = reader.count("series")?;
@@ -63,18 +52,14 @@ fn decode(bytes: &[u8]) -> Result<Index> {
     let mut entries = Vec::with_capacity(block_count);
     let mut previous_min = 0_i64;
     for _ in 0..block_count {
-        let object_key = reader.string("a block object key")?;
-        let min_ts = previous_min.wrapping_add(reader.ivarint("a block start")?);
-        let max_ts = min_ts.wrapping_add(reader.ivarint("a block span")?);
+        let block = super::read_shard_block_prefix(&mut reader, previous_min)?;
+        let object_key = block.object_key;
+        let ShardBlockBounds { min_ts, max_ts } = block.bounds;
         previous_min = min_ts;
-        let row_count = reader.count_unbounded("a block row count")?;
+        let row_count = block.row_count;
         let fingerprint_count = reader.count_unbounded("a block fingerprint count")?;
         let fingerprint_digest = reader.u64_le("a block fingerprint digest")?;
-        let level = BlockLevel(
-            u32::try_from(reader.uvarint("a block level")?).map_err(|_| {
-                BlockStoreError::InvalidBlock("names a compaction level beyond u32".to_string())
-            })?,
-        );
+        let level = block.level;
         entries.push(BlockEntry {
             object_key,
             min_ts,
@@ -125,7 +110,12 @@ fn decode(bytes: &[u8]) -> Result<Index> {
     Ok(index)
 }
 
-fn dictionary_entry(dictionary: &[String], id: u64) -> Result<&str> {
+/// Resolves a names-dictionary id read from a shard to its string.
+///
+/// # Errors
+/// Returns [`BlockStoreError::InvalidBlock`] when `id` is past the end of the
+/// dictionary.
+pub(crate) fn dictionary_entry(dictionary: &[String], id: u64) -> Result<&str> {
     usize::try_from(id)
         .ok()
         .and_then(|id| dictionary.get(id))

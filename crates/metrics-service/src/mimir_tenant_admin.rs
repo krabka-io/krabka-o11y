@@ -179,10 +179,11 @@ async fn persist_marker(
     Ok(())
 }
 
-async fn load_marker(
+/// The JSON document at `key`, or `None` when no object is there.
+pub(crate) async fn read_optional_json<T: serde::de::DeserializeOwned>(
     store: &Arc<dyn ObjectStore>,
     key: &Path,
-) -> Result<Option<TenantDeletionMarker>, String> {
+) -> Result<Option<T>, String> {
     let bytes = match store.get(key).await {
         Ok(object) => object.bytes().await.map_err(|error| error.to_string())?,
         Err(object_store::Error::NotFound { .. }) => return Ok(None),
@@ -191,6 +192,13 @@ async fn load_marker(
     serde_json::from_slice(&bytes)
         .map(Some)
         .map_err(|error| error.to_string())
+}
+
+async fn load_marker(
+    store: &Arc<dyn ObjectStore>,
+    key: &Path,
+) -> Result<Option<TenantDeletionMarker>, String> {
+    read_optional_json(store, key).await
 }
 
 async fn marker_objects_absent(
@@ -215,7 +223,9 @@ fn tenant_deletion_marker_key(tenant: &str) -> Path {
 }
 
 fn internal(error: impl std::fmt::Display) -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, format!("{error}\n")).into_response()
+    let mut response = format!("{error}\n").into_response();
+    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    response
 }
 
 #[cfg(test)]
@@ -252,20 +262,22 @@ mod tests {
         headers
     }
 
-    fn state(
-        store: Arc<dyn ObjectStore>,
-        head: WalHead,
-    ) -> (MimirTenantAdminState, Arc<RefreshingMetricBlockStore>) {
+    struct TestMimirState {
+        admin: MimirTenantAdminState,
+        query: Arc<RefreshingMetricBlockStore>,
+    }
+
+    fn state(store: Arc<dyn ObjectStore>, head: WalHead) -> TestMimirState {
         let query = Arc::new(RefreshingMetricBlockStore::new(
             Arc::clone(&store),
             "memory:///".parse().unwrap(),
             "metrics",
             head.clone(),
         ));
-        (
-            MimirTenantAdminState::new(store, Arc::clone(&query), head),
+        TestMimirState {
+            admin: MimirTenantAdminState::new(store, Arc::clone(&query), head),
             query,
-        )
+        }
     }
 
     #[tokio::test]
@@ -297,14 +309,16 @@ mod tests {
         head.update(|head| {
             head.push_float(
                 "tenant-a",
-                [("__name__".to_owned(), "up".to_owned())]
+                [krabka_blockstore::LabelPair::new("__name__", "up")]
                     .into_iter()
                     .collect::<Labels>(),
                 1_000,
                 1.0,
             );
         });
-        let (admin_state, query) = state(Arc::clone(&store), head);
+        let test_state = state(Arc::clone(&store), head);
+        let admin_state = test_state.admin;
+        let query = test_state.query;
 
         for _ in 0..2 {
             let response = delete_tenant(
@@ -333,7 +347,7 @@ mod tests {
             Err(object_store::Error::NotFound { .. })
         ));
 
-        let (restarted, _) = state(Arc::clone(&store), WalHead::new());
+        let restarted = state(Arc::clone(&store), WalHead::new()).admin;
         let response = delete_tenant_status(
             State(restarted),
             Extension(Principal::Unauthenticated),
@@ -375,7 +389,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let (_, query) = state(Arc::clone(&store), WalHead::new());
+        let query = state(Arc::clone(&store), WalHead::new()).query;
         let engine = krabka_promql::PromqlEngine::new(query, krabka_promql::EngineOpts::default());
 
         let result = engine

@@ -21,6 +21,24 @@ use promql_parser::{
 
 use crate::{PromqlError, PromqlLabels as Labels, error::Result};
 
+struct QueryScan {
+    chars: Vec<char>,
+    output: String,
+    index: usize,
+    quoted: QuotedCopy,
+}
+
+impl QueryScan {
+    fn new(query: &str) -> Self {
+        Self {
+            chars: query.chars().collect(),
+            output: String::with_capacity(query.len()),
+            index: 0,
+            quoted: QuotedCopy::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -151,67 +169,103 @@ mod tests {
 
 pub(crate) mod byte_selector_expr;
 pub(crate) mod byte_string_expr;
-mod consume_ident;
 mod consume_number_duration;
+mod duration_conversion;
 mod duration_expr_context;
 mod duration_expr_parser;
-mod duration_unit_seconds;
 mod extended_modifier_at;
 mod extended_selector_expr;
 mod extended_selector_modifier;
+#[cfg(test)]
+mod first_batch_values;
 mod format_promql_expr;
 pub(crate) mod histogram_trim_operators;
 mod info_label_selector;
-mod is_ident_char;
-mod is_ident_start;
-mod is_zero;
+#[cfg(test)]
+mod job_values;
 mod labeled_series;
+mod leaf_extension_expr;
 mod matching_delimiter;
-mod ms_to_seconds;
 mod normalize_duration_expressions;
 mod normalize_range_duration_content;
 mod normalize_utf8_strings;
 mod offset_operand;
-mod parse_experimental_zero_arg_helper;
-mod parse_promql;
 mod parse_promql_with_duration_context;
 mod query_ast_codec;
-mod seconds_to_duration_literal;
-mod skip_ws;
+mod quoted_copy;
+mod range_window_grid;
+mod skip_literal_or_comment;
 mod starts_offset_keyword;
 mod step_grid;
 mod strip_extended_selector_modifiers;
+#[cfg(test)]
+mod test_approx_eq;
 mod timed_value;
 mod top_level_colon;
 mod wrap_extended_selectors;
 
-use consume_ident::consume_ident;
 use consume_number_duration::consume_number_duration;
+use duration_conversion::{duration_unit_seconds, ms_to_seconds, seconds_to_duration_literal};
 pub use duration_expr_context::DurationExprContext;
 use duration_expr_parser::DurationExprParser;
-use duration_unit_seconds::duration_unit_seconds;
 use extended_modifier_at::extended_modifier_at;
 pub use extended_selector_expr::ExtendedSelectorExpr;
 pub use extended_selector_modifier::ExtendedSelectorModifier;
+#[cfg(test)]
+use first_batch_values::first_batch_values;
 pub use format_promql_expr::{format_promql_expr, serialize_promql_expr};
-use is_ident_char::is_ident_char;
-use is_ident_start::is_ident_start;
-use is_zero::is_zero;
+#[cfg(test)]
+pub(crate) use job_values::{JobValue, job_values};
 pub use labeled_series::LabeledSeries;
 use matching_delimiter::matching_delimiter;
-use ms_to_seconds::ms_to_seconds;
 use normalize_duration_expressions::normalize_duration_expressions;
 use normalize_range_duration_content::normalize_range_duration_content;
 use offset_operand::offset_operand;
-use parse_experimental_zero_arg_helper::parse_experimental_zero_arg_helper;
-pub use parse_promql::parse_promql;
 pub use parse_promql_with_duration_context::parse_promql_with_duration_context;
 pub use query_ast_codec::{format_promql_query, serialize_promql_query};
-use seconds_to_duration_literal::seconds_to_duration_literal;
-use skip_ws::skip_ws;
+use quoted_copy::QuotedCopy;
+pub use range_window_grid::RangeWindowGrid;
+use skip_literal_or_comment::skip_literal_or_comment;
 use starts_offset_keyword::starts_offset_keyword;
 pub use step_grid::StepGrid;
 use strip_extended_selector_modifiers::strip_extended_selector_modifiers;
+#[cfg(test)]
+use test_approx_eq::approx_eq;
 pub use timed_value::TimedValue;
 use top_level_colon::top_level_colon;
 use wrap_extended_selectors::wrap_extended_selectors;
+
+fn is_zero(value: f64) -> bool {
+    value.abs() <= f64::EPSILON
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_ident_char(ch: char) -> bool {
+    is_ident_start(ch) || ch.is_ascii_digit() || ch == ':'
+}
+
+fn skip_ws(chars: &[char], mut index: usize) -> usize {
+    while chars.get(index).is_some_and(|ch| ch.is_whitespace()) {
+        index += 1;
+    }
+    index
+}
+
+fn consume_ident(chars: &[char], mut index: usize) -> usize {
+    while chars.get(index).is_some_and(|ch| is_ident_char(*ch)) {
+        index += 1;
+    }
+    index
+}
+
+/// Parses a `PromQL` expression with an instant-query duration context.
+///
+/// # Errors
+///
+/// Returns an error when the input does not parse as a valid `PromQL` expression.
+pub fn parse_promql(query: &str) -> Result<Expr> {
+    parse_promql_with_duration_context(query, DurationExprContext::instant(0))
+}

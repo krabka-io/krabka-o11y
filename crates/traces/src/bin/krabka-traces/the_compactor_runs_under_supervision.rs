@@ -6,23 +6,20 @@
 //! is also how a loop that outlived the role is caught: a compactor whose loop
 //! kept ticking after the role returned would keep raising it.
 
-use std::time::{Duration, Instant};
+#[path = "../../../../observability/tests/support/compaction_passes.rs"]
+mod compaction_passes;
+use std::time::Duration;
 
 use assert2::check;
 use clap::Parser as _;
-use krabka_observability::{RoleReadiness, StagedDrain};
-use krabka_units::secs;
+use krabka_observability::RoleReadiness;
 use tokio::sync::oneshot;
 
+use self::compaction_passes::{
+    COMPACTION_INTERVAL, assert_role_stops_after_cancel, assert_stage_drains_with_its_loop,
+    cancel_ready_role_after_two_passes,
+};
 use super::{CancellationToken, Cli, ServiceMetrics, SharedObjectStore, run_compactor};
-
-/// Short enough that several passes happen while a test waits, and still long
-/// enough to be a schedule rather than a spin.
-const INTERVAL: &str = "20ms";
-
-/// Long enough for ten ticks of [`INTERVAL`], so a loop that was left running
-/// has recorded passes by the time the check reads the counter.
-const AFTER_THE_STOP: Duration = Duration::from_millis(200);
 
 fn compactor_cli() -> Cli {
     Cli::try_parse_from([
@@ -32,30 +29,9 @@ fn compactor_cli() -> Cli {
         "--object-store-url",
         "memory:///",
         "--compaction-interval",
-        INTERVAL,
+        COMPACTION_INTERVAL,
     ])
     .expect("the compactor CLI")
-}
-
-/// Passes the role has finished, whatever each one made of the empty store.
-fn passes(metrics: &ServiceMetrics) -> u64 {
-    metrics.compaction.runs(true) + metrics.compaction.runs(false)
-}
-
-/// Waits until the role has finished `wanted` passes, so a test acts on a
-/// compactor that is demonstrably running rather than on a guess at a delay.
-async fn passes_reach(metrics: &ServiceMetrics, wanted: u64) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if passes(metrics) >= wanted {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!(
-        "the compactor finished {} passes, and the test waited for {wanted}",
-        passes(metrics)
-    );
 }
 
 /// `--target compactor`: the role returns when its token is cancelled, and the
@@ -80,21 +56,13 @@ async fn a_cancelled_compactor_returns_and_leaves_no_loop_behind() {
         }
     });
 
-    passes_reach(&metrics, 2).await;
-    check!(readiness.is_ready(), "{:?}", readiness.pending());
-    shutdown.cancel();
+    cancel_ready_role_after_two_passes(&metrics.compaction, &readiness, &shutdown).await;
     let outcome = tokio::time::timeout(Duration::from_secs(5), role)
         .await
         .expect("the compactor returns when its token is cancelled")
         .expect("the compactor role task");
 
-    check!(outcome.is_ok());
-    let stopped_at = passes(&metrics);
-    tokio::time::sleep(AFTER_THE_STOP).await;
-    check!(
-        passes(&metrics) == stopped_at,
-        "a compaction loop was still running after the role returned"
-    );
+    assert_role_stops_after_cancel(&outcome, &metrics.compaction).await;
 }
 
 /// A role started with its token already cancelled stops without a pass, and
@@ -109,21 +77,19 @@ async fn a_cancelled_compactor_returns_and_leaves_no_loop_behind() {
 #[tokio::test]
 async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
     let metrics = ServiceMetrics::new();
+    let compaction = metrics.compaction.clone();
     let shutdown = CancellationToken::new();
     shutdown.cancel();
-
     let object_store = SharedObjectStore::new();
     let outcome = run_compactor(
         compactor_cli(),
-        metrics.clone(),
+        metrics,
         RoleReadiness::new(),
         shutdown,
         &object_store,
     )
     .await;
-
-    check!(outcome.is_ok());
-    check!(passes(&metrics) == 0);
+    compaction_passes::assert_stopped_without_a_pass(&outcome, &compaction);
 }
 
 /// `--target all`: the compactor stage stops inside the drain's budget.
@@ -136,10 +102,11 @@ async fn a_compactor_started_during_shutdown_returns_without_a_pass() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
     let metrics = ServiceMetrics::new();
-    let (outcome_tx, outcome_rx) = oneshot::channel();
-    let mut drain = StagedDrain::new(secs(5));
+    let outcome_channel = oneshot::channel();
+    let outcome_tx = outcome_channel.0;
+    let outcome_rx = outcome_channel.1;
     let staged = metrics.clone();
-    drain.stage("compactor", move |token| async move {
+    assert_stage_drains_with_its_loop(&metrics.compaction, move |token| async move {
         let object_store = SharedObjectStore::new();
         let outcome = run_compactor(
             compactor_cli(),
@@ -150,20 +117,11 @@ async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
         )
         .await;
         let _ = outcome_tx.send(outcome.is_ok());
-    });
+    })
+    .await;
 
-    passes_reach(&metrics, 2).await;
-    let overran = drain.drain().await;
-
-    check!(overran.is_empty(), "the compactor stage overran its budget");
     check!(
         outcome_rx.await.expect("the stage reports its outcome"),
         "the compactor stage returned an error"
-    );
-    let stopped_at = passes(&metrics);
-    tokio::time::sleep(AFTER_THE_STOP).await;
-    check!(
-        passes(&metrics) == stopped_at,
-        "a compaction loop outlived the stage that owned it"
     );
 }

@@ -10,52 +10,66 @@ pub(crate) fn apply_binary_sample_value(
     op: BinaryOp,
     modifier: Option<&BinModifier>,
 ) -> Result<Option<SampleValue>> {
-    match (&left.value, &right.value) {
-        (SampleValue::Float(left), SampleValue::Float(right)) => Ok(op
-            .apply_scalar(*left, *right, modifier)
-            .map(SampleValue::Float)),
-        (SampleValue::Histogram(left), SampleValue::Histogram(right)) => {
-            apply_histogram_histogram_binary(left, right, op, modifier)
-        }
-        (SampleValue::Float(left), SampleValue::Histogram(right)) => {
-            if op.is_comparison() {
-                emit_info(incompatible_types_in_binop_info(
-                    "float",
-                    op.symbol(),
-                    "histogram",
-                ));
-                return Ok(None);
+    match &left.value {
+        SampleValue::Float(left_float) => match &right.value {
+            SampleValue::Float(right_float) => Ok(op
+                .apply_scalar(*left_float, *right_float, modifier)
+                .map(SampleValue::Float)),
+            SampleValue::Histogram(right_histogram) => {
+                if op.is_comparison() {
+                    emit_info(incompatible_types_in_binop_info(
+                        "float",
+                        op.symbol(),
+                        "histogram",
+                    ));
+                    return Ok(None);
+                }
+                let out = apply_histogram_float_binary(
+                    right_histogram,
+                    *left_float,
+                    op,
+                    ScalarSide::Left,
+                );
+                if out.is_none() {
+                    // `+`, `-`, `%`, `^` and `atan2` are undefined between a float
+                    // and a histogram: Prometheus drops the pair and says why.
+                    emit_info(incompatible_types_in_binop_info(
+                        "float",
+                        op.symbol(),
+                        "histogram",
+                    ));
+                }
+                Ok(out)
             }
-            let out = apply_histogram_float_binary(right, *left, op, ScalarSide::Left);
-            if out.is_none() {
-                // `+`, `-`, `%`, `^` and `atan2` are undefined between a float
-                // and a histogram: Prometheus drops the pair and says why.
-                emit_info(incompatible_types_in_binop_info(
-                    "float",
-                    op.symbol(),
-                    "histogram",
-                ));
+        },
+        SampleValue::Histogram(left_histogram) => match &right.value {
+            SampleValue::Float(right_float) => {
+                if op.is_comparison() {
+                    emit_info(incompatible_types_in_binop_info(
+                        "histogram",
+                        op.symbol(),
+                        "float",
+                    ));
+                    return Ok(None);
+                }
+                let out = apply_histogram_float_binary(
+                    left_histogram,
+                    *right_float,
+                    op,
+                    ScalarSide::Right,
+                );
+                if out.is_none() {
+                    emit_info(incompatible_types_in_binop_info(
+                        "histogram",
+                        op.symbol(),
+                        "float",
+                    ));
+                }
+                Ok(out)
             }
-            Ok(out)
-        }
-        (SampleValue::Histogram(left), SampleValue::Float(right)) => {
-            if op.is_comparison() {
-                emit_info(incompatible_types_in_binop_info(
-                    "histogram",
-                    op.symbol(),
-                    "float",
-                ));
-                return Ok(None);
+            SampleValue::Histogram(right_histogram) => {
+                apply_histogram_histogram_binary(left_histogram, right_histogram, op, modifier)
             }
-            let out = apply_histogram_float_binary(left, *right, op, ScalarSide::Right);
-            if out.is_none() {
-                emit_info(incompatible_types_in_binop_info(
-                    "histogram",
-                    op.symbol(),
-                    "float",
-                ));
-            }
-            Ok(out)
-        }
+        },
     }
 }

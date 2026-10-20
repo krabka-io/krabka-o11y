@@ -23,8 +23,11 @@ pub(crate) fn native_histogram_stdvar(hist: &NativeHistogram) -> f64 {
             continue;
         }
         let delta = native_histogram_bucket_mean(hist, bucket) - mean;
-        (variance, compensation) =
-            kahan_sum_inc(bucket.count * delta * delta, variance, compensation);
+        kahan_sum_inc(
+            bucket.count * delta * delta,
+            &mut variance,
+            &mut compensation,
+        );
     }
     (variance + compensation) / hist.count
 }

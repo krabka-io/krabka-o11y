@@ -5,7 +5,7 @@ use std::{
 
 use assert2::{assert, check};
 use clap::{CommandFactory, Parser};
-use krabka_broker::{Broker, BrokerConfig};
+use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_observability::topic_contract::{
     METRICS_HA_TOPIC, METRICS_WAL_TOPIC, TopicSettings, provision_topics,
@@ -397,9 +397,10 @@ fn a_config_file_naming_a_retired_role_is_refused_the_same_way() {
 #[test]
 fn the_help_offers_the_roles_this_binary_has_and_none_it_refuses() {
     let rendered = Cli::command().render_long_help().to_string();
-    let (_, after) = rendered
+    let possible_values = rendered
         .split_once("Possible values:")
         .expect("`--target` renders the roles it accepts");
+    let after = possible_values.1;
     let offered: String = after
         .lines()
         .skip(1)
@@ -447,28 +448,36 @@ fn runtime_options_read_unit_bearing_environment_values() {
     let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().expect("environment lock");
 
-    temp_env::with_vars(
-        [
-            ("KRABKA_METRICS_TARGET", Some("block-builder")),
-            ("KRABKA_METRICS_BLOCK_BUILDER_POLL_TIMEOUT", Some("250ms")),
-            ("KRABKA_METRICS_BLOCK_BUILDER_FLUSH_MAX_AGE", Some("2m")),
-            (
-                "KRABKA_METRICS_BLOCK_BUILDER_RETENTION_SWEEP_INTERVAL",
-                Some("30s"),
-            ),
-        ],
-        || {
-            let cli = Cli::try_parse_from(["krabka-metrics"]).expect("parse environment");
-            assert!(matches!(cli.target, Target::BlockBuilder));
-            assert!(
-                (
-                    cli.block_builder_poll_timeout,
-                    cli.block_builder_flush_max_age,
-                    cli.block_builder_retention_sweep_interval,
-                ) == (millis(250), minutes(2), secs(30))
-            );
-        },
-    );
+    temp_env::with_var("KRABKA_METRICS_TARGET", Some("block-builder"), || {
+        temp_env::with_var(
+            "KRABKA_METRICS_BLOCK_BUILDER_POLL_TIMEOUT",
+            Some("250ms"),
+            || {
+                temp_env::with_var(
+                    "KRABKA_METRICS_BLOCK_BUILDER_FLUSH_MAX_AGE",
+                    Some("2m"),
+                    || {
+                        temp_env::with_var(
+                            "KRABKA_METRICS_BLOCK_BUILDER_RETENTION_SWEEP_INTERVAL",
+                            Some("30s"),
+                            || {
+                                let cli = Cli::try_parse_from(["krabka-metrics"])
+                                    .expect("parse environment");
+                                assert!(matches!(cli.target, Target::BlockBuilder));
+                                assert!(
+                                    (
+                                        cli.block_builder_poll_timeout,
+                                        cli.block_builder_flush_max_age,
+                                        cli.block_builder_retention_sweep_interval,
+                                    ) == (millis(250), minutes(2), secs(30))
+                                );
+                            },
+                        );
+                    },
+                );
+            },
+        );
+    });
 }
 
 /// The compaction policy an operator configures, and the defaults it falls
@@ -634,15 +643,22 @@ fn parses_the_server_audit_and_wal_security_flags() {
 /// that names the flag, before the role binds a port or reaches a broker.
 #[tokio::test]
 async fn a_security_flag_set_that_cannot_work_stops_the_start() {
+    struct MissingFlagCase {
+        flags: Vec<&'static str>,
+        missing_flag: &'static str,
+    }
     let cases = [
-        (
-            vec!["--server-tls-cert-path", "/etc/krabka/tls.crt"],
-            "--server-tls-key-path",
-        ),
-        (vec!["--wal-security-protocol", "SSL"], "--wal-tls-ca-path"),
+        MissingFlagCase {
+            flags: vec!["--server-tls-cert-path", "/etc/krabka/tls.crt"],
+            missing_flag: "--server-tls-key-path",
+        },
+        MissingFlagCase {
+            flags: vec!["--wal-security-protocol", "SSL"],
+            missing_flag: "--wal-tls-ca-path",
+        },
     ];
 
-    for (flags, named) in cases {
+    for case in cases {
         let mut argv = vec![
             "krabka-metrics",
             "--target",
@@ -650,12 +666,12 @@ async fn a_security_flag_set_that_cannot_work_stops_the_start() {
             "--admin-listen-addr",
             "127.0.0.1:0",
         ];
-        argv.extend(flags);
+        argv.extend(case.flags);
         let cli = Cli::try_parse_from(argv).expect("the flags parse");
 
         let error = run(cli).await.expect_err("the start stops");
 
-        check!(error.to_string().contains(named), "{error}");
+        check!(error.to_string().contains(case.missing_flag), "{error}");
     }
 }
 
@@ -669,21 +685,22 @@ async fn a_security_flag_set_that_cannot_work_stops_the_start() {
 /// word. Both roles of this binary reach that broker, so both must refuse.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_topic_that_breaks_the_contract_stops_every_role_that_uses_it() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
+    let TestBroker {
+        broker: _broker,
+        bootstrap,
+        log_directory: _log_directory,
+    } = TestBroker::start().await;
     create_topics(
         &bootstrap,
         &[
-            (
-                METRICS_WAL_TOPIC,
-                BTreeMap::from([("retention.ms".to_string(), "900000".to_string())]),
-            ),
+            TopicConfigSpec::new(METRICS_WAL_TOPIC, {
+                let mut properties = BTreeMap::new();
+                properties.insert("retention.ms".to_string(), "900000".to_string());
+                properties
+            }),
             // The violation: a compacted state topic with no
             // `cleanup.policy` override on it.
-            (METRICS_HA_TOPIC, BTreeMap::new()),
+            TopicConfigSpec::new(METRICS_HA_TOPIC, BTreeMap::new()),
         ],
     )
     .await;
@@ -742,12 +759,16 @@ async fn an_unreachable_broker_stops_every_role() {
 /// return the contract error and leave its data port unbound.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_role_does_not_start_and_does_not_listen_when_the_contract_is_broken() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-        .await
-        .expect("broker start");
-    let bootstrap = broker.listen_addr().to_string();
-    create_topics(&bootstrap, &[(METRICS_HA_TOPIC, BTreeMap::new())]).await;
+    let TestBroker {
+        broker: _broker,
+        bootstrap,
+        log_directory: _log_directory,
+    } = TestBroker::start().await;
+    create_topics(
+        &bootstrap,
+        &[TopicConfigSpec::new(METRICS_HA_TOPIC, BTreeMap::new())],
+    )
+    .await;
 
     // A port nothing holds, so a bind by the role is the only thing that
     // could make it answer.
@@ -785,18 +806,52 @@ fn cli_for(target: Target, bootstrap: &str) -> Cli {
         .expect("cli")
 }
 
-async fn create_topics(bootstrap: &str, topics: &[(&str, BTreeMap<String, String>)]) {
+/// An in-process broker over a temporary log directory, and its bootstrap
+/// address.
+struct TestBroker {
+    broker: BrokerHandle,
+    bootstrap: String,
+    log_directory: tempfile::TempDir,
+}
+
+impl TestBroker {
+    async fn start() -> Self {
+        let log_directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(log_directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        Self {
+            broker,
+            bootstrap,
+            log_directory,
+        }
+    }
+}
+
+struct TopicConfigSpec<'a> {
+    name: &'a str,
+    configs: BTreeMap<String, String>,
+}
+
+impl<'a> TopicConfigSpec<'a> {
+    fn new(name: &'a str, configs: BTreeMap<String, String>) -> Self {
+        Self { name, configs }
+    }
+}
+
+async fn create_topics(bootstrap: &str, topics: &[TopicConfigSpec<'_>]) {
     let mut admin = AdminClient::connect(&[bootstrap.to_string()])
         .await
         .expect("admin connect");
     let specs: Vec<CreateTopicSpec> = topics
         .iter()
-        .map(|(name, configs)| CreateTopicSpec {
+        .map(|topic| CreateTopicSpec {
             replica_assignments: std::collections::BTreeMap::default(),
-            name: (*name).to_string(),
+            name: topic.name.to_string(),
             partitions: 1,
             replicas: 1,
-            configs: configs.clone(),
+            configs: topic.configs.clone(),
         })
         .collect();
     admin
@@ -829,11 +884,13 @@ async fn shared_compactor_registers_startup_before_its_stage_runs_and_drains() {
     drain.stage("compactor", move |token| {
         let role = serve(
             cli,
-            ServiceMetrics::new(),
-            role_readiness,
-            security,
-            None,
-            token,
+            super::WriterRuntime {
+                metrics: ServiceMetrics::new(),
+                readiness: role_readiness,
+                security,
+                wal_security: None,
+                stopping: token,
+            },
         );
         async move {
             role.await.expect("the real compactor drains successfully");
@@ -855,11 +912,11 @@ async fn shared_compactor_registers_startup_before_its_stage_runs_and_drains() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn distributor_writes_all_records_with_default_and_small_frames() {
     for frame_max in [kibibytes(32), krabka_client_core::DEFAULT_CLIENT_FRAME_MAX] {
-        let directory = tempfile::tempdir().unwrap();
-        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-            .await
-            .unwrap();
-        let bootstrap = broker.listen_addr().to_string();
+        let TestBroker {
+            broker,
+            bootstrap,
+            log_directory: _log_directory,
+        } = TestBroker::start().await;
         provision_topics(
             &bootstrap,
             &METRICS_TOPICS,
@@ -877,11 +934,13 @@ async fn distributor_writes_all_records_with_default_and_small_frames() {
         let stopping = krabka_observability::CancellationToken::new();
         let role = tokio::spawn(serve(
             cli,
-            ServiceMetrics::new(),
-            RoleReadiness::new(),
-            ServerSecurity::default(),
-            None,
-            stopping.clone(),
+            super::WriterRuntime {
+                metrics: ServiceMetrics::new(),
+                readiness: RoleReadiness::new(),
+                security: ServerSecurity::default(),
+                wal_security: None,
+                stopping: stopping.clone(),
+            },
         ));
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -907,11 +966,17 @@ async fn distributor_writes_all_records_with_default_and_small_frames() {
         // Each record fits the small frame; a 64 KiB batch of these does not.
         let expected = (0..100)
             .map(|index| {
-                let mut labels = vec![("__name__".into(), "up".into())];
-                labels.extend(
-                    (0..20).map(|pad| (format!("padding_{pad:02}"), "x".repeat(1024).into())),
-                );
-                labels.push(("series".into(), index.to_string().into()));
+                let mut labels = vec![crate::MetricLabelPair::new("__name__", "up".into())];
+                labels.extend((0..20).map(|pad| {
+                    crate::MetricLabelPair::new(
+                        format!("padding_{pad:02}"),
+                        "x".repeat(1024).into(),
+                    )
+                }));
+                labels.push(crate::MetricLabelPair::new(
+                    "series",
+                    index.to_string().into(),
+                ));
                 WalRecord {
                     tenant: "tenant".into(),
                     labels,
@@ -931,9 +996,13 @@ async fn distributor_writes_all_records_with_default_and_small_frames() {
                     labels: record
                         .labels
                         .iter()
-                        .map(|(name, value)| pb::v1::Label {
-                            name: name.clone(),
-                            value: value.utf8().expect("test labels are UTF-8").to_owned(),
+                        .map(|label| pb::v1::Label {
+                            name: label.name.clone(),
+                            value: label
+                                .value
+                                .utf8()
+                                .expect("test labels are UTF-8")
+                                .to_owned(),
                         })
                         .collect(),
                     samples: vec![pb::v1::Sample {

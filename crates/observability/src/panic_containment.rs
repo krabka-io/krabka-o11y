@@ -28,16 +28,70 @@
 //! publish-on-success discipline behind it converts a loud fault into a silent
 //! one, which is the failure mode this milestone exists to remove.
 
-use crate::{IntoResponse, Response, Router, StatusCode};
+use std::{any::Any, panic::AssertUnwindSafe};
 
-mod catch_panic;
-mod contain_handler_panics;
-mod panic_message;
+use axum::{extract::Request, middleware::Next};
+use futures_util::FutureExt as _;
+
+use crate::{Response, Router, StatusCode};
+
 mod panic_safe_shared;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use catch_panic::catch_panic;
-pub use contain_handler_panics::contain_handler_panics;
-pub(crate) use panic_message::panic_message;
 pub use panic_safe_shared::PanicSafeShared;
+
+/// Wraps `router` so a panic in any of its handlers becomes a 500 for that
+/// request instead of a dropped connection.
+///
+/// Apply it once per listener, at the point the router is served, rather than
+/// inside each router builder. A role composes several routers into one app --
+/// a data router merged with `/ready`, a Prometheus router built in another
+/// crate -- and one layer at the serving boundary covers all of them without
+/// stacking one wrapper per merge.
+pub fn contain_handler_panics(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(catch_panic))
+}
+
+/// The message a panic carried, for a log line.
+///
+/// `panic!` stores a `&'static str` when it has no arguments and a `String`
+/// when it has. A panic raised by any other means carries a payload this
+/// cannot read, which is rare enough to name rather than to decode.
+pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        message
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message
+    } else {
+        "panic payload of an unknown type"
+    }
+}
+
+/// Runs the rest of the stack and answers 500 if it panics.
+///
+/// The panic hook has already run by the time the unwind reaches here, so the
+/// backtrace is on stderr as usual; what this adds is a reply. `AssertUnwindSafe`
+/// is the honest annotation: the request is consumed by the inner future and
+/// the router is cloned per request, so nothing this frame owns is observed
+/// after the unwind. What the *handler* touched is another matter, and
+/// [`the module documentation`](crate::panic_containment) say what that costs.
+pub(crate) async fn catch_panic(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    match AssertUnwindSafe(next.run(request)).catch_unwind().await {
+        Ok(response) => response,
+        Err(payload) => {
+            tracing::error!(
+                %method,
+                %path,
+                panic = panic_message(payload.as_ref()),
+                "request handler panicked; answering 500"
+            );
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("internal server error\n".into())
+                .expect("internal server error response status is valid")
+        }
+    }
+}

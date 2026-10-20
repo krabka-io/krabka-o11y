@@ -42,15 +42,15 @@ pub(crate) async fn remote_read<S: MetricStore>(
         let stream = futures::stream::iter(
             encode_chunked_read_frames(response).map(|frame| frame.map(Bytes::from)),
         );
-        return (
-            StatusCode::OK,
-            [(
-                header::CONTENT_TYPE,
-                "application/x-streamed-protobuf; proto=prometheus.ChunkedReadResponse",
-            )],
-            Body::from_stream(stream),
-        )
-            .into_response();
+        let mut response = Body::from_stream(stream).into_response();
+        *response.status_mut() = StatusCode::OK;
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            "application/x-streamed-protobuf; proto=prometheus.ChunkedReadResponse"
+                .parse()
+                .expect("static content type is valid"),
+        );
+        return response;
     }
 
     let compressed = match encode_read_response(&response) {
@@ -65,13 +65,17 @@ pub(crate) async fn remote_read<S: MetricStore>(
         }
     };
 
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/x-protobuf"),
-            (header::CONTENT_ENCODING, "snappy"),
-        ],
-        compressed,
-    )
-        .into_response()
+    let mut response = Body::from(compressed).into_response();
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/x-protobuf"
+            .parse()
+            .expect("static content type is valid"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_ENCODING,
+        "snappy".parse().expect("static encoding is valid"),
+    );
+    response
 }

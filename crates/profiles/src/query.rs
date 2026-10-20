@@ -36,7 +36,6 @@ use num_traits::ToPrimitive as _;
 use prost::Message;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
-use tokio::net::TcpListener;
 
 use crate::{
     ids::{DefaultMs, EndMs, MaxValue, MinValue, NowMs, StartMs},
@@ -47,15 +46,135 @@ use crate::{
     wire::pb,
 };
 
+pub(super) struct ConnectQueryRequest<S: ProfileStore, R> {
+    pub state: Extension<Arc<QuerierState<S>>>,
+    pub principal: Extension<Principal>,
+    pub headers: HeaderMap,
+    pub request: ConnectRequest<R>,
+}
+
+impl<S: ProfileStore, R> ConnectQueryRequest<S, R> {
+    pub fn new(
+        state: Extension<Arc<QuerierState<S>>>,
+        principal: Extension<Principal>,
+        headers: HeaderMap,
+        request: ConnectRequest<R>,
+    ) -> Self {
+        Self {
+            state,
+            principal,
+            headers,
+            request,
+        }
+    }
+
+    pub fn authorized_tenant(&self) -> Result<TenantId, ConnectError> {
+        authorized_connect_tenant(
+            &self.headers,
+            &self.principal.0,
+            &self.state.0.tenant_policy,
+        )
+    }
+}
+
+async fn bind_profile_listener(
+    addr: SocketAddr,
+    security: &ServerSecurity,
+) -> std::io::Result<(ServerListener, SocketAddr)> {
+    let listener = ServerListener::bind(tokio::net::TcpListener::bind(addr).await?, security)
+        .map_err(std::io::Error::other)?;
+    let bound = listener.local_addr();
+    Ok((listener, bound))
+}
+
+fn authorized_connect_tenant(
+    headers: &HeaderMap,
+    principal: &Principal,
+    policy: &TenantPolicy,
+) -> Result<TenantId, ConnectError> {
+    let tenant =
+        tenant_from_headers(headers, policy).map_err(|error| tenant_connect_error(&error))?;
+    authorize_tenant(principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    Ok(tenant)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use assert2::{assert, check};
     use base64::Engine;
-    use krabka_pprof::{FunctionRec, LineRec, LocationRec};
+    use krabka_pprof::{
+        FunctionRec, LineRec, LocationRec, ProfileIdentity, ProfileLabel, SampleValues,
+        StacktraceIdentity,
+    };
     use krabka_units::secs;
     use object_store::ObjectStoreExt as _;
+
+    struct ProfileIdValue {
+        profile_id: &'static str,
+        value: i64,
+    }
+
+    struct NamedBooleanCase {
+        name: &'static str,
+        expected: bool,
+    }
+
+    struct TimestampValue {
+        timestamp: i64,
+        value: i64,
+    }
+
+    struct QueryCountCase {
+        query: &'static str,
+        count: i64,
+    }
+
+    struct QueryStatusCase {
+        selector: &'static str,
+        expected: reqwest::StatusCode,
+    }
+
+    struct QueryArchitectureCase {
+        architecture: super::PyroscopeQueryArchitecture,
+        enabled: bool,
+        concurrency: usize,
+        expected: reqwest::StatusCode,
+    }
+
+    struct FieldCountCase {
+        field: &'static str,
+        expected: i64,
+    }
+
+    struct AnalyzeRangeCase {
+        start: i64,
+        end: i64,
+        selector: &'static str,
+        expected: i64,
+    }
+
+    struct OptionalTimeCase {
+        input: Option<&'static str>,
+        expected: i64,
+    }
+
+    struct StringTimeCase {
+        input: &'static str,
+        expected: i64,
+    }
+
+    struct TenantResolveCase {
+        error: TenantResolveError,
+        message: String,
+    }
+
+    struct TenantPolicyCase {
+        policy: TenantPolicy,
+        expected_status: StatusCode,
+        expect_frame: bool,
+    }
 
     /// Converting a heatmap to its wire form derives a step from the time
     /// span and stamps each slot with its own *end*. The span is `end - start`
@@ -141,11 +260,26 @@ mod tests {
     #[test]
     fn query_params_are_read_by_name_and_must_parse() {
         let params = [
-            ("limit".to_string(), "10".to_string()),
-            ("offset".to_string(), "20".to_string()),
-            ("limit".to_string(), "30".to_string()),
-            ("depth".to_string(), "-4".to_string()),
-            ("junk".to_string(), "not a number".to_string()),
+            QueryParameter {
+                key: "limit".to_string(),
+                value: "10".to_string(),
+            },
+            QueryParameter {
+                key: "offset".to_string(),
+                value: "20".to_string(),
+            },
+            QueryParameter {
+                key: "limit".to_string(),
+                value: "30".to_string(),
+            },
+            QueryParameter {
+                key: "depth".to_string(),
+                value: "-4".to_string(),
+            },
+            QueryParameter {
+                key: "junk".to_string(),
+                value: "not a number".to_string(),
+            },
         ];
         let get = |name| super::query_param_i64(&params, name);
 
@@ -273,7 +407,10 @@ mod tests {
 
         // The unit is the last character and the count is everything before it.
         let err = parse("1w").unwrap_err().to_string();
-        check!(err.contains("duration unit \"w\""), "got: {err}");
+        check!(
+            err.contains("invalid render relative duration unit 'w'"),
+            "got: {err}"
+        );
         let err = parse("s").unwrap_err().to_string();
         check!(
             err.contains("invalid render relative duration"),
@@ -301,8 +438,8 @@ mod tests {
     #[test]
     fn label_pairs_keep_their_names_with_their_values() {
         let pairs = super::types_label_pairs(vec![
-            ("service".to_string(), "api".to_string()),
-            ("env".to_string(), "prod".to_string()),
+            ProfileLabel::new("service", "api"),
+            ProfileLabel::new("env", "prod"),
         ]);
         check!(
             pairs
@@ -373,7 +510,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::{Limits, OverridesProvider};
+    use crate::{Limits, OverridesProvider, test_support::serve_on_loopback_with};
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 
@@ -424,16 +561,113 @@ mod tests {
         assert!(err.to_string().contains("query length exceeded"), "{err}");
     }
 
-    fn store_with_frame(name: &str) -> InMemoryProfileStore {
-        let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string(name);
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
+    async fn serve_on_loopback<S: ProfileStore + 'static>(
+        state: Arc<QuerierState<S>>,
+    ) -> crate::test_support::BoundTestServer {
+        serve_on_loopback_with(async |addr, security, shutdown| {
+            serve(addr, state, security, shutdown).await
+        })
+        .await
+    }
+
+    /// The settings `tenant` has, as a Connect JSON `Get` to the querier at
+    /// `bound` answers them. Fails on any non-success status.
+    async fn get_settings(bound: SocketAddr, tenant: &str) -> serde_json::Value {
+        reqwest::Client::new()
+            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
+            .header("content-type", "application/json")
+            .header("connect-protocol-version", "1")
+            .header("x-scope-orgid", tenant)
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    /// Serves a querier over two leaf frames, `hot.path` worth 7 and
+    /// `cold.path` worth 10, on loopback.
+    async fn serve_hot_and_cold_paths() -> crate::test_support::BoundTestServer {
+        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
+            LeafSample {
+                frame: "hot.path",
+                value: 7,
+            },
+            LeafSample {
+                frame: "cold.path",
+                value: 10,
+            },
+        ]))));
+        serve_on_loopback(state).await
+    }
+
+    /// `SelectMergeStacktraces` of service `api` over `0..100` in `format`,
+    /// answered by a querier whose one frame is `main.work`.
+    async fn main_work_merge_stacktraces(format: &str) -> serde_json::Value {
+        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
+                "profileTypeID": PT,
+                "labelSelector": r#"{service_name="api"}"#,
+                "start": 0,
+                "end": 100,
+                "format": format,
+            }),
+        )
+        .await
+    }
+
+    /// Asserts `response` carries no flame graph, and a Pyroscope tree whose
+    /// one node is `main.work` worth 7.
+    fn assert_main_work_tree_only(response: &serde_json::Value) {
+        assert!(response.get("flamegraph").is_none(), "{response}");
+        let tree = response
+            .get("tree")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|tree| base64::engine::general_purpose::STANDARD.decode(tree).ok())
+            .unwrap();
+
+        assert!(tree == b"\x00\x00\x01\x09main.work\x07\x00", "{response}");
+    }
+
+    async fn post_querier(
+        bound: SocketAddr,
+        method: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        reqwest::Client::new()
+            .post(format!("http://{bound}/querier.v1.QuerierService/{method}"))
+            .header("x-scope-orgid", "tenant-a")
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    fn intern_leaf_stacktrace(store: &mut InMemoryProfileStore, name: &str) -> u32 {
+        let symbols = store.symbols_mut();
+        let name_ref = symbols.intern_string(name);
+        let function_id = symbols.intern_function(FunctionRec {
             name: name_ref,
             system_name: name_ref,
             filename: 0,
             start_line: 0,
         });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
+        let location_id = symbols.intern_location(LocationRec {
             address: 0,
             mapping_id: 0,
             lines: vec![LineRec {
@@ -441,11 +675,16 @@ mod tests {
                 line: 1,
             }],
         });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        symbols.intern_stacktrace(0, &[location_id])
+    }
+
+    fn store_with_frame(name: &str) -> InMemoryProfileStore {
+        let mut store = InMemoryProfileStore::new();
+        let stacktrace = intern_leaf_stacktrace(&mut store, name);
         store.push_sample(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, stacktrace),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, stacktrace),
             7,
             10,
         );
@@ -457,32 +696,17 @@ mod tests {
     /// store exercises the sort-by-name path of the `Series` response.
     fn store_with_unsorted_labels() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         store.push_sample(
-            ("tenant-a", PT),
+            ProfileIdentity::new("tenant-a", PT),
             vec![
-                ("service_name".to_string(), "api".to_string()),
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("env".to_string(), "pprofdiff".to_string()),
-                ("service.name".to_string(), "api".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
+                ProfileLabel::new("service_name", "api"),
+                ProfileLabel::new("__name__", "process_cpu"),
+                ProfileLabel::new("env", "pprofdiff"),
+                ProfileLabel::new("service.name", "api"),
+                ProfileLabel::new("__profile_type__", PT),
             ],
-            (0, stacktrace),
+            StacktraceIdentity::new(0, stacktrace),
             7,
             10,
         );
@@ -491,30 +715,15 @@ mod tests {
 
     fn store_with_two_profile_types() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         for profile_type in [PT, "memory:alloc_space:bytes:space:bytes"] {
             store.push_sample(
-                ("tenant-a", profile_type),
+                ProfileIdentity::new("tenant-a", profile_type),
                 vec![
-                    ("service_name".to_string(), "api".to_string()),
-                    ("__profile_type__".to_string(), profile_type.to_string()),
+                    ProfileLabel::new("service_name", "api"),
+                    ProfileLabel::new("__profile_type__", profile_type),
                 ],
-                (0, stacktrace),
+                StacktraceIdentity::new(0, stacktrace),
                 7,
                 10,
             );
@@ -547,57 +756,40 @@ mod tests {
 
     fn store_with_span_frame(name: &str, span_id: u64) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string(name);
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, name);
         store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, stacktrace),
-            (7, 7),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, stacktrace),
+            SampleValues::new(7, 7),
             10,
             span_id,
         );
         store
     }
 
-    fn store_with_span_leaf_frames(frames: &[(&str, u64, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value` on the one-frame stack `frame`, recorded
+    /// under span `span_id`.
+    struct SpanLeafSample {
+        frame: &'static str,
+        span_id: u64,
+        value: i64,
+    }
+
+    fn store_with_span_leaf_frames(frames: &[SpanLeafSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (name, span_id, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        for SpanLeafSample {
+            frame: name,
+            span_id,
+            value,
+        } in frames
+        {
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_span(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
-                (*value, *value),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
+                SampleValues::new(*value, *value),
                 10,
                 *span_id,
             );
@@ -605,62 +797,55 @@ mod tests {
         store
     }
 
-    fn store_with_associated_leaf_frames(
-        frames: &[(&str, u64, [u8; 16], i64)],
-    ) -> InMemoryProfileStore {
+    /// A sample of value `value` on the one-frame stack `frame`, recorded
+    /// under span `span_id` of trace `trace_id`.
+    struct AssociatedLeafSample {
+        frame: &'static str,
+        span_id: u64,
+        trace_id: [u8; 16],
+        value: i64,
+    }
+
+    fn store_with_associated_leaf_frames(frames: &[AssociatedLeafSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (name, span_id, trace_id, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        for AssociatedLeafSample {
+            frame: name,
+            span_id,
+            trace_id,
+            value,
+        } in frames
+        {
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample_with_total_and_associations(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
-                (*value, *value),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
+                SampleValues::new(*value, *value),
                 10,
-                (Some(*span_id), Some(trace_id.to_vec())),
+                krabka_pprof::SampleAssociations::new(Some(*span_id), Some(trace_id.to_vec())),
             );
         }
         store
     }
 
-    fn store_with_frame_samples(name: &str, samples: &[(i64, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value`, taken at `timestamp_ms` Unix milliseconds.
+    struct TimedSample {
+        timestamp_ms: i64,
+        value: i64,
+    }
+
+    fn store_with_frame_samples(name: &str, samples: &[TimedSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string(name);
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
-        for (timestamp, value) in samples {
+        let stacktrace = intern_leaf_stacktrace(&mut store, name);
+        for TimedSample {
+            timestamp_ms: timestamp,
+            value,
+        } in samples
+        {
             store.push_sample(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 *timestamp,
             );
@@ -668,32 +853,29 @@ mod tests {
         store
     }
 
-    fn store_with_services(samples: &[(&str, &str, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value` from `service_name` `service` in `env`.
+    struct ServiceSample {
+        service: &'static str,
+        env: &'static str,
+        value: i64,
+    }
+
+    fn store_with_services(samples: &[ServiceSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
-        for (service, env, value) in samples {
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
+        for ServiceSample {
+            service,
+            env,
+            value,
+        } in samples
+        {
             store.push_sample(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("service_name".to_string(), (*service).to_string()),
-                    ("env".to_string(), (*env).to_string()),
+                    ProfileLabel::new("service_name", *service),
+                    ProfileLabel::new("env", *env),
                 ],
-                (0, stacktrace),
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 10,
             );
@@ -701,29 +883,20 @@ mod tests {
         store
     }
 
-    fn store_with_leaf_frames(frames: &[(&str, i64)]) -> InMemoryProfileStore {
+    /// A sample of value `value` on the one-frame stack `frame`.
+    struct LeafSample {
+        frame: &'static str,
+        value: i64,
+    }
+
+    fn store_with_leaf_frames(frames: &[LeafSample]) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (name, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        for LeafSample { frame: name, value } in frames {
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
-                ("tenant-a", PT),
-                vec![("service_name".to_string(), "api".to_string())],
-                (0, stacktrace),
+                ProfileIdentity::new("tenant-a", PT),
+                vec![ProfileLabel::new("service_name", "api")],
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 10,
             );
@@ -733,65 +906,57 @@ mod tests {
 
     fn store_with_profile_ids() -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
-        for (profile_id, value) in [("profile-a", 5), ("profile-b", 7)] {
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
+        for sample in [
+            ProfileIdValue {
+                profile_id: "profile-a",
+                value: 5,
+            },
+            ProfileIdValue {
+                profile_id: "profile-b",
+                value: 7,
+            },
+        ] {
             store.push_sample(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("service_name".to_string(), "api".to_string()),
-                    ("__profile_id__".to_string(), profile_id.to_string()),
+                    ProfileLabel::new("service_name", "api"),
+                    ProfileLabel::new("__profile_id__", sample.profile_id),
                 ],
-                (0, stacktrace),
-                value,
+                StacktraceIdentity::new(0, stacktrace),
+                sample.value,
                 10,
             );
         }
         store
     }
 
+    /// A sample of value `value` on the one-frame stack `frame`, from the
+    /// profile `profile_id`.
+    struct ProfileLeafSample {
+        profile_id: &'static str,
+        frame: &'static str,
+        value: i64,
+    }
+
     fn store_with_profile_ids_and_leaf_frames(
-        frames: &[(&str, &str, i64)],
+        frames: &[ProfileLeafSample],
     ) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
-        for (profile_id, name, value) in frames {
-            let name_ref = store.symbols_mut().intern_string(name);
-            let function_id = store.symbols_mut().intern_function(FunctionRec {
-                name: name_ref,
-                system_name: name_ref,
-                filename: 0,
-                start_line: 0,
-            });
-            let location_id = store.symbols_mut().intern_location(LocationRec {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![LineRec {
-                    function_id,
-                    line: 1,
-                }],
-            });
-            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        for ProfileLeafSample {
+            profile_id,
+            frame: name,
+            value,
+        } in frames
+        {
+            let stacktrace = intern_leaf_stacktrace(&mut store, name);
             store.push_sample(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("service_name".to_string(), "api".to_string()),
-                    ("__profile_id__".to_string(), (*profile_id).to_string()),
+                    ProfileLabel::new("service_name", "api"),
+                    ProfileLabel::new("__profile_id__", *profile_id),
                 ],
-                (0, stacktrace),
+                StacktraceIdentity::new(0, stacktrace),
                 *value,
                 10,
             );
@@ -805,6 +970,33 @@ mod tests {
             .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
     }
 
+    fn pprof_json_sample_total(response: &serde_json::Value) -> i64 {
+        response
+            .get("sample")
+            .and_then(serde_json::Value::as_array)
+            .unwrap()
+            .iter()
+            .flat_map(|sample| {
+                sample
+                    .get("value")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .filter_map(json_i64)
+            .sum()
+    }
+
+    fn first_point_exemplar_ids<'a>(response: &'a serde_json::Value, field: &str) -> Vec<&'a str> {
+        response
+            .pointer("/series/0/points/0/exemplars")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("missing {field} exemplars: {response}"))
+            .iter()
+            .filter_map(|exemplar| exemplar.get(field).and_then(serde_json::Value::as_str))
+            .collect()
+    }
+
     #[tokio::test]
     async fn get_profile_stats_is_global_not_time_scoped() {
         // A sample ingested at a non-zero timestamp must be reported by
@@ -812,26 +1004,11 @@ mod tests {
         // request (start = end = 0). Time-scoping to [0, 0] hides it and wedges
         // the Drilldown onto its onboarding screen.
         let mut store = InMemoryProfileStore::new();
-        let name_ref = store.symbols_mut().intern_string("main.work");
-        let function_id = store.symbols_mut().intern_function(FunctionRec {
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        let location_id = store.symbols_mut().intern_location(LocationRec {
-            address: 0,
-            mapping_id: 0,
-            lines: vec![LineRec {
-                function_id,
-                line: 1,
-            }],
-        });
-        let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+        let stacktrace = intern_leaf_stacktrace(&mut store, "main.work");
         store.push_sample(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, stacktrace),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, stacktrace),
             7,
             5_000, // non-zero ingest timestamp
         );
@@ -869,11 +1046,11 @@ mod tests {
 
         let err = state
             .select_series(
-                (&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
+                super::QueryTarget::new(&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
-                (0, 2_000),
+                QueryRange::new(0, 2_000),
                 &[],
             )
             .await
@@ -898,22 +1075,22 @@ overrides:
 
         let tenant_a_err = state
             .select_series(
-                (&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
+                super::QueryTarget::new(&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
-                (0, 2_000),
+                QueryRange::new(0, 2_000),
                 &[],
             )
             .await
             .unwrap_err();
         let tenant_b_series = state
             .select_series(
-                (&tenant("tenant-b"), PT, r#"{service_name="api"}"#),
+                super::QueryTarget::new(&tenant("tenant-b"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
-                (0, 2_000),
+                QueryRange::new(0, 2_000),
                 &[],
             )
             .await
@@ -929,26 +1106,24 @@ overrides:
     #[tokio::test]
     async fn select_series_limit_keeps_the_largest_series() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_services(&[
-            ("small", "prod", 1),
-            ("large", "prod", 10),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
+            ServiceSample {
+                service: "small",
+                env: "prod",
+                value: 1,
             },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+            ServiceSample {
+                service: "large",
+                env: "prod",
+                value: 10,
+            },
+        ]))));
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": "{}",
                 "start": 0,
@@ -956,15 +1131,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "step": 1.0,
                 "limit": 1,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let actual: pb::querier::v1::SelectSeriesResponse =
             serde_json::from_value(response.clone()).unwrap();
@@ -992,9 +1161,18 @@ overrides:
     async fn select_merge_stacktraces_clamps_requested_nodes_to_configured_max() {
         let state = QuerierState::new_with_limits(
             Arc::new(store_with_leaf_frames(&[
-                ("hot.path", 10),
-                ("warm.path", 8),
-                ("cold.path", 6),
+                LeafSample {
+                    frame: "hot.path",
+                    value: 10,
+                },
+                LeafSample {
+                    frame: "warm.path",
+                    value: 8,
+                },
+                LeafSample {
+                    frame: "cold.path",
+                    value: 6,
+                },
             ])),
             Limits {
                 max_flamegraph_nodes_default: 2048,
@@ -1015,25 +1193,30 @@ overrides:
             .await
             .unwrap();
 
-        for (name, want) in [("other", true), ("warm.path", false), ("cold.path", false)] {
-            check!(flamegraph.names.iter().any(|frame| frame == name) == want);
+        for case in [
+            NamedBooleanCase {
+                name: "other",
+                expected: true,
+            },
+            NamedBooleanCase {
+                name: "warm.path",
+                expected: false,
+            },
+            NamedBooleanCase {
+                name: "cold.path",
+                expected: false,
+            },
+        ] {
+            check!(flamegraph.names.iter().any(|frame| frame == case.name) == case.expected);
         }
     }
 
     #[tokio::test]
     async fn render_format_dot_returns_dot_graph() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("from", "0")
@@ -1070,17 +1253,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(Arc::clone(&admin_store)),
         );
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
 
         let resp = client
@@ -1130,32 +1305,11 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(admin_store),
         );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
 
-        let persisted: serde_json::Value = client
-            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
-            .header("content-type", "application/json")
-            .header("connect-protocol-version", "1")
-            .header("x-scope-orgid", "tenant-a")
-            .body("{}")
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let persisted = get_settings(bound, "tenant-a").await;
         assert!(
             persisted
                 .pointer("/settings/0/name")
@@ -1163,20 +1317,7 @@ overrides:
                 == Some("flamegraph.collapsed"),
             "setting must survive restart: {persisted}"
         );
-        let isolated: serde_json::Value = client
-            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
-            .header("content-type", "application/json")
-            .header("connect-protocol-version", "1")
-            .header("x-scope-orgid", "tenant-b")
-            .body("{}")
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let isolated = get_settings(bound, "tenant-b").await;
         assert!(
             isolated.get("settings").is_none(),
             "tenant leak: {isolated}"
@@ -1196,20 +1337,7 @@ overrides:
             "Delete must succeed, got {}",
             resp.status()
         );
-        let deleted: serde_json::Value = client
-            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
-            .header("content-type", "application/json")
-            .header("connect-protocol-version", "1")
-            .header("x-scope-orgid", "tenant-a")
-            .body("{}")
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let deleted = get_settings(bound, "tenant-a").await;
         assert!(
             deleted.get("settings").is_none(),
             "delete failed: {deleted}"
@@ -1232,17 +1360,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_admin_store(admin_store),
         );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
         let connect = |path: &str, tenant: &str, body: serde_json::Value| {
             client
@@ -1692,20 +1812,20 @@ overrides:
     #[tokio::test]
     async fn render_group_by_adds_group_frames_to_flamebearer() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_services(&[
-            ("api", "prod", 5),
-            ("worker", "prod", 7),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
+            ServiceSample {
+                service: "api",
+                env: "prod",
+                value: 5,
             },
-        )
-        .await
-        .unwrap();
+            ServiceSample {
+                service: "worker",
+                env: "prod",
+                value: 7,
+            },
+        ]))));
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", &format!(r#"{PT}{{env="prod"}}"#))
             .append_pair("from", "0")
@@ -1745,17 +1865,9 @@ overrides:
     #[tokio::test]
     async fn render_diff_flamebearer_includes_legacy_ticks_and_max_self() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("leftQuery", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("rightQuery", &format!(r#"{PT}{{service_name="api"}}"#))
@@ -1798,19 +1910,20 @@ overrides:
     async fn render_diff_uses_side_specific_windows() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame_samples(
             "main.work",
-            &[(1_700_000_010_000, 5), (1_700_000_090_000, 7)],
+            &[
+                TimedSample {
+                    timestamp_ms: 1_700_000_010_000,
+                    value: 5,
+                },
+                TimedSample {
+                    timestamp_ms: 1_700_000_090_000,
+                    value: 7,
+                },
+            ],
         ))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("leftQuery", &format!(r#"{PT}{{service_name="api"}}"#))
             .append_pair("leftFrom", "1700000000000")
@@ -1847,38 +1960,7 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_stacktraces_dot_format_returns_dot_only() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 100,
-                "format": "PROFILE_FORMAT_DOT",
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let response = main_work_merge_stacktraces("PROFILE_FORMAT_DOT").await;
 
         check!(response.get("flamegraph").is_none(), "{response}");
         check!(
@@ -1899,40 +1981,8 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_stacktraces_tree_format_returns_pyroscope_tree_bytes() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 100,
-                "format": "PROFILE_FORMAT_TREE",
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let response = main_work_merge_stacktraces("PROFILE_FORMAT_TREE").await;
 
-        assert!(response.get("flamegraph").is_none(), "{response}");
         assert!(
             response
                 .get("dot")
@@ -1940,34 +1990,30 @@ overrides:
                 .is_none_or(str::is_empty),
             "{response}"
         );
-        let tree = response
-            .get("tree")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|tree| base64::engine::general_purpose::STANDARD.decode(tree).ok())
-            .unwrap();
-
-        assert!(tree == b"\x00\x00\x01\x09main.work\x07\x00", "{response}");
+        assert_main_work_tree_only(&response);
     }
 
     #[tokio::test]
     async fn current_query_selectors_pprof_and_async_fields_are_honored() {
         let state = Arc::new(QuerierState::new(Arc::new(
             store_with_associated_leaf_frames(&[
-                ("hot.path", 0x2a, [0xaa; 16], 5),
-                ("cold.path", 0x2b, [0xbb; 16], 7),
+                AssociatedLeafSample {
+                    frame: "hot.path",
+                    span_id: 0x2a,
+                    trace_id: [0xaa; 16],
+                    value: 5,
+                },
+                AssociatedLeafSample {
+                    frame: "cold.path",
+                    span_id: 0x2b,
+                    trace_id: [0xbb; 16],
+                    value: 7,
+                },
             ]),
         )));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
         let url = format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces");
         let request = |extra: serde_json::Value| {
@@ -2097,47 +2143,24 @@ overrides:
             "main.work",
             111,
         ))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeSpanProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectMergeSpanProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "spanSelector": ["000000000000006f"],
                 "start": 0,
                 "end": 100,
                 "format": "PROFILE_FORMAT_TREE",
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
-        assert!(response.get("flamegraph").is_none(), "{response}");
-        let tree = response
-            .get("tree")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|tree| base64::engine::general_purpose::STANDARD.decode(tree).ok())
-            .unwrap();
-
-        assert!(tree == b"\x00\x00\x01\x09main.work\x07\x00", "{response}");
+        assert_main_work_tree_only(&response);
     }
 
     #[tokio::test]
@@ -2146,17 +2169,9 @@ overrides:
             QuerierState::new(Arc::new(store_with_frame("main.work")))
                 .with_query_architecture(super::PyroscopeQueryArchitecture::V2),
         );
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
         // The sample at 10 ms belongs to the 1000 ms endpoint with a
         // one-second step. Verify the fixture produces data before exercising
         // the populated v2 SPAN error.
@@ -2191,14 +2206,20 @@ overrides:
                     exemplars: Vec::new(),
                 }]
         );
-        for (selector, status) in [
-            (r#"{service_name="missing"}"#, reqwest::StatusCode::OK),
-            ("{}", reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+        for case in [
+            QueryStatusCase {
+                selector: r#"{service_name="missing"}"#,
+                expected: reqwest::StatusCode::OK,
+            },
+            QueryStatusCase {
+                selector: "{}",
+                expected: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            },
         ] {
-            let response = client.post(&url).header("x-scope-orgid","tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":selector,"start":0,"end":1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_SPAN"})).send().await.unwrap();
-            check!(response.status() == status);
+            let response = client.post(&url).header("x-scope-orgid","tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":case.selector,"start":0,"end":1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_SPAN"})).send().await.unwrap();
+            check!(response.status() == case.expected);
             let response: serde_json::Value = response.json().await.unwrap();
-            if status == reqwest::StatusCode::OK {
+            if case.expected == reqwest::StatusCode::OK {
                 check!(response == json!({}));
             } else {
                 check!(response["code"] == "unknown");
@@ -2209,62 +2230,54 @@ overrides:
 
     #[tokio::test]
     async fn query_architecture_binds_async_without_changing_v1() {
-        for (architecture, enabled, concurrency, status) in [
-            (
-                super::PyroscopeQueryArchitecture::V1,
-                true,
-                5,
-                reqwest::StatusCode::OK,
-            ),
-            (
-                super::PyroscopeQueryArchitecture::V2,
-                false,
-                5,
-                reqwest::StatusCode::OK,
-            ),
-            (
-                super::PyroscopeQueryArchitecture::V2,
-                true,
-                0,
-                reqwest::StatusCode::TOO_MANY_REQUESTS,
-            ),
-            (
-                super::PyroscopeQueryArchitecture::V2,
-                true,
-                5,
-                reqwest::StatusCode::OK,
-            ),
+        for case in [
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V1,
+                enabled: true,
+                concurrency: 5,
+                expected: reqwest::StatusCode::OK,
+            },
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V2,
+                enabled: false,
+                concurrency: 5,
+                expected: reqwest::StatusCode::OK,
+            },
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V2,
+                enabled: true,
+                concurrency: 0,
+                expected: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            },
+            QueryArchitectureCase {
+                architecture: super::PyroscopeQueryArchitecture::V2,
+                enabled: true,
+                concurrency: 5,
+                expected: reqwest::StatusCode::OK,
+            },
         ] {
             let state = Arc::new(
                 QuerierState::new_with_limits(
                     Arc::new(store_with_frame("main.work")),
                     Limits {
-                        max_async_query_concurrency: concurrency,
+                        max_async_query_concurrency: case.concurrency,
                         ..Default::default()
                     },
                 )
-                .with_query_architecture(architecture)
-                .with_async_queries_enabled(enabled),
+                .with_query_architecture(case.architecture)
+                .with_async_queries_enabled(case.enabled),
             );
-            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-            let bound = serve(
-                "127.0.0.1:0".parse().unwrap(),
-                state,
-                &ServerSecurity::default(),
-                async move {
-                    let _ = shutdown_rx.await;
-                },
-            )
-            .await
-            .unwrap();
+            let server = serve_on_loopback(state).await;
+            let bound = server.address;
+            let shutdown_tx = server.shutdown;
             let response = reqwest::Client::new().post(format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"))
                 .header("x-scope-orgid", "tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":"{}","start":0,"end":100,"async":{"type":"ASYNC_QUERY_TYPE_FORCE"}})).send().await.unwrap();
-            check!(response.status() == status);
+            check!(response.status() == case.expected);
             let response: serde_json::Value = response.json().await.unwrap();
-            if architecture == super::PyroscopeQueryArchitecture::V1 || !enabled {
+            if case.architecture == super::PyroscopeQueryArchitecture::V1 || !case.enabled {
                 check!(response.get("async").is_none());
                 check!(response["flamegraph"]["total"].as_str() == Some("7"));
-            } else if concurrency > 0 {
+            } else if case.concurrency > 0 {
                 check!(response["async"]["status"] == "ASYNC_QUERY_STATUS_IN_PROGRESS");
                 check!(response.get("flamegraph").is_none());
             } else {
@@ -2277,37 +2290,21 @@ overrides:
     #[tokio::test]
     async fn select_merge_stacktraces_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "profileIdSelector": ["profile-a"],
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let total = response
             .get("flamegraph")
@@ -2319,79 +2316,36 @@ overrides:
     #[tokio::test]
     async fn select_merge_profile_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectMergeProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "profileIdSelector": ["profile-a"],
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
         assert!(response.get("profile").is_none(), "{response}");
-        let total: i64 = response
-            .get("sample")
-            .and_then(serde_json::Value::as_array)
-            .unwrap()
-            .iter()
-            .flat_map(|sample| {
-                sample
-                    .get("value")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-            })
-            .filter_map(json_i64)
-            .sum();
+        let total = pprof_json_sample_total(&response);
 
         assert!(total == 5, "{response}");
     }
 
     #[tokio::test]
     async fn select_merge_profile_stack_trace_selector_filters_call_sites() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectMergeProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "stackTraceSelector": {
@@ -2399,30 +2353,11 @@ overrides:
                 },
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
         assert!(response.get("profile").is_none(), "{response}");
-        let total: i64 = response
-            .get("sample")
-            .and_then(serde_json::Value::as_array)
-            .unwrap()
-            .iter()
-            .flat_map(|sample| {
-                sample
-                    .get("value")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-            })
-            .filter_map(json_i64)
-            .sum();
+        let total = pprof_json_sample_total(&response);
 
         assert!(total == 7, "{response}");
     }
@@ -2430,48 +2365,62 @@ overrides:
     #[tokio::test]
     async fn select_merge_profile_max_nodes_truncates_to_other() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("leaf0", 1),
-            ("leaf1", 2),
-            ("leaf2", 3),
-            ("leaf3", 4),
-            ("leaf4", 5),
-            ("leaf5", 6),
-            ("leaf6", 7),
-            ("leaf7", 8),
-            ("leaf8", 9),
-            ("leaf9", 10),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
+            LeafSample {
+                frame: "leaf0",
+                value: 1,
             },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeProfile"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+            LeafSample {
+                frame: "leaf1",
+                value: 2,
+            },
+            LeafSample {
+                frame: "leaf2",
+                value: 3,
+            },
+            LeafSample {
+                frame: "leaf3",
+                value: 4,
+            },
+            LeafSample {
+                frame: "leaf4",
+                value: 5,
+            },
+            LeafSample {
+                frame: "leaf5",
+                value: 6,
+            },
+            LeafSample {
+                frame: "leaf6",
+                value: 7,
+            },
+            LeafSample {
+                frame: "leaf7",
+                value: 8,
+            },
+            LeafSample {
+                frame: "leaf8",
+                value: 9,
+            },
+            LeafSample {
+                frame: "leaf9",
+                value: 10,
+            },
+        ]))));
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectMergeProfile",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "maxNodes": 4,
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let samples = response
             .get("sample")
@@ -2508,27 +2457,13 @@ overrides:
 
     #[tokio::test]
     async fn select_merge_stacktraces_stack_trace_selector_filters_call_sites() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectMergeStacktraces",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "stackTraceSelector": {
@@ -2536,15 +2471,9 @@ overrides:
                 },
                 "start": 0,
                 "end": 100,
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let total = response
             .get("flamegraph")
@@ -2555,25 +2484,13 @@ overrides:
 
     #[tokio::test]
     async fn diff_honors_embedded_stack_trace_selectors() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!("http://{bound}/querier.v1.QuerierService/Diff"))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "Diff",
+            json!({
                 "left": {
                     "profileTypeID": PT,
                     "labelSelector": r#"{service_name="api"}"#,
@@ -2592,15 +2509,9 @@ overrides:
                     "start": 0,
                     "end": 100
                 }
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         assert!(
             response.pointer("/flamegraph/leftTicks").and_then(json_i64) == Some(7),
@@ -2618,31 +2529,10 @@ overrides:
     #[tokio::test]
     async fn profile_types_without_time_range_returns_ingested_types() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/ProfileTypes"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
         let profile_types = response
             .get("profileTypes")
@@ -2660,40 +2550,15 @@ overrides:
         );
     }
 
-    #[tokio::test]
-    async fn profile_types_health_probe_ignores_query_range_limit_when_range_omitted() {
-        let state = Arc::new(QuerierState::new_with_limits(
-            Arc::new(store_with_frame("main.work")),
-            Limits {
-                max_query_length: secs(1),
-                ..Limits::default()
-            },
-        ));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/ProfileTypes"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+    /// The range-omitted `ProfileTypes` health probe, answered by `state`,
+    /// lists at least one profile type.
+    async fn assert_health_probe_lists_profile_types<S: ProfileStore + 'static>(
+        state: Arc<QuerierState<S>>,
+    ) {
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
         assert!(
             response
@@ -2704,47 +2569,68 @@ overrides:
         );
     }
 
-    #[tokio::test]
-    async fn select_series_stack_trace_selector_filters_call_sites() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
-            ("hot.path", 7),
-            ("cold.path", 10),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
+    /// A `SelectSeries` request for `api` over the first minute, grouped by
+    /// service, with its call sites narrowed to `hot.path`.
+    fn hot_path_select_series() -> serde_json::Value {
+        json!({
+            "profileTypeID": PT,
+            "labelSelector": r#"{service_name="api"}"#,
+            "start": 0,
+            "end": 60_000,
+            "groupBy": ["service_name"],
+            "step": 60.0,
+            "stackTraceSelector": {
+                "callSite": [{ "name": "hot.path" }]
+            }
+        })
+    }
+
+    fn hot_path_select_series_with_span_exemplars() -> serde_json::Value {
+        let mut request = hot_path_select_series();
+        request["exemplarType"] = json!("EXEMPLAR_TYPE_SPAN");
+        request
+    }
+
+    /// `AnalyzeQuery` for `api`'s series of one profile type, over a store
+    /// that holds two.
+    async fn analyze_api_query_over_two_profile_types() -> serde_json::Value {
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_two_profile_types()))
+                .with_query_analysis_series_enabled(true),
+        );
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        post_querier(
+            bound,
+            "AnalyzeQuery",
+            json!({
+                "start": 1,
+                "end": 100,
+                "query": format!(r#"{PT}{{service_name="api"}}"#),
+            }),
         )
         .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 60_000,
-                "groupBy": ["service_name"],
-                "step": 60.0,
-                "stackTraceSelector": {
-                    "callSite": [{ "name": "hot.path" }]
-                }
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn profile_types_health_probe_ignores_query_range_limit_when_range_omitted() {
+        let state = Arc::new(QuerierState::new_with_limits(
+            Arc::new(store_with_frame("main.work")),
+            Limits {
+                max_query_length: secs(1),
+                ..Limits::default()
+            },
+        ));
+        assert_health_probe_lists_profile_types(state).await;
+    }
+
+    #[tokio::test]
+    async fn select_series_stack_trace_selector_filters_call_sites() {
+        let server = serve_hot_and_cold_paths().await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(bound, "SelectSeries", hot_path_select_series()).await;
 
         let points: Vec<pb::querier::v1::Point> =
             serde_json::from_value(response["series"][0]["points"].clone()).unwrap();
@@ -2769,17 +2655,9 @@ overrides:
     #[tokio::test]
     async fn series_emits_label_sets_sorted_by_name() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_unsorted_labels())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
 
         let series_labels = |body: serde_json::Value, allow_utf8: bool| {
             let url = format!("http://{bound}/querier.v1.QuerierService/Series");
@@ -2867,25 +2745,20 @@ overrides:
     #[tokio::test]
     async fn select_series_span_exemplar_returns_span_metadata() {
         let state = Arc::new(QuerierState::new(Arc::new(
-            store_with_associated_leaf_frames(&[("span.path", 0x2a, [0xab; 16], 7)]),
+            store_with_associated_leaf_frames(&[AssociatedLeafSample {
+                frame: "span.path",
+                span_id: 0x2a,
+                trace_id: [0xab; 16],
+                value: 7,
+            }]),
         )));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -2893,15 +2766,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(
             response
@@ -2931,45 +2798,26 @@ overrides:
     #[tokio::test]
     async fn select_series_span_exemplar_honors_stack_trace_selector() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_span_leaf_frames(&[
-            ("hot.path", 0x2a, 5),
-            ("cold.path", 0x2b, 7),
-        ]))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
+            SpanLeafSample {
+                frame: "hot.path",
+                span_id: 0x2a,
+                value: 5,
             },
+            SpanLeafSample {
+                frame: "cold.path",
+                span_id: 0x2b,
+                value: 7,
+            },
+        ]))));
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            hot_path_select_series_with_span_exemplars(),
         )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 60_000,
-                "groupBy": ["service_name"],
-                "step": 60.0,
-                "stackTraceSelector": {
-                    "callSite": [{ "name": "hot.path" }]
-                },
-                "exemplarType": "EXEMPLAR_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        .await;
 
         check!(
             response
@@ -2979,14 +2827,7 @@ overrides:
             "{response}"
         );
 
-        let exemplars = response
-            .pointer("/series/0/points/0/exemplars")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("missing span exemplars: {response}"));
-        let span_ids: Vec<_> = exemplars
-            .iter()
-            .filter_map(|exemplar| exemplar.get("spanId").and_then(serde_json::Value::as_str))
-            .collect();
+        let span_ids = first_point_exemplar_ids(&response, "spanId");
 
         assert!(span_ids == vec!["000000000000002a"], "{response}");
     }
@@ -2994,23 +2835,13 @@ overrides:
     #[tokio::test]
     async fn select_series_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3018,15 +2849,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(
             response
@@ -3036,18 +2861,7 @@ overrides:
             "{response}"
         );
 
-        let exemplars = response
-            .pointer("/series/0/points/0/exemplars")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("missing individual exemplars: {response}"));
-        let profile_ids: Vec<_> = exemplars
-            .iter()
-            .filter_map(|exemplar| {
-                exemplar
-                    .get("profileId")
-                    .and_then(serde_json::Value::as_str)
-            })
-            .collect();
+        let profile_ids = first_point_exemplar_ids(&response, "profileId");
 
         assert!(profile_ids.contains(&"profile-a"), "{response}");
         assert!(profile_ids.contains(&"profile-b"), "{response}");
@@ -3057,27 +2871,25 @@ overrides:
     async fn select_series_individual_exemplar_honors_stack_trace_selector() {
         let state = Arc::new(QuerierState::new(Arc::new(
             store_with_profile_ids_and_leaf_frames(&[
-                ("profile-a", "hot.path", 5),
-                ("profile-b", "cold.path", 7),
+                ProfileLeafSample {
+                    profile_id: "profile-a",
+                    frame: "hot.path",
+                    value: 5,
+                },
+                ProfileLeafSample {
+                    profile_id: "profile-b",
+                    frame: "cold.path",
+                    value: 7,
+                },
             ]),
         )));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectSeries"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectSeries",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3088,15 +2900,9 @@ overrides:
                     "callSite": [{ "name": "hot.path" }]
                 },
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         check!(
             response
@@ -3106,18 +2912,7 @@ overrides:
             "{response}"
         );
 
-        let exemplars = response
-            .pointer("/series/0/points/0/exemplars")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or_else(|| panic!("missing individual exemplars: {response}"));
-        let profile_ids: Vec<_> = exemplars
-            .iter()
-            .filter_map(|exemplar| {
-                exemplar
-                    .get("profileId")
-                    .and_then(serde_json::Value::as_str)
-            })
-            .collect();
+        let profile_ids = first_point_exemplar_ids(&response, "profileId");
 
         assert!(profile_ids == vec!["profile-a"], "{response}");
     }
@@ -3127,41 +2922,60 @@ overrides:
         let mut store = InMemoryProfileStore::new();
         // The request includes the first step's lookback. The timestamps at
         // 2012 and 2500 are in range but belong to the omitted 3011 endpoint.
-        for (timestamp, value) in [
-            (10, 100),
-            (11, 1),
-            (12, 2),
-            (1_011, 3),
-            (1_012, 5),
-            (2_011, 7),
-            (2_012, 200),
-            (2_500, 300),
-            (2_501, 400),
+        for point in [
+            TimestampValue {
+                timestamp: 10,
+                value: 100,
+            },
+            TimestampValue {
+                timestamp: 11,
+                value: 1,
+            },
+            TimestampValue {
+                timestamp: 12,
+                value: 2,
+            },
+            TimestampValue {
+                timestamp: 1_011,
+                value: 3,
+            },
+            TimestampValue {
+                timestamp: 1_012,
+                value: 5,
+            },
+            TimestampValue {
+                timestamp: 2_011,
+                value: 7,
+            },
+            TimestampValue {
+                timestamp: 2_012,
+                value: 200,
+            },
+            TimestampValue {
+                timestamp: 2_500,
+                value: 300,
+            },
+            TimestampValue {
+                timestamp: 2_501,
+                value: 400,
+            },
         ] {
             store.push_sample_with_total_and_associations(
-                ("tenant-a", PT),
+                ProfileIdentity::new("tenant-a", PT),
                 vec![
-                    ("__profile_id__".to_string(), "profile-a".to_string()),
-                    ("service_name".to_string(), "api".to_string()),
+                    ProfileLabel::new("__profile_id__", "profile-a"),
+                    ProfileLabel::new("service_name", "api"),
                 ],
-                (0, 1),
-                (value, value),
-                timestamp,
-                (Some(0x2a), Some(vec![0xab; 16])),
+                StacktraceIdentity::new(0, 1),
+                SampleValues::new(point.value, point.value),
+                point.timestamp,
+                krabka_pprof::SampleAssociations::new(Some(0x2a), Some(vec![0xab; 16])),
             );
         }
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
         let client = reqwest::Client::new();
         let labels = vec![pb::querier::v1::LabelPair {
             name: "service_name".to_string(),
@@ -3236,52 +3050,36 @@ overrides:
     async fn select_heatmap_group_by_returns_labeled_series() {
         let mut store = InMemoryProfileStore::new();
         store.push_sample_with_total(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, 1),
-            (4, 4),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, 1),
+            SampleValues::new(4, 4),
             0,
         );
         store.push_sample_with_total(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "worker".to_string())],
-            (0, 2),
-            (9, 9),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "worker")],
+            StacktraceIdentity::new(0, 2),
+            SampleValues::new(9, 9),
             0,
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": "{}",
                 "start": 0,
                 "end": 100,
                 "step": 100.0,
                 "groupBy": ["service_name"],
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let series = response
             .get("series")
@@ -3310,23 +3108,13 @@ overrides:
             "span.path",
             0x2a,
         ))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3335,15 +3123,9 @@ overrides:
                 "groupBy": ["service_name"],
                 "queryType": "HEATMAP_QUERY_TYPE_SPAN",
                 "exemplarType": "EXEMPLAR_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let exemplar = response
             .pointer("/series/0/slots/0/exemplars/0")
@@ -3361,23 +3143,13 @@ overrides:
     #[tokio::test]
     async fn select_heatmap_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3385,15 +3157,9 @@ overrides:
                 "step": 60.0,
                 "groupBy": ["service_name"],
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let exemplars = response
             .pointer("/series/0/slots/0/exemplars")
@@ -3416,38 +3182,28 @@ overrides:
     async fn select_heatmap_span_query_type_counts_only_span_profiles() {
         let mut store = InMemoryProfileStore::new();
         store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, 1),
-            (7, 7),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, 1),
+            SampleValues::new(7, 7),
             10,
             0x2a,
         );
         store.push_sample_with_total(
-            ("tenant-a", PT),
-            vec![("service_name".to_string(), "api".to_string())],
-            (0, 2),
-            (11, 11),
+            ProfileIdentity::new("tenant-a", PT),
+            vec![ProfileLabel::new("service_name", "api")],
+            StacktraceIdentity::new(0, 2),
+            SampleValues::new(11, 11),
             20,
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/SelectHeatmap"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let _shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "SelectHeatmap",
+            json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
@@ -3455,15 +3211,9 @@ overrides:
                 "step": 100.0,
                 "groupBy": ["service_name"],
                 "queryType": "HEATMAP_QUERY_TYPE_SPAN"
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            }),
+        )
+        .await;
 
         let count: i64 = response
             .pointer("/series/0/slots/0/counts")
@@ -3482,43 +3232,39 @@ overrides:
             QuerierState::new(Arc::new(store_with_two_profile_types()))
                 .with_query_analysis_series_enabled(true),
         );
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
+        for case in [
+            QueryCountCase {
+                query: "",
+                count: 2,
             },
-        )
-        .await
-        .unwrap();
-        for (query, count) in [
-            ("", 2),
-            ("{}", 2),
-            ("{service_name=\"api\"}", 2),
-            ("{service_name=\"missing\"}", 0),
+            QueryCountCase {
+                query: "{}",
+                count: 2,
+            },
+            QueryCountCase {
+                query: "{service_name=\"api\"}",
+                count: 2,
+            },
+            QueryCountCase {
+                query: "{service_name=\"missing\"}",
+                count: 0,
+            },
         ] {
-            let response: serde_json::Value = reqwest::Client::new()
-                .post(format!(
-                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                ))
-                .header("x-scope-orgid", "tenant-a")
-                .json(&json!({"start":1,"end":100,"query":query}))
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+            let response = post_querier(
+                bound,
+                "AnalyzeQuery",
+                json!({"start":1,"end":100,"query":case.query}),
+            )
+            .await;
             check!(
                 response
                     .pointer("/queryImpact/totalQueriedSeries")
                     .and_then(json_i64)
                     .unwrap_or_default()
-                    == count
+                    == case.count
             );
             check!(
                 response
@@ -3540,31 +3286,15 @@ overrides:
     #[tokio::test]
     async fn disabled_query_analysis_ignores_selector_and_preserves_physical_cost() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_two_profile_types())));
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
+        let response = post_querier(
+            bound,
+            "AnalyzeQuery",
+            json!({"start":1,"end":100,"query":"invalid ignored {"}),
         )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({"start":1,"end":100,"query":"invalid ignored {"}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        .await;
         check!(
             response
                 .pointer("/queryImpact/totalQueriedSeries")
@@ -3590,39 +3320,7 @@ overrides:
 
     #[tokio::test]
     async fn analyze_query_returns_scope_and_impact_for_matching_series() {
-        let state = Arc::new(
-            QuerierState::new(Arc::new(store_with_two_profile_types()))
-                .with_query_analysis_series_enabled(true),
-        );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
-                "start": 1,
-                "end": 100,
-                "query": format!(r#"{PT}{{service_name="api"}}"#),
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let response = analyze_api_query_over_two_profile_types().await;
 
         check!(response.get("valid").is_none(), "{response}");
         check!(
@@ -3646,12 +3344,25 @@ overrides:
                 == Some(2),
             "{response}"
         );
-        for (field, value) in [("blockCount", 1), ("profileCount", 2), ("sampleCount", 2)] {
+        for case in [
+            FieldCountCase {
+                field: "blockCount",
+                expected: 1,
+            },
+            FieldCountCase {
+                field: "profileCount",
+                expected: 2,
+            },
+            FieldCountCase {
+                field: "sampleCount",
+                expected: 2,
+            },
+        ] {
             check!(
                 response
-                    .pointer(&format!("/queryScopes/0/{field}"))
+                    .pointer(&format!("/queryScopes/0/{}", case.field))
                     .and_then(json_i64)
-                    == Some(value),
+                    == Some(case.expected),
                 "{response}"
             );
         }
@@ -3661,53 +3372,52 @@ overrides:
     async fn analyze_query_counts_series_in_overlapping_head_but_not_outside_it() {
         let mut store = store_with_two_profile_types();
         store.push_sample(
-            ("tenant-a", PT),
+            ProfileIdentity::new("tenant-a", PT),
             vec![
-                ("service_name".to_string(), "api".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
+                ProfileLabel::new("service_name", "api"),
+                ProfileLabel::new("__profile_type__", PT),
             ],
-            (0, 0),
+            StacktraceIdentity::new(0, 0),
             5,
             100,
         );
         let state =
             Arc::new(QuerierState::new(Arc::new(store)).with_query_analysis_series_enabled(true));
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
+        let server = serve_on_loopback(state).await;
+        let bound = server.address;
+        let shutdown_tx = server.shutdown;
+        for case in [
+            AnalyzeRangeCase {
+                start: 25,
+                end: 75,
+                selector: "{}",
+                expected: 1,
             },
-        )
-        .await
-        .unwrap();
-        for (start, end, selector, expected) in [
-            (25, 75, "{}", 1),
-            (200, 300, "{}", 0),
-            (25, 75, r#"{service_name="missing"}"#, 0),
+            AnalyzeRangeCase {
+                start: 200,
+                end: 300,
+                selector: "{}",
+                expected: 0,
+            },
+            AnalyzeRangeCase {
+                start: 25,
+                end: 75,
+                selector: r#"{service_name="missing"}"#,
+                expected: 0,
+            },
         ] {
-            let response: serde_json::Value = reqwest::Client::new()
-                .post(format!(
-                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-                ))
-                .header("x-scope-orgid", "tenant-a")
-                .json(&json!({"start":start,"end":end,"query":format!("{PT}{selector}")}))
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .json()
-                .await
-                .unwrap();
+            let response = post_querier(
+                bound,
+                "AnalyzeQuery",
+                json!({"start":case.start,"end":case.end,"query":format!("{PT}{}", case.selector)}),
+            )
+            .await;
             check!(
                 response
                     .pointer("/queryImpact/totalQueriedSeries")
                     .and_then(json_i64)
                     .unwrap_or_default()
-                    == expected,
+                    == case.expected,
                 "{response}"
             );
         }
@@ -3716,39 +3426,7 @@ overrides:
 
     #[tokio::test]
     async fn analyze_query_counts_only_the_queried_profile_type() {
-        let state = Arc::new(
-            QuerierState::new(Arc::new(store_with_two_profile_types()))
-                .with_query_analysis_series_enabled(true),
-        );
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({
-                "start": 1,
-                "end": 100,
-                "query": format!(r#"{PT}{{service_name="api"}}"#),
-            }))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let response = analyze_api_query_over_two_profile_types().await;
 
         assert!(
             response
@@ -3761,22 +3439,21 @@ overrides:
 
     #[test]
     fn render_query_splits_profile_type_and_selector() {
-        let (profile_type, selector) = parse_render_query(
+        let parsed = parse_render_query(
             r#"process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name="api"}"#,
         )
         .unwrap();
 
-        assert!(profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
-        assert!(selector == r#"{service_name="api"}"#);
+        assert!(parsed.profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
+        assert!(parsed.selector == r#"{service_name="api"}"#);
     }
 
     #[test]
     fn render_query_allows_profile_type_only() {
-        let (profile_type, selector) =
-            parse_render_query("process_cpu:cpu:nanoseconds:cpu:nanoseconds").unwrap();
+        let parsed = parse_render_query("process_cpu:cpu:nanoseconds:cpu:nanoseconds").unwrap();
 
-        assert!(profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
-        assert!(selector == "{}");
+        assert!(parsed.profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds");
+        assert!(parsed.selector == "{}");
     }
 
     #[test]
@@ -3843,13 +3520,27 @@ overrides:
     fn render_time_params_accept_now_offsets() {
         let now_ms = NowMs(1_700_000_000_000);
 
-        for (input, want) in [
-            (None, 0),
-            (Some("now"), now_ms.0),
-            (Some("now-1h"), now_ms.0 - 3_600_000),
-            (Some("now-15m"), now_ms.0 - 15 * 60_000),
+        for case in [
+            OptionalTimeCase {
+                input: None,
+                expected: 0,
+            },
+            OptionalTimeCase {
+                input: Some("now"),
+                expected: now_ms.0,
+            },
+            OptionalTimeCase {
+                input: Some("now-1h"),
+                expected: now_ms.0 - 3_600_000,
+            },
+            OptionalTimeCase {
+                input: Some("now-15m"),
+                expected: now_ms.0 - 15 * 60_000,
+            },
         ] {
-            check!(parse_render_time_param(input, now_ms, DefaultMs(0)).unwrap() == want);
+            check!(
+                parse_render_time_param(case.input, now_ms, DefaultMs(0)).unwrap() == case.expected
+            );
         }
     }
 
@@ -3857,12 +3548,24 @@ overrides:
     fn render_time_params_accept_unix_seconds_and_millis() {
         let now_ms = NowMs(1_700_000_000_000);
 
-        for (input, want) in [
-            ("123", 123_000),
-            ("1700000000", 1_700_000_000_000),
-            ("1700000000000", 1_700_000_000_000),
+        for case in [
+            StringTimeCase {
+                input: "123",
+                expected: 123_000,
+            },
+            StringTimeCase {
+                input: "1700000000",
+                expected: 1_700_000_000_000,
+            },
+            StringTimeCase {
+                input: "1700000000000",
+                expected: 1_700_000_000_000,
+            },
         ] {
-            check!(parse_render_time_param(Some(input), now_ms, DefaultMs(0)).unwrap() == want);
+            check!(
+                parse_render_time_param(Some(case.input), now_ms, DefaultMs(0)).unwrap()
+                    == case.expected
+            );
         }
     }
 
@@ -3888,30 +3591,33 @@ overrides:
     #[tokio::test]
     async fn a_tenant_that_does_not_resolve_maps_to_a_client_fault_with_upstreams_message() {
         let cases = [
-            (TenantResolveError::Missing, "no org id".to_string()),
-            (
-                TenantResolveError::Invalid(
+            TenantResolveCase {
+                error: TenantResolveError::Missing,
+                message: "no org id".to_string(),
+            },
+            TenantResolveCase {
+                error: TenantResolveError::Invalid(
                     krabka_blockstore::TenantIdError::UnsupportedCharacter {
                         tenant: "a/b".into(),
                         character: '/',
                     },
                 ),
-                "tenant ID 'a/b' contains unsupported character '/'".to_string(),
-            ),
-            (
-                TenantResolveError::Invalid(krabka_blockstore::TenantIdError::TooLong),
-                "tenant ID is too long: max 150 characters".to_string(),
-            ),
+                message: "tenant ID 'a/b' contains unsupported character '/'".to_string(),
+            },
+            TenantResolveCase {
+                error: TenantResolveError::Invalid(krabka_blockstore::TenantIdError::TooLong),
+                message: "tenant ID is too long: max 150 characters".to_string(),
+            },
         ];
 
-        for (error, message) in cases {
-            let connect = tenant_connect_error(&error);
+        for case in cases {
+            let connect = tenant_connect_error(&case.error);
             check!(
-                (connect.code(), connect.message())
-                    == (Code::InvalidArgument, Some(message.as_str()))
+                connect.code() == Code::InvalidArgument
+                    && connect.message() == Some(case.message.as_str())
             );
 
-            let response = tenant_error_response(&error);
+            let response = tenant_error_response(&case.error);
             let status = response.status();
             let content_type = response
                 .headers()
@@ -3921,17 +3627,9 @@ overrides:
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            check!(
-                (
-                    status,
-                    content_type,
-                    String::from_utf8(body.to_vec()).unwrap()
-                ) == (
-                    StatusCode::BAD_REQUEST,
-                    Some("text/plain; charset=utf-8".to_string()),
-                    message
-                )
-            );
+            check!(status == StatusCode::BAD_REQUEST);
+            check!(content_type.as_deref() == Some("text/plain; charset=utf-8"));
+            check!(String::from_utf8(body.to_vec()).unwrap() == case.message);
         }
     }
 
@@ -3942,23 +3640,23 @@ overrides:
     async fn the_querier_resolves_a_request_without_a_tenant_under_the_state_policy() {
         let fallback = TenantPolicy::Fallback(tenant("tenant-a"));
         let required = TenantPolicy::Required;
-        for (policy, want_status, want_frame) in [
-            (fallback, StatusCode::OK, true),
-            (required, StatusCode::BAD_REQUEST, false),
+        for case in [
+            TenantPolicyCase {
+                policy: fallback,
+                expected_status: StatusCode::OK,
+                expect_frame: true,
+            },
+            TenantPolicyCase {
+                policy: required,
+                expected_status: StatusCode::BAD_REQUEST,
+                expect_frame: false,
+            },
         ] {
             let mut state = QuerierState::new(Arc::new(store_with_frame("main.work")));
-            state.tenant_policy = policy.clone();
-            let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-            let bound = serve(
-                "127.0.0.1:0".parse().unwrap(),
-                Arc::new(state),
-                &ServerSecurity::default(),
-                async move {
-                    let _ = shutdown_rx.await;
-                },
-            )
-            .await
-            .unwrap();
+            state.tenant_policy = case.policy.clone();
+            let server = serve_on_loopback(Arc::new(state)).await;
+            let bound = server.address;
+            let _shutdown_tx = server.shutdown;
             let client = reqwest::Client::new();
             let query = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("query", &format!(r#"{PT}{{service_name="api"}}"#))
@@ -3973,10 +3671,15 @@ overrides:
                 .unwrap();
             let render_status = render.status();
             let render_body = render.text().await.unwrap();
-            check!(render_status == want_status, "{policy:?}: {render_body}");
             check!(
-                render_body.contains("main.work") == want_frame,
-                "{policy:?}: {render_body}"
+                render_status == case.expected_status,
+                "{:?}: {render_body}",
+                case.policy
+            );
+            check!(
+                render_body.contains("main.work") == case.expect_frame,
+                "{:?}: {render_body}",
+                case.policy
             );
 
             let types = client
@@ -3989,19 +3692,25 @@ overrides:
                 .unwrap();
             let types_status = types.status();
             let types_body: serde_json::Value = types.json().await.unwrap();
-            check!(types_status == want_status, "{policy:?}: {types_body}");
-            if want_frame {
+            check!(
+                types_status == case.expected_status,
+                "{:?}: {types_body}",
+                case.policy
+            );
+            if case.expect_frame {
                 check!(
                     types_body
                         .pointer("/profileTypes/0/ID")
                         .and_then(serde_json::Value::as_str)
                         == Some(PT),
-                    "{policy:?}: {types_body}"
+                    "{:?}: {types_body}",
+                    case.policy
                 );
             } else {
                 check!(
                     types_body == json!({"code": "invalid_argument", "message": "no org id"}),
-                    "{policy:?}"
+                    "{:?}",
+                    case.policy
                 );
                 check!(render_body == "no org id");
             }
@@ -4032,39 +3741,7 @@ overrides:
         // The range-omitted (`start==0 && end==0`) health probe must still work
         // even though the default cap now rejects explicit unbounded ranges.
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve(
-            "127.0.0.1:0".parse().unwrap(),
-            state,
-            &ServerSecurity::default(),
-            async move {
-                let _ = shutdown_rx.await;
-            },
-        )
-        .await
-        .unwrap();
-        let response: serde_json::Value = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/ProfileTypes"
-            ))
-            .header("x-scope-orgid", "tenant-a")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-
-        assert!(
-            response
-                .get("profileTypes")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|profile_types| !profile_types.is_empty()),
-            "{response}"
-        );
+        assert_health_probe_lists_profile_types(state).await;
     }
 
     #[tokio::test]
@@ -4191,197 +3868,124 @@ overrides:
     }
 }
 
-mod analyze_query_handler;
 mod analyze_query_inner;
 mod apply_go_pgo;
 mod async_stacktrace_query;
-mod connect_error;
-mod default_heatmap_time_buckets_max;
-mod default_heatmap_value_buckets;
-mod default_store;
+mod authorized_http_tenant;
+mod bucket_exemplars;
+mod connect_handlers;
 mod deserialize_group_by;
-mod diff_handler;
 mod diff_inner;
-mod dot_escape;
+mod error_responses;
+mod escape_quoted;
+mod exemplar_helpers;
 mod flame_graph;
 mod flame_graph_diff;
-mod flamebearer_diff_json;
 mod flamebearer_json;
-mod flamebearer_metadata;
 mod flamegraph_dot;
-mod frames_match_call_sites;
-mod get_profile_stats_handler;
 mod get_profile_stats_inner;
 mod heatmap_from_points;
-mod heatmap_individual_exemplars_from_scan;
 mod heatmap_series;
-mod heatmap_slot_timestamp;
-mod heatmap_span_exemplars_by_series;
-mod heatmap_span_exemplars_from_scan;
-mod heatmap_time_buckets;
-mod heatmap_y_mins;
-mod individual_exemplars_from_scan;
-mod individual_exemplars_from_totals;
-mod is_internal_label;
-mod label_matcher_value_escape;
-mod label_names_handler;
 mod label_names_inner;
 mod label_pairs;
-mod label_values_handler;
 mod label_values_inner;
-mod limit;
 mod merge_label_matcher;
 mod merge_profile_id_selector;
-mod merge_profile_type_selector;
 mod metadata_range;
-mod normalize_render_unix_time;
-mod parse_matchers;
-mod parse_render_offset;
-mod parse_render_query;
-mod parse_render_time_param;
-mod parse_span_selectors;
-mod parse_trace_selectors;
+mod metadata_scope;
+mod parse_selectors;
 mod post_only_querier;
 mod pprof_dot;
-mod profile_error_response;
-mod profile_id_label;
-mod profile_types_handler;
 mod profile_types_inner;
 mod pyroscope_query_architecture;
+mod querier_request_parts;
 mod querier_state;
-mod query_execution;
-mod query_param_i64;
-mod query_param_render_time;
-mod query_range;
-mod query_target;
-mod reject_negative_render_time;
-mod render_diff_handler;
+mod query_params;
+mod query_types;
 mod render_diff_inner;
-mod render_handler;
+mod render_handlers;
 mod render_inner;
+mod render_params;
 mod render_query;
 mod router;
-mod select_heatmap_handler;
+#[cfg(test)]
+use render_params::parse_render_offset;
+use render_params::{parse_render_query, parse_render_time_param};
 mod select_heatmap_inner;
-mod select_merge_profile_handler;
 mod select_merge_profile_inner;
-mod select_merge_span_profile_handler;
 mod select_merge_span_profile_inner;
-mod select_merge_stacktraces_handler;
 mod select_merge_stacktraces_inner;
-mod select_series_handler;
 mod select_series_inner;
-mod series_handler;
 mod series_inner;
-mod series_key;
 mod serve;
 mod serve_supervised;
-mod span_exemplars_by_series;
-mod span_exemplars_from_scan;
-mod span_exemplars_from_totals;
-mod span_heatmap_points_from_scan;
-mod stack_trace_call_sites;
-mod tenant_connect_error;
-mod tenant_denied_connect_error;
-mod tenant_error_response;
 mod tenant_services;
 mod timed_query;
 mod timed_query_response;
-mod types_label_pairs;
-mod unix_now_ms;
 mod utf8_label_names;
 
-use analyze_query_handler::analyze_query_handler;
 use analyze_query_inner::analyze_query_inner;
 use apply_go_pgo::apply_go_pgo;
 pub use async_stacktrace_query::AsyncQueryPolicy;
 use async_stacktrace_query::async_stacktrace_query;
-use connect_error::connect_error;
-use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;
-use default_heatmap_value_buckets::DEFAULT_HEATMAP_VALUE_BUCKETS;
-pub use default_store::DefaultStore;
+use authorized_http_tenant::authorized_http_tenant;
+use bucket_exemplars::{BucketExemplars, ExemplarRow, ExemplarSource, bucket_exemplars};
+pub type DefaultStore = InMemoryProfileStore;
+use connect_handlers::{
+    analyze_query_handler, diff_handler, get_profile_stats_handler, label_names_handler,
+    label_values_handler, profile_types_handler, select_heatmap_handler,
+    select_merge_profile_handler, select_merge_span_profile_handler,
+    select_merge_stacktraces_handler, select_series_handler, series_handler,
+};
 use deserialize_group_by::deserialize_group_by;
-use diff_handler::diff_handler;
 use diff_inner::diff_inner;
-use dot_escape::dot_escape;
-use flamebearer_diff_json::flamebearer_diff_json;
-use flamebearer_json::flamebearer_json;
-use flamebearer_metadata::flamebearer_metadata;
+use error_responses::{connect_error, profile_error_response, tenant_error_response};
+use escape_quoted::{TabEscape, escape_quoted};
+use exemplar_helpers::{
+    heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan, heatmap_time_buckets,
+    heatmap_y_mins, individual_exemplars_from_scan, span_exemplars_from_scan,
+    span_heatmap_points_from_scan,
+};
+use flamebearer_json::{flamebearer_diff_json, flamebearer_json};
 use flamegraph_dot::flamegraph_dot;
-use frames_match_call_sites::frames_match_call_sites;
-use get_profile_stats_handler::get_profile_stats_handler;
 use get_profile_stats_inner::get_profile_stats_inner;
 use heatmap_from_points::heatmap_from_points;
-use heatmap_individual_exemplars_from_scan::heatmap_individual_exemplars_from_scan;
-use heatmap_slot_timestamp::heatmap_slot_timestamp;
-use heatmap_span_exemplars_by_series::HeatmapSpanExemplarsBySeries;
-use heatmap_span_exemplars_from_scan::heatmap_span_exemplars_from_scan;
-use heatmap_time_buckets::heatmap_time_buckets;
-use heatmap_y_mins::heatmap_y_mins;
-use individual_exemplars_from_scan::individual_exemplars_from_scan;
-use individual_exemplars_from_totals::individual_exemplars_from_totals;
-use is_internal_label::is_internal_label;
-use label_matcher_value_escape::label_matcher_value_escape;
-use label_names_handler::label_names_handler;
 use label_names_inner::label_names_inner;
-use label_pairs::label_pairs;
-use label_values_handler::label_values_handler;
+use label_pairs::{label_pairs, types_label_pairs};
 use label_values_inner::label_values_inner;
-use limit::limit;
-use merge_label_matcher::merge_label_matcher;
+use merge_label_matcher::{merge_label_matcher, merge_profile_type_selector};
 use merge_profile_id_selector::merge_profile_id_selector;
-use merge_profile_type_selector::merge_profile_type_selector;
 use metadata_range::MetadataRange;
-use normalize_render_unix_time::normalize_render_unix_time;
-use parse_matchers::parse_matchers;
-use parse_render_offset::parse_render_offset;
-use parse_render_query::parse_render_query;
-use parse_render_time_param::parse_render_time_param;
-use parse_span_selectors::parse_span_selectors;
-use parse_trace_selectors::parse_trace_selectors;
+use metadata_scope::{MetadataRequest, MetadataScope, metadata_scope, metadata_scope_for_request};
+use parse_selectors::{parse_span_selectors, parse_trace_selectors, stack_trace_call_sites};
 use post_only_querier::post_only_querier;
 use pprof_dot::pprof_dot;
-use profile_error_response::profile_error_response;
-use profile_id_label::PROFILE_ID_LABEL;
-use profile_types_handler::profile_types_handler;
 use profile_types_inner::profile_types_inner;
 pub use pyroscope_query_architecture::PyroscopeQueryArchitecture;
+use querier_request_parts::QuerierRequestParts;
 pub use querier_state::QuerierState;
-use query_execution::QueryExecution;
-use query_param_i64::query_param_i64;
-use query_param_render_time::query_param_render_time;
-use query_range::QueryRange;
-use query_target::QueryTarget;
-use reject_negative_render_time::reject_negative_render_time;
-use render_diff_handler::render_diff_handler;
+use query_params::{
+    QueryParameter, query_param_i64, query_param_render_time, reject_negative_render_time,
+};
+use query_types::{
+    HeatmapExemplarRequest, HeatmapSlotsMillis, HeatmapSpanExemplarsBySeries, IndividualProfile,
+    QueryExecution, QueryTarget, SeriesExemplarQuery, SpanExemplarsBySeries, SpanHeatmapRequest,
+    heatmap_slot_timestamp,
+};
+pub(crate) use query_types::{QueryRange, SeriesKey};
 use render_diff_inner::render_diff_inner;
-use render_handler::render_handler;
+use render_handlers::{render_diff_handler, render_handler};
 use render_inner::render_inner;
 use render_query::RenderQuery;
 pub use router::router;
-use select_heatmap_handler::select_heatmap_handler;
 use select_heatmap_inner::select_heatmap_inner;
-use select_merge_profile_handler::select_merge_profile_handler;
 use select_merge_profile_inner::select_merge_profile_inner;
-use select_merge_span_profile_handler::select_merge_span_profile_handler;
 use select_merge_span_profile_inner::select_merge_span_profile_inner;
-use select_merge_stacktraces_handler::select_merge_stacktraces_handler;
 use select_merge_stacktraces_inner::select_merge_stacktraces_inner;
-use select_series_handler::select_series_handler;
 use select_series_inner::select_series_inner;
-use series_handler::series_handler;
 use series_inner::series_inner;
-use series_key::SeriesKey;
 pub use serve::serve;
 pub use serve_supervised::serve_supervised;
-use span_exemplars_by_series::SpanExemplarsBySeries;
-use span_exemplars_from_scan::span_exemplars_from_scan;
-use span_exemplars_from_totals::span_exemplars_from_totals;
-use span_heatmap_points_from_scan::span_heatmap_points_from_scan;
-use stack_trace_call_sites::stack_trace_call_sites;
-use tenant_connect_error::tenant_connect_error;
-use tenant_denied_connect_error::tenant_denied_connect_error;
-use tenant_error_response::tenant_error_response;
 use tenant_services::{
     delete_debuginfo_handler, delete_recording_rule_handler, delete_settings_handler,
     diff_adhoc_handler, feature_flags_handler, get_adhoc_handler, get_recording_rule_handler,
@@ -4389,8 +3993,90 @@ use tenant_services::{
     set_settings_handler, should_initiate_upload_handler, upload_adhoc_handler,
     upload_debuginfo_handler, upload_finished_handler, upsert_recording_rule_handler,
 };
-use timed_query::timed_query;
+use timed_query::{timed_connect_query, timed_query};
 use timed_query_response::timed_query_response;
-use types_label_pairs::types_label_pairs;
-use unix_now_ms::unix_now_ms;
 use utf8_label_names::{client_allows_utf8_label_names, is_legacy_label_name};
+
+pub(crate) const DEFAULT_HEATMAP_TIME_BUCKETS_MAX: usize = 4096;
+
+pub(crate) const DEFAULT_HEATMAP_VALUE_BUCKETS: usize = 20;
+
+pub(crate) const PROFILE_ID_LABEL: &str = "__profile_id__";
+
+pub(crate) fn dot_escape(value: &str) -> String {
+    escape_quoted(value, TabEscape::Literal)
+}
+
+pub(crate) fn frames_match_call_sites(
+    frames: &[krabka_pprof::Frame],
+    call_sites: &[String],
+) -> bool {
+    krabka_pprof::stack_matches_call_sites(frames, call_sites)
+}
+
+/// Labels that Krabka stores internally for span and exemplar lookups.
+///
+/// Pyroscope does not expose these labels through the label-enumeration APIs
+/// `LabelNames` and `LabelValues`, or through series counting. Krabka attaches
+/// `__profile_id__` to each profile, so a report of it would leak per-profile
+/// cardinality that real Pyroscope never reports.
+pub(crate) fn is_internal_label(name: &str) -> bool {
+    name == PROFILE_ID_LABEL
+}
+
+pub(crate) fn label_matcher_value_escape(value: &str) -> String {
+    escape_quoted(value, TabEscape::Escaped)
+}
+
+pub(crate) fn limit(limit: Option<i64>) -> usize {
+    limit
+        .and_then(|limit| usize::try_from(limit).ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(usize::MAX)
+}
+
+pub(crate) fn normalize_render_unix_time(value: i64) -> i64 {
+    if value.abs() < 10_000_000_000 {
+        value.saturating_mul(1000)
+    } else {
+        value
+    }
+}
+
+pub(crate) fn parse_matchers(
+    matchers: &[String],
+) -> Result<Vec<krabka_blockstore::LabelMatcher>, ProfileError> {
+    let mut out = Vec::new();
+    for matcher in matchers {
+        out.extend(parse_label_selector(matcher)?);
+    }
+    Ok(out)
+}
+
+/// Maps a tenant that does not resolve to the Connect error the querier sends.
+///
+/// Pyroscope with multi-tenancy off does not read `X-Scope-OrgID`, so it has
+/// no rejection to match here. Krabka isolates blocks and queries by tenant, so
+/// it rejects a malformed name. The code is `invalid_argument`, because the
+/// fault is in the request. The message is the text that Grafana's `dskit`
+/// sends for the same header.
+pub(crate) fn tenant_connect_error(error: &TenantResolveError) -> ConnectError {
+    ConnectError::new(Code::InvalidArgument, error.to_string())
+}
+
+/// Maps a tenant that the principal of the request may not use to the Connect error the querier sends.
+///
+/// The code is `permission_denied`, which Connect sends with status 403. That
+/// is the status of the plain HTTP routes for the same denial. The message is
+/// the text of the denial. It names the principal and the tenant, and not the
+/// tenants that the principal may use.
+pub(crate) fn tenant_denied_connect_error(denied: &TenantDenied) -> ConnectError {
+    ConnectError::new(Code::PermissionDenied, denied.to_string())
+}
+
+pub(crate) fn unix_now_ms() -> i64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}

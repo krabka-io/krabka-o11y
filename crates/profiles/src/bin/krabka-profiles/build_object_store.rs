@@ -1,8 +1,4 @@
-use krabka_blockstore::{
-    ConditionalUpdateRequirement, MeteredObjectStore, ObjectStoreMetrics,
-    verify_object_store_semantics,
-};
-use object_store::{path::Path, prefix::PrefixStore};
+use krabka_blockstore::{ObjectStoreMetrics, build_metered_object_store};
 
 use super::ConfiguredObjectStore;
 
@@ -20,17 +16,6 @@ pub(crate) async fn build_object_store(
     url: &str,
     metrics: ObjectStoreMetrics,
 ) -> Result<ConfiguredObjectStore, Box<dyn std::error::Error + Send + Sync>> {
-    let parsed = url::Url::parse(url)?;
-    let (store, prefix) = object_store::parse_url_opts(&parsed, std::env::vars())?;
-    let store = MeteredObjectStore::wrap(
-        std::sync::Arc::new(PrefixStore::new(store, prefix)),
-        metrics,
-    );
-    verify_object_store_semantics(
-        store.as_ref(),
-        &Path::from(""),
-        ConditionalUpdateRequirement::for_object_store_url(url),
-    )
-    .await?;
+    let store = build_metered_object_store(url, metrics).await?;
     Ok(ConfiguredObjectStore { store })
 }

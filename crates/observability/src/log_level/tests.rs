@@ -11,6 +11,11 @@ use assert2::{assert, check};
 
 use super::{EnvFilter, LogLevelControl, LogLevelError};
 
+struct DirectiveCase {
+    directives: &'static str,
+    expected: &'static str,
+}
+
 #[test]
 fn a_fixed_control_reports_its_level_and_refuses_to_move_it() {
     let control = LogLevelControl::fixed("warn");
@@ -53,25 +58,18 @@ fn a_clone_of_a_control_names_the_same_filter() {
 /// `/log_level` reports one word, and `RUST_LOG` is a list of directives. The
 /// word is the most verbose thing the filter admits anywhere, because that is
 /// the question an operator who set `debug` on one target is asking.
-#[test]
-fn the_reported_word_is_the_most_verbose_level_the_filter_admits() {
-    let cases = [
-        ("info", "info"),
-        ("debug", "debug"),
-        ("warn", "warn"),
-        // A per-target directive is more verbose than the global one, and it
-        // is the reason lines are being emitted at all.
-        ("info,krabka_observability=debug", "debug"),
-        // And less verbose: the global level still governs everything else.
-        ("info,hyper=off", "info"),
-        // A filter that admits nothing says so rather than defaulting.
-        ("off", "off"),
-    ];
-
-    for (directives, want) in cases {
-        check!(
-            LogLevelControl::level_word(&EnvFilter::new(directives)) == want,
-            "RUST_LOG={directives}"
-        );
-    }
+#[yare::parameterized(
+    info = { DirectiveCase { directives: "info", expected: "info" } },
+    debug = { DirectiveCase { directives: "debug", expected: "debug" } },
+    warn = { DirectiveCase { directives: "warn", expected: "warn" } },
+    per_target_debug = { DirectiveCase { directives: "info,krabka_observability=debug", expected: "debug" } },
+    less_verbose_target = { DirectiveCase { directives: "info,hyper=off", expected: "info" } },
+    off = { DirectiveCase { directives: "off", expected: "off" } },
+)]
+fn the_reported_word_is_the_most_verbose_level_the_filter_admits(case: DirectiveCase) {
+    check!(
+        LogLevelControl::level_word(&EnvFilter::new(case.directives)) == case.expected,
+        "RUST_LOG={}",
+        case.directives
+    );
 }

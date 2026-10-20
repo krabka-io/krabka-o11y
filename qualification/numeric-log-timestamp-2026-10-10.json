@@ -1,0 +1,583 @@
+{
+  "status": "draft_progress",
+  "date": "2026-10-10",
+  "created_utc": "2026-10-10T16:31:17.079012+00:00",
+  "baseline_source": "45b254287a49cda79bbea61e447bb2580c7033a2",
+  "environment": "Current managed VM; no GCP VM provisioned; CPU affinity 4; Rust 1.98.1 opt-level=3, frame pointers, 16 codegen units, no LTO.",
+  "change": "Keep canonical log-entry nanoseconds as i64 until wire encoding. Preserve noncanonical and malformed strings exactly. Numeric/text canonical identity shares deduplication keys. Default and categorized JSON retain string timestamps.",
+  "scope": "Actual production entry construction, label clones, stream sorting, optional trim before encoding, folded/categorized JSON construction, complete wire serialization. BlockDescriptor, time-range, direction and concurrency stand-ins. Memory fixture; no HTTP/storage/native upstream measurement. Independent payload oracle, fixture creation and final buffer disposal excluded from timer.",
+  "controls": "One ELF contains baseline and candidate. Each case runs four balanced pairs (B/C,C/B,B/C,C/B) on a shared verified fixture. /proc/self/stat user+system CPU at 100 ticks/s; tick reads outside wall timer. Fresh entry construction per iteration. Do not pool timings across boots, serializer versions, or isolated-process and shared-process harnesses.",
+  "fixtures": "1,000 through 2,000,000 rows; 10 or 1,000 points per stream; ordered and shuffled inputs; full response or limit 100; folded and categorized. First two/last two timestamps per stream are tied i64::MIN/MAX, so extreme timestamps represent 40% of ten-row streams; other timestamps use realistic 19-digit values. Escaped and Unicode lines/labels.",
+  "cpu_control_cases": [
+    {
+      "version": "v1",
+      "rows": 1000000,
+      "points_per_stream": 1000,
+      "pattern": "shuffled",
+      "limit": "all",
+      "encoding": "categorized",
+      "iterations": 2,
+      "boot_id": "887c688e-234f-4fc2-a9c7-a671f6b28472",
+      "cohort": "cpu-controls",
+      "complete_pairs": 4,
+      "cpu_ratios": [
+        0.93790546802595,
+        1.0177165354330708,
+        1.0114107883817427,
+        0.9698443579766538
+      ],
+      "wall_ratios": [
+        0.9371064992528593,
+        1.020528268335332,
+        1.010713269799994,
+        0.9710520390268675
+      ],
+      "median_cpu_ratio": 0.9906275731791983,
+      "median_wall_ratio": 0.9908826544134308,
+      "baseline_cpu_seconds": [
+        5.395,
+        5.08,
+        4.82,
+        5.14
+      ],
+      "candidate_cpu_seconds": [
+        5.06,
+        5.17,
+        4.875,
+        4.985
+      ]
+    },
+    {
+      "version": "v2",
+      "rows": 1000000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "limit": "all",
+      "encoding": "folded",
+      "iterations": 2,
+      "boot_id": "887c688e-234f-4fc2-a9c7-a671f6b28472",
+      "cohort": "cpu-controls",
+      "complete_pairs": 4,
+      "cpu_ratios": [
+        0.8466898954703833,
+        0.9248826291079812,
+        0.9096459096459097,
+        0.8980070339976555
+      ],
+      "wall_ratios": [
+        0.8453027743589033,
+        0.9249418648028933,
+        0.9112099702656402,
+        0.898226612421506
+      ],
+      "median_cpu_ratio": 0.9038264718217826,
+      "median_wall_ratio": 0.9047182913435732,
+      "baseline_cpu_seconds": [
+        4.305,
+        4.26,
+        4.095,
+        4.265
+      ],
+      "candidate_cpu_seconds": [
+        3.645,
+        3.94,
+        3.725,
+        3.83
+      ]
+    },
+    {
+      "version": "v2",
+      "rows": 1000000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "limit": "100",
+      "encoding": "folded",
+      "iterations": 2,
+      "boot_id": "887c688e-234f-4fc2-a9c7-a671f6b28472",
+      "cohort": "cpu-controls",
+      "complete_pairs": 4,
+      "cpu_ratios": [
+        0.897560975609756,
+        0.8373205741626795,
+        0.8822553897180763,
+        0.7701317715959004
+      ],
+      "wall_ratios": [
+        0.8966698074987905,
+        0.8371031939641035,
+        0.8808642101447746,
+        0.7705166063976371
+      ],
+      "median_cpu_ratio": 0.8597879819403779,
+      "median_wall_ratio": 0.8589837020544391,
+      "baseline_cpu_seconds": [
+        3.075,
+        3.135,
+        3.015,
+        3.415
+      ],
+      "candidate_cpu_seconds": [
+        2.76,
+        2.625,
+        2.66,
+        2.63
+      ]
+    },
+    {
+      "version": "v2",
+      "rows": 1000000,
+      "points_per_stream": 1000,
+      "pattern": "ordered",
+      "limit": "all",
+      "encoding": "folded",
+      "iterations": 2,
+      "boot_id": "887c688e-234f-4fc2-a9c7-a671f6b28472",
+      "cohort": "cpu-controls",
+      "complete_pairs": 4,
+      "cpu_ratios": [
+        0.9744990892531875,
+        0.8585526315789473,
+        1.0188323917137478,
+        0.966010733452594
+      ],
+      "wall_ratios": [
+        0.9723278358307447,
+        0.8603615741727766,
+        1.0186875240194766,
+        0.9666441553349462
+      ],
+      "median_cpu_ratio": 0.9702549113528908,
+      "median_wall_ratio": 0.9694859955828454,
+      "baseline_cpu_seconds": [
+        2.745,
+        3.04,
+        2.655,
+        2.795
+      ],
+      "candidate_cpu_seconds": [
+        2.675,
+        2.61,
+        2.705,
+        2.7
+      ]
+    },
+    {
+      "version": "v2",
+      "rows": 1000000,
+      "points_per_stream": 1000,
+      "pattern": "shuffled",
+      "limit": "all",
+      "encoding": "categorized",
+      "iterations": 2,
+      "boot_id": "887c688e-234f-4fc2-a9c7-a671f6b28472",
+      "cohort": "cpu-controls",
+      "complete_pairs": 4,
+      "cpu_ratios": [
+        0.9645593869731801,
+        0.9459980713596915,
+        1.229383886255924,
+        0.9737354085603114
+      ],
+      "wall_ratios": [
+        0.9646634614111546,
+        0.9440609090607462,
+        1.2304621166178857,
+        0.9738907682956156
+      ],
+      "median_cpu_ratio": 0.9691473977667457,
+      "median_wall_ratio": 0.9692771148533851,
+      "baseline_cpu_seconds": [
+        5.22,
+        5.185,
+        5.275,
+        5.14
+      ],
+      "candidate_cpu_seconds": [
+        5.035,
+        4.905,
+        6.485,
+        5.005
+      ]
+    },
+    {
+      "version": "v2",
+      "rows": 2000000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "limit": "100",
+      "encoding": "folded",
+      "iterations": 2,
+      "boot_id": "4998e289-6070-4e45-b7ff-34852c313151",
+      "cohort": "final-cpu-controls",
+      "complete_pairs": 4,
+      "cpu_ratios": [
+        0.7995610826627652,
+        0.8908091123330715,
+        0.8411358403683807,
+        0.8537519142419602
+      ],
+      "wall_ratios": [
+        0.799111500245972,
+        0.8916168991037121,
+        0.8410363834064077,
+        0.8538654259210962
+      ],
+      "median_cpu_ratio": 0.8474438773051705,
+      "median_wall_ratio": 0.847450904663752,
+      "baseline_cpu_seconds": [
+        6.835,
+        6.365,
+        6.515,
+        6.53
+      ],
+      "candidate_cpu_seconds": [
+        5.465,
+        5.67,
+        5.48,
+        5.575
+      ]
+    },
+    {
+      "version": "v2",
+      "rows": 1000000,
+      "points_per_stream": 1000,
+      "pattern": "shuffled",
+      "limit": "all",
+      "encoding": "categorized",
+      "iterations": 5,
+      "boot_id": "4998e289-6070-4e45-b7ff-34852c313151",
+      "cohort": "final-cpu-controls",
+      "complete_pairs": 4,
+      "cpu_ratios": [
+        1.002997377294867,
+        0.9595736861447995,
+        0.9973524962178517,
+        1.0214455917394758
+      ],
+      "wall_ratios": [
+        1.0027231009810544,
+        0.9589970405922813,
+        0.996926390085266,
+        1.0226308069522279
+      ],
+      "median_cpu_ratio": 1.0001749367563595,
+      "median_wall_ratio": 0.9998247455331601,
+      "baseline_cpu_seconds": [
+        5.338,
+        5.442,
+        5.288,
+        5.036
+      ],
+      "candidate_cpu_seconds": [
+        5.354,
+        5.2219999999999995,
+        5.274,
+        5.144
+      ]
+    }
+  ],
+  "profiles": {
+    "version": "v1 generic wrapper serialization; production uses v2 direct i64/text serialization",
+    "cpu_captures": 6,
+    "heap_captures": 6,
+    "scope": "Whole process: fixture, oracle, verification, timed pipeline and disposal. Not normalized pipeline CPU ratios.",
+    "lost_samples": 0,
+    "allocation_observations": {
+      "folded_all_20000": {
+        "baseline_calls": 3954222,
+        "candidate_calls": 3954222,
+        "baseline_peak_mb": 77.93,
+        "candidate_peak_mb": 77.55
+      },
+      "folded_limit100_20000": {
+        "baseline_calls": 3539681,
+        "candidate_calls": 3320781,
+        "fewer_calls": 218900,
+        "baseline_peak_mb": 75.87,
+        "candidate_peak_mb": 75.49
+      },
+      "categorized_all_20000": {
+        "baseline_calls": 11766918,
+        "candidate_calls": 11547358,
+        "baseline_temporary_allocations": 642,
+        "candidate_temporary_allocations": 1082,
+        "peak_mb_both": 87.08
+      }
+    },
+    "caveat": "V1 categorized serialization has 440 extra temporary allocations. The v2 direct i64/text serializer removes those in a targeted complete-payload-verified repeat; baseline and candidate both have 642 temporary allocations. No peak heap gain.",
+    "v2_additional_heap_captures": 2,
+    "v2_categorized_allocation_repeat": {
+      "baseline_calls": 11766918,
+      "candidate_calls": 11546918,
+      "fewer_calls": 220000,
+      "baseline_temporary_allocations": 642,
+      "candidate_temporary_allocations": 642,
+      "baseline_peak_mb": 87.08,
+      "candidate_peak_mb": 87.08,
+      "source": "Full heaptrack_print reports; heaptrack process stats omit one loader temporary allocation in both.",
+      "scope": "Same ELF baseline/candidate; 20,000 rows, 1,000 points/stream, ten timed iterations plus oracle/verification/setup/disposal. Compiler ran concurrently: allocation counts only, no runtime/RSS advantage qualified."
+    }
+  },
+  "interrupted_cohorts": {
+    "first": "146 verified observations, 73 complete pairs; boot identity absent; retained separately.",
+    "second": "221 observations, 110 complete pairs and one orphan; orphan excluded from paired summaries.",
+    "two_million_first_attempt": "Two complete pairs retained separately after VM restart; not pooled with final boot controls.",
+    "cause": "VM connectivity interruptions; restart observed; cause not established."
+  },
+  "upstream_comparison": {
+    "system": "Grafana Loki",
+    "commit": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    "source": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L255",
+    "approach": "Typed timestamps with UnixNano comparisons and ordered iterator merge; ReadBatch stops at requested count. Krabka still materializes/sorts rows. This change removes repeated decimal parsing in actual sort/trim callers.",
+    "native_run": "Pending; current disk space does not meet existing WAL headroom guard. No guard bypass or fresh native parity claim."
+  },
+  "validation": {
+    "managed_format": "Passed via already-generated Bazel format target; not a fresh Bazel invocation.",
+    "standalone_v2_behavior": "Passed: 15 exact wire-spelling cases and six canonical identity cases.",
+    "actual_production_build": "Passed using captured cached Rust dependency graph; not fresh Cargo/Bazel validation.",
+    "scoped_crate_tests": {
+      "status": "Passed",
+      "suites": {
+        "querier": {
+          "passed": 70,
+          "failed": 0,
+          "ignored": 0
+        },
+        "querier_object_store": {
+          "passed": 22,
+          "failed": 0,
+          "ignored": 0
+        },
+        "query_range": {
+          "passed": 56,
+          "failed": 0,
+          "ignored": 0
+        },
+        "per_tenant_limits": {
+          "passed": 10,
+          "failed": 0,
+          "ignored": 0
+        },
+        "observability_unit": {
+          "passed": 431,
+          "failed": 0,
+          "ignored": 0
+        }
+      },
+      "total_passed": 589,
+      "scope": "Actual source; direct rustc commands from captured cached dependency graph."
+    },
+    "strict_clippy": "Passed for actual production and full unit-test source; clippy::all and clippy::pedantic, -D warnings, using captured cached graph.",
+    "complete_http": "Pending",
+    "bazel_full_suite": "Not run; cold managed tool extraction previously blocked by current VM disk space.",
+    "production_clippy_log": "qualification/evidence/numeric-log-timestamp-2026-10-10/production-clippy.log",
+    "full-unit-source_clippy_log": "qualification/evidence/numeric-log-timestamp-2026-10-10/full-unit-source-clippy.log",
+    "baseline_records": "tools/mutants-record.py --check passed; historical benchmark budgets unchanged."
+  },
+  "limitations": [
+    "Million-row categorized controls include a 1.2294 CPU ratio regression in one pair; retain it. No consistent general categorized improvement qualified.",
+    "The longer categorized repeat was running during managed formatting (13 seconds); conservatively treat that final categorized case as diagnostic if timing overlap cannot be excluded.",
+    "No claim of HTTP, storage, native upstream, durable ingest, or general memory improvement.",
+    "Raw profiles, source snapshots, commands and component executable identities stay under qualification/evidence on this VM. The raw progress snapshot is frozen with SHA256SUMS; production library/code archive are RAM-only and must be rebuilt after a VM restart."
+  ],
+  "benchmark_contract": "No benchmark IDs, historical numerical budgets, WAL locations or disk guards changed.",
+  "evidence_files": [
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/source-state.json",
+      "bytes": 328,
+      "sha256": "650a208a888c79cfb31a4a9988ecc4a7909364aaccfe2c5dbcf95b9ec1565b12"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/cpu-profile-summary.json",
+      "bytes": 1701,
+      "sha256": "9b52a54c43cb43479cf8f74c052a0362c72a6d3cac42b605fd935d1f3e99a4da"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/profile-compression-proof.json",
+      "bytes": 5104,
+      "sha256": "ed654ea5bb3cecafad5a3d36301d6ac5f067791e9c28e0a619d33792269fc47d"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/v2-behavior-check.log",
+      "bytes": 143,
+      "sha256": "49ad2d0aed76ce0ca23eaf4f6acd182b8b64cd977a47ba3f86a2b582795bdb88"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/loki-entry-iterator.go",
+      "bytes": 20085,
+      "sha256": "87906790842578c02f35a87b8a58c33eed3f72cc5d7a11ddb8f6e3fff0d96e94"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/interrupted-paired-timings.json",
+      "bytes": 102538,
+      "sha256": "cde93cdc17861712c8d2e8fdd59adc1bb4e55621284712a12818958ebaa4176b"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/second-interrupted-paired-timings.json",
+      "bytes": 185195,
+      "sha256": "1abbc46e0295859c7434df5d9878e7d2180ff271efea30e9a43556f90d2a6bed"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/interrupted-two-million-cpu-controls.log",
+      "bytes": 822,
+      "sha256": "8253a05122185bf565b45239c1e9aeead0cf78c29c59713b8a0047067013ce38"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/format.log",
+      "bytes": 86,
+      "sha256": "cce3c36671d540410700136f2bc1f0942068175093e67d63b1c134acc346ae73"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/cpu-controls-at-pr-open.json",
+      "bytes": 33825,
+      "sha256": "0872d75b09a76f731cbba9611442e57f3728f0a1aca2b38b46154d6e175998fa"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/final-cpu-controls-at-pr-open.json",
+      "bytes": 13428,
+      "sha256": "643a979320d1d4f439a41dc4a7d20ce1c5bed694e1fc58ff701a01aef3f31ab8"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/v2-heap-record.json",
+      "bytes": 10781,
+      "sha256": "e2be534c80ef3cd04f76d3db32b47993a9aa355ef4822a0ffac818df3201d191"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/baseline-v2-20000-categorized-heap.txt.gz",
+      "bytes": 33901,
+      "sha256": "2b154c2b74fafd747bc1b4da6d1af61c6a547ef98d27e248f3ef9bacc9adbc6d"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/candidate-v2-20000-categorized-heap.txt.gz",
+      "bytes": 33687,
+      "sha256": "ee5ba373e22a83d505860a31d54404804237e67a40b778466b600c762cd66f25"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/baseline-v2-20000-categorized.heaptrack.zst",
+      "bytes": 138949,
+      "sha256": "fa2bccf1ebc9389264fa20a824fb5e5063bce7759c44b0b6ab6a09384e4a4fdd"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/candidate-v2-20000-categorized.heaptrack.zst",
+      "bytes": 233861,
+      "sha256": "a6922275f9352e7f9b38c5379317a77cde72afbdeb540cd77f9784525aa55a0f"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/candidate-krabka_observability-command.json",
+      "bytes": 7044,
+      "sha256": "5dddf56255ce4b0018b36da3a9a87226946f318dbb2b2bab6c005ee6bf0a4863"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/production-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/querier-tests.log",
+      "bytes": 4942,
+      "sha256": "74a202fae1872bb50c9120c664ccdc79f54edbb58ad2ef964a0e541a78dcb38e"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/querier_object_store-tests.log",
+      "bytes": 1955,
+      "sha256": "70485728886774c8cc5ce4f6a32d0f5779b0a6653601538967e6aa987316657e"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/query_range-tests.log",
+      "bytes": 4171,
+      "sha256": "bec92ee8ff3194916f78bbb5b0a9d19daf4517bda76d46af0f2c069c80a1b374"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/per_tenant_limits-tests.log",
+      "bytes": 803,
+      "sha256": "9f3215d20be75d52442a59b087d15c6ecb8857bc8ed9e825c8a524fc6434482a"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/observability_unit-tests.log",
+      "bytes": 56103,
+      "sha256": "7af056128f288bd2aec2b3e0fe63be7616fb1a096919c1ccecf8f59d0a74523a"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/tests-build.log",
+      "bytes": 249,
+      "sha256": "ac2a620470eaed403444004ce0de9a90c6cdd9b888024d45ea500d0a0382c048"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/observability_unit-tests.log",
+      "bytes": 56103,
+      "sha256": "7af056128f288bd2aec2b3e0fe63be7616fb1a096919c1ccecf8f59d0a74523a"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/production-clippy-command.json",
+      "bytes": 7159,
+      "sha256": "735ca4821cf04eee720df122560e3424788582a817bfac9fca7229e15aaeecad"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/production-clippy.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/full-unit-source-clippy-command.json",
+      "bytes": 7937,
+      "sha256": "e20fa8d312b0c0ae52e097e1ae864d00ed4b9df12a203fda3b7c6b466a09a383"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/full-unit-source-clippy.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/production-source-identity.json",
+      "bytes": 1504,
+      "sha256": "1035b292290d6b328ae3694eac64935a5d1385770159a7c39989298ffb8f5c6c"
+    },
+    {
+      "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/production-library-archive.json",
+      "bytes": 1100,
+      "sha256": "5ed476cc2d45f2b472b0076a7f793979a279d25398535b786421ba9e199aa186"
+    }
+  ],
+  "updated_utc": "2026-10-10T16:39:21.919172+00:00",
+  "tested_source": {
+    "tested_source_commit": "4bf1541c83a894279fc41f577fc4c0b86d5a659f",
+    "production_source_unchanged_since_tested_commit": true,
+    "modified_source_files": [
+      {
+        "path": "crates/observability/src/http/response/loki_responses.rs",
+        "sha256": "80260b71dcf0416700292a4d939862d2d3b127e8d6875f888ade5a2f345f769e"
+      },
+      {
+        "path": "crates/observability/src/http/response/loki_responses/loki_stream_entry.rs",
+        "sha256": "c760c1c32f42fded58cb7e84c83c3f5437ed5b892d5c9024bb9a9fa75cb1bbad"
+      },
+      {
+        "path": "crates/observability/src/http/response/loki_responses/loki_stream_results.rs",
+        "sha256": "ec9f97fa531ef66fba5e19f1c83b7ba2ec48a713ee4176d2c27eb9cde4e4481e"
+      },
+      {
+        "path": "crates/observability/src/http/response/loki_responses/loki_timestamp.rs",
+        "sha256": "9632a6c42655d2f556e6f5ca0f864d942faf4e262feb408ff1cce5c19325a590"
+      },
+      {
+        "path": "crates/observability/src/http/response/loki_responses/loki_timestamp/tests.rs",
+        "sha256": "aa6b20ae50863c164de6aaa5cb422a47c6527af06abc04dc64e4d24e97154988"
+      },
+      {
+        "path": "crates/observability/src/querier/scan/stream_scans/stream_scan_options.rs",
+        "sha256": "ad74f95d7d65e39ead1f714c66db8a7e6d9fc88e020c0aa6a8dda49824740aac"
+      },
+      {
+        "path": "crates/observability/src/tests/scan_stats_and_samples/loki_stream_values_sort_numerically_not_lexicographically.rs",
+        "sha256": "aa4acc420f24f3fff3ec4f83130906d23ab866b1961fe4e6c069dc3dc860c5a9"
+      }
+    ]
+  },
+  "raw_snapshot": {
+    "path": "qualification/evidence/numeric-log-timestamp-2026-10-10/SHA256SUMS",
+    "sha256": "040a799c04457b39008529ac84e139d3a6a86822e176893fc0d65035ce5ffc22",
+    "files": 184,
+    "bytes": 63033703,
+    "status": "Frozen local progress snapshot; no complete HTTP or fresh native qualification."
+  }
+}

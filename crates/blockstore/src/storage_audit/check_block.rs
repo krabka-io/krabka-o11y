@@ -41,7 +41,7 @@ pub async fn check_block(
         BlockStoreError::BlockUnreadable { .. }
             if error
                 .unreadable_block()
-                .and_then(|(_, failure)| failure.skip_reason())
+                .and_then(|unreadable| unreadable.failure.skip_reason())
                 .is_none() =>
         {
             return Err(StorageAuditError::ObjectStore(error.to_string()));
@@ -62,13 +62,14 @@ pub async fn check_block(
 }
 
 async fn drain_block(store: &Arc<dyn ObjectStore>, key: &str) -> Result<(), BlockStoreError> {
-    let (_, _, mut batches) = open_block_stream(
+    let opened = open_block_stream(
         Arc::clone(store),
         key,
         DEFAULT_BLOCK_READ_MAX,
         MERGE_READ_BATCH_ROWS,
     )
     .await?;
+    let mut batches = opened.batches;
     while let Some(batch) = batches.next().await {
         batch?;
     }

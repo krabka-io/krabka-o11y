@@ -7,19 +7,36 @@ use super::*;
 
 #[tokio::test]
 async fn packing_clipped_traces_keeps_each_roots_columns_and_payload() {
+    #[derive(bon::Builder)]
+    struct TraceFixture {
+        trace: u8,
+        service: &'static str,
+        duration: i64,
+    }
     let mut store = LiveStore::new(i64::MAX);
-    for (trace, service, duration) in [(1, "api", 500), (2, "web", 800)] {
+    for fixture in [
+        TraceFixture::builder()
+            .trace(1)
+            .service("api")
+            .duration(500)
+            .build(),
+        TraceFixture::builder()
+            .trace(2)
+            .service("web")
+            .duration(800)
+            .build(),
+    ] {
         let mut root = span_with_everything();
-        root.trace_id = [trace; 16];
+        root.trace_id = [fixture.trace; 16];
         root.span_id = [1; 8];
-        root.name = format!("{service}-root");
-        root.resource_attrs[0].value = AttrValue::Str(service.into());
+        root.name = format!("{}-root", fixture.service);
+        root.resource_attrs[0].value = AttrValue::Str(fixture.service.into());
         let mut child = root.clone();
         child.span_id = [2; 8];
         child.parent_span_id = Some(root.span_id);
-        child.name = format!("{service}-child");
+        child.name = format!("{}-child", fixture.service);
         child.start_ns = 2_000;
-        child.duration_ns = duration;
+        child.duration_ns = fixture.duration;
         for span in [root, child] {
             store.ingest(SpanRecord {
                 tenant: "t".into(),
@@ -112,35 +129,13 @@ async fn borrowed_window_keeps_complete_rows_order_and_owned_output() {
         child.name = format!("child-{id}");
         child.start_ns = 2_000;
         child.span_attrs.extend([
-            KeyValue {
-                key: "http.method".into(),
-                value: AttrValue::Str("POST".into()),
-            },
-            KeyValue {
-                key: "__resource.service.name".into(),
-                value: AttrValue::Str("spoof".into()),
-            },
-            KeyValue {
-                key: "bytes".into(),
-                value: AttrValue::Bytes(vec![0, 255]),
-            },
-            KeyValue {
-                key: "empty".into(),
-                value: AttrValue::Array(Vec::new()),
-            },
-            KeyValue {
-                key: "one".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7)]),
-            },
-            KeyValue {
-                key: "many".into(),
-                value: AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
-            },
-            KeyValue {
-                key: "mixed".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
-            },
+            KeyValue::new("http.method", AttrValue::Str("POST".into())),
+            KeyValue::new("__resource.service.name", AttrValue::Str("spoof".into())),
+            KeyValue::new("bytes", AttrValue::Bytes(vec![0, 255])),
         ]);
+        child
+            .span_attrs
+            .extend(crate::span::test_span::array_shape_attrs());
         store.ingest(SpanRecord {
             tenant: "t".into(),
             span: child,

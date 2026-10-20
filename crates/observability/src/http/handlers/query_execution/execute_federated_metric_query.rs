@@ -2,15 +2,15 @@ use num_traits::ToPrimitive as _;
 
 use super::{apply_grouped_metric_selection, apply_nested_vector_aggregation};
 use crate::{
-    HttpQueryError, Labels, MetricQuery, PipelineStage, QuerierState, QueryKind, RangeAggregation,
-    TimeRange, Value, VectorAggregationOp, add_loki_query_stats, default_metric_range_step,
-    eval_times,
+    FormattedMetricSeriesEntry, HttpMetricQuery, HttpQueryError, Labels, PipelineStage,
+    QuerierState, QueryKind, RangeAggregation, TimeRange, Value, VectorAggregationOp,
+    add_loki_query_stats, default_metric_range_step, eval_times,
     http::params_format::aggregation_formatting::apply_approx_metric_selection,
     json, loki_matrix_response, loki_vector_response_from_matrix, merge_loki_query_response,
     metric_scan_range,
     querier::{
         aggregate::sample_windows::absent_metric_labels,
-        metric_eval::scalar_samples::execute_http_metric_query_with_scan_range,
+        metric_eval::scalar_samples::{execute_http_metric_query, validate_approximate_topk},
     },
 };
 
@@ -19,19 +19,27 @@ use crate::{
 // merge: it would lose contributions from another tenant or shard.
 pub(crate) async fn execute_federated_metric_query(
     state: &QuerierState,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-    mut query: MetricQuery,
-    scan_range: Option<TimeRange>,
+    metric_query: HttpMetricQuery,
 ) -> Result<Value, HttpQueryError> {
+    let HttpMetricQuery {
+        time_range,
+        step,
+        kind,
+        mut query,
+        common_scan_range: scan_range,
+    } = metric_query;
     let aggregation = query.vector_aggregation.take();
     let absent_labels = matches!(query.aggregation, RangeAggregation::AbsentOverTime)
         .then(|| absent_metric_labels(&query));
     if absent_labels.is_some() {
         query.aggregation = RangeAggregation::CountOverTime;
     }
-    validate_approximate_aggregation(state, kind, aggregation.as_ref())?;
+    if aggregation
+        .as_ref()
+        .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::ApproxTopK(_)))
+    {
+        validate_approximate_topk(state, kind)?;
+    }
     let tenants = state
         .federated_metric_tenants
         .as_ref()
@@ -41,7 +49,8 @@ pub(crate) async fn execute_federated_metric_query(
         "resultType":if matches!(kind, QueryKind::Instant) { "vector" } else { "matrix" },"result":[]
     }}));
     for tenant in tenants.iter() {
-        let tenant_labels = Labels::from([("__tenant_id__".into(), tenant.as_str().into())]);
+        let mut tenant_labels = Labels::new();
+        tenant_labels.insert("__tenant_id__".into(), tenant.as_str().into());
         if !query
             .stream
             .matchers
@@ -73,21 +82,31 @@ pub(crate) async fn execute_federated_metric_query(
         let mut tenant_state = state.clone();
         tenant_state.federated_metric_tenants = None;
         tenant_state = tenant_state.with_tenant_limits(tenant);
-        let mut value = execute_http_metric_query_with_scan_range(
+        let mut value = execute_http_metric_query(
             &tenant_state,
             tenant.as_str(),
-            time_range,
-            step,
-            kind,
-            query,
-            Some(scan_range),
+            HttpMetricQuery {
+                time_range,
+                step,
+                kind,
+                query,
+                common_scan_range: Some(scan_range),
+            },
         )
         .await?;
         add_federated_tenant_labels(&mut value, tenant.as_str());
         merge_loki_query_response(&mut response, &value);
     }
     if let Some(labels) = absent_labels {
-        apply_federated_absence(&mut response, labels, time_range, step, kind);
+        apply_federated_absence(
+            &mut response,
+            labels,
+            FederatedEvaluation {
+                time_range,
+                step_ns: step,
+                kind,
+            },
+        );
     }
     if let Some(aggregation) = aggregation {
         match aggregation.op {
@@ -105,29 +124,6 @@ pub(crate) async fn execute_federated_metric_query(
     Ok(response)
 }
 
-fn validate_approximate_aggregation(
-    state: &QuerierState,
-    kind: QueryKind,
-    aggregation: Option<&crate::VectorAggregation>,
-) -> Result<(), HttpQueryError> {
-    if aggregation
-        .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::ApproxTopK(_)))
-    {
-        if !state
-            .limits
-            .shard_aggregations
-            .iter()
-            .any(|name| name == "approx_topk")
-        {
-            return Err(HttpQueryError::ApproxTopKDisabled);
-        }
-        if matches!(kind, QueryKind::Range) {
-            return Err(HttpQueryError::ApproxTopKRangeQuery);
-        }
-    }
-    Ok(())
-}
-
 fn add_federated_tenant_labels(value: &mut Value, tenant: &str) {
     for row in value["data"]["result"]
         .as_array_mut()
@@ -141,16 +137,24 @@ fn add_federated_tenant_labels(value: &mut Value, tenant: &str) {
     }
 }
 
+/// When a federated metric query evaluates.
+#[derive(Clone, Copy)]
+struct FederatedEvaluation {
+    time_range: TimeRange,
+    /// The range-query step, or `None` for the default step.
+    step_ns: Option<i64>,
+    kind: QueryKind,
+}
+
 // Absence is computed after merging real samples from every selected tenant.
 // Synthesizing once per tenant would report an absent series even when another
 // tenant supplied matching data in that same evaluation window.
-fn apply_federated_absence(
-    response: &mut Value,
-    labels: Labels,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-) {
+fn apply_federated_absence(response: &mut Value, labels: Labels, evaluation: FederatedEvaluation) {
+    let FederatedEvaluation {
+        time_range,
+        step_ns: step,
+        kind,
+    } = evaluation;
     let mut present = std::collections::BTreeSet::new();
     for row in response["data"]["result"]
         .as_array()
@@ -165,7 +169,7 @@ fn apply_federated_absence(
             }
         }
     }
-    let evaluation = if matches!(kind, QueryKind::Instant) {
+    let evaluation_range = if matches!(kind, QueryKind::Instant) {
         TimeRange::new(time_range.end_ns, time_range.end_ns).expect("instant range")
     } else {
         time_range
@@ -175,7 +179,7 @@ fn apply_federated_absence(
     } else {
         step.unwrap_or_else(|| default_metric_range_step(time_range))
     };
-    let points = eval_times(evaluation, step_ns)
+    let points = eval_times(evaluation_range, step_ns)
         .into_iter()
         .filter(|time| {
             !present
@@ -186,7 +190,10 @@ fn apply_federated_absence(
     let mut value = loki_matrix_response(if points.is_empty() {
         Vec::new()
     } else {
-        vec![(labels, points)]
+        vec![FormattedMetricSeriesEntry {
+            labels,
+            values: points,
+        }]
     });
     if matches!(kind, QueryKind::Instant) {
         value = loki_vector_response_from_matrix(value);

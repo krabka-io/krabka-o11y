@@ -7,6 +7,11 @@ use crate::{
     AdmissionController, AdmissionError, AdmissionLimits, CacheKey, Clock, QueryCache, SystemClock,
 };
 
+struct Indexed<T> {
+    index: usize,
+    value: T,
+}
+
 /// One independently executable query produced by a signal adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlannedQuery<Q> {
@@ -144,25 +149,30 @@ impl<C> QueryFrontend<C> {
         .buffered(self.options.max_parallelism.get())
         .try_collect::<Vec<_>>()
         .await?;
-        let mut missing = planned
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, query)| cached[index].is_none().then_some((index, query)))
-            .collect::<Vec<_>>();
-        let mut results = cached
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, result)| result.map(|result| (index, result)))
-            .collect::<Vec<_>>();
+        let mut missing = Vec::new();
+        for (index, (cached, query)) in cached.iter().zip(planned).enumerate() {
+            if cached.is_none() {
+                missing.push(Indexed {
+                    index,
+                    value: query,
+                });
+            }
+        }
+        let mut results = Vec::new();
+        for (index, result) in cached.into_iter().enumerate() {
+            if let Some(value) = result {
+                results.push(Indexed { index, value });
+            }
+        }
         let limits = adapter.admission_limits(request);
         let fallback_bytes = limits.map_or(1, |limits| limits.estimated_bytes_per_subquery);
         while !missing.is_empty() {
             let batch_len = missing.len().min(self.options.max_parallelism.get());
             let batch = missing.drain(..batch_len).collect::<Vec<_>>();
-            let tenant = batch[0].1.cache_key.tenant().to_owned();
+            let tenant = batch[0].value.cache_key.tenant().to_owned();
             let estimated_bytes = batch
                 .iter()
-                .map(|(_, query)| query.estimated_bytes.max(fallback_bytes))
+                .map(|query| query.value.estimated_bytes.max(fallback_bytes))
                 .fold(0_usize, usize::saturating_add);
             let permit = match limits {
                 Some(limits) => {
@@ -177,10 +187,13 @@ impl<C> QueryFrontend<C> {
                 }
             }
             .map_err(QueryFrontendError::Admission)?;
-            let executed = stream::iter(batch.into_iter().map(|(index, query)| async move {
-                self.execute_uncached(adapter, query)
+            let executed = stream::iter(batch.into_iter().map(|query| async move {
+                self.execute_uncached(adapter, query.value)
                     .await
-                    .map(|result| (index, result))
+                    .map(|result| Indexed {
+                        index: query.index,
+                        value: result,
+                    })
             }))
             .buffer_unordered(self.options.max_parallelism.get())
             .try_collect::<Vec<_>>()
@@ -188,8 +201,8 @@ impl<C> QueryFrontend<C> {
             drop(permit);
             results.extend(executed);
         }
-        results.sort_unstable_by_key(|(index, _)| *index);
-        let results = results.into_iter().map(|(_, result)| result).collect();
+        results.sort_unstable_by_key(|result| result.index);
+        let results = results.into_iter().map(|result| result.value).collect();
         adapter
             .merge(request, results)
             .map_err(QueryFrontendError::Adapter)

@@ -38,14 +38,30 @@ fn transient() -> ObjectStoreError {
     }
 }
 
+fn metered_breakable_store(failing_puts: usize, fail_list: bool) -> MeteredBreakableStore {
+    let metrics = ObjectStoreMetrics::unregistered();
+    let store = MeteredObjectStore::wrap(
+        Arc::new(BreakableStore::new(failing_puts, fail_list)),
+        metrics.clone(),
+    );
+    MeteredBreakableStore { metrics, store }
+}
+
+struct MeteredBreakableStore {
+    metrics: ObjectStoreMetrics,
+    store: Arc<dyn ObjectStore>,
+}
+
 impl std::fmt::Display for BreakableStore {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("BreakableStore")
     }
 }
 
-#[async_trait::async_trait]
-impl ObjectStore for BreakableStore {
+crate::delegate_object_store! {
+    BreakableStore => inner;
+    forward [put_multipart_opts, get_opts, list_with_delimiter, copy_opts, delete_stream];
+
     async fn put_opts(
         &self,
         location: &Path,
@@ -54,7 +70,7 @@ impl ObjectStore for BreakableStore {
     ) -> object_store::Result<object_store::PutResult> {
         if self
             .failing_puts
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 (left > 0).then(|| left - 1)
             })
             .is_ok()
@@ -62,22 +78,6 @@ impl ObjectStore for BreakableStore {
             return Err(transient());
         }
         self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: object_store::PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: object_store::GetOptions,
-    ) -> object_store::Result<object_store::GetResult> {
-        self.inner.get_opts(location, options).await
     }
 
     fn list(
@@ -89,35 +89,13 @@ impl ObjectStore for BreakableStore {
         }
         self.inner.list(prefix)
     }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&Path>,
-    ) -> object_store::Result<object_store::ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: object_store::CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: futures::stream::BoxStream<'static, object_store::Result<Path>>,
-    ) -> futures::stream::BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
 }
 
 #[tokio::test]
 async fn a_put_and_a_get_move_their_own_operation_series_only() {
-    let metrics = ObjectStoreMetrics::unregistered();
-    let store = MeteredObjectStore::wrap(Arc::new(BreakableStore::new(0, false)), metrics.clone());
+    let metered = metered_breakable_store(0, false);
+    let metrics = &metered.metrics;
+    let store = &metered.store;
 
     store
         .put(
@@ -184,8 +162,9 @@ async fn a_success_records_when_the_object_store_last_worked() {
 
 #[tokio::test]
 async fn a_listing_is_recorded_when_the_stream_ends_and_not_before() {
-    let metrics = ObjectStoreMetrics::unregistered();
-    let store = MeteredObjectStore::wrap(Arc::new(BreakableStore::new(0, false)), metrics.clone());
+    let metered = metered_breakable_store(0, false);
+    let metrics = &metered.metrics;
+    let store = &metered.store;
     store
         .put(&Path::from("blocks/a"), PutPayload::from_static(b"x"))
         .await
@@ -288,7 +267,9 @@ async fn each_wrapped_method_moves_its_own_operation_series_and_no_other() {
 
     // One store per case, so "no other series moved" is a statement about
     // this one call rather than about everything the case did before it.
-    for (operation, drive) in object_store_cases() {
+    for case in object_store_cases() {
+        let operation = case.operation;
+        let drive = case.drive;
         let metrics = ObjectStoreMetrics::unregistered();
         seed("blocks/a").await;
         let store =
@@ -319,45 +300,64 @@ async fn each_wrapped_method_moves_its_own_operation_series_and_no_other() {
 /// One call against a wrapped store, driven to completion.
 type DriveOperation = for<'store> fn(&'store Arc<dyn ObjectStore>) -> BoxFuture<'store, ()>;
 
+struct ObjectStoreCase {
+    operation: ObjectStoreOperation,
+    drive: DriveOperation,
+}
+
 /// The methods driven by the case above, each with the label it must land on.
-fn object_store_cases() -> Vec<(ObjectStoreOperation, DriveOperation)> {
+fn object_store_cases() -> Vec<ObjectStoreCase> {
     vec![
-        (ObjectStoreOperation::PutMultipart, |store| {
-            Box::pin(async move {
-                let upload = store
-                    .put_multipart(&Path::from("blocks/multipart"))
-                    .await
-                    .expect("the in-memory store opens an upload");
-                drop(upload);
-            })
-        }),
-        (ObjectStoreOperation::ListWithDelimiter, |store| {
-            Box::pin(async move {
-                let listed = store
-                    .list_with_delimiter(Some(&Path::from("blocks")))
-                    .await
-                    .expect("a listing");
-                check!(listed.objects.len() == 1, "the listing is the real one");
-            })
-        }),
-        (ObjectStoreOperation::Copy, |store| {
-            Box::pin(async move {
-                store
-                    .copy(&Path::from("blocks/a"), &Path::from("blocks/b"))
-                    .await
-                    .expect("a copy");
-            })
-        }),
-        (ObjectStoreOperation::DeleteStream, |store| {
-            Box::pin(async move {
-                let deleted: Vec<_> = store
-                    .delete_stream(futures::stream::iter(vec![Ok(Path::from("blocks/a"))]).boxed())
-                    .collect()
-                    .await;
-                check!(deleted.len() == 1);
-                check!(deleted[0].is_ok());
-            })
-        }),
+        ObjectStoreCase {
+            operation: ObjectStoreOperation::PutMultipart,
+            drive: |store| {
+                Box::pin(async move {
+                    let upload = store
+                        .put_multipart(&Path::from("blocks/multipart"))
+                        .await
+                        .expect("the in-memory store opens an upload");
+                    drop(upload);
+                })
+            },
+        },
+        ObjectStoreCase {
+            operation: ObjectStoreOperation::ListWithDelimiter,
+            drive: |store| {
+                Box::pin(async move {
+                    let listed = store
+                        .list_with_delimiter(Some(&Path::from("blocks")))
+                        .await
+                        .expect("a listing");
+                    check!(listed.objects.len() == 1, "the listing is the real one");
+                })
+            },
+        },
+        ObjectStoreCase {
+            operation: ObjectStoreOperation::Copy,
+            drive: |store| {
+                Box::pin(async move {
+                    store
+                        .copy(&Path::from("blocks/a"), &Path::from("blocks/b"))
+                        .await
+                        .expect("a copy");
+                })
+            },
+        },
+        ObjectStoreCase {
+            operation: ObjectStoreOperation::DeleteStream,
+            drive: |store| {
+                Box::pin(async move {
+                    let deleted: Vec<_> = store
+                        .delete_stream(
+                            futures::stream::iter(vec![Ok(Path::from("blocks/a"))]).boxed(),
+                        )
+                        .collect()
+                        .await;
+                    check!(deleted.len() == 1);
+                    check!(deleted[0].is_ok());
+                })
+            },
+        },
     ]
 }
 

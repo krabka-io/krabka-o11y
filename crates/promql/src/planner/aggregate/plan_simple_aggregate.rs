@@ -4,6 +4,11 @@ use super::{
     resolve_group_labels,
 };
 
+struct AggregateInput {
+    plan: LogicalPlan,
+    group_expressions: Vec<Expr>,
+}
+
 /// Wraps `input` in a `DataFusion` aggregate for `op grouping (<input>)`.
 ///
 /// The aggregate implements that `PromQL` aggregation. `input` is the inner
@@ -45,20 +50,26 @@ pub fn plan_simple_aggregate(
     // projected away in the final result. Only the `value` column is needed
     // downstream (the aggregate reads it; `group` ignores it), so the synthetic
     // projection carries just `value` plus the group column.
-    let (input, group_exprs): (LogicalPlan, Vec<Expr>) = if group_labels.is_empty() {
+    let aggregate_input = if group_labels.is_empty() {
         let projected = LogicalPlanBuilder::from(input)
             .project(vec![col(VALUE_COLUMN), lit("").alias(ALL_GROUP_COLUMN)])
             .map_err(|error| PromqlError::Exec(error.to_string()))?
             .build()
             .map_err(|error| PromqlError::Exec(error.to_string()))?;
-        (projected, vec![col(ALL_GROUP_COLUMN)])
+        AggregateInput {
+            plan: projected,
+            group_expressions: vec![col(ALL_GROUP_COLUMN)],
+        }
     } else {
-        (input, group_labels.iter().map(col).collect())
+        AggregateInput {
+            plan: input,
+            group_expressions: group_labels.iter().map(col).collect(),
+        }
     };
     let aggr_exprs = vec![op.value_aggregate()];
 
-    let aggregated = LogicalPlanBuilder::from(input)
-        .aggregate(group_exprs, aggr_exprs)
+    let aggregated = LogicalPlanBuilder::from(aggregate_input.plan)
+        .aggregate(aggregate_input.group_expressions, aggr_exprs)
         .map_err(|error| PromqlError::Exec(error.to_string()))?
         .build()
         .map_err(|error| PromqlError::Exec(error.to_string()))?;

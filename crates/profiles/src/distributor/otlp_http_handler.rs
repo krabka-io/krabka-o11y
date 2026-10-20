@@ -1,9 +1,36 @@
 use super::*;
 
+struct EncodedOtlpBody {
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+#[cfg(test)]
+struct ErrorWireFormatCase {
+    json: bool,
+    content_type: &'static str,
+}
+
+fn response_with_content_type(
+    status: StatusCode,
+    content_type: &'static str,
+    body: Bytes,
+) -> Response {
+    let mut response = body.into_response();
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static(content_type),
+    );
+    response
+}
+
 pub(crate) async fn otlp_http_handler(
-    Extension(state): Extension<Arc<DistributorState>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
+    IngestRequestParts {
+        state,
+        principal,
+        headers,
+    }: IngestRequestParts,
     body: Bytes,
 ) -> Response {
     let start = std::time::Instant::now();
@@ -12,17 +39,8 @@ pub(crate) async fn otlp_http_handler(
     let tenant = tenant_from_headers(&headers, &state.tenant_policy);
     let json = is_json(&headers);
     let response_is_json = matches!(json, Ok(true));
-    // ONE server span per ingest request (not per sample). `krabka.ingest.samples`
-    // is filled in after the body runs and the item count is known.
-    let ingest_span = tracing::info_span!(
-        "profiles_ingest",
-        otel.kind = "server",
-        messaging.system = "kafka",
-        messaging.destination.name = PROFILES_WAL_TOPIC,
-        krabka.tenant = ingest_span_tenant(tenant.as_ref().ok()),
-        krabka.ingest.samples = tracing::field::Empty,
-        krabka.ingest.bytes = bytes,
-    );
+    // ONE server span per ingest request (not per sample).
+    let ingest_span = ingest_request_span(tenant.as_ref().ok(), bytes);
     let result = async {
         let tenant = tenant.as_ref().map_err(TenantResolveError::clone)?;
         // Before the profiles are decoded, so a denied push reaches no WAL.
@@ -43,32 +61,38 @@ pub(crate) async fn otlp_http_handler(
         };
         if json {
             serde_json::to_vec(&response)
-                .map(|body| ("application/json", body))
+                .map(|body| EncodedOtlpBody {
+                    content_type: "application/json",
+                    body,
+                })
                 .map_err(|err| ProfilesError::Internal(format!("OTLP profiles JSON encode: {err}")))
         } else {
-            Ok(("application/x-protobuf", response.encode_to_vec()))
+            Ok(EncodedOtlpBody {
+                content_type: "application/x-protobuf",
+                body: response.encode_to_vec(),
+            })
         }
     }
     .instrument(ingest_span.clone())
     .await;
 
-    ingest_span.record("krabka.ingest.samples", items);
-    if let Ok(tenant) = &tenant {
-        state.metrics.record_ingest_samples(tenant.as_str(), items);
-    }
-    state.metrics.record_ingest(
-        result.is_ok(),
-        IngestBytes(bytes),
-        IngestItems(items),
-        start.elapsed().as_time(),
+    record_ingest_outcome(
+        &state,
+        &ingest_span,
+        &IngestOutcome {
+            tenant: tenant.as_ref().ok(),
+            outcome: RequestOutcome::from_result(&result),
+            bytes,
+            items,
+            start,
+        },
     );
     match result {
-        Ok((content_type, body)) => (
+        Ok(encoded) => response_with_content_type(
             StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, content_type)],
-            Bytes::from(body),
-        )
-            .into_response(),
+            encoded.content_type,
+            Bytes::from(encoded.body),
+        ),
         Err(err) => otlp_error_response(&err, response_is_json),
     }
 }
@@ -160,20 +184,18 @@ fn otlp_error_response(err: &ProfilesError, json: bool) -> Response {
         code,
         message: client_facing_message(err),
     };
-    let (content_type, body) = if json {
-        (
-            "application/json",
-            serde_json::to_vec(&envelope).unwrap_or_default(),
-        )
+    let encoded = if json {
+        EncodedOtlpBody {
+            content_type: "application/json",
+            body: serde_json::to_vec(&envelope).unwrap_or_default(),
+        }
     } else {
-        ("application/x-protobuf", envelope.encode_to_vec())
+        EncodedOtlpBody {
+            content_type: "application/x-protobuf",
+            body: envelope.encode_to_vec(),
+        }
     };
-    (
-        status,
-        [(axum::http::header::CONTENT_TYPE, content_type)],
-        body,
-    )
-        .into_response()
+    response_with_content_type(status, encoded.content_type, Bytes::from(encoded.body))
 }
 
 fn is_json(headers: &HeaderMap) -> Result<bool, ProfilesError> {
@@ -254,18 +276,26 @@ mod tests {
 
     #[tokio::test]
     async fn errors_use_google_status_in_the_request_wire_format() {
-        for (json, content_type) in [
-            (true, "application/json"),
-            (false, "application/x-protobuf"),
+        for case in [
+            ErrorWireFormatCase {
+                json: true,
+                content_type: "application/json",
+            },
+            ErrorWireFormatCase {
+                json: false,
+                content_type: "application/x-protobuf",
+            },
         ] {
             let error = ProfilesError::Decode("bad payload".into());
-            let response = otlp_error_response(&error, json);
+            let response = otlp_error_response(&error, case.json);
             assert2::check!(response.status() == StatusCode::BAD_REQUEST);
-            assert2::check!(response.headers()[axum::http::header::CONTENT_TYPE] == content_type);
+            assert2::check!(
+                response.headers()[axum::http::header::CONTENT_TYPE] == case.content_type
+            );
             let body = axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            let status = if json {
+            let status = if case.json {
                 let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
                 OtlpStatus {
                     code: i32::try_from(value["code"].as_i64().unwrap()).unwrap(),

@@ -4,7 +4,9 @@ use std::{fmt::Write as _, fs, path::Path, sync::Arc};
 
 use krabka_units::{Time, convert::TimeExt as _};
 
-use crate::{AttrValue, EngineOpts, InMemorySpanStore, InputSpan, SearchResponse, TraceqlEngine};
+use crate::{
+    AttrValue, Attribute, EngineOpts, InMemorySpanStore, InputSpan, SearchResponse, TraceqlEngine,
+};
 
 #[cfg(test)]
 mod tests {
@@ -97,7 +99,15 @@ query: { .svc = "x" }
 
     #[test]
     fn span_helper_offsets_start_time_by_span_id() {
-        let span = span(9, 2, Some(1), "child", 123, vec![]);
+        let span = SpanFixture {
+            trace: 9,
+            id: 2,
+            parent: Some(1),
+            name: "child",
+            duration_nanos: 123,
+            ..SpanFixture::default()
+        }
+        .input_span();
 
         assert!(
             span == InputSpan {
@@ -253,7 +263,13 @@ query: { .svc = "x" }
         use crate::{in_memory::InMemorySpanStore, result::EventRef};
 
         let with_event = |id: u8, event: &str| {
-            let mut input = super::span(1, id, None, "root", 100, vec![]);
+            let mut input = SpanFixture {
+                id,
+                name: "root",
+                duration_nanos: 100,
+                ..SpanFixture::default()
+            }
+            .input_span();
             input.events = vec![EventRef {
                 time_since_start: Time::from_nanos(1),
                 name: event.to_string(),
@@ -529,36 +545,88 @@ expect_series_count: 1
 
 mod case;
 mod case_result;
+mod corpus;
 mod engine;
-mod file_name;
-mod parse_cases;
-mod parse_field;
-mod parse_u8_list;
 mod report;
-mod run_case;
-mod run_corpus_dir;
+mod root_span_columns;
+mod run_cases;
 mod run_corpus_file;
 mod run_metrics_case;
-mod run_search_case;
-mod run_trace_by_id_case;
-mod span;
-mod span_ids;
-mod trace_ids;
+pub(crate) mod span;
 
 use case::Case;
 pub use case_result::CaseResult;
-use engine::engine;
-use file_name::file_name;
-use parse_cases::parse_cases;
-use parse_field::parse_field;
-use parse_u8_list::parse_u8_list;
+use corpus::parse_cases;
+pub use corpus::run_corpus_dir;
+pub use engine::engine;
 pub use report::Report;
-use run_case::run_case;
-pub use run_corpus_dir::run_corpus_dir;
-pub use run_corpus_file::run_corpus_file;
+pub use root_span_columns::{RootSpanRow, root_span_columns};
+use run_cases::{run_search_case, run_trace_by_id_case};
+pub use run_corpus_file::{run_and_print_corpus_file, run_corpus_file};
 use run_metrics_case::run_metrics_case;
-use run_search_case::run_search_case;
-use run_trace_by_id_case::run_trace_by_id_case;
-use span::span;
-use span_ids::span_ids;
-use trace_ids::trace_ids;
+use span::SpanFixture;
+
+pub(crate) fn file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Parses one numeric field of a corpus case, failing loudly rather than
+/// leaving it unset. A field that will not parse is a mistake in the case
+/// file, and treating it as absent removes the assertion it was written to
+/// make.
+pub(crate) fn parse_field<T: std::str::FromStr>(case: &str, key: &str, value: &str) -> T {
+    value
+        .parse()
+        .unwrap_or_else(|_| panic!("{case}: `{key}` is not a valid value: {value:?}"))
+}
+
+pub(crate) fn trace_ids(resp: &SearchResponse) -> Vec<u8> {
+    resp.traces.iter().map(|trace| trace.trace_id[0]).collect()
+}
+
+/// Parses a comma-separated id list. Empty entries are allowed so a trailing
+/// comma is harmless, but an entry that is not a number is a mistake in the
+/// case file and stops the run: dropping it would silently shorten the list
+/// the case is asserting against.
+pub(crate) fn parse_u8_list(value: Option<&str>) -> Vec<u8> {
+    value
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse()
+                .unwrap_or_else(|_| panic!("`{item}` is not a valid id in list {value:?}"))
+        })
+        .collect()
+}
+
+pub(crate) async fn run_case(engine: &TraceqlEngine<InMemorySpanStore>, case: Case) -> CaseResult {
+    match case.kind.as_str() {
+        "search" => run_search_case(engine, case).await,
+        "metrics" => run_metrics_case(engine, case).await,
+        "trace_by_id" => run_trace_by_id_case(engine, case).await,
+        other => CaseResult {
+            name: case.name,
+            passed: false,
+            passed_assertions: 0,
+            total_assertions: 1,
+            message: format!("unknown case kind `{other}`"),
+        },
+    }
+}
+
+pub(crate) fn span_ids(resp: &SearchResponse) -> Vec<u8> {
+    let mut ids = resp
+        .traces
+        .iter()
+        .flat_map(|trace| trace.span_sets.iter())
+        .flat_map(|set| set.spans.iter())
+        .map(|span| span.span_id[0])
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids
+}

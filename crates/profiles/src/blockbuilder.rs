@@ -9,7 +9,7 @@ use std::{
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
     BlockIndex, BlockMeta, BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels,
-    ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, ProfileIndex,
+    ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, OffsetRange, ProfileIndex,
     ProfileSampleRow, RetryingObjectStore, SummaryColumns, encode_profile_samples,
     escape_object_path_segment, profile_samples_decl, retry_object_store,
 };
@@ -33,6 +33,18 @@ use crate::{
     wal::{PROFILES_WAL_TOPIC, ProfileRecord, WalMapping, WalSymbolSet},
 };
 
+pub(crate) fn wal_sample_ids(
+    position: Option<crate::wal::WalPosition>,
+    ordinal: usize,
+) -> Result<Vec<Vec<u8>>, ProfilesError> {
+    let Some(position) = position else {
+        return Ok(Vec::new());
+    };
+    let ordinal =
+        u64::try_from(ordinal).map_err(|error| ProfilesError::Decode(error.to_string()))?;
+    Ok(vec![position.sample_identity(ordinal)])
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -40,12 +52,31 @@ mod tests {
     use assert2::{assert, check};
     use bytes::Bytes;
     use krabka_client_consumer::ConsumerRecord;
-    use krabka_pprof::SymbolDb;
+    use krabka_pprof::{MappingSymbolizationParts, SymbolDb};
     use krabka_units::{convert::TimeExt as _, minutes};
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
 
     use super::*;
     use crate::wal::{ProfileRecord, WalMapping, WalSample, WalSymbolSet};
+
+    struct TenantSegmentCase {
+        name: &'static str,
+        tenant: &'static str,
+        segment: &'static str,
+    }
+
+    struct TenantRowCount {
+        tenant: &'static str,
+        row_count: usize,
+    }
+
+    struct WalHandoffCase {
+        name: &'static str,
+        topic: &'static str,
+        offset: i64,
+        value: i64,
+        expected: i64,
+    }
 
     fn format_headers() -> Vec<krabka_client_consumer::Header> {
         vec![krabka_client_consumer::Header {
@@ -60,11 +91,11 @@ mod tests {
         ProfileRecord {
             tenant: "t".into(),
             labels: vec![
-                ("__name__".into(), name.into()),
-                ("service_name".into(), "api".into()),
-                (
-                    "__profile_type__".into(),
-                    "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
+                krabka_blockstore::LabelPair::new("__name__", name),
+                krabka_blockstore::LabelPair::new("service_name", "api"),
+                krabka_blockstore::LabelPair::new(
+                    "__profile_type__",
+                    "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
                 ),
             ],
             profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
@@ -110,7 +141,12 @@ mod tests {
                 file_offset: 0x10,
                 filename: 10,
                 build_id: 20,
-                symbolization: MappingSymbolization::from_parts((true, false, true, false)),
+                symbolization: MappingSymbolization::from_parts(MappingSymbolizationParts {
+                    functions: true,
+                    filenames: false,
+                    line_numbers: true,
+                    inline_frames: false,
+                }),
             }
         );
 
@@ -130,7 +166,12 @@ mod tests {
                 file_offset: 0x10,
                 filename: 10,
                 build_id: 20,
-                symbolization: MappingSymbolization::from_parts((false, true, false, true)),
+                symbolization: MappingSymbolization::from_parts(MappingSymbolizationParts {
+                    functions: false,
+                    filenames: true,
+                    line_numbers: false,
+                    inline_frames: true,
+                }),
             }
         );
     }
@@ -151,36 +192,60 @@ mod tests {
     #[test]
     fn the_tenant_is_one_escaped_segment_that_reads_back_as_the_tenant() {
         let cases = [
-            ("plain", "tenant-a", "tenant-a"),
-            ("star", "a*b", "a!2Ab"),
-            ("escape marker", "a!b", "a!21b"),
-            ("quote and parentheses", "a'(b)", "a!27!28b!29"),
-            ("dots", "a.b", "a.b"),
+            TenantSegmentCase {
+                name: "plain",
+                tenant: "tenant-a",
+                segment: "tenant-a",
+            },
+            TenantSegmentCase {
+                name: "star",
+                tenant: "a*b",
+                segment: "a!2Ab",
+            },
+            TenantSegmentCase {
+                name: "escape marker",
+                tenant: "a!b",
+                segment: "a!21b",
+            },
+            TenantSegmentCase {
+                name: "quote and parentheses",
+                tenant: "a'(b)",
+                segment: "a!27!28b!29",
+            },
+            TenantSegmentCase {
+                name: "dots",
+                tenant: "a.b",
+                segment: "a.b",
+            },
         ];
 
-        for (name, tenant, segment) in cases {
-            let key = object_key(tenant, 3, 10, 20, 100, 200);
+        for case in cases {
+            let key = object_key(case.tenant, 3, 10, 20, 100, 200);
             check!(
                 key == format!(
-                    "blocks/{segment}/00003/00000000000000000010-00000000000000000020-100-200.parquet"
+                    "blocks/{}/00003/00000000000000000010-00000000000000000020-100-200.parquet",
+                    case.segment
                 ),
-                "{name}"
+                "{}",
+                case.name
             );
             let path = Path::from(key.as_str());
             check!(
                 path.as_ref() == key,
-                "{name}: the object store keeps the key"
+                "{}: the object store keeps the key",
+                case.name
             );
             let parts: Vec<_> = path.parts().collect();
-            check!(parts.len() == 4, "{name}: {key}");
+            check!(parts.len() == 4, "{}: {key}", case.name);
             check!(
                 parts
                     .get(1)
                     .and_then(|part| krabka_blockstore::unescape_object_path_segment(
                         part.as_ref()
                     ))
-                    == Some(tenant.to_string()),
-                "{name}"
+                    == Some(case.tenant.to_string()),
+                "{}",
+                case.name
             );
         }
     }
@@ -220,16 +285,18 @@ mod tests {
     #[test]
     fn samples_batch_matches_profile_schema() {
         let batch = samples_batch(&[BuiltSample {
-            series_fingerprint: 1,
             timestamp_ns: 100,
-            profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
-            stacktrace_id: 7,
-            value: 5,
-            stacktrace_partition: 0,
-            total_value: 5,
-            span_id: None,
-            trace_id: None,
-            wal_sample_ids: Vec::new(),
+            fields: krabka_blockstore::ProfileSampleFields {
+                series_fingerprint: 1,
+                profile_type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds".into(),
+                stacktrace_id: 7,
+                value: 5,
+                stacktrace_partition: 0,
+                total_value: 5,
+                span_id: None,
+                trace_id: None,
+                wal_sample_ids: Vec::new(),
+            },
         }])
         .unwrap();
 
@@ -247,7 +314,7 @@ mod tests {
             "t",
             0,
             &records,
-            (10, 20),
+            OffsetRange::new(10, 20),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -290,11 +357,21 @@ mod tests {
         .unwrap();
 
         check!(metas.len() == 2);
-        for (tenant, row_count) in [("t", 2), ("u", 1)] {
+        for expected in [
+            TenantRowCount {
+                tenant: "t",
+                row_count: 2,
+            },
+            TenantRowCount {
+                tenant: "u",
+                row_count: 1,
+            },
+        ] {
             check!(
                 metas
                     .iter()
-                    .any(|meta| meta.tenant == tenant && meta.row_count == row_count)
+                    .any(|meta| meta.tenant == expected.tenant
+                        && meta.row_count == expected.row_count)
             );
         }
         for meta in metas {
@@ -327,28 +404,43 @@ mod tests {
             record.symbols.locations = vec![crate::wal::WalLocation {
                 address: 0x40,
                 mapping_id: 0,
-                lines: vec![(0, 11)],
+                lines: vec![crate::wal::WalLine {
+                    function_id: 0,
+                    line: 11,
+                }],
             }];
             record
         };
         let profile_type = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
-        for (name, topic, offset, value, expected) in [
-            ("same WAL record", PROFILES_WAL_TOPIC, 10, 7, 7),
-            ("different topic", "replacement-profiles-wal", 10, 7, 14),
-            (
-                "reused offset with different data",
-                PROFILES_WAL_TOPIC,
-                10,
-                11,
-                18,
-            ),
-            (
-                "independent identical record",
-                PROFILES_WAL_TOPIC,
-                11,
-                7,
-                14,
-            ),
+        for case in [
+            WalHandoffCase {
+                name: "same WAL record",
+                topic: PROFILES_WAL_TOPIC,
+                offset: 10,
+                value: 7,
+                expected: 7,
+            },
+            WalHandoffCase {
+                name: "different topic",
+                topic: "replacement-profiles-wal",
+                offset: 10,
+                value: 7,
+                expected: 14,
+            },
+            WalHandoffCase {
+                name: "reused offset with different data",
+                topic: PROFILES_WAL_TOPIC,
+                offset: 10,
+                value: 11,
+                expected: 18,
+            },
+            WalHandoffCase {
+                name: "independent identical record",
+                topic: PROFILES_WAL_TOPIC,
+                offset: 11,
+                value: 7,
+                expected: 14,
+            },
         ] {
             let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
             let mut index = ProfileIndex::new();
@@ -363,11 +455,11 @@ mod tests {
             .await
             .unwrap();
 
-            let mut incoming = consumer_record(0, offset, record(value));
-            incoming.topic = topic.to_string();
+            let mut incoming = consumer_record(0, case.offset, record(case.value));
+            incoming.topic = case.topic.to_string();
             let bytes = incoming.value.as_deref().unwrap();
             let hot = crate::hot_store::WalTailProfileStore::new();
-            hot.append_records_with_positions([(
+            hot.append_records_with_positions([crate::hot_store::PositionedWalRecord::new(
                 ProfileRecord::decode(bytes).unwrap(),
                 Some(crate::wal::WalPosition::from_record(&incoming, bytes)),
             )])
@@ -386,7 +478,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            check!(flamegraph.total == expected, "{name}");
+            check!(flamegraph.total == case.expected, "{}", case.name);
         }
     }
 
@@ -435,50 +527,167 @@ mod tests {
 }
 
 mod block_builder_config;
-mod block_object_prefix;
 mod build_block;
-mod built_sample;
 mod consumer_record_accumulator;
-mod default_flush_max_age;
-mod default_flush_records;
-mod default_wal_fetch_max;
-mod default_wal_fetch_partition_max;
-mod flush_consumer_records;
-mod flush_consumer_records_with_index;
-mod intern_record;
-mod intern_symbols;
-mod mapping_rec;
-mod nanos_per_milli;
-mod object_key;
-mod profile_timestamp_ms;
-mod remap_ref;
-mod run;
+mod record_writer;
 mod run_with_config;
-mod samples_batch;
-mod stacktrace_partition;
-mod symbol_refs;
 
 pub use block_builder_config::BlockBuilderConfig;
-pub use block_object_prefix::BLOCK_OBJECT_PREFIX;
 pub use build_block::build_block;
-pub(crate) use build_block::build_block_with_positions;
-pub use built_sample::BuiltSample;
+pub(crate) use build_block::{PositionedProfileRecord, build_block_with_positions};
 use consumer_record_accumulator::ConsumerRecordAccumulator;
-pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
-pub use default_flush_records::DEFAULT_FLUSH_RECORDS;
-pub use default_wal_fetch_max::DEFAULT_WAL_FETCH_MAX;
-pub use default_wal_fetch_partition_max::DEFAULT_WAL_FETCH_PARTITION_MAX;
-pub use flush_consumer_records::flush_consumer_records;
-pub use flush_consumer_records_with_index::flush_consumer_records_with_index;
-pub use intern_record::intern_record;
-use intern_symbols::intern_symbols;
-use mapping_rec::mapping_rec;
-use nanos_per_milli::NANOS_PER_MILLI;
-pub use object_key::object_key;
-pub use profile_timestamp_ms::profile_timestamp_ms;
-use remap_ref::remap_ref;
-pub use run::run;
+pub use record_writer::flush_consumer_records_with_index;
+use record_writer::intern_symbols;
 pub use run_with_config::run_with_config;
-pub use samples_batch::samples_batch;
-pub use stacktrace_partition::STACKTRACE_PARTITION;
-use symbol_refs::SymbolRefs;
+
+pub(crate) struct SymbolRefs {
+    pub(crate) locations: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Deref)]
+pub struct BuiltSample {
+    pub timestamp_ns: i64,
+    #[deref]
+    pub fields: krabka_blockstore::ProfileSampleFields,
+}
+
+/// The object-store prefix every profile block sits under.
+///
+/// Both writers of a block key start here: [`object_key`]
+/// for a block the block-builder flushes, and the compactor for a block a
+/// merge writes. The orphan sweep lists this prefix and deletes what the index
+/// does not name, so a block written outside it would never be reclaimed, and
+/// anything else written inside it would be deleted.
+pub const BLOCK_OBJECT_PREFIX: &str = "blocks";
+
+/// Scale between the epoch-nanosecond timestamps that the WAL carries and the
+/// epoch-millisecond timestamps that index blocks.
+///
+/// This is instant arithmetic and not an extent, so it stays exact integer
+/// division. An absolute nanosecond timestamp is about 1.8e18 and cannot
+/// round-trip through the `f64` seconds that a `Time` stores.
+pub(crate) const NANOS_PER_MILLI: i64 = 1_000_000;
+
+pub const DEFAULT_FLUSH_MAX_AGE: Time = secs(10);
+
+pub const DEFAULT_FLUSH_RECORDS: usize = 1024;
+
+pub const DEFAULT_WAL_FETCH_MAX: ByteSize = mebibytes(2);
+
+pub const DEFAULT_WAL_FETCH_PARTITION_MAX: ByteSize = kibibytes(256);
+
+pub const STACKTRACE_PARTITION: u64 = 0;
+
+#[must_use]
+pub fn profile_timestamp_ms(timestamp_ns: i64) -> i64 {
+    timestamp_ns.div_euclid(NANOS_PER_MILLI)
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn flush_consumer_records(
+    store: &Arc<dyn ObjectStore>,
+    records: &[ConsumerRecord],
+    flush_records: usize,
+    metrics: &ObjectStoreMetrics,
+) -> Result<Vec<BlockMeta>, ProfilesError> {
+    let mut index = ProfileIndex::new();
+    flush_consumer_records_with_index(store, &mut index, records, flush_records, metrics).await
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub fn intern_record(symdb: &mut SymbolDb, rec: &ProfileRecord) -> Result<Vec<u32>, ProfilesError> {
+    let symbols = intern_symbols(symdb, &rec.symbols)?;
+    rec.samples
+        .iter()
+        .map(|sample| {
+            let stack = sample
+                .stacktrace_location_refs
+                .iter()
+                .map(|location_ref| remap_ref(*location_ref, &symbols.locations))
+                .collect::<Vec<_>>();
+            Ok(symdb.intern_stacktrace(STACKTRACE_PARTITION, &stack))
+        })
+        .collect()
+}
+
+pub(crate) fn mapping_rec(mapping: &WalMapping, strings: &[u32]) -> MappingRec {
+    MappingRec {
+        memory_start: mapping.memory_start,
+        memory_limit: mapping.memory_limit,
+        file_offset: mapping.file_offset,
+        filename: remap_ref(mapping.filename, strings),
+        build_id: remap_ref(mapping.build_id, strings),
+        symbolization: MappingSymbolization::from_parts(krabka_pprof::MappingSymbolizationParts {
+            functions: mapping.has_functions.get(),
+            filenames: mapping.has_filenames.get(),
+            line_numbers: mapping.has_line_numbers.get(),
+            inline_frames: mapping.has_inline_frames.get(),
+        }),
+    }
+}
+
+/// Object key of one block that the block-builder writes.
+///
+/// The tenant is one path segment. It goes through
+/// [`escape_object_path_segment`], so a tenant name that holds a character
+/// such as `*` or `!` stays in its own segment and survives the object store.
+/// The other segments come from integers and cannot hold a separator.
+#[must_use]
+pub fn object_key(
+    tenant: &str,
+    partition: i32,
+    min_offset: i64,
+    max_offset: i64,
+    min_ts: i64,
+    max_ts: i64,
+) -> String {
+    let tenant = escape_object_path_segment(tenant);
+    format!(
+        "{BLOCK_OBJECT_PREFIX}/{tenant}/{partition:05}/{min_offset:020}-{max_offset:020}-{min_ts}-{max_ts}.parquet"
+    )
+}
+
+pub(crate) fn remap_ref(reference: u32, table: &[u32]) -> u32 {
+    usize::try_from(reference)
+        .ok()
+        .and_then(|idx| table.get(idx))
+        .copied()
+        .or_else(|| {
+            reference
+                .checked_sub(1)
+                .and_then(|idx| usize::try_from(idx).ok())
+                .and_then(|idx| table.get(idx))
+                .copied()
+        })
+        .unwrap_or(reference)
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn run(shutdown: CancellationToken) -> Result<(), ProfilesError> {
+    let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+    run_with_config(
+        BlockBuilderConfig::new("127.0.0.1:9092".to_string(), store),
+        shutdown,
+    )
+    .await
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub fn samples_batch(rows: &[BuiltSample]) -> Result<RecordBatch, ProfilesError> {
+    let rows = rows
+        .iter()
+        .map(|row| ProfileSampleRow {
+            timestamp: row.timestamp_ns,
+            fields: row.fields.clone(),
+        })
+        .collect::<Vec<_>>();
+    encode_profile_samples(&rows).map_err(|err| ProfilesError::Block(err.to_string()))
+}

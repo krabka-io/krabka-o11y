@@ -4,6 +4,9 @@
 //! injects one fault. The keys follow the grammar of the service that owns
 //! the signal, so the audit classifies them as it would in production.
 
+// Each test binary uses only a subset of these shared fixture helpers.
+#![allow(dead_code)]
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
@@ -84,7 +87,23 @@ struct MetricsManifest<'a> {
     min_ts: i64,
     max_ts: i64,
     fingerprints: Vec<u64>,
-    series: Vec<(u64, Labels)>,
+    series: Vec<MetricsSeries>,
+}
+
+#[derive(Serialize)]
+struct MetricsSeries {
+    fingerprint: u64,
+    labels: Labels,
+}
+
+pub struct TenantBlocks<'a> {
+    pub tenant: &'a str,
+    pub blocks: &'a [String],
+}
+
+pub struct MissingShardKeys {
+    pub shard: String,
+    pub block: String,
 }
 
 // The bytes of a metrics `.index` manifest that names `tenant`, `block_key`
@@ -102,7 +121,10 @@ pub fn metrics_manifest(tenant: &str, block_key: &str, index_key: &str) -> Vec<u
         min_ts: 10,
         max_ts: 10,
         fingerprints: vec![7],
-        series: vec![(7, Labels::from_pairs([("__name__", "up")]))],
+        series: vec![MetricsSeries {
+            fingerprint: 7,
+            labels: Labels::from_pairs([krabka_blockstore::LabelPair::new("__name__", "up")]),
+        }],
     };
     SerdeCompat::<MetricsManifest>::serialize(&manifest).unwrap()
 }
@@ -110,20 +132,57 @@ pub fn metrics_manifest(tenant: &str, block_key: &str, index_key: &str) -> Vec<u
 // The bytes of an empty `.symdb` symbol table, in the field order of
 // `SymbolDb`.
 pub fn symbol_table() -> Vec<u8> {
-    type Shape = (
-        Vec<String>,
-        Vec<(u32, u32, u32, i64)>,
-        Vec<(u64, u32, Vec<(u32, i32)>)>,
-        Vec<(u64, u64, u64, u32, u32, u8)>,
-        HashMap<u64, Vec<(i32, i32)>>,
-    );
-    let empty: Shape = (
-        vec![String::new()],
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        HashMap::new(),
-    );
+    #[derive(Serialize)]
+    struct Shape {
+        strings: Vec<String>,
+        functions: Vec<FunctionRecord>,
+        locations: Vec<LocationRecord>,
+        mappings: Vec<MappingRecord>,
+        partitions: HashMap<u64, Partition>,
+    }
+    #[derive(Serialize)]
+    struct FunctionRecord {
+        name: u32,
+        system_name: u32,
+        filename: u32,
+        start_line: i64,
+    }
+    #[derive(Serialize)]
+    struct LocationRecord {
+        address: u64,
+        mapping_id: u32,
+        lines: Vec<LineRecord>,
+    }
+    #[derive(Serialize)]
+    struct LineRecord {
+        function_id: u32,
+        line: i32,
+    }
+    #[derive(Serialize)]
+    struct MappingRecord {
+        memory_start: u64,
+        memory_limit: u64,
+        file_offset: u64,
+        filename: u32,
+        build_id: u32,
+        symbolization: u8,
+    }
+    #[derive(Serialize)]
+    struct Partition {
+        nodes: Vec<TreeNode>,
+    }
+    #[derive(Serialize)]
+    struct TreeNode {
+        parent: i32,
+        location_ref: i32,
+    }
+    let empty = Shape {
+        strings: vec![String::new()],
+        functions: Vec::new(),
+        locations: Vec::new(),
+        mappings: Vec::new(),
+        partitions: HashMap::new(),
+    };
     SerdeCompat::<Shape>::serialize(&empty).unwrap()
 }
 
@@ -147,7 +206,10 @@ fn series_schema() -> SchemaRef {
 pub async fn put_block(store: &Arc<dyn ObjectStore>, signal: StorageSignal, key: &str) {
     if signal == StorageSignal::Logs {
         let parsed = parse_log_key(key);
-        let fingerprint = krabka_blockstore::series_fingerprint(&labels([("app", "api")]));
+        let fingerprint =
+            krabka_blockstore::series_fingerprint(&labels([krabka_blockstore::LabelPair::new(
+                "app", "api",
+            )]));
         write_log_block_to_object_store(
             store.as_ref(),
             &Path::default(),
@@ -182,7 +244,9 @@ fn parse_log_key(key: &str) -> BlockKey {
         .next()
         .and_then(|segment| segment.strip_prefix("tenant="))
         .unwrap();
-    let (first, last) = offsets.split_once('-').unwrap();
+    let offset_range = offsets.split_once('-').unwrap();
+    let first = offset_range.0;
+    let last = offset_range.1;
     log_key(tenant, first.parse().unwrap(), last.parse().unwrap())
 }
 
@@ -201,7 +265,7 @@ pub async fn put_bytes(store: &Arc<dyn ObjectStore>, key: &str, bytes: impl AsRe
 pub async fn publish(
     store: &Arc<dyn ObjectStore>,
     signal: StorageSignal,
-    tenants: &[(&str, &[String])],
+    tenants: &[TenantBlocks<'_>],
     with_sidecar: &BTreeSet<String>,
 ) {
     match signal {
@@ -214,9 +278,9 @@ pub async fn publish(
         }
         StorageSignal::Traces => {
             let mut index = TraceIndex::new();
-            for (tenant, blocks) in tenants {
-                for key in *blocks {
-                    index.add_trace_block(tenant, trace_stats(key));
+            for tenant_blocks in tenants {
+                for key in tenant_blocks.blocks {
+                    index.add_trace_block(tenant_blocks.tenant, trace_stats(key));
                 }
             }
             index
@@ -226,12 +290,17 @@ pub async fn publish(
         }
         StorageSignal::Profiles => {
             let mut index = ProfileIndex::new();
-            let series = Labels::from_pairs([("__profile_type__", CPU_TYPE.to_string())]);
-            for (tenant, blocks) in tenants {
+            let series = Labels::from_pairs([krabka_blockstore::LabelPair::new(
+                "__profile_type__",
+                CPU_TYPE,
+            )]);
+            for tenant_blocks in tenants {
+                let tenant = tenant_blocks.tenant;
+                let blocks = tenant_blocks.blocks;
                 index
                     .add_series(tenant, series.fingerprint(), &series)
                     .unwrap();
-                for key in *blocks {
+                for key in blocks {
                     BlockIndex::add_block(&mut index, &block_meta(tenant, key, &series));
                     index.add_profile_block(tenant, key, vec![1]);
                 }
@@ -245,11 +314,16 @@ pub async fn publish(
                 .unwrap();
         }
         StorageSignal::Logs => {
-            for (tenant, blocks) in tenants {
+            for tenant_blocks in tenants {
+                let tenant = tenant_blocks.tenant;
+                let blocks = tenant_blocks.blocks;
                 let mut label_index = LabelIndex::default();
-                let fingerprint = label_index.insert_series(*tenant, labels([("app", "api")]));
+                let fingerprint = label_index.insert_series(
+                    tenant,
+                    labels([krabka_blockstore::LabelPair::new("app", "api")]),
+                );
                 let mut block_index = LogBlockIndex::default();
-                for key in *blocks {
+                for key in blocks {
                     block_index.insert(BlockDescriptor::new(
                         parse_log_key(key),
                         BTreeSet::from([fingerprint]),
@@ -308,17 +382,18 @@ pub async fn healthy(
     for key in blocks.iter().flatten() {
         put_block(store, signal, key).await;
     }
-    let published: Vec<(&str, &[String])> = tenants
-        .iter()
-        .copied()
-        .zip(blocks.iter().map(Vec::as_slice))
+    let published: Vec<TenantBlocks<'_>> = (0..tenants.len())
+        .map(|index| TenantBlocks {
+            tenant: tenants[index],
+            blocks: blocks[index].as_slice(),
+        })
         .collect();
     let sidecars = blocks.iter().flatten().cloned().collect();
     publish(store, signal, &published, &sidecars).await;
     blocks.into_iter().flatten().collect()
 }
 
-pub async fn listed_keys(store: &Arc<dyn ObjectStore>) -> Vec<String> {
+pub async fn listed_keys(store: &dyn ObjectStore) -> Vec<String> {
     let mut keys = store
         .list(None)
         .map(|meta| meta.unwrap().location.to_string())
@@ -335,7 +410,7 @@ pub async fn listed_keys(store: &Arc<dyn ObjectStore>) -> Vec<String> {
 // A logs block that only a shard manifest names, and a shard catalog that
 // names that shard manifest, which the store does not hold. Returns the key
 // of the shard manifest and of the block.
-pub async fn missing_shard(store: &Arc<dyn ObjectStore>) -> (String, String) {
+pub async fn missing_shard(store: &Arc<dyn ObjectStore>) -> MissingShardKeys {
     let block = block_key(StorageSignal::Logs, "t", 10, 19);
     put_block(store, StorageSignal::Logs, &block).await;
     let range = TimeRange::new(10, 19).unwrap();
@@ -348,7 +423,10 @@ pub async fn missing_shard(store: &Arc<dyn ObjectStore>) -> (String, String) {
     .await
     .unwrap();
     let shard = log_tenant_index_shard_manifest_object_path(&Path::default(), "t", range);
-    (shard.to_string(), block)
+    MissingShardKeys {
+        shard: shard.to_string(),
+        block,
+    }
 }
 
 // A metrics block whose manifest has an upper-case `.INDEX` extension, which
@@ -372,7 +450,16 @@ pub async fn foreign_entry(store: &Arc<dyn ObjectStore>, signal: StorageSignal) 
     publish(
         store,
         signal,
-        &[("t", &t_blocks), ("u", &u_blocks)],
+        &[
+            TenantBlocks {
+                tenant: "t",
+                blocks: &t_blocks,
+            },
+            TenantBlocks {
+                tenant: "u",
+                blocks: &u_blocks,
+            },
+        ],
         &sidecars,
     )
     .await;

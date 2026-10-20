@@ -236,7 +236,13 @@ def prepare(metadata_path, output):
         git_roots[root] = staged
         packages.append({**package, "staged_manifest": staged / manifest.relative_to(root)})
     dependency_roots = {**git_roots, **registry_roots}
-    copied = [(native / "crates", output / "crates"), (native / ".cargo", output / ".cargo"), *dependency_roots.items()]
+    # The build scripts include `tools/build_support` by path, so it travels with the crates.
+    copied = [
+        (native / "crates", output / "crates"),
+        (native / ".cargo", output / ".cargo"),
+        (native / "tools" / "build_support", output / "tools" / "build_support"),
+        *dependency_roots.items(),
+    ]
     if native.is_relative_to(output) or any(output.is_relative_to(src) or src.is_relative_to(output) for src, _ in copied):
         raise ValueError("Output must be separate from native source directories and cargo checkouts")
     # Repeated copies must not follow a destination link back into native sources.

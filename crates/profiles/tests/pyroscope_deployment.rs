@@ -8,16 +8,18 @@ use flate2::{Compression, write::GzEncoder};
 use krabka_pprof::proto;
 use krabka_profiles::wire::pb;
 use prost::Message as _;
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt as _,
-    core::{ContainerPort, Mount, WaitFor},
+    core::{ContainerPort, Mount},
 };
 
 #[path = "../../metrics-service/tests/support/container_deployment.rs"]
 mod container_deployment;
-use self::container_deployment::{TestResult, base_url, image, start, start_broker};
+use self::container_deployment::{
+    Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
+};
 
 const PORT: u16 = 4040;
 const ADMIN: u16 = 9404;
@@ -30,83 +32,61 @@ const SELECTOR: &str = r#"{service_name="checkout"}"#;
 const PUSH: &str = "/push.v1.PusherService/Push";
 const QUERY: &str = "/querier.v1.QuerierService";
 
-// Containers release their mounts before the temporary directories are removed.
-struct Deployment {
-    distributor: ContainerAsync<GenericImage>,
-    hot: ContainerAsync<GenericImage>,
-    _minio: ContainerAsync<GenericImage>,
-    _broker: ContainerAsync<GenericImage>,
-    data: tempfile::TempDir,
-    _broker_data: tempfile::TempDir,
-    network: String,
-    client: Client,
+struct EncodedRequest {
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+struct LegacyUpload {
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+struct EndpointRequestCase {
+    method: Method,
+    content_type: &'static str,
+    body: Vec<u8>,
+    expected: StatusCode,
 }
 
 impl Deployment {
     async fn start() -> TestResult<Self> {
-        let broker_data = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
-        let network = format!(
-            "krabka-profiles-{}",
-            broker_data
-                .path()
-                .file_name()
-                .ok_or("directory name")?
-                .to_string_lossy()
-                .trim_start_matches('.')
-                .to_ascii_lowercase()
-        );
-        let broker = start_broker(broker_data.path(), &network).await?;
-        let minio = start(
-            image("MINIO")
-                .with_entrypoint("/bin/sh")
-                .with_wait_for(WaitFor::message_on_stderr("API:"))
-                .with_network(&network)
-                .with_container_name(format!("{network}-minio"))
-                .with_env_var("MINIO_ROOT_USER", "krabkaprofiles")
-                .with_env_var("MINIO_ROOT_PASSWORD", "krabkaprofiles")
-                .with_cmd([
-                    "-c",
-                    "mkdir -p /data/profiles && exec /usr/bin/minio server /data",
-                ]),
+        let infrastructure = start_infrastructure("profiles", None).await?;
+        let distributor = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "distributor",
+            false,
         )
         .await?;
-        let distributor = role(&network, data.path(), "distributor", false).await?;
-        let hot = role(&network, data.path(), "querier", false).await?;
-        let deployment = Self {
+        let hot = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "querier",
+            false,
+        )
+        .await?;
+        Self {
             distributor,
             hot,
-            _minio: minio,
-            _broker: broker,
-            data,
-            _broker_data: broker_data,
-            network,
-            client: Client::builder().timeout(Duration::from_secs(5)).build()?,
-        };
-        deployment.ready(&deployment.distributor, PORT).await?;
-        deployment.ready(&deployment.hot, PORT).await?;
-        Ok(deployment)
+            infrastructure,
+        }
+        .wait_until_serving(PORT)
+        .await
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>, port: u16) -> TestResult {
-        let url = format!("{}/ready", base_url(container, port).await?);
-        tokio::time::timeout(TIMEOUT, async {
-            loop {
-                if let Ok(response) = self.client.get(&url).send().await
-                    && response.status() == StatusCode::OK
-                {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .map_err(|error| format!("{url}: {error}"))?;
-        Ok(())
+        wait_until_ready(&self.infrastructure.client, container, port).await
     }
 
     async fn role(&self, target: &str, cold: bool) -> TestResult<ContainerAsync<GenericImage>> {
-        let container = role(&self.network, self.data.path(), target, cold).await?;
+        let container = role(
+            &self.infrastructure.network,
+            self.infrastructure.data.path(),
+            target,
+            cold,
+        )
+        .await?;
         self.ready(
             &container,
             if target == "block-builder" {
@@ -128,6 +108,7 @@ impl Deployment {
         body: Vec<u8>,
     ) -> TestResult<reqwest::Response> {
         Ok(self
+            .infrastructure
             .client
             .post(format!("{}{path}", base_url(container, PORT).await?))
             .header("X-Scope-OrgID", tenant)
@@ -213,9 +194,15 @@ impl Deployment {
                         profile
                             .sample_type
                             .iter()
-                            .map(|kind| (text(&profile, kind.r#type), text(&profile, kind.unit)))
+                            .map(|kind| krabka_pprof::SampleType {
+                                name: text(&profile, kind.r#type).to_string(),
+                                unit: text(&profile, kind.unit).to_string(),
+                            })
                             .collect::<Vec<_>>()
-                            == vec![("cpu", "nanoseconds")]
+                            == vec![krabka_pprof::SampleType {
+                                name: "cpu".to_string(),
+                                unit: "nanoseconds".to_string(),
+                            }]
                     );
                     return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(());
                 }
@@ -238,16 +225,40 @@ impl Deployment {
     ) -> TestResult {
         let profile = profile(time_ms, values);
         let request = push_request(service, gzip(&profile.encode_to_vec())?);
-        let (content_type, body) = if binary {
-            ("application/proto", request.encode_to_vec())
+        let encoded = if binary {
+            EncodedRequest {
+                content_type: "application/proto",
+                body: request.encode_to_vec(),
+            }
         } else {
-            ("application/json", serde_json::to_vec(&request)?)
+            EncodedRequest {
+                content_type: "application/json",
+                body: serde_json::to_vec(&request)?,
+            }
         };
         accepted(
-            self.request(&self.distributor, tenant, PUSH, content_type, body)
-                .await?,
+            self.request(
+                &self.distributor,
+                tenant,
+                PUSH,
+                encoded.content_type,
+                encoded.body,
+            )
+            .await?,
         )
         .await
+    }
+
+    /// Pushes `TENANT`'s `checkout` profile with values 100 and 40, waits for
+    /// the hot querier to answer it, and returns a cold querier that answers
+    /// it from storage.
+    async fn checkout_stored(&self) -> TestResult<ContainerAsync<GenericImage>> {
+        self.push(TENANT, START, "checkout", &[100, 40], false)
+            .await?;
+        let rows = expected(&[100, 40]);
+        self.stacks(&self.hot, TENANT, PROFILE_TYPE, SELECTOR, &rows)
+            .await?;
+        self.stored(TENANT, PROFILE_TYPE, SELECTOR, &rows).await
     }
 
     async fn stored(
@@ -346,15 +357,22 @@ fn profile(time_ms: i64, values: &[i64]) -> proto::Profile {
         sample: values
             .iter()
             .enumerate()
-            .map(|(i, value)| proto::Sample {
-                location_id: if i == 0 { vec![2, 1] } else { vec![1] },
-                value: vec![*value],
+            .map(|entry| proto::Sample {
+                location_id: if entry.0 == 0 { vec![2, 1] } else { vec![1] },
+                value: vec![*entry.1],
                 label: vec![],
             })
             .collect(),
         mapping: vec![proto::Mapping {
             id: 1,
-            symbolization: proto::MappingSymbolization::from_parts((true, true, true, false)),
+            symbolization: proto::MappingSymbolization::from_parts(
+                proto::MappingSymbolizationParts {
+                    functions: true,
+                    filenames: true,
+                    line_numbers: true,
+                    inline_frames: false,
+                },
+            ),
             ..Default::default()
         }],
         location: (1_u64..=2)
@@ -454,8 +472,8 @@ fn collapsed(profile: &proto::Profile) -> BTreeMap<Vec<String>, Vec<i64>> {
             .entry(stack)
             .or_insert_with(|| vec![0; sample.value.len()]);
         assert!(row.len() == sample.value.len());
-        for (sum, value) in row.iter_mut().zip(&sample.value) {
-            *sum += value;
+        for (value_index, total) in row.iter_mut().enumerate() {
+            *total += sample.value[value_index];
         }
     }
     rows
@@ -517,21 +535,22 @@ async fn speedscope_survives_storage_and_restart() -> TestResult {
 }
 async fn legacy(format: &str, compressed: bool) -> TestResult {
     let deployment = Deployment::start().await?;
-    let (content_type, mut body) = if format == "pprof" {
-        (
-            "binary/octet-stream",
-            profile(START, &[100, 40]).encode_to_vec(),
-        )
+    let upload = if format == "pprof" {
+        LegacyUpload {
+            content_type: "binary/octet-stream",
+            body: profile(START, &[100, 40]).encode_to_vec(),
+        }
     } else {
-        (
-            "application/json",
-            serde_json::to_vec(&json!({
+        LegacyUpload {
+            content_type: "application/json",
+            body: serde_json::to_vec(&json!({
                 "$schema":"https://www.speedscope.app/file-format-schema.json",
                 "shared":{"frames":[{"name":"main.work"},{"name":"main.hotloop"}]},
                 "profiles":[{"type":"sampled","name":"cpu","unit":"nanoseconds","startValue":0,"endValue":140,"samples":[[0,1],[0]],"weights":[100,40]}]
             }))?,
-        )
+        }
     };
+    let mut body = upload.body;
     if compressed {
         body = gzip(&body)?;
     }
@@ -539,20 +558,20 @@ async fn legacy(format: &str, compressed: bool) -> TestResult {
         "{}/ingest",
         base_url(&deployment.distributor, PORT).await?
     ))?;
-    url.query_pairs_mut().extend_pairs([
-        ("name", "checkout"),
-        ("format", format),
-        ("from", "1700000000"),
-        ("until", "1700000000"),
-        ("sampleRate", "100"),
-        ("units", "nanoseconds"),
-    ]);
+    url.query_pairs_mut()
+        .append_pair("name", "checkout")
+        .append_pair("format", format)
+        .append_pair("from", "1700000000")
+        .append_pair("until", "1700000000")
+        .append_pair("sampleRate", "100")
+        .append_pair("units", "nanoseconds");
     accepted(
         deployment
+            .infrastructure
             .client
             .post(url)
             .header("X-Scope-OrgID", TENANT)
-            .header("Content-Type", content_type)
+            .header("Content-Type", upload.content_type)
             .body(body)
             .send()
             .await?,
@@ -617,6 +636,7 @@ async fn otlp(json: bool, compressed: bool, connect: bool) -> TestResult {
         "application/x-protobuf"
     };
     let mut request = deployment
+        .infrastructure
         .client
         .post(format!(
             "{}{path}",
@@ -670,16 +690,8 @@ fn otlp_request() -> pb::otlp_profiles::ExportProfilesServiceRequest {
 #[ignore = "requires Docker and Bazel-loaded images"]
 async fn profile_metadata_and_selectors_survive_storage_and_restart() -> TestResult {
     let deployment = Deployment::start().await?;
-    deployment
-        .push(TENANT, START, "checkout", &[100, 40], false)
-        .await?;
+    let cold = deployment.checkout_stored().await?;
     let rows = expected(&[100, 40]);
-    deployment
-        .stacks(&deployment.hot, TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
-    let cold = deployment
-        .stored(TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
     for container in [&deployment.hot, &cold] {
         for range in [json!({}), json!({"start":START-1000,"end":START+1000})] {
             let result = deployment
@@ -872,16 +884,7 @@ async fn malformed_pprof_is_rejected_without_wal_data() -> TestResult {
         );
         assert!(error["code"] == "invalid_argument");
     }
-    deployment
-        .push(TENANT, START, "checkout", &[100, 40], false)
-        .await?;
-    let rows = expected(&[100, 40]);
-    deployment
-        .stacks(&deployment.hot, TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
-    let cold = deployment
-        .stored(TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
+    let cold = deployment.checkout_stored().await?;
     for container in [&deployment.hot, &cold] {
         deployment
             .stacks(
@@ -924,64 +927,67 @@ async fn query_status_codes_match_upstream_cases() -> TestResult {
     let query = format!("{QUERY}/SelectMergeProfile");
     let valid = json!({"profileTypeID":PROFILE_TYPE,"labelSelector":SELECTOR,"start":START-1000,"end":START+1000});
     let cases = [
-        (
-            Method::POST,
-            "application/json",
-            serde_json::to_vec(&valid)?,
-            StatusCode::OK,
-        ),
-        (
-            Method::POST,
-            "application/json",
-            b"{broken".to_vec(),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            Method::POST,
-            "text/plain",
-            serde_json::to_vec(&valid)?,
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        ),
-        (
-            Method::GET,
-            "application/json",
-            vec![],
-            StatusCode::METHOD_NOT_ALLOWED,
-        ),
-        (
-            Method::POST,
-            "application/json",
-            serde_json::to_vec(
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: serde_json::to_vec(&valid)?,
+            expected: StatusCode::OK,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: b"{broken".to_vec(),
+            expected: StatusCode::BAD_REQUEST,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "text/plain",
+            body: serde_json::to_vec(&valid)?,
+            expected: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        },
+        EndpointRequestCase {
+            method: Method::GET,
+            content_type: "application/json",
+            body: vec![],
+            expected: StatusCode::METHOD_NOT_ALLOWED,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: serde_json::to_vec(
                 &json!({"profileTypeID":PROFILE_TYPE,"labelSelector":"{broken","start":START-1000,"end":START+1000}),
             )?,
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            Method::POST,
-            "application/json",
-            serde_json::to_vec(
+            expected: StatusCode::BAD_REQUEST,
+        },
+        EndpointRequestCase {
+            method: Method::POST,
+            content_type: "application/json",
+            body: serde_json::to_vec(
                 &json!({"profileTypeID":"bad","labelSelector":"{}","start":START-1000,"end":START+1000}),
             )?,
-            StatusCode::BAD_REQUEST,
-        ),
+            expected: StatusCode::BAD_REQUEST,
+        },
     ];
-    for (method, content_type, body, expected) in cases {
+    for case in cases {
         let response = deployment
+            .infrastructure
             .client
             .request(
-                method.clone(),
+                case.method.clone(),
                 format!("{}{query}", base_url(&deployment.hot, PORT).await?),
             )
             .header("X-Scope-OrgID", TENANT)
-            .header("Content-Type", content_type)
-            .body(body)
+            .header("Content-Type", case.content_type)
+            .body(case.body)
             .send()
             .await?;
         let status = response.status();
         let body = response.text().await?;
         assert!(
-            status == expected,
-            "{method} {content_type}: {status}: {body}"
+            status == case.expected,
+            "{} {}: {status}: {body}",
+            case.method,
+            case.content_type
         );
     }
     Ok(())

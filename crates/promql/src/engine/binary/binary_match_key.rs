@@ -12,7 +12,7 @@ pub(crate) fn binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) 
         }
         Some(LabelModifier::Exclude(exclude)) => {
             let excluded = exclude.labels.iter().collect::<BTreeSet<_>>();
-            for (name, value) in labels.iter() {
+            for pair in labels.iter() {
                 // Only `__name__` here, deliberately: with an explicit
                 // `ignoring (...)` clause Prometheus leaves `__type__` and
                 // `__unit__` in the match key, so series differing only in
@@ -20,18 +20,18 @@ pub(crate) fn binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) 
                 // three. Making the two agree fails the upstream
                 // `type_and_unit.test` case
                 // `... / ignoring(group) ...`, which must yield no samples.
-                if name == "__name__" || excluded.contains(name) {
+                if pair.name == "__name__" || excluded.contains(pair.name) {
                     continue;
                 }
-                key_labels.insert(name, value);
+                key_labels.insert(pair.name, pair.value);
             }
         }
         None => {
-            for (name, value) in labels.iter() {
-                if is_result_metadata_label(name) {
+            for pair in labels.iter() {
+                if is_result_metadata_label(pair.name) {
                     continue;
                 }
-                key_labels.insert(name, value);
+                key_labels.insert(pair.name, pair.value);
             }
         }
     }

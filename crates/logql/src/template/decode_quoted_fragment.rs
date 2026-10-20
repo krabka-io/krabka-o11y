@@ -1,5 +1,11 @@
 use super::{ParseError, template_parse_error};
 
+struct EscapeNumber {
+    radix: u32,
+    digits: u8,
+    value: u32,
+}
+
 pub(crate) fn decode_quoted_fragment(fragment: &str) -> Result<String, ParseError> {
     String::from_utf8(decode_quoted_bytes(fragment, '"')?)
         .map_err(|_| template_parse_error("template name must be valid UTF-8"))
@@ -32,29 +38,46 @@ pub(crate) fn decode_quoted_bytes(fragment: &str, quote: char) -> Result<Vec<u8>
             't' => decoded.push(b'\t'),
             'v' => decoded.push(11),
             'x' | 'u' | 'U' | '0'..='7' => {
-                let (radix, count, mut value) = match escaped {
-                    'x' => (16, 2, 0),
-                    'u' => (16, 4, 0),
-                    'U' => (16, 8, 0),
-                    digit => (8, 2, digit.to_digit(8).expect("octal escape")),
+                let mut number = match escaped {
+                    'x' => EscapeNumber {
+                        radix: 16,
+                        digits: 2,
+                        value: 0,
+                    },
+                    'u' => EscapeNumber {
+                        radix: 16,
+                        digits: 4,
+                        value: 0,
+                    },
+                    'U' => EscapeNumber {
+                        radix: 16,
+                        digits: 8,
+                        value: 0,
+                    },
+                    digit => EscapeNumber {
+                        radix: 8,
+                        digits: 2,
+                        value: digit.to_digit(8).expect("octal escape"),
+                    },
                 };
-                for _ in 0..count {
+                for _ in 0..number.digits {
                     let digit = chars
                         .next()
-                        .and_then(|ch| ch.to_digit(radix))
+                        .and_then(|ch| ch.to_digit(number.radix))
                         .ok_or_else(|| template_parse_error("invalid template escape"))?;
-                    value = value
-                        .checked_mul(radix)
+                    number.value = number
+                        .value
+                        .checked_mul(number.radix)
                         .and_then(|value| value.checked_add(digit))
                         .ok_or_else(|| template_parse_error("invalid Unicode escape"))?;
                 }
-                if escaped == 'x' || radix == 8 {
+                if escaped == 'x' || number.radix == 8 {
                     decoded.push(
-                        u8::try_from(value)
+                        u8::try_from(number.value)
                             .map_err(|_| template_parse_error("byte escape exceeds 255"))?,
                     );
                 } else {
-                    let ch = char::from_u32(value)
+                    let ch = char::from_u32(number.value)
                         .ok_or_else(|| template_parse_error("invalid Unicode scalar"))?;
                     let mut buffer = [0; 4];
                     decoded.extend(ch.encode_utf8(&mut buffer).as_bytes());

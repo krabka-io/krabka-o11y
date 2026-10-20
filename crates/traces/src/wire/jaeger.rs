@@ -8,151 +8,306 @@ use crate::{
     wire::WireError,
 };
 
+pub(crate) struct InputCursor<'a> {
+    pub(crate) bytes: &'a [u8],
+    pub(crate) pos: usize,
+}
+
+pub(crate) fn read_length_prefixed_binary(
+    bytes: &[u8],
+    pos: &mut usize,
+    len: Result<usize, WireError>,
+) -> Result<Vec<u8>, WireError> {
+    take_bytes(bytes, pos, len?)
+}
+
+impl<'a> InputCursor<'a> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+
+    pub(crate) fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.pos)
+    }
+
+    pub(crate) fn read_u8(&mut self) -> Result<u8, WireError> {
+        thrift_cursor::next_byte(self.bytes, &mut self.pos)
+    }
+
+    pub(crate) fn read_exact(&mut self, out: &mut [u8]) -> Result<(), WireError> {
+        let end = self
+            .pos
+            .checked_add(out.len())
+            .ok_or_else(|| WireError::Decode("read length overflow".into()))?;
+        if end > self.bytes.len() {
+            return Err(WireError::Decode("unexpected end of thrift payload".into()));
+        }
+        out.copy_from_slice(&self.bytes[self.pos..end]);
+        self.pos = end;
+        Ok(())
+    }
+}
+
+fn read_struct_list<T>(
+    element_type: u8,
+    len: usize,
+    struct_type: u8,
+    mut read_one: impl FnMut() -> Result<T, WireError>,
+) -> Result<Vec<T>, WireError> {
+    if element_type != struct_type {
+        return Err(WireError::Decode("expected struct list".into()));
+    }
+    (0..len).map(|_| read_one()).collect()
+}
+
+fn validate_map_header(
+    key_type: u8,
+    value_type: u8,
+    len: usize,
+    stop_type: u8,
+    remaining: usize,
+) -> Result<MapHeader, WireError> {
+    let header = MapHeader {
+        key_type,
+        value_type,
+        len,
+    };
+    check_map_header(header, stop_type, remaining)?;
+    Ok(header)
+}
+
+pub(crate) enum KeyValuePart {
+    Key(String),
+    Value(AttrValue),
+}
+
+pub(crate) trait KeyValueReader {
+    fn read_binary(&mut self) -> Result<Vec<u8>, WireError>;
+
+    fn read_string(&mut self) -> Result<String, WireError> {
+        read_utf8_binary(|| self.read_binary())
+    }
+
+    fn reset_key_value_fields(&mut self);
+    fn next_key_value_field(&mut self) -> Result<Option<FieldHeader>, WireError>;
+    fn read_key_value_part(
+        &mut self,
+        field_type: u8,
+        field_id: i16,
+    ) -> Result<Option<KeyValuePart>, WireError>;
+}
+
+pub(crate) fn parse_key_value(input: &mut impl KeyValueReader) -> Result<KeyValue, WireError> {
+    input.reset_key_value_fields();
+    let mut key = String::new();
+    let mut value = None;
+    while let Some(field) = input.next_key_value_field()? {
+        match input.read_key_value_part(field.field_type, field.field_id)? {
+            Some(KeyValuePart::Key(field)) => key = field,
+            Some(KeyValuePart::Value(field)) => value = Some(field),
+            None => {}
+        }
+    }
+    Ok(KeyValue {
+        key,
+        value: value.unwrap_or_else(|| AttrValue::Str(String::new())),
+    })
+}
+
+#[cfg(test)]
+pub(crate) mod thrift_fixture;
+
 #[cfg(test)]
 pub(crate) mod test_support {
+    use super::thrift_fixture::CompactStructWriter;
     use crate::ids::{TraceIdHigh, TraceIdLow};
 
     pub fn encode_sample_batch() -> Vec<u8> {
         let mut out = Vec::new();
-        write_process(&mut out, 1, "checkout");
-        write_span_list(&mut out, 2);
-        out.push(0);
+        let mut batch = CompactStructWriter::new(&mut out);
+        write_process(&mut batch, 1, "checkout");
+        write_span_list(&mut batch, 2);
+        batch.stop();
         out
     }
 
-    fn write_process(out: &mut Vec<u8>, field_id: i16, service: &str) {
-        write_field_header(out, 12, field_id, &mut 0);
-        let mut last = 0;
-        write_string_field(out, 1, service, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 1);
-        write_key_value_string(out, "process.tag", "present");
-        out.push(0);
+    pub fn write_process(batch: &mut CompactStructWriter<'_>, field_id: i16, service: &str) {
+        batch.field_header(12, field_id);
+        let mut process = batch.nested_struct();
+        process.string_field(1, service);
+        process.field_header(9, 2);
+        process.list_header(12, 1);
+        process.string_tag("process.tag", "present");
+        process.stop();
     }
 
-    fn write_span_list(out: &mut Vec<u8>, field_id: i16) {
-        write_field_header(out, 9, field_id, &mut 1);
-        write_list_header(out, 12, 1);
-        let mut last = 0;
-        write_i64_field(out, 1, 2, &mut last);
-        write_i64_field(out, 2, 1, &mut last);
-        write_i64_field(out, 3, 3, &mut last);
-        write_i64_field(out, 4, 0, &mut last);
-        write_string_field(out, 5, "GET /", &mut last);
-        write_field_header(out, 9, 6, &mut last);
-        write_list_header(out, 12, 2);
-        write_span_ref(out, 0, TraceIdLow(2), TraceIdHigh(1), 4);
-        write_span_ref(out, 1, TraceIdLow(5), TraceIdHigh(6), 7);
-        write_i32_field(out, 7, 0, &mut last);
-        write_i64_field(out, 8, 1_000, &mut last);
-        write_i64_field(out, 9, 25, &mut last);
-        write_field_header(out, 9, 10, &mut last);
-        write_list_header(out, 12, 3);
-        write_key_value_string(out, "span.kind", "server");
-        write_key_value_string(out, "http.method", "GET");
-        write_key_value_bool(out, "error", true);
-        write_field_header(out, 9, 11, &mut last);
-        write_list_header(out, 12, 1);
-        write_log(out);
-        out.push(0);
+    pub fn write_span_list(batch: &mut CompactStructWriter<'_>, field_id: i16) {
+        batch.field_header(9, field_id);
+        batch.list_header(12, 1);
+        let mut span = batch.nested_struct();
+        span.i64_field(1, 2);
+        span.i64_field(2, 1);
+        span.i64_field(3, 3);
+        span.i64_field(4, 0);
+        span.string_field(5, "GET /");
+        span.field_header(9, 6);
+        span.list_header(12, 2);
+        write_span_ref(
+            &mut span,
+            &SpanRefFixture {
+                ref_type: 0,
+                trace_id_low: TraceIdLow(2),
+                trace_id_high: TraceIdHigh(1),
+                span_id: 4,
+            },
+        );
+        write_span_ref(
+            &mut span,
+            &SpanRefFixture {
+                ref_type: 1,
+                trace_id_low: TraceIdLow(5),
+                trace_id_high: TraceIdHigh(6),
+                span_id: 7,
+            },
+        );
+        span.i32_field(7, 0);
+        span.i64_field(8, 1_000);
+        span.i64_field(9, 25);
+        span.field_header(9, 10);
+        span.list_header(12, 3);
+        span.string_tag("span.kind", "server");
+        span.string_tag("http.method", "GET");
+        span.true_tag("error");
+        span.field_header(9, 11);
+        span.list_header(12, 1);
+        write_log(&mut span);
+        span.stop();
     }
 
-    fn write_span_ref(
-        out: &mut Vec<u8>,
+    /// One Jaeger `SpanRef` list element.
+    struct SpanRefFixture {
         ref_type: i32,
-        low: TraceIdLow,
-        high: TraceIdHigh,
+        trace_id_low: TraceIdLow,
+        trace_id_high: TraceIdHigh,
         span_id: i64,
-    ) {
-        let mut last = 0;
-        write_i32_field(out, 1, ref_type, &mut last);
-        write_i64_field(out, 2, low.0, &mut last);
-        write_i64_field(out, 3, high.0, &mut last);
-        write_i64_field(out, 4, span_id, &mut last);
-        out.push(0);
     }
 
-    fn write_log(out: &mut Vec<u8>) {
-        let mut last = 0;
-        write_i64_field(out, 1, 1_005, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 2);
-        write_key_value_string(out, "event", "cache.miss");
-        write_key_value_string(out, "cache.key", "users");
-        out.push(0);
+    fn write_span_ref(span: &mut CompactStructWriter<'_>, span_ref: &SpanRefFixture) {
+        let mut reference = span.nested_struct();
+        reference.i32_field(1, span_ref.ref_type);
+        reference.i64_field(2, span_ref.trace_id_low.0);
+        reference.i64_field(3, span_ref.trace_id_high.0);
+        reference.i64_field(4, span_ref.span_id);
+        reference.stop();
     }
 
-    fn write_key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 0, &mut last);
-        write_string_field(out, 3, value, &mut last);
-        out.push(0);
+    fn write_log(span: &mut CompactStructWriter<'_>) {
+        let mut log = span.nested_struct();
+        log.i64_field(1, 1_005);
+        log.field_header(9, 2);
+        log.list_header(12, 2);
+        log.string_tag("event", "cache.miss");
+        log.string_tag("cache.key", "users");
+        log.stop();
     }
+}
 
-    fn write_key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 3, &mut last);
-        write_bool_field(out, 5, value, &mut last);
-        out.push(0);
-    }
+#[derive(Clone, Default)]
+pub(super) struct JaegerBatch {
+    pub(crate) process: JaegerProcess,
+    pub(crate) spans: Vec<JaegerSpan>,
+}
 
-    fn write_i32_field(out: &mut Vec<u8>, id: i16, value: i32, last: &mut i16) {
-        write_field_header(out, 5, id, last);
-        write_varint(out, zigzag_i32(value));
-    }
+#[derive(Clone, Default)]
+pub(super) struct JaegerLog {
+    pub(crate) timestamp_micros: i64,
+    pub(crate) fields: Vec<KeyValue>,
+}
 
-    pub fn write_i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
-        write_field_header(out, 6, id, last);
-        write_varint(out, zigzag_i64(value));
-    }
+#[derive(Clone, Default)]
+pub(super) struct JaegerProcess {
+    pub(crate) service_name: String,
+    pub(crate) tags: Vec<KeyValue>,
+}
 
-    pub fn write_string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
-        write_field_header(out, 8, id, last);
-        write_varint(out, u64::try_from(value.len()).unwrap());
-        out.extend_from_slice(value.as_bytes());
-    }
+#[derive(Clone, Default)]
+pub(super) struct JaegerRef {
+    pub(crate) ref_type: i32,
+    pub(crate) trace_id_low: i64,
+    pub(crate) trace_id_high: i64,
+    pub(crate) span_id: i64,
+}
 
-    fn write_bool_field(out: &mut Vec<u8>, id: i16, value: bool, last: &mut i16) {
-        write_field_header(out, if value { 1 } else { 2 }, id, last);
-    }
+#[derive(Clone, Default)]
+pub(super) struct JaegerSpan {
+    pub(crate) trace_id_low: i64,
+    pub(crate) trace_id_high: i64,
+    pub(crate) span_id: i64,
+    pub(crate) parent_span_id: i64,
+    pub(crate) operation_name: String,
+    pub(crate) references: Vec<JaegerRef>,
+    pub(crate) start_time_micros: i64,
+    pub(crate) duration_micros: i64,
+    pub(crate) tags: Vec<KeyValue>,
+    pub(crate) logs: Vec<JaegerLog>,
+}
 
-    pub fn write_field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
-        let delta = id - *last;
-        if (1..=15).contains(&delta) {
-            out.push((u8::try_from(delta).unwrap() << 4) | type_id);
-        } else {
-            out.push(type_id);
-            write_varint(out, zigzag_i32(i32::from(id)));
-        }
-        *last = id;
+pub(super) fn jaeger_span_to_internal(span: &JaegerSpan, process: &JaegerProcess) -> Span {
+    let mut resource_attrs = process.tags.clone();
+    resource_attrs.push(KeyValue {
+        key: "service.name".into(),
+        value: AttrValue::Str(process.service_name.clone()),
+    });
+    let parent_span_id = span
+        .references
+        .iter()
+        .find(|reference| reference.ref_type == 0)
+        .map(|reference| i64_bytes(reference.span_id))
+        .or_else(|| (span.parent_span_id != 0).then(|| i64_bytes(span.parent_span_id)));
+    let links = span
+        .references
+        .iter()
+        .filter(|reference| reference.ref_type != 0)
+        .map(|reference| LinkRecord {
+            trace_id: trace_id(
+                TraceIdHigh(reference.trace_id_high),
+                TraceIdLow(reference.trace_id_low),
+            ),
+            span_id: i64_bytes(reference.span_id),
+            attrs: vec![KeyValue {
+                key: "ref.type".into(),
+                value: AttrValue::Str(ref_type_name(reference.ref_type).into()),
+            }],
+        })
+        .collect();
+    Span {
+        trace_id: trace_id(
+            TraceIdHigh(span.trace_id_high),
+            TraceIdLow(span.trace_id_low),
+        ),
+        span_id: i64_bytes(span.span_id),
+        parent_span_id,
+        name: span.operation_name.clone(),
+        kind: span_kind(&span.tags),
+        start_ns: span.start_time_micros.saturating_mul(1_000),
+        duration_ns: span.duration_micros.saturating_mul(1_000),
+        status: span_status(&span.tags),
+        status_message: String::new(),
+        resource_attrs,
+        span_attrs: span.tags.clone(),
+        events: span_logs_to_events(&span.logs),
+        links,
+        instrumentation_scope: String::new(),
+        instrumentation_version: String::new(),
     }
+}
 
-    fn write_list_header(out: &mut Vec<u8>, element_type: u8, size: usize) {
-        if size < 15 {
-            out.push((u8::try_from(size).unwrap() << 4) | element_type);
-        } else {
-            out.push(0xF0 | element_type);
-            write_varint(out, u64::try_from(size).unwrap());
-        }
-    }
+pub(crate) fn read_binary_key_value(input: &mut BinaryInput<'_>) -> Result<KeyValue, WireError> {
+    parse_key_value(input)
+}
 
-    fn write_varint(out: &mut Vec<u8>, mut value: u64) {
-        while value >= 0x80 {
-            out.push(u8::try_from(value & 0x7f).unwrap() | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap());
-    }
-
-    fn zigzag_i32(value: i32) -> u64 {
-        u64::from(((value << 1) ^ (value >> 31)).cast_unsigned())
-    }
-
-    fn zigzag_i64(value: i64) -> u64 {
-        ((value << 1) ^ (value >> 63)).cast_unsigned()
-    }
+pub(crate) fn read_key_value(input: &mut CompactInput<'_>) -> Result<KeyValue, WireError> {
+    parse_key_value(input)
 }
 
 #[cfg(test)]
@@ -166,7 +321,7 @@ mod tests {
     #[test]
     fn a_multi_byte_varint_drops_each_continuation_bit() {
         let read = |bytes: &[u8]| {
-            let mut input = super::CompactInput { bytes, pos: 0 };
+            let mut input = super::CompactInput::new(bytes);
             input.read_varint()
         };
 
@@ -199,6 +354,12 @@ mod tests {
             out.extend_from_slice(payload);
         }
 
+        /// Reads one span reference from the start of `bytes`.
+        fn read_ref(bytes: &[u8]) -> super::JaegerRef {
+            let mut input = super::BinaryInput::new(bytes);
+            super::read_binary_ref(&mut input).expect("reads")
+        }
+
         let mut bytes = Vec::new();
         field(&mut bytes, 8, 1, &7_i32.to_be_bytes());
         field(&mut bytes, 10, 2, &11_i64.to_be_bytes());
@@ -206,11 +367,7 @@ mod tests {
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         bytes.push(0);
 
-        let mut input = super::BinaryInput {
-            bytes: &bytes,
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&bytes);
         check!(reference.ref_type == 7);
         check!(reference.trace_id_low == 11, "field two is the low half");
         check!(
@@ -227,11 +384,7 @@ mod tests {
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         field(&mut bytes, 10, 2, &11_i64.to_be_bytes());
         bytes.push(0);
-        let mut input = super::BinaryInput {
-            bytes: &bytes,
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&bytes);
         check!(reference.span_id == 33);
         check!(reference.trace_id_low == 11);
         check!(
@@ -244,22 +397,14 @@ mod tests {
         field(&mut bytes, 10, 9, &99_i64.to_be_bytes());
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         bytes.push(0);
-        let mut input = super::BinaryInput {
-            bytes: &bytes,
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&bytes);
         check!(
             reference.span_id == 33,
             "the field after the unknown one still lands"
         );
 
         // An empty struct is all defaults rather than an error.
-        let mut input = super::BinaryInput {
-            bytes: &[0],
-            pos: 0,
-        };
-        let reference = super::read_binary_ref(&mut input).expect("reads");
+        let reference = read_ref(&[0]);
         check!(reference.ref_type == 0);
         check!(reference.span_id == 0);
     }
@@ -273,10 +418,7 @@ mod tests {
     fn binary_fields_are_framed_by_each_protocol_own_length() {
         // Compact: a one-byte varint length of three, then three bytes.
         let compact_bytes = [0x03, b'a', b'b', b'c'];
-        let mut input = super::CompactInput {
-            bytes: &compact_bytes,
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&compact_bytes);
         check!(input.read_binary().expect("reads") == b"abc".to_vec());
         check!(
             input.pos == 4,
@@ -284,61 +426,37 @@ mod tests {
         );
 
         // Exactly filling the buffer is complete, not truncated.
-        let mut input = super::CompactInput {
-            bytes: &compact_bytes,
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&compact_bytes);
         check!(input.read_binary().is_ok(), "a payload may end the buffer");
 
         // One byte short is truncated.
-        let mut input = super::CompactInput {
-            bytes: &compact_bytes[..3],
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&compact_bytes[..3]);
         check!(input.read_binary().is_err(), "one byte short");
 
         // Trailing bytes are left for the caller.
         let with_tail = [0x03, b'a', b'b', b'c', 0xff];
-        let mut input = super::CompactInput {
-            bytes: &with_tail,
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&with_tail);
         check!(input.read_binary().expect("reads") == b"abc".to_vec());
         check!(input.pos == 4, "and the tail is not consumed");
 
         // Binary: a four-byte length of three, then three bytes.
         let binary_bytes = [0x00, 0x00, 0x00, 0x03, b'x', b'y', b'z'];
-        let mut input = super::BinaryInput {
-            bytes: &binary_bytes,
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&binary_bytes);
         check!(input.read_binary().expect("reads") == b"xyz".to_vec());
         check!(input.pos == 7, "four length bytes plus three payload");
 
-        let mut input = super::BinaryInput {
-            bytes: &binary_bytes[..6],
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&binary_bytes[..6]);
         check!(input.read_binary().is_err(), "one byte short");
 
         // An empty payload is a value, not an absence.
-        let mut input = super::CompactInput {
-            bytes: &[0x00],
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&[0x00]);
         check!(input.read_binary().expect("reads").is_empty());
-        let mut input = super::BinaryInput {
-            bytes: &[0, 0, 0, 0],
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&[0, 0, 0, 0]);
         check!(input.read_binary().expect("reads").is_empty());
 
         // A negative length cannot be a size, and only the binary framing can
         // express one.
-        let mut input = super::BinaryInput {
-            bytes: &[0xff, 0xff, 0xff, 0xff, 0, 0],
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&[0xff, 0xff, 0xff, 0xff, 0, 0]);
         check!(
             input.read_binary().is_err(),
             "a negative i32 length is refused"
@@ -351,37 +469,29 @@ mod tests {
     /// another so a variant reading a neighbouring field is visible.
     #[test]
     fn a_jaeger_tag_takes_the_variant_its_wire_type_names() {
-        use super::test_support::{write_field_header, write_i64_field, write_string_field};
-
         // Key in field 1, then one value field, then the stop byte.
         let string_tag = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "http.method", &mut last);
-            write_string_field(&mut out, 3, "GET", &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "http.method");
+            tag_struct.string_field(3, "GET");
+            tag_struct.stop();
             out
         };
-        let mut input = super::CompactInput {
-            bytes: &string_tag,
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&string_tag);
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "http.method");
         check!(tag.value == AttrValue::Str("GET".into()));
 
         let int_tag = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "http.status", &mut last);
-            write_i64_field(&mut out, 6, 503, &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "http.status");
+            tag_struct.i64_field(6, 503);
+            tag_struct.stop();
             out
         };
-        let mut input = super::CompactInput {
-            bytes: &int_tag,
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&int_tag);
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "http.status");
         check!(
@@ -391,20 +501,32 @@ mod tests {
 
         // The two boolean types carry their value in the type itself rather
         // than in a payload, so each needs its own field header.
-        for (type_id, expected) in [(1_u8, true), (2_u8, false)] {
+        struct CompactBooleanCase {
+            type_id: u8,
+            expected: bool,
+        }
+        for case in [
+            CompactBooleanCase {
+                type_id: 1_u8,
+                expected: true,
+            },
+            CompactBooleanCase {
+                type_id: 2_u8,
+                expected: false,
+            },
+        ] {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "retryable", &mut last);
-            write_field_header(&mut out, type_id, 5, &mut last);
-            out.push(0);
-            let mut input = super::CompactInput {
-                bytes: &out,
-                pos: 0,
-            };
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "retryable");
+            tag_struct.field_header(case.type_id, 5);
+            tag_struct.stop();
+            let mut input = super::CompactInput::new(&out);
             let tag = super::read_key_value(&mut input).expect("reads");
             check!(
-                tag.value == AttrValue::Bool(expected),
-                "type {type_id} is {expected}"
+                tag.value == AttrValue::Bool(case.expected),
+                "type {} is {}",
+                case.type_id,
+                case.expected
             );
         }
 
@@ -413,15 +535,12 @@ mod tests {
         // consuming the ones after it.
         let bare = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "lonely", &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "lonely");
+            tag_struct.stop();
             out
         };
-        let mut input = super::CompactInput {
-            bytes: &bare,
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&bare);
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "lonely");
         check!(
@@ -431,17 +550,14 @@ mod tests {
 
         let with_unknown = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "kept", &mut last);
-            write_i64_field(&mut out, 9, 77, &mut last);
-            write_i64_field(&mut out, 6, 42, &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "kept");
+            tag_struct.i64_field(9, 77);
+            tag_struct.i64_field(6, 42);
+            tag_struct.stop();
             out
         };
-        let mut input = super::CompactInput {
-            bytes: &with_unknown,
-            pos: 0,
-        };
+        let mut input = super::CompactInput::new(&with_unknown);
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "kept");
         check!(
@@ -461,55 +577,37 @@ mod tests {
         let big = value.to_be_bytes();
         check!(little != big, "the fixture must distinguish the two orders");
 
-        let mut compact = super::CompactInput {
-            bytes: &little,
-            pos: 0,
-        };
+        let mut compact = super::CompactInput::new(&little);
         check!(
             compact.read_double().expect("reads").to_bits() == value.to_bits(),
             "compact is little-endian"
         );
 
-        let mut compact_wrong = super::CompactInput {
-            bytes: &big,
-            pos: 0,
-        };
+        let mut compact_wrong = super::CompactInput::new(&big);
         check!(
             compact_wrong.read_double().expect("reads").to_bits() != value.to_bits(),
             "and does not read the other order as the same number"
         );
 
-        let mut binary = super::BinaryInput {
-            bytes: &big,
-            pos: 0,
-        };
+        let mut binary = super::BinaryInput::new(&big);
         check!(
             binary.read_double().expect("reads").to_bits() == value.to_bits(),
             "binary is big-endian"
         );
 
-        let mut binary_wrong = super::BinaryInput {
-            bytes: &little,
-            pos: 0,
-        };
+        let mut binary_wrong = super::BinaryInput::new(&little);
         check!(binary_wrong.read_double().expect("reads").to_bits() != value.to_bits());
 
         // Each consumes exactly eight bytes and leaves the rest.
         let mut trailing = [0_u8; 9];
         trailing[..8].copy_from_slice(&big);
         trailing[8] = 0x7f;
-        let mut binary = super::BinaryInput {
-            bytes: &trailing,
-            pos: 0,
-        };
+        let mut binary = super::BinaryInput::new(&trailing);
         check!(binary.read_double().expect("reads").to_bits() == value.to_bits());
         check!(binary.pos == 8, "the cursor stops after the double");
 
         // Seven bytes is not a double.
-        let mut short = super::BinaryInput {
-            bytes: &big[..7],
-            pos: 0,
-        };
+        let mut short = super::BinaryInput::new(&big[..7]);
         check!(short.read_double().is_err(), "one byte short");
     }
 
@@ -521,20 +619,14 @@ mod tests {
             0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x04,
         ];
 
-        let mut input = super::BinaryInput {
-            bytes: &bytes,
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&bytes);
         check!(
             input.read_i32().expect("reads") == 0x0102,
             "four bytes, most significant first"
         );
         check!(input.pos == 4);
 
-        let mut input = super::BinaryInput {
-            bytes: &bytes[4..],
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&bytes[4..]);
         check!(
             input.read_i64().expect("reads") == 0x0304,
             "eight bytes, most significant first"
@@ -542,39 +634,40 @@ mod tests {
         check!(input.pos == 8);
 
         // A leading high bit makes the value negative.
-        let mut input = super::BinaryInput {
-            bytes: &[0xff, 0xff, 0xff, 0xff],
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&[0xff, 0xff, 0xff, 0xff]);
         check!(input.read_i32().expect("reads") == -1);
 
         // Short input on each width.
-        let mut input = super::BinaryInput {
-            bytes: &[0, 0, 0],
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&[0, 0, 0]);
         check!(input.read_i32().is_err(), "three bytes is not an i32");
-        let mut input = super::BinaryInput {
-            bytes: &[0; 7],
-            pos: 0,
-        };
+        let mut input = super::BinaryInput::new(&[0; 7]);
         check!(input.read_i64().is_err(), "seven bytes is not an i64");
     }
     use assert2::check;
 
-    use super::*;
-    use crate::{
-        ids::{TraceIdHigh, TraceIdLow},
-        span::{AttrValue, EventRecord, SpanKind, StatusCode},
+    use super::{
+        test_support::{encode_sample_batch, write_process, write_span_list},
+        thrift_fixture::{
+            CompactStructWriter, binary_bytes, binary_field, binary_i32_field, binary_i64_field,
+            binary_string_field, encode_binary_sample_batch, write_varint, zigzag_i32,
+        },
+        *,
     };
+    use crate::span::{AttrValue, EventRecord, SpanKind, StatusCode};
 
     /// Jaeger carries the span kind as a `span.kind` tag rather than a field.
     /// Every name maps to its own kind, an unknown or absent one falls back
     /// to internal, and a tag whose value is not a string is not a kind at
     /// all -- a fallback reached by the wrong route still looks right until
     /// a real kind is present and ignored.
-    #[test]
-    fn the_jaeger_span_kind_tag_maps_each_name_and_falls_back_to_internal() {
+    #[yare::parameterized(
+        server = { "server", SpanKind::Server },
+        client = { "client", SpanKind::Client },
+        producer = { "producer", SpanKind::Producer },
+        consumer = { "consumer", SpanKind::Consumer },
+        internal = { "internal", SpanKind::Internal },
+    )]
+    fn each_jaeger_span_kind_name_maps_to_its_kind(name: &str, expected: SpanKind) {
         let tag = |key: &str, value: AttrValue| KeyValue {
             key: key.to_string(),
             value,
@@ -582,16 +675,17 @@ mod tests {
         let str_tag = |key: &str, value: &str| tag(key, AttrValue::Str(value.to_string()));
         let kind = |tags: Vec<KeyValue>| super::span_kind(&tags);
 
-        for (name, expected) in [
-            ("server", SpanKind::Server),
-            ("client", SpanKind::Client),
-            ("producer", SpanKind::Producer),
-            ("consumer", SpanKind::Consumer),
-            ("internal", SpanKind::Internal),
-        ] {
-            check!(kind(vec![str_tag("span.kind", name)]) == expected, "{name}");
-        }
+        check!(kind(vec![str_tag("span.kind", name)]) == expected, "{name}");
+    }
 
+    #[test]
+    fn missing_unknown_and_non_string_jaeger_span_kind_fall_back_to_internal() {
+        let tag = |key: &str, value: AttrValue| KeyValue {
+            key: key.to_string(),
+            value,
+        };
+        let str_tag = |key: &str, value: &str| tag(key, AttrValue::Str(value.to_string()));
+        let kind = |tags: Vec<KeyValue>| super::span_kind(&tags);
         check!(kind(vec![]) == SpanKind::Internal, "no tags at all");
         check!(
             kind(vec![str_tag("other", "server")]) == SpanKind::Internal,
@@ -621,6 +715,38 @@ mod tests {
         );
     }
 
+    // The process tags both sample batches carry, with the service name the
+    // decoder appends.
+    fn sample_resource_attrs() -> Vec<KeyValue> {
+        vec![
+            KeyValue::new("process.tag", AttrValue::Str("present".into())),
+            KeyValue::new("service.name", AttrValue::Str("checkout".into())),
+        ]
+    }
+
+    // The ids and timing of the span every sample batch carries.
+    fn sample_span() -> Span {
+        Span {
+            trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
+            span_id: [0, 0, 0, 0, 0, 0, 0, 3],
+            start_ns: 1_000_000,
+            duration_ns: 25_000,
+            ..Span::default()
+        }
+    }
+
+    // The span tags both sample batches carry.
+    fn sample_span_attrs() -> Vec<KeyValue> {
+        vec![
+            KeyValue::new("span.kind", AttrValue::Str("server".into())),
+            KeyValue::new("http.method", AttrValue::Str("GET".into())),
+            KeyValue {
+                key: "error".into(),
+                value: AttrValue::Bool(true),
+            },
+        ]
+    }
+
     #[test]
     fn decodes_jaeger_thrift_batch() {
         let spans = decode_jaeger_thrift(&encode_sample_batch()).unwrap();
@@ -628,39 +754,12 @@ mod tests {
         assert2::assert!(
             spans
                 == vec![Span {
-                    trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: [0, 0, 0, 0, 0, 0, 0, 3],
                     parent_span_id: Some([0, 0, 0, 0, 0, 0, 0, 4]),
                     name: "GET /".into(),
                     kind: SpanKind::Server,
-                    start_ns: 1_000_000,
-                    duration_ns: 25_000,
                     status: StatusCode::Error,
-                    status_message: String::new(),
-                    resource_attrs: vec![
-                        KeyValue {
-                            key: "process.tag".into(),
-                            value: AttrValue::Str("present".into()),
-                        },
-                        KeyValue {
-                            key: "service.name".into(),
-                            value: AttrValue::Str("checkout".into()),
-                        },
-                    ],
-                    span_attrs: vec![
-                        KeyValue {
-                            key: "span.kind".into(),
-                            value: AttrValue::Str("server".into()),
-                        },
-                        KeyValue {
-                            key: "http.method".into(),
-                            value: AttrValue::Str("GET".into()),
-                        },
-                        KeyValue {
-                            key: "error".into(),
-                            value: AttrValue::Bool(true),
-                        },
-                    ],
+                    resource_attrs: sample_resource_attrs(),
+                    span_attrs: sample_span_attrs(),
                     events: vec![EventRecord {
                         time_unix_nano: 1_005_000,
                         name: "cache.miss".into(),
@@ -683,8 +782,7 @@ mod tests {
                             value: AttrValue::Str("follows_from".into()),
                         }],
                     }],
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+                    ..sample_span()
                 }]
         );
     }
@@ -696,43 +794,15 @@ mod tests {
         assert2::assert!(
             spans
                 == vec![Span {
-                    trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: [0, 0, 0, 0, 0, 0, 0, 3],
                     parent_span_id: None,
                     name: "GET /binary".into(),
                     kind: SpanKind::Server,
-                    start_ns: 1_000_000,
-                    duration_ns: 25_000,
                     status: StatusCode::Error,
-                    status_message: String::new(),
-                    resource_attrs: vec![
-                        KeyValue {
-                            key: "process.tag".into(),
-                            value: AttrValue::Str("present".into()),
-                        },
-                        KeyValue {
-                            key: "service.name".into(),
-                            value: AttrValue::Str("checkout".into()),
-                        },
-                    ],
-                    span_attrs: vec![
-                        KeyValue {
-                            key: "span.kind".into(),
-                            value: AttrValue::Str("server".into()),
-                        },
-                        KeyValue {
-                            key: "http.method".into(),
-                            value: AttrValue::Str("GET".into()),
-                        },
-                        KeyValue {
-                            key: "error".into(),
-                            value: AttrValue::Bool(true),
-                        },
-                    ],
+                    resource_attrs: sample_resource_attrs(),
+                    span_attrs: sample_span_attrs(),
                     events: Vec::new(),
                     links: Vec::new(),
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+                    ..sample_span()
                 }]
         );
     }
@@ -764,94 +834,72 @@ mod tests {
     fn a_binary_thrift_span_reads_the_fields_the_sample_batch_leaves_empty() {
         const T_STOP: u8 = 0;
         const T_DOUBLE: u8 = 4;
-        const T_I32: u8 = 8;
-        const T_I64: u8 = 10;
         const T_BINARY: u8 = 11;
         const T_STRUCT: u8 = 12;
         const T_LIST: u8 = 15;
 
-        fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-            out.push(type_);
-            out.extend_from_slice(&id.to_be_bytes());
-        }
-        fn bytes(out: &mut Vec<u8>, value: &[u8]) {
-            out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-            out.extend_from_slice(value);
-        }
-        fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-            field(out, T_BINARY, id);
-            bytes(out, value.as_bytes());
-        }
-        fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-            field(out, T_I32, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-            field(out, T_I64, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
         fn list_header(out: &mut Vec<u8>, id: i16, count: i32) {
-            field(out, T_LIST, id);
+            binary_field(out, T_LIST, id);
             out.push(T_STRUCT);
             out.extend_from_slice(&count.to_be_bytes());
         }
         // The value's wire type is named by field 2 and carried by the field
         // id that follows, and the reader takes the variant from the id.
         fn kv_string(out: &mut Vec<u8>, key: &str, value: &str) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 0);
-            string_field(out, 3, value);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 0);
+            binary_string_field(out, 3, value);
             out.push(T_STOP);
         }
         fn kv_double(out: &mut Vec<u8>, key: &str, value: f64) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 1);
-            field(out, T_DOUBLE, 4);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 1);
+            binary_field(out, T_DOUBLE, 4);
             out.extend_from_slice(&value.to_be_bytes());
             out.push(T_STOP);
         }
         fn kv_int(out: &mut Vec<u8>, key: &str, value: i64) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 3);
-            i64_field(out, 6, value);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 3);
+            binary_i64_field(out, 6, value);
             out.push(T_STOP);
         }
         fn kv_bytes(out: &mut Vec<u8>, key: &str, value: &[u8]) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 4);
-            field(out, T_BINARY, 7);
-            bytes(out, value);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 4);
+            binary_field(out, T_BINARY, 7);
+            binary_bytes(out, value);
             out.push(T_STOP);
         }
 
         let mut out = Vec::new();
-        field(&mut out, T_STRUCT, 1);
-        string_field(&mut out, 1, "checkout");
+        binary_field(&mut out, T_STRUCT, 1);
+        binary_string_field(&mut out, 1, "checkout");
         out.push(T_STOP);
 
         list_header(&mut out, 2, 1);
-        i64_field(&mut out, 1, 2);
-        i64_field(&mut out, 2, 1);
-        i64_field(&mut out, 3, 3);
+        binary_i64_field(&mut out, 1, 2);
+        binary_i64_field(&mut out, 2, 1);
+        binary_i64_field(&mut out, 3, 3);
         // Non-zero, and no child_of reference to override it.
-        i64_field(&mut out, 4, 9);
-        string_field(&mut out, 5, "GET /full");
+        binary_i64_field(&mut out, 4, 9);
+        binary_string_field(&mut out, 5, "GET /full");
         // A follows_from reference becomes a link; a child_of one would
         // instead have become the parent.
         list_header(&mut out, 6, 1);
-        i32_field(&mut out, 1, 1);
-        i64_field(&mut out, 2, 5);
-        i64_field(&mut out, 3, 4);
-        i64_field(&mut out, 4, 6);
+        binary_i32_field(&mut out, 1, 1);
+        binary_i64_field(&mut out, 2, 5);
+        binary_i64_field(&mut out, 3, 4);
+        binary_i64_field(&mut out, 4, 6);
         out.push(T_STOP);
-        i64_field(&mut out, 8, 1_000);
-        i64_field(&mut out, 9, 25);
+        binary_i64_field(&mut out, 8, 1_000);
+        binary_i64_field(&mut out, 9, 25);
         list_header(&mut out, 10, 3);
         kv_double(&mut out, "latency.ms", 1.5);
         kv_int(&mut out, "retry.count", 7);
         kv_bytes(&mut out, "payload", &[1, 2, 3]);
         list_header(&mut out, 11, 1);
-        i64_field(&mut out, 1, 1_005);
+        binary_i64_field(&mut out, 1, 1_005);
         list_header(&mut out, 2, 2);
         kv_string(&mut out, "event", "cache.miss");
         kv_int(&mut out, "retries", 2);
@@ -864,15 +912,10 @@ mod tests {
         check!(
             spans
                 == vec![Span {
-                    trace_id: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                    span_id: [0, 0, 0, 0, 0, 0, 0, 3],
                     parent_span_id: Some([0, 0, 0, 0, 0, 0, 0, 9]),
                     name: "GET /full".into(),
                     kind: SpanKind::Internal,
-                    start_ns: 1_000_000,
-                    duration_ns: 25_000,
                     status: StatusCode::Unset,
-                    status_message: String::new(),
                     resource_attrs: vec![KeyValue {
                         key: "service.name".into(),
                         value: AttrValue::Str("checkout".into()),
@@ -913,86 +956,9 @@ mod tests {
                             value: AttrValue::Str("follows_from".into()),
                         }],
                     }],
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+                    ..sample_span()
                 }]
         );
-    }
-
-    fn encode_binary_sample_batch() -> Vec<u8> {
-        const T_STOP: u8 = 0;
-        const T_BOOL: u8 = 2;
-        const T_I32: u8 = 8;
-        const T_I64: u8 = 10;
-        const T_BINARY: u8 = 11;
-        const T_STRUCT: u8 = 12;
-        const T_LIST: u8 = 15;
-
-        fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-            out.push(type_);
-            out.extend_from_slice(&id.to_be_bytes());
-        }
-        fn string(out: &mut Vec<u8>, value: &str) {
-            out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-            out.extend_from_slice(value.as_bytes());
-        }
-        fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-            field(out, T_BINARY, id);
-            string(out, value);
-        }
-        fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-            field(out, T_I32, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-            field(out, T_I64, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn bool_field(out: &mut Vec<u8>, id: i16, value: bool) {
-            field(out, T_BOOL, id);
-            out.push(u8::from(value));
-        }
-        fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 0);
-            string_field(out, 3, value);
-            out.push(T_STOP);
-        }
-        fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 3);
-            bool_field(out, 5, value);
-            out.push(T_STOP);
-        }
-
-        let mut out = Vec::new();
-        field(&mut out, T_STRUCT, 1);
-        string_field(&mut out, 1, "checkout");
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        key_value_string(&mut out, "process.tag", "present");
-        out.push(T_STOP);
-
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        i64_field(&mut out, 1, 2);
-        i64_field(&mut out, 2, 1);
-        i64_field(&mut out, 3, 3);
-        i64_field(&mut out, 4, 0);
-        string_field(&mut out, 5, "GET /binary");
-        i64_field(&mut out, 8, 1_000);
-        i64_field(&mut out, 9, 25);
-        field(&mut out, T_LIST, 10);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&3_i32.to_be_bytes());
-        key_value_string(&mut out, "span.kind", "server");
-        key_value_string(&mut out, "http.method", "GET");
-        key_value_bool(&mut out, "error", true);
-        out.push(T_STOP);
-        out.push(T_STOP);
-        out
     }
 
     fn encode_binary_sample_batch_with_unknown_map() -> Vec<u8> {
@@ -1014,21 +980,20 @@ mod tests {
         out
     }
 
-    fn encode_sample_batch() -> Vec<u8> {
-        let mut out = Vec::new();
-        write_process(&mut out, 1, "checkout");
-        write_span_list(&mut out, 2);
-        out.push(0);
-        out
-    }
-
     fn encode_sample_batch_with_unknown_map() -> Vec<u8> {
         let mut out = Vec::new();
-        write_process(&mut out, 1, "checkout");
-        write_span_list(&mut out, 2);
-        let mut last = 2;
-        write_field_header(&mut out, 11, 3, &mut last);
-        write_map_header(&mut out, 8, 5, 1);
+        let mut batch = CompactStructWriter::new(&mut out);
+        write_process(&mut batch, 1, "checkout");
+        write_span_list(&mut batch, 2);
+        batch.field_header(11, 3);
+        write_map_header(
+            &mut out,
+            &MapHeader {
+                key_type: 8,
+                value_type: 5,
+                size: 1,
+            },
+        );
         write_varint(&mut out, 7);
         out.extend_from_slice(b"ignored");
         write_varint(&mut out, zigzag_i32(42));
@@ -1036,125 +1001,19 @@ mod tests {
         out
     }
 
-    fn write_process(out: &mut Vec<u8>, field_id: i16, service: &str) {
-        write_field_header(out, 12, field_id, &mut 0);
-        let mut last = 0;
-        write_string_field(out, 1, service, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 1);
-        write_key_value_string(out, "process.tag", "present");
-        out.push(0);
+    /// A compact-protocol map header: element types and entry count.
+    struct MapHeader {
+        key_type: u8,
+        value_type: u8,
+        size: usize,
     }
 
-    fn write_span_list(out: &mut Vec<u8>, field_id: i16) {
-        write_field_header(out, 9, field_id, &mut 1);
-        write_list_header(out, 12, 1);
-        let mut last = 0;
-        write_i64_field(out, 1, 2, &mut last);
-        write_i64_field(out, 2, 1, &mut last);
-        write_i64_field(out, 3, 3, &mut last);
-        write_i64_field(out, 4, 0, &mut last);
-        write_string_field(out, 5, "GET /", &mut last);
-        write_field_header(out, 9, 6, &mut last);
-        write_list_header(out, 12, 2);
-        write_span_ref(out, 0, TraceIdLow(2), TraceIdHigh(1), 4);
-        write_span_ref(out, 1, TraceIdLow(5), TraceIdHigh(6), 7);
-        write_i32_field(out, 7, 0, &mut last);
-        write_i64_field(out, 8, 1_000, &mut last);
-        write_i64_field(out, 9, 25, &mut last);
-        write_field_header(out, 9, 10, &mut last);
-        write_list_header(out, 12, 3);
-        write_key_value_string(out, "span.kind", "server");
-        write_key_value_string(out, "http.method", "GET");
-        write_key_value_bool(out, "error", true);
-        write_field_header(out, 9, 11, &mut last);
-        write_list_header(out, 12, 1);
-        write_log(out);
-        out.push(0);
-    }
-
-    fn write_span_ref(
-        out: &mut Vec<u8>,
-        ref_type: i32,
-        low: TraceIdLow,
-        high: TraceIdHigh,
-        span_id: i64,
-    ) {
-        let mut last = 0;
-        write_i32_field(out, 1, ref_type, &mut last);
-        write_i64_field(out, 2, low.0, &mut last);
-        write_i64_field(out, 3, high.0, &mut last);
-        write_i64_field(out, 4, span_id, &mut last);
-        out.push(0);
-    }
-
-    fn write_log(out: &mut Vec<u8>) {
-        let mut last = 0;
-        write_i64_field(out, 1, 1_005, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 2);
-        write_key_value_string(out, "event", "cache.miss");
-        write_key_value_string(out, "cache.key", "users");
-        out.push(0);
-    }
-
-    fn write_key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 0, &mut last);
-        write_string_field(out, 3, value, &mut last);
-        out.push(0);
-    }
-
-    fn write_key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 3, &mut last);
-        write_bool_field(out, 5, value, &mut last);
-        out.push(0);
-    }
-
-    fn write_i32_field(out: &mut Vec<u8>, id: i16, value: i32, last: &mut i16) {
-        write_field_header(out, 5, id, last);
-        write_varint(out, zigzag_i32(value));
-    }
-
-    fn write_i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
-        write_field_header(out, 6, id, last);
-        write_varint(out, zigzag_i64(value));
-    }
-
-    fn write_string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
-        write_field_header(out, 8, id, last);
-        write_varint(out, u64::try_from(value.len()).unwrap());
-        out.extend_from_slice(value.as_bytes());
-    }
-
-    fn write_bool_field(out: &mut Vec<u8>, id: i16, value: bool, last: &mut i16) {
-        write_field_header(out, if value { 1 } else { 2 }, id, last);
-    }
-
-    fn write_field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
-        let delta = id - *last;
-        if (1..=15).contains(&delta) {
-            out.push((u8::try_from(delta).unwrap() << 4) | type_id);
-        } else {
-            out.push(type_id);
-            write_varint(out, zigzag_i32(i32::from(id)));
-        }
-        *last = id;
-    }
-
-    fn write_list_header(out: &mut Vec<u8>, element_type: u8, size: usize) {
-        if size < 15 {
-            out.push((u8::try_from(size).unwrap() << 4) | element_type);
-        } else {
-            out.push(0xF0 | element_type);
-            write_varint(out, u64::try_from(size).unwrap());
-        }
-    }
-
-    fn write_map_header(out: &mut Vec<u8>, key_type: u8, value_type: u8, size: usize) {
+    fn write_map_header(out: &mut Vec<u8>, header: &MapHeader) {
+        let &MapHeader {
+            key_type,
+            value_type,
+            size,
+        } = header;
         if size == 0 {
             out.push(0);
         } else {
@@ -1162,130 +1021,356 @@ mod tests {
             out.push((key_type << 4) | value_type);
         }
     }
-
-    fn write_varint(out: &mut Vec<u8>, mut value: u64) {
-        while value >= 0x80 {
-            out.push(u8::try_from(value & 0x7f).unwrap() | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap());
-    }
-
-    fn zigzag_i32(value: i32) -> u64 {
-        u64::from(((value << 1) ^ (value >> 31)).cast_unsigned())
-    }
-
-    fn zigzag_i64(value: i64) -> u64 {
-        ((value << 1) ^ (value >> 63)).cast_unsigned()
-    }
 }
 
 mod binary_input;
-mod bt_binary;
-mod bt_bool;
-mod bt_byte;
-mod bt_double;
-mod bt_i16;
-mod bt_i32;
-mod bt_i64;
-mod bt_list;
-mod bt_map;
-mod bt_set;
-mod bt_stop;
-mod bt_struct;
 mod compact_input;
-mod decode_jaeger_binary_thrift;
-mod decode_jaeger_thrift;
-mod i64_bytes;
-mod jaeger_batch;
-mod jaeger_log;
-mod jaeger_process;
-mod jaeger_ref;
-mod jaeger_span;
-mod jaeger_span_to_internal;
-mod read_batch;
-mod read_binary_batch;
-mod read_binary_key_value;
-mod read_binary_log;
-mod read_binary_process;
-mod read_binary_ref;
-mod read_binary_span;
-mod read_key_value;
-mod read_log;
-mod read_process;
-mod read_ref;
-mod read_span;
-mod ref_type_name;
-mod span_kind;
-mod span_logs_to_events;
-mod span_status;
-mod spans_from_batch;
-mod t_binary;
-mod t_bool_false;
-mod t_bool_true;
-mod t_byte;
-mod t_double;
-mod t_i16;
-mod t_i32;
-mod t_i64;
-mod t_list;
-mod t_map;
-mod t_set;
-mod t_stop;
-mod t_struct;
-mod trace_id;
+mod thrift_cursor;
 
 use binary_input::BinaryInput;
-use bt_binary::BT_BINARY;
-use bt_bool::BT_BOOL;
-use bt_byte::BT_BYTE;
-use bt_double::BT_DOUBLE;
-use bt_i16::BT_I16;
-use bt_i32::BT_I32;
-use bt_i64::BT_I64;
-use bt_list::BT_LIST;
-use bt_map::BT_MAP;
-use bt_set::BT_SET;
-use bt_stop::BT_STOP;
-use bt_struct::BT_STRUCT;
 use compact_input::CompactInput;
-pub use decode_jaeger_binary_thrift::decode_jaeger_binary_thrift;
-pub use decode_jaeger_thrift::decode_jaeger_thrift;
-use i64_bytes::i64_bytes;
-pub(super) use jaeger_batch::JaegerBatch;
-pub(super) use jaeger_log::JaegerLog;
-pub(super) use jaeger_process::JaegerProcess;
-pub(super) use jaeger_ref::JaegerRef;
-pub(super) use jaeger_span::JaegerSpan;
-use jaeger_span_to_internal::jaeger_span_to_internal;
-use read_batch::read_batch;
-use read_binary_batch::read_binary_batch;
-use read_binary_key_value::read_binary_key_value;
-use read_binary_log::read_binary_log;
-use read_binary_process::read_binary_process;
-use read_binary_ref::read_binary_ref;
-use read_binary_span::read_binary_span;
-use read_key_value::read_key_value;
-use read_log::read_log;
-use read_process::read_process;
-use read_ref::read_ref;
-use read_span::read_span;
-use ref_type_name::ref_type_name;
-use span_kind::span_kind;
-use span_logs_to_events::span_logs_to_events;
-use span_status::span_status;
-pub(super) use spans_from_batch::spans_from_batch;
-use t_binary::T_BINARY;
-use t_bool_false::T_BOOL_FALSE;
-use t_bool_true::T_BOOL_TRUE;
-use t_byte::T_BYTE;
-use t_double::T_DOUBLE;
-use t_i16::T_I16;
-use t_i32::T_I32;
-use t_i64::T_I64;
-use t_list::T_LIST;
-use t_map::T_MAP;
-use t_set::T_SET;
-use t_stop::T_STOP;
-use t_struct::T_STRUCT;
-use trace_id::trace_id;
+pub(super) use thrift_cursor::wire_length;
+use thrift_cursor::{
+    CollectionHeader, FieldHeader, MapHeader, check_collection_header, check_map_header,
+    descend_skip_depth, read_utf8_binary,
+};
+
+pub(crate) const BT_BINARY: u8 = 11;
+
+pub(crate) const BT_BOOL: u8 = 2;
+
+pub(crate) const BT_BYTE: u8 = 3;
+
+pub(crate) const BT_DOUBLE: u8 = 4;
+
+pub(crate) const BT_I16: u8 = 6;
+
+pub(crate) const BT_I32: u8 = 8;
+
+pub(crate) const BT_I64: u8 = 10;
+
+pub(crate) const BT_LIST: u8 = 15;
+
+pub(crate) const BT_MAP: u8 = 13;
+
+pub(crate) const BT_SET: u8 = 14;
+
+pub(crate) const BT_STOP: u8 = 0;
+
+pub(crate) const BT_STRUCT: u8 = 12;
+
+pub(crate) const T_BINARY: u8 = 8;
+
+pub(crate) const T_BOOL_FALSE: u8 = 2;
+
+pub(crate) const T_BOOL_TRUE: u8 = 1;
+
+pub(crate) const T_BYTE: u8 = 3;
+
+pub(crate) const T_DOUBLE: u8 = 7;
+
+pub(crate) const T_I16: u8 = 4;
+
+pub(crate) const T_I32: u8 = 5;
+
+pub(crate) const T_I64: u8 = 6;
+
+pub(crate) const T_LIST: u8 = 9;
+
+pub(crate) const T_MAP: u8 = 11;
+
+pub(crate) const T_SET: u8 = 10;
+
+pub(crate) const T_STOP: u8 = 0;
+
+pub(crate) const T_STRUCT: u8 = 12;
+
+/// Decode a Jaeger binary-Thrift HTTP `Batch` body into internal spans.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn decode_jaeger_binary_thrift(body: &[u8]) -> Result<Vec<Span>, WireError> {
+    let mut input = BinaryInput::new(body);
+    let batch = read_binary_batch(&mut input)?;
+    Ok(spans_from_batch(&batch))
+}
+
+/// Decode a Jaeger compact-Thrift HTTP `Batch` body into internal spans.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn decode_jaeger_thrift(body: &[u8]) -> Result<Vec<Span>, WireError> {
+    let mut input = CompactInput::new(body);
+    let batch = read_batch(&mut input)?;
+    Ok(spans_from_batch(&batch))
+}
+
+// Jaeger carries a span id as a signed 64-bit integer, and OTLP carries the
+// same id as its eight big-endian bytes. The reading is the one the profiles
+// side uses too, so it comes from the block store rather than from here.
+pub(crate) fn i64_bytes(value: i64) -> [u8; 8] {
+    span_id_be_bytes_from_u64(value.cast_unsigned())
+}
+
+pub(crate) fn ref_type_name(ref_type: i32) -> &'static str {
+    match ref_type {
+        0 => "child_of",
+        1 => "follows_from",
+        _ => "reference",
+    }
+}
+
+pub(super) fn spans_from_batch(batch: &JaegerBatch) -> Vec<Span> {
+    batch
+        .spans
+        .iter()
+        .map(|span| jaeger_span_to_internal(span, &batch.process))
+        .collect()
+}
+
+pub(crate) fn trace_id(high: TraceIdHigh, low: TraceIdLow) -> [u8; 16] {
+    let mut out = [0; 16];
+    out[..8].copy_from_slice(&high.0.to_be_bytes());
+    out[8..].copy_from_slice(&low.0.to_be_bytes());
+    out
+}
+
+pub(super) fn read_batch(input: &mut CompactInput<'_>) -> Result<JaegerBatch, WireError> {
+    let mut out = JaegerBatch::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_STRUCT => out.process = read_process(input)?,
+            2 if field.field_type == T_LIST => out.spans = input.read_struct_list(read_span)?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_binary_batch(input: &mut BinaryInput<'_>) -> Result<JaegerBatch, WireError> {
+    let mut out = JaegerBatch::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_STRUCT => out.process = read_binary_process(input)?,
+            2 if field.field_type == BT_LIST => {
+                out.spans = input.read_struct_list(read_binary_span)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_binary_log(input: &mut BinaryInput<'_>) -> Result<JaegerLog, WireError> {
+    let mut out = JaegerLog::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_I64 => out.timestamp_micros = input.read_i64()?,
+            2 if field.field_type == BT_LIST => {
+                out.fields = input.read_struct_list(read_binary_key_value)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_binary_process(input: &mut BinaryInput<'_>) -> Result<JaegerProcess, WireError> {
+    let mut out = JaegerProcess::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_BINARY => out.service_name = input.read_string()?,
+            2 if field.field_type == BT_LIST => {
+                out.tags = input.read_struct_list(read_binary_key_value)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_binary_ref(input: &mut BinaryInput<'_>) -> Result<JaegerRef, WireError> {
+    let mut out = JaegerRef::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_I32 => out.ref_type = input.read_i32()?,
+            2 if field.field_type == BT_I64 => out.trace_id_low = input.read_i64()?,
+            3 if field.field_type == BT_I64 => out.trace_id_high = input.read_i64()?,
+            4 if field.field_type == BT_I64 => out.span_id = input.read_i64()?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_binary_span(input: &mut BinaryInput<'_>) -> Result<JaegerSpan, WireError> {
+    let mut out = JaegerSpan::default();
+    while let Some(field) = input.read_field()? {
+        match field.field_id {
+            1 if field.field_type == BT_I64 => out.trace_id_low = input.read_i64()?,
+            2 if field.field_type == BT_I64 => out.trace_id_high = input.read_i64()?,
+            3 if field.field_type == BT_I64 => out.span_id = input.read_i64()?,
+            4 if field.field_type == BT_I64 => out.parent_span_id = input.read_i64()?,
+            5 if field.field_type == BT_BINARY => out.operation_name = input.read_string()?,
+            6 if field.field_type == BT_LIST => {
+                out.references = input.read_struct_list(read_binary_ref)?;
+            }
+            8 if field.field_type == BT_I64 => out.start_time_micros = input.read_i64()?,
+            9 if field.field_type == BT_I64 => out.duration_micros = input.read_i64()?,
+            10 if field.field_type == BT_LIST => {
+                out.tags = input.read_struct_list(read_binary_key_value)?;
+            }
+            11 if field.field_type == BT_LIST => {
+                out.logs = input.read_struct_list(read_binary_log)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_log(input: &mut CompactInput<'_>) -> Result<JaegerLog, WireError> {
+    let mut out = JaegerLog::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_I64 => out.timestamp_micros = input.read_i64()?,
+            2 if field.field_type == T_LIST => {
+                out.fields = input.read_struct_list(read_key_value)?;
+            }
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_process(input: &mut CompactInput<'_>) -> Result<JaegerProcess, WireError> {
+    let mut out = JaegerProcess::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_BINARY => out.service_name = input.read_string()?,
+            2 if field.field_type == T_LIST => out.tags = input.read_struct_list(read_key_value)?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_ref(input: &mut CompactInput<'_>) -> Result<JaegerRef, WireError> {
+    let mut out = JaegerRef::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_I32 => out.ref_type = input.read_i32()?,
+            2 if field.field_type == T_I64 => out.trace_id_low = input.read_i64()?,
+            3 if field.field_type == T_I64 => out.trace_id_high = input.read_i64()?,
+            4 if field.field_type == T_I64 => out.span_id = input.read_i64()?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn read_span(input: &mut CompactInput<'_>) -> Result<JaegerSpan, WireError> {
+    let mut out = JaegerSpan::default();
+    let mut last = 0;
+    while let Some(field) = input.read_field(&mut last)? {
+        match field.field_id {
+            1 if field.field_type == T_I64 => out.trace_id_low = input.read_i64()?,
+            2 if field.field_type == T_I64 => out.trace_id_high = input.read_i64()?,
+            3 if field.field_type == T_I64 => out.span_id = input.read_i64()?,
+            4 if field.field_type == T_I64 => out.parent_span_id = input.read_i64()?,
+            5 if field.field_type == T_BINARY => out.operation_name = input.read_string()?,
+            6 if field.field_type == T_LIST => out.references = input.read_struct_list(read_ref)?,
+            8 if field.field_type == T_I64 => out.start_time_micros = input.read_i64()?,
+            9 if field.field_type == T_I64 => out.duration_micros = input.read_i64()?,
+            10 if field.field_type == T_LIST => {
+                out.tags = input.read_struct_list(read_key_value)?;
+            }
+            11 if field.field_type == T_LIST => out.logs = input.read_struct_list(read_log)?,
+            _ => input.skip(field.field_type)?,
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn span_kind(tags: &[KeyValue]) -> SpanKind {
+    tags.iter()
+        .find_map(|tag| {
+            if tag.key != "span.kind" {
+                return None;
+            }
+            match &tag.value {
+                AttrValue::Str(value) => match value.as_str() {
+                    "server" => Some(SpanKind::Server),
+                    "client" => Some(SpanKind::Client),
+                    "producer" => Some(SpanKind::Producer),
+                    "consumer" => Some(SpanKind::Consumer),
+                    "internal" => Some(SpanKind::Internal),
+                    _ => None,
+                },
+                _ => None,
+            }
+        })
+        .unwrap_or(SpanKind::Internal)
+}
+
+pub(super) fn span_logs_to_events(logs: &[JaegerLog]) -> Vec<crate::span::EventRecord> {
+    logs.iter()
+        .map(|log| {
+            let name = log
+                .fields
+                .iter()
+                .find_map(|field| {
+                    if field.key != "event" {
+                        return None;
+                    }
+                    match &field.value {
+                        AttrValue::Str(value) if !value.is_empty() => Some(value.clone()),
+                        _ => None,
+                    }
+                })
+                .unwrap_or_else(|| "log".to_string());
+            crate::span::EventRecord {
+                time_unix_nano: log.timestamp_micros.saturating_mul(1_000),
+                name,
+                attrs: log.fields.clone(),
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn span_status(tags: &[KeyValue]) -> StatusCode {
+    if tags.iter().any(|tag| {
+        tag.key == "error"
+            && match &tag.value {
+                AttrValue::Bool(true) => true,
+                AttrValue::Str(value) => value == "true",
+                AttrValue::Int(_)
+                | AttrValue::Double(_)
+                | AttrValue::Bool(false)
+                | AttrValue::Bytes(_)
+                | AttrValue::Array(_)
+                | AttrValue::Unsupported(_) => false,
+            }
+    }) {
+        StatusCode::Error
+    } else {
+        StatusCode::Unset
+    }
+}
+
+/// Take `len` bytes from `bytes` at `*pos`, and advance `*pos` past them.
+pub(crate) fn take_bytes(bytes: &[u8], pos: &mut usize, len: usize) -> Result<Vec<u8>, WireError> {
+    let end = pos
+        .checked_add(len)
+        .ok_or_else(|| WireError::Decode("binary length overflow".into()))?;
+    let out = bytes
+        .get(*pos..end)
+        .ok_or_else(|| WireError::Decode("truncated binary".into()))?
+        .to_vec();
+    *pos = end;
+    Ok(out)
+}

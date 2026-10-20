@@ -81,11 +81,14 @@ fn last_key_row(columns: &[ArrayRef], row: usize) -> Result<Vec<ArrayRef>> {
 
 /// One comparator per key column, each comparing a `left` row to a `right` row.
 fn comparators(left: &[ArrayRef], right: &[ArrayRef]) -> Result<Vec<DynComparator>> {
-    left.iter()
-        .zip(right)
-        .map(|(left, right)| {
-            make_comparator(left.as_ref(), right.as_ref(), SORT_KEY_OPTIONS)
-                .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
+    (0..left.len())
+        .map(|index| {
+            make_comparator(
+                left[index].as_ref(),
+                right[index].as_ref(),
+                SORT_KEY_OPTIONS,
+            )
+            .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
         })
         .collect()
 }

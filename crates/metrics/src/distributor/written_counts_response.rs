@@ -1,4 +1,4 @@
-use super::{IntoResponse, Response, StatusCode, WrittenCounts, insert_written_header};
+use super::{HeaderMap, HeaderValue, IntoResponse, Response, StatusCode, WrittenCounts};
 
 pub(crate) fn written_counts_response(status: StatusCode, counts: WrittenCounts) -> Response {
     let mut response = status.into_response();
@@ -19,4 +19,11 @@ pub(crate) fn written_counts_response(status: StatusCode, counts: WrittenCounts)
         counts.exemplars,
     );
     response
+}
+
+pub(crate) fn insert_written_header(headers: &mut HeaderMap, name: &'static str, value: u64) {
+    headers.insert(
+        name,
+        HeaderValue::from_str(&value.to_string()).expect("u64 header value"),
+    );
 }

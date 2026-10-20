@@ -5,6 +5,24 @@ use std::collections::HashMap;
 use krabka_units::{Time, secs};
 use serde::{Deserialize, Serialize};
 
+/// Tempo-default latency histogram bucket edges, in nanoseconds.
+pub const DEFAULT_LATENCY_BUCKETS_NS: &[f64] = &[
+    2_000_000.0,
+    4_000_000.0,
+    8_000_000.0,
+    16_000_000.0,
+    32_000_000.0,
+    64_000_000.0,
+    128_000_000.0,
+    256_000_000.0,
+    512_000_000.0,
+    1_024_000_000.0,
+    2_048_000_000.0,
+    4_096_000_000.0,
+    8_192_000_000.0,
+    16_384_000_000.0,
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -15,23 +33,26 @@ mod tests {
     /// Every other default is Tempo's.
     #[test]
     fn defaults_match_tempo() {
-        let c = MetricsGenConfig::default();
+        // Compared as the serialized document, so the check covers the
+        // Tempo-spelled keys each default is written under too.
+        let defaults = serde_json::to_value(MetricsGenConfig::default()).unwrap();
         assert2::assert!(
-            c == MetricsGenConfig {
-                collection_interval: secs(15),
-                histogram_buckets_ns: DEFAULT_LATENCY_BUCKETS_NS.to_vec(),
-                max_exemplars_per_series: 0,
-                edge_ttl: secs(10),
-                edge_store_max_items: 10_000,
-                max_active_series: 10_000,
-                max_tenants: 10_000,
-                enable_target_info: false,
-                enable_status_message: false,
-                enable_messaging_system_latency: false,
-                remote_write_url: "http://localhost:9009/api/v1/push".to_string(),
-                processor: ProcessorConfig::default(),
-                overrides: HashMap::new(),
-            }
+            defaults
+                == serde_json::json!({
+                    "collection_interval_secs": 15,
+                    "histogram_buckets_ns": DEFAULT_LATENCY_BUCKETS_NS,
+                    "max_exemplars_per_series": 0,
+                    "edge_ttl_secs": 10,
+                    "edge_store_max_items": 10_000,
+                    "max_active_series": 10_000,
+                    "max_tenants": 10_000,
+                    "enable_target_info": false,
+                    "enable_status_message": false,
+                    "enable_messaging_system_latency": false,
+                    "remote_write_url": "http://localhost:9009/api/v1/push",
+                    "processor": ProcessorConfig::default(),
+                    "overrides": {},
+                })
         );
     }
 
@@ -61,18 +82,8 @@ mod tests {
         assert2::assert!(
             c == MetricsGenConfig {
                 collection_interval: secs(30),
-                histogram_buckets_ns: DEFAULT_LATENCY_BUCKETS_NS.to_vec(),
                 max_exemplars_per_series: 5,
-                edge_ttl: secs(10),
-                edge_store_max_items: 10_000,
-                max_active_series: 10_000,
-                max_tenants: 10_000,
-                enable_target_info: false,
-                enable_status_message: false,
-                enable_messaging_system_latency: false,
-                remote_write_url: "http://localhost:9009/api/v1/push".to_string(),
-                processor: ProcessorConfig::default(),
-                overrides: HashMap::new(),
+                ..MetricsGenConfig::default()
             }
         );
     }
@@ -113,11 +124,9 @@ overrides:
     }
 }
 
-mod default_latency_buckets_ns;
 mod metrics_gen_config;
 mod processor_config;
 
-pub use default_latency_buckets_ns::DEFAULT_LATENCY_BUCKETS_NS;
 pub use metrics_gen_config::MetricsGenConfig;
 pub use processor_config::{
     AttributeMatch, DimensionMapping, FilterPolicy, HostInfoConfig, MatchType, ProcessorConfig,

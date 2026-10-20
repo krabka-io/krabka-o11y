@@ -92,7 +92,7 @@ WASIX, supporting contended locks and timed waits.
 
 The build pins cargo-wasix 0.1.34, wasixcc 0.4.7, WASIX Rust `v2026-09-18.1+rust-1.97`, libc sysroot `v2026-10-02.1`, LLVM `21.1.206`, and Binaryen `version_133`. Installations and downloads stay under `.tools/`. Rustup's `wasix` alias points to the pinned compiler.
 
-`scripts/prepare-wasix-std.py` creates the private compiler tree `.tools/wasix-rust/`. It imports Rust standard-library source from WASIX revision `706d63224a7ce7be61ceb9d0525fe942d99a93df`. It applies `wasi/wasix-std-network.patch` there so socket addresses reflect the actual bound ports. The build uses a private rustup alias and `-Zbuild-std=std,panic_abort`. The installed standard-library source stays unchanged. The native MSRV stays at Rust 1.98.1. Only the WASIX build uses `--ignore-rust-version`; the actual build and browser checks establish compiler and API compatibility.
+`scripts/prepare-wasix-std.py` creates the private compiler tree `.tools/wasix-rust/`. It imports Rust standard-library source from WASIX revision `706d63224a7ce7be61ceb9d0525fe942d99a93df`. It applies `wasi/wasix-std-network.patch` there so socket addresses reflect the actual bound ports. The build uses a private rustup alias and `-Zbuild-std=std,panic_abort`. The installed standard-library source stays unchanged. The native MSRV stays at Rust 1.99.1. Only the WASIX build uses `--ignore-rust-version`; the actual build and browser checks establish compiler and API compatibility.
 
 `scripts/build-runtime.sh` pins Wasmer SDK 0.19.0 at `362e0db28fea57fb23af8d34cffefcb7333a883d` and Wasmer core at `5bd2b7d3182e816bd0ea330acc88e4e4733e167f`. The private SDK tree receives `wasi/wasmer-network.patch` for TCP port allocation, local UDP packets, and a dedicated async worker that keeps command deadlines runnable while guest workers block. Closing the SDK stops its workers, including workers blocked in native atomic waits. The private core tree receives `wasi/wasmer-address.patch` for the guest socket address ABI and `wasi/wasmer-udp-timeout.patch` for UDP timeouts. The runtime build records these revisions, patch hashes, and the compiled runtime hash. `network-check.mjs` checks these adapters with actual guest socket operations.
 
@@ -105,7 +105,21 @@ The default release profile uses size optimization and retains the toolchain's
 panic behavior. The manifest records the source revision, dirty state, dependency
 lock and build-script hashes, pinned runtime, and each module's SHA-256 and byte
 count, plus every platform patch hash. It is published only after all ten modules and the browser runtime exist;
-a failed build removes the ready manifest. Cached tools do not replace builds.
+a failed build removes the ready manifest.
+
+CI keeps separate caches for WASIX tools, Cargo downloads, service build outputs,
+and the completed browser runtime. Main builds save these caches; PRs only read
+them. The runtime cache covers its scripts, pins, patches, and dependency lock.
+The build checks every cached runtime file before reuse. It checks optimized
+service outputs against a completion record before Cargo can reuse them.
+Unchanged staged sources keep their previous timestamps so Cargo can reuse
+compiled dependencies. Changed sources receive new timestamps.
+
+Documentation-only PRs build the static site and check its links and browser
+navigation. They do not compile or start the WASIX services. Changes to Rust,
+dependencies, website code, build scripts, or workflows run the full lab. Main
+builds and manual runs also run the full lab. The website check remains in the
+CI gate for both paths.
 
 Local Linux x86_64 qualification passed in Chromium. All ten WASIX modules
 compiled with the qualified locks. Browser checks passed actual ingestion and

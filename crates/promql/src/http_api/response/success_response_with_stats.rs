@@ -1,11 +1,9 @@
 use std::time::Duration;
 
 use krabka_units::prelude::*;
-use serde::Serialize;
+use serde::{Serialize, ser::SerializeTuple};
 
-use super::{
-    Annotations, IntoResponse, Json, Map, QueryResult, Response, Value, json, result_json,
-};
+use super::{Annotations, QueryResult, Response, annotated_success_response, result_json};
 use crate::engine::QuerySampleStats;
 
 #[derive(Debug, Serialize)]
@@ -29,9 +27,40 @@ struct QueryTimings {
 #[serde(rename_all = "camelCase")]
 struct QuerySamples {
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    total_queryable_samples_per_step: Vec<(f64, u64)>,
+    total_queryable_samples_per_step: Vec<QueryableSamplesAtStep>,
     total_queryable_samples: u64,
     peak_samples: usize,
+}
+
+#[derive(Debug)]
+struct QueryableSamplesAtStep {
+    timestamp_seconds: f64,
+    count: u64,
+}
+
+impl Serialize for QueryableSamplesAtStep {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.timestamp_seconds)?;
+        tuple.serialize_element(&self.count)?;
+        tuple.end()
+    }
+}
+
+/// How long each phase of one query took, as its `stats` timings report it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct QueryPhaseDurations {
+    /// Parameter decode and planning before the engine runs.
+    pub(crate) preparation: Duration,
+    /// The engine's evaluation.
+    pub(crate) evaluation: Duration,
+    /// The wait for a query permit.
+    pub(crate) queue: Duration,
+    /// The whole request, from receipt to response.
+    pub(crate) total: Duration,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,13 +70,13 @@ pub(crate) struct QueryResponseStats {
 }
 
 impl QueryResponseStats {
-    pub(crate) fn new(
-        samples: QuerySampleStats,
-        preparation: Duration,
-        evaluation: Duration,
-        queue: Duration,
-        total: Duration,
-    ) -> Self {
+    pub(crate) fn new(samples: QuerySampleStats, durations: QueryPhaseDurations) -> Self {
+        let QueryPhaseDurations {
+            preparation,
+            evaluation,
+            queue,
+            total,
+        } = durations;
         Self {
             timings: QueryTimings {
                 eval_total: evaluation.as_secs_f64(),
@@ -62,8 +91,9 @@ impl QueryResponseStats {
                 total_queryable_samples_per_step: samples
                     .per_step
                     .into_iter()
-                    .map(|(timestamp_ms, count)| {
-                        (Time::from_millis(timestamp_ms).secs_f64(), count)
+                    .map(|entry| QueryableSamplesAtStep {
+                        timestamp_seconds: Time::from_millis(entry.0).secs_f64(),
+                        count: entry.1,
                     })
                     .collect(),
                 total_queryable_samples: samples.total_queryable_samples,
@@ -85,14 +115,5 @@ pub(crate) fn success_response_with_stats(
             "stats".to_string(),
             serde_json::to_value(stats).expect("query stats serialize"),
         );
-    let mut envelope = Map::new();
-    envelope.insert("status".to_string(), json!("success"));
-    envelope.insert("data".to_string(), data);
-    if !annotations.warnings.is_empty() {
-        envelope.insert("warnings".to_string(), json!(annotations.warnings));
-    }
-    if !annotations.infos.is_empty() {
-        envelope.insert("infos".to_string(), json!(annotations.http_infos()));
-    }
-    Json(Value::Object(envelope)).into_response()
+    annotated_success_response(data, annotations)
 }

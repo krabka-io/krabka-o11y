@@ -18,34 +18,82 @@ mod tests {
 
     #[test]
     fn status_codes_map_to_ingest_edge_failures() {
-        for (err, want) in [
-            (TracesError::UnsupportedContentType("x".into()), 415),
-            (TracesError::Decode("x".into()), 400),
-            (TracesError::Invalid("x".into()), 400),
-            (TracesError::Tenant(TenantResolveError::Missing), 400),
-            (
-                TracesError::TenantDenied(TenantDenied {
+        struct StatusCase {
+            error: TracesError,
+            status: u16,
+        }
+        for case in [
+            StatusCase {
+                error: TracesError::UnsupportedContentType("x".into()),
+                status: 415,
+            },
+            StatusCase {
+                error: TracesError::Decode("x".into()),
+                status: 400,
+            },
+            StatusCase {
+                error: TracesError::Invalid("x".into()),
+                status: 400,
+            },
+            StatusCase {
+                error: TracesError::Tenant(TenantResolveError::Missing),
+                status: 400,
+            },
+            StatusCase {
+                error: TracesError::TenantDenied(TenantDenied {
                     principal: "grafana".into(),
                     tenant: krabka_blockstore::TenantId::new("tenant-b").unwrap(),
                 }),
-                403,
-            ),
-            (TracesError::Limit("x".into()), 400),
-            (TracesError::RateLimit("x".into()), 429),
-            (TracesError::TooLarge { limit: 1 }, 400),
-            (TracesError::Wal("x".into()), 500),
-            (TracesError::Produce("x".into()), 500),
-            (TracesError::Block("x".into()), 500),
+                status: 403,
+            },
+            StatusCase {
+                error: TracesError::Limit("x".into()),
+                status: 400,
+            },
+            StatusCase {
+                error: TracesError::RateLimit("x".into()),
+                status: 429,
+            },
+            StatusCase {
+                error: TracesError::TooLarge { limit: 1 },
+                status: 400,
+            },
+            StatusCase {
+                error: TracesError::Wal("x".into()),
+                status: 500,
+            },
+            StatusCase {
+                error: TracesError::Produce("x".into()),
+                status: 500,
+            },
+            StatusCase {
+                error: TracesError::Block("x".into()),
+                status: 500,
+            },
         ] {
-            assert2::assert!(err.status_code() == want);
+            assert2::assert!(case.error.status_code() == case.status);
         }
     }
 }
-
-mod tempo_error_response;
-mod tempo_limit_error_response;
 mod traces_error;
 
-pub use tempo_error_response::tempo_error_response;
-pub use tempo_limit_error_response::tempo_limit_error_response;
 pub use traces_error::TracesError;
+
+#[must_use]
+pub fn tempo_error_response(status: StatusCode, message: impl Into<String>) -> Response {
+    let mut response = Json(json!({
+        "status": "error",
+        "error": message.into(),
+    }))
+    .into_response();
+    *response.status_mut() = status;
+    response
+}
+
+#[must_use]
+pub fn tempo_limit_error_response(err: &LimitError) -> Response {
+    tempo_error_response(
+        StatusCode::from_u16(err.http_status()).unwrap_or(StatusCode::BAD_REQUEST),
+        err.message(),
+    )
+}

@@ -12,23 +12,39 @@ mod tests {
 
     use super::*;
 
+    struct PushPathCase {
+        path: &'static str,
+        content_type: Option<&'static str>,
+        expected_format: WireFormat,
+    }
+
     #[test]
     fn negotiate_trace_push_paths() {
-        for (path, content_type, want) in [
-            (
-                "/v1/traces",
-                Some("application/x-protobuf"),
-                WireFormat::Otlp,
-            ),
-            ("/api/push", None, WireFormat::Otlp),
-            (
-                "/api/v2/spans",
-                Some("application/json"),
-                WireFormat::Zipkin,
-            ),
-            ("/api/traces", None, WireFormat::Jaeger),
+        for case in [
+            PushPathCase {
+                path: "/v1/traces",
+                content_type: Some("application/x-protobuf"),
+                expected_format: WireFormat::Otlp,
+            },
+            PushPathCase {
+                path: "/api/push",
+                content_type: None,
+                expected_format: WireFormat::Otlp,
+            },
+            PushPathCase {
+                path: "/api/v2/spans",
+                content_type: Some("application/json"),
+                expected_format: WireFormat::Zipkin,
+            },
+            PushPathCase {
+                path: "/api/traces",
+                content_type: None,
+                expected_format: WireFormat::Jaeger,
+            },
         ] {
-            assert2::assert!(negotiate(path, content_type).unwrap() == want);
+            assert2::assert!(
+                negotiate(case.path, case.content_type).unwrap() == case.expected_format
+            );
         }
     }
 
@@ -39,10 +55,29 @@ mod tests {
     }
 }
 
-mod negotiate;
-mod wire_error;
-mod wire_format;
+/// Ingest-edge wire error.
+pub type WireError = TracesError;
 
-pub use negotiate::negotiate;
-pub use wire_error::WireError;
-pub use wire_format::WireFormat;
+/// Which push door a request arrived on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireFormat {
+    Otlp,
+    Zipkin,
+    Jaeger,
+}
+
+/// Pick the decoder from the request path.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn negotiate(path: &str, content_type: Option<&str>) -> Result<WireFormat, WireError> {
+    match path {
+        "/v1/traces" | "/api/push" => Ok(WireFormat::Otlp),
+        "/api/v2/spans" => Ok(WireFormat::Zipkin),
+        "/api/traces" => Ok(WireFormat::Jaeger),
+        other => Err(WireError::UnsupportedContentType(format!(
+            "{other} (content-type {})",
+            content_type.unwrap_or("none")
+        ))),
+    }
+}

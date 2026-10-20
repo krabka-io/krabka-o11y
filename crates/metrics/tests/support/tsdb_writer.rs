@@ -9,19 +9,58 @@
 use std::collections::BTreeMap;
 
 pub struct SyntheticSeries {
-    pub labels: Vec<(Vec<u8>, Vec<u8>)>,
+    pub labels: Vec<LabelBytes>,
     pub chunks: Vec<SyntheticChunk>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LabelBytes {
+    pub name: Vec<u8>,
+    pub value: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SyntheticSample {
+    pub timestamp_ms: i64,
+    pub value: f64,
+}
+
+impl SyntheticSample {
+    pub const fn new(timestamp_ms: i64, value: f64) -> Self {
+        Self {
+            timestamp_ms,
+            value,
+        }
+    }
 }
 
 pub struct SyntheticChunk {
     /// The chunk segment that holds the chunk.
     pub segment: usize,
-    pub samples: Vec<(i64, f64)>,
+    pub samples: Vec<SyntheticSample>,
 }
 
 pub struct SyntheticBlock {
     pub index: Vec<u8>,
     pub segments: Vec<Vec<u8>>,
+}
+
+pub struct TombstoneRecord {
+    pub series_reference: u64,
+    pub min_time: i64,
+    pub max_time: i64,
+}
+
+#[derive(Clone, Copy)]
+struct ChunkTimeRange {
+    max_time: i64,
+    reference: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct LabelBytesRef<'a> {
+    name: &'a [u8],
+    value: &'a [u8],
 }
 
 /// Writes `series` in the given order into an index and `segments` chunk
@@ -58,14 +97,14 @@ pub fn write_block(series: &[SyntheticSeries], segments: usize) -> SyntheticBloc
 /// Writes a tombstones file that deletes each `(series reference, min, max)`
 /// interval, inclusive at both ends.
 #[must_use]
-pub fn write_tombstones(records: &[(u64, i64, i64)]) -> Vec<u8> {
+pub fn write_tombstones(records: &[TombstoneRecord]) -> Vec<u8> {
     let mut file = 0x0130_BA30_u32.to_be_bytes().to_vec();
     file.push(1);
     let mut body = Vec::new();
-    for (series, min_time, max_time) in records {
-        put_uvarint(&mut body, *series);
-        put_varint(&mut body, *min_time);
-        put_varint(&mut body, *max_time);
+    for record in records {
+        put_uvarint(&mut body, record.series_reference);
+        put_varint(&mut body, record.min_time);
+        put_varint(&mut body, record.max_time);
     }
     file.extend_from_slice(&body);
     file.extend_from_slice(&crc32c::crc32c(&body).to_be_bytes());
@@ -85,7 +124,7 @@ fn write_index(series: &[SyntheticSeries], chunk_refs: &[Vec<u64>]) -> Vec<u8> {
             entry
                 .labels
                 .iter()
-                .flat_map(|(name, value)| [name.as_slice(), value.as_slice()])
+                .flat_map(|label| [label.name.as_slice(), label.value.as_slice()])
         })
         .collect::<Vec<_>>();
     symbols.sort_unstable();
@@ -117,40 +156,53 @@ fn write_index(series: &[SyntheticSeries], chunk_refs: &[Vec<u64>]) -> Vec<u8> {
 
     align(&mut index, 16);
     let series_offset = offset(&index);
-    let mut postings = BTreeMap::<(&[u8], &[u8]), Vec<u32>>::new();
-    for (entry, refs) in series.iter().zip(chunk_refs) {
+    let mut postings = BTreeMap::<LabelBytesRef<'_>, Vec<u32>>::new();
+    for series_entry in series.iter().zip(chunk_refs) {
+        let entry = series_entry.0;
+        let refs = series_entry.1;
         align(&mut index, 16);
         let reference = u32::try_from(index.len() / 16).expect("series reference fits u32");
-        postings.entry((b"", b"")).or_default().push(reference);
+        postings
+            .entry(LabelBytesRef {
+                name: b"",
+                value: b"",
+            })
+            .or_default()
+            .push(reference);
         let mut content = Vec::new();
         put_uvarint(
             &mut content,
             u64::try_from(entry.labels.len()).expect("label count"),
         );
-        for (name, value) in &entry.labels {
+        for label in &entry.labels {
             postings
-                .entry((name.as_slice(), value.as_slice()))
+                .entry(LabelBytesRef {
+                    name: label.name.as_slice(),
+                    value: label.value.as_slice(),
+                })
                 .or_default()
                 .push(reference);
-            put_uvarint(&mut content, symbol_ref(name.as_slice()));
-            put_uvarint(&mut content, symbol_ref(value.as_slice()));
+            put_uvarint(&mut content, symbol_ref(label.name.as_slice()));
+            put_uvarint(&mut content, symbol_ref(label.value.as_slice()));
         }
         put_uvarint(
             &mut content,
             u64::try_from(entry.chunks.len()).expect("chunk count"),
         );
-        let mut previous = None::<(i64, u64)>;
-        for (chunk, reference) in entry.chunks.iter().zip(refs) {
+        let mut previous = None::<ChunkTimeRange>;
+        for chunk_entry in entry.chunks.iter().zip(refs) {
+            let chunk = chunk_entry.0;
+            let reference = chunk_entry.1;
             let min_time = chunk
                 .samples
                 .iter()
-                .map(|(t, _)| *t)
+                .map(|sample| sample.timestamp_ms)
                 .min()
                 .expect("chunk has samples");
             let max_time = chunk
                 .samples
                 .iter()
-                .map(|(t, _)| *t)
+                .map(|sample| sample.timestamp_ms)
                 .max()
                 .expect("chunk has samples");
             match previous {
@@ -159,16 +211,19 @@ fn write_index(series: &[SyntheticSeries], chunk_refs: &[Vec<u64>]) -> Vec<u8> {
                     put_uvarint(&mut content, (max_time - min_time).cast_unsigned());
                     put_uvarint(&mut content, *reference);
                 }
-                Some((previous_max, previous_ref)) => {
-                    put_uvarint(&mut content, (min_time - previous_max).cast_unsigned());
+                Some(previous) => {
+                    put_uvarint(&mut content, (min_time - previous.max_time).cast_unsigned());
                     put_uvarint(&mut content, (max_time - min_time).cast_unsigned());
                     put_varint(
                         &mut content,
-                        reference.cast_signed() - previous_ref.cast_signed(),
+                        reference.cast_signed() - previous.reference.cast_signed(),
                     );
                 }
             }
-            previous = Some((max_time, *reference));
+            previous = Some(ChunkTimeRange {
+                max_time,
+                reference: *reference,
+            });
         }
         put_uvarint(
             &mut index,
@@ -184,10 +239,12 @@ fn write_index(series: &[SyntheticSeries], chunk_refs: &[Vec<u64>]) -> Vec<u8> {
         .expect("pair count")
         .to_be_bytes()
         .to_vec();
-    for ((name, value), refs) in &postings {
+    for posting in &postings {
+        let label = posting.0;
+        let refs = posting.1;
         align(&mut index, 4);
         put_uvarint(&mut table, 2);
-        for part in [name, value] {
+        for part in [label.name, label.value] {
             put_uvarint(&mut table, u64::try_from(part.len()).expect("label length"));
             table.extend_from_slice(part);
         }
@@ -253,20 +310,22 @@ fn put_varint(out: &mut Vec<u8>, value: i64) {
 /// Encodes an XOR chunk. Every delta-of-delta uses the 64-bit form and every
 /// changed value writes new leading and trailing counts, which the format
 /// allows and which keeps the writer short.
-fn xor_chunk(samples: &[(i64, f64)]) -> Vec<u8> {
+fn xor_chunk(samples: &[SyntheticSample]) -> Vec<u8> {
     let mut bits = BitWriter::default();
     let mut previous_time = 0_i64;
     let mut previous_delta = 0_i64;
     let mut previous_value = 0_u64;
-    for (index, (timestamp, value)) in samples.iter().enumerate() {
-        let value = value.to_bits();
+    for sample_entry in samples.iter().enumerate() {
+        let index = sample_entry.0;
+        let sample = sample_entry.1;
+        let value = sample.value.to_bits();
         if index == 0 {
             let mut varint = Vec::new();
-            put_varint(&mut varint, *timestamp);
+            put_varint(&mut varint, sample.timestamp_ms);
             bits.write_bytes(&varint);
             bits.write(value, 64);
         } else {
-            let delta = timestamp - previous_time;
+            let delta = sample.timestamp_ms - previous_time;
             if index == 1 {
                 let mut uvarint = Vec::new();
                 put_uvarint(&mut uvarint, delta.cast_unsigned());
@@ -286,7 +345,7 @@ fn xor_chunk(samples: &[(i64, f64)]) -> Vec<u8> {
                 bits.write(xor, 64);
             }
         }
-        previous_time = *timestamp;
+        previous_time = sample.timestamp_ms;
         previous_value = value;
     }
     let mut chunk = u16::try_from(samples.len())

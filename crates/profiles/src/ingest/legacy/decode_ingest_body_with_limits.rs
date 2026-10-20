@@ -29,13 +29,16 @@ pub async fn decode_ingest_body_with_limits(
     // A pprof body carries its own sample types, so it keeps them and takes the
     // metric name that follows from them. The stack formats carry none, and
     // Pyroscope reads every one of them as a CPU profile.
-    let (profile, metric_name) = match query.format {
+    let decoded = match query.format {
         IngestFormat::Pprof => {
             let profile = PprofProfile::decode(&maybe_gunzip(&body, max)?)?;
             let metric_name = pprof_metric_name(&profile).ok_or_else(|| {
                 ProfilesError::Decode("pprof profile declares no sample_type".to_string())
             })?;
-            (profile, metric_name)
+            LegacyCpuProfile {
+                profile,
+                metric_name,
+            }
         }
         IngestFormat::Groups => legacy_cpu_profile(
             folded_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&body))?,
@@ -63,9 +66,9 @@ pub async fn decode_ingest_body_with_limits(
             ));
         }
     };
-    let profile = apply_query_time(profile, query)?;
+    let profile = apply_query_time(decoded.profile, query)?;
     Ok(RawProfile {
-        labels: query_labels(query, &metric_name, Vec::new()),
+        labels: query_labels(query, &decoded.metric_name, Vec::new()),
         profile,
         delta: false,
         sample_timestamps_ns: Vec::new(),

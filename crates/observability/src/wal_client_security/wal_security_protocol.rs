@@ -1,23 +1,29 @@
-use super::{ListenerProtocol, ValueEnum, fmt};
+use derive_more::Display;
+
+use super::{ListenerProtocol, ValueEnum};
 
 /// The protocol a write-ahead log connection speaks, as Kafka's
 /// `security.protocol` names it.
 ///
 /// The flag accepts the names in any letter case, as the Kafka clients do.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq, ValueEnum)]
 pub enum WalSecurityProtocol {
     /// Plain TCP, with no TLS and no SASL.
     #[default]
     #[value(name = "PLAINTEXT")]
+    #[display("PLAINTEXT")]
     Plaintext,
     /// TLS, with an optional client certificate for mutual TLS.
     #[value(name = "SSL")]
+    #[display("SSL")]
     Ssl,
     /// SASL authentication over plain TCP.
     #[value(name = "SASL_PLAINTEXT")]
+    #[display("SASL_PLAINTEXT")]
     SaslPlaintext,
     /// SASL authentication over TLS.
     #[value(name = "SASL_SSL")]
+    #[display("SASL_SSL")]
     SaslSsl,
 }
 
@@ -43,15 +49,5 @@ impl From<WalSecurityProtocol> for ListenerProtocol {
             WalSecurityProtocol::SaslPlaintext => Self::SaslPlaintext,
             WalSecurityProtocol::SaslSsl => Self::SaslSsl,
         }
-    }
-}
-
-impl fmt::Display for WalSecurityProtocol {
-    // The flag spelling, so an error names the value the operator typed.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self
-            .to_possible_value()
-            .expect("no protocol variant is skipped");
-        formatter.write_str(value.get_name())
     }
 }

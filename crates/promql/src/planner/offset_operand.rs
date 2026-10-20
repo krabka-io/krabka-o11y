@@ -1,6 +1,11 @@
 use super::{consume_ident, consume_number_duration, is_ident_start, matching_delimiter, skip_ws};
 
-pub(crate) fn offset_operand(chars: &[char], after_keyword: usize) -> Option<(String, usize)> {
+pub(crate) struct OffsetOperand {
+    pub text: String,
+    pub end: usize,
+}
+
+pub(crate) fn offset_operand(chars: &[char], after_keyword: usize) -> Option<OffsetOperand> {
     let mut start = skip_ws(chars, after_keyword);
     if start >= chars.len() {
         return None;
@@ -21,7 +26,7 @@ pub(crate) fn offset_operand(chars: &[char], after_keyword: usize) -> Option<(St
         if let Some(sign_start) = sign_start {
             operand.insert(0, chars[sign_start]);
         }
-        return Some((operand, end));
+        return Some(OffsetOperand { text: operand, end });
     }
 
     let end = if is_ident_start(chars[start]) {
@@ -39,5 +44,8 @@ pub(crate) fn offset_operand(chars: &[char], after_keyword: usize) -> Option<(St
     };
 
     let operand_start = sign_start.unwrap_or(start);
-    Some((chars[operand_start..end].iter().collect::<String>(), end))
+    Some(OffsetOperand {
+        text: chars[operand_start..end].iter().collect::<String>(),
+        end,
+    })
 }

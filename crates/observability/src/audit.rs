@@ -33,39 +33,28 @@
 //! write fails, the writer puts records in the spool at `--audit-spool-dir`.
 //! It writes them again, in order, when the topic accepts writes again.
 
-mod admin_operation;
 mod audit_args;
 mod audit_build_error;
 mod audit_clocks;
 mod audit_handle;
-mod audit_principal_of;
-mod audit_producer_record;
 mod audit_security_events;
 mod audit_service;
-mod authentication;
-mod authorization_denied;
 mod kafka_topic_audit_sink;
-mod krabka_product;
-mod mechanism_of;
 mod mechanisms;
 mod operations;
-mod principal;
-mod resource;
 mod resource_types;
-mod source_endpoint;
 #[cfg(test)]
 mod tests;
-mod unauthenticated_principal;
-mod unknown_source_endpoint;
 
+use axum::body::Bytes;
 pub use krabka_audit::{
     AuditEndpoint, AuditError, AuditEvent, AuditOutcome, AuditPrincipal, AuditRecord,
     AuditResource, AuditSink, EpochMs, ProductInfo,
 };
+use krabka_client_producer::{Header, ProducerRecord};
+use krabka_ids::PartitionIndex;
 
-use self::audit_producer_record::audit_producer_record;
 pub use self::{
-    admin_operation::admin_operation,
     audit_args::{
         AuditArgs, DEFAULT_AUDIT_CHECKPOINT_EVERY, DEFAULT_AUDIT_QUEUE_CAPACITY,
         DEFAULT_AUDIT_SPOOL_MAX,
@@ -73,14 +62,13 @@ pub use self::{
     audit_build_error::AuditBuildError,
     audit_clocks::AuditClocks,
     audit_handle::AuditHandle,
-    audit_principal_of::audit_principal_of,
-    audit_service::{AUDIT_CHECKPOINT_EVERY_RECORDS, AUDIT_SPOOL_REPLAY_EVERY, AuditService},
-    authentication::authentication,
-    authorization_denied::authorization_denied,
+    audit_service::{
+        AUDIT_CHECKPOINT_EVERY_RECORDS, AUDIT_SPOOL_REPLAY_EVERY, AuditService, AuditServiceParts,
+    },
     kafka_topic_audit_sink::{DEFAULT_AUDIT_WRITE_TIMEOUT, KafkaTopicAuditSink},
-    krabka_product::krabka_product,
-    mechanism_of::mechanism_of,
-    mechanisms::{MECHANISM_BASIC, MECHANISM_BEARER, MECHANISM_MTLS, MECHANISM_NONE, MECHANISMS},
+    mechanisms::{
+        MECHANISM_BASIC, MECHANISM_BEARER, MECHANISM_MTLS, MECHANISM_NONE, MECHANISMS, mechanism_of,
+    },
     operations::{
         OPERATION_ADMIN_ACCESS, OPERATION_DELETE_REQUEST_CANCEL, OPERATION_DELETE_REQUEST_CREATE,
         OPERATION_INGESTER_FLUSH, OPERATION_INGESTER_PREPARE_SHUTDOWN_SET,
@@ -89,14 +77,211 @@ pub use self::{
         OPERATION_RULE_NAMESPACE_DELETE, OPERATION_TENANT_ACCESS, OPERATION_TENANT_READ,
         OPERATION_TENANT_WRITE, OPERATIONS,
     },
-    principal::principal,
-    resource::resource,
     resource_types::{
         RESOURCE_ADMIN_API, RESOURCE_DELETE_REQUEST, RESOURCE_INGESTER, RESOURCE_LOG_LEVEL,
         RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, RESOURCE_TYPES,
         RESOURCE_WAL_TOPIC,
     },
-    source_endpoint::source_endpoint,
-    unauthenticated_principal::{UNAUTHENTICATED_PRINCIPAL_NAME, unauthenticated_principal},
-    unknown_source_endpoint::unknown_source_endpoint,
 };
+use crate::server_security::Principal;
+
+/// An event for an operation that changes a tenant's data or the service
+/// itself, at `time`.
+///
+/// `operation` is one of [`OPERATIONS`]. Every resource
+/// type in `resources` is one of [`RESOURCE_TYPES`].
+/// Use [`AuditOutcome::Failure`] when the service tried the operation and the
+/// operation failed. Record an authorization refusal with
+/// [`authorization_denied`].
+#[must_use]
+pub fn admin_operation(
+    principal: AuditPrincipal,
+    source: AuditEndpoint,
+    operation: &'static str,
+    resources: Vec<AuditResource>,
+    outcome: AuditOutcome,
+    time: EpochMs,
+) -> AuditEvent {
+    AuditEvent::AdminOperation {
+        outcome,
+        principal,
+        source,
+        operation: operation.to_owned(),
+        resources,
+        time_ms: time.into(),
+    }
+}
+
+/// The audit principal for the principal the authentication layer put on a request.
+///
+/// An unauthenticated request becomes [`unauthenticated_principal`], so an
+/// audit record for a server without a credentials file names no principal
+/// that a credentials file could define.
+#[must_use]
+pub fn audit_principal_of(request_principal: &Principal) -> AuditPrincipal {
+    match request_principal {
+        Principal::Unauthenticated => unauthenticated_principal(),
+        Principal::Authenticated { name, method, .. } => {
+            principal(name.as_ref(), mechanism_of(*method))
+        }
+    }
+}
+
+/// The Kafka record for one audit record, pinned to `partition`.
+///
+/// The record carries every audit header, and the chain headers with them. It
+/// has no key, because the partition is fixed. The producer stamps the record
+/// time. The event time is in the OCSF value.
+#[must_use]
+pub fn audit_producer_record(
+    topic: &str,
+    partition: PartitionIndex,
+    record: AuditRecord,
+) -> ProducerRecord {
+    ProducerRecord {
+        topic: topic.to_owned(),
+        partition: Some(partition.get()),
+        key: None,
+        value: Some(Bytes::from(record.value)),
+        headers: std::iter::once(Header {
+            key: crate::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(
+                crate::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        })
+        .chain(record.headers.into_iter().map(|header| Header {
+            key: header.0,
+            value: Some(Bytes::from(header.1)),
+        }))
+        .collect(),
+        timestamp_ms: None,
+    }
+}
+
+/// An event for an authentication attempt with `mechanism`, at `time`.
+///
+/// `mechanism` is one of [`MECHANISMS`]. `reason` tells
+/// why a failed attempt failed. It should not contain the credentials.
+#[must_use]
+pub fn authentication(
+    outcome: AuditOutcome,
+    mechanism: &'static str,
+    principal: AuditPrincipal,
+    source: AuditEndpoint,
+    reason: Option<String>,
+    time: EpochMs,
+) -> AuditEvent {
+    AuditEvent::Authentication {
+        outcome,
+        mechanism: mechanism.to_owned(),
+        principal,
+        source,
+        reason,
+        time_ms: time.into(),
+    }
+}
+
+/// An event for a request that the service refused because the principal may
+/// not do `operation` on the resource, at `time`.
+///
+/// Use it for a WAL topic ACL refusal and for a principal that may not use
+/// the tenant it names. `resource_type` is one of
+/// [`RESOURCE_TYPES`], and `operation` is one of
+/// [`OPERATIONS`].
+#[must_use]
+pub fn authorization_denied(
+    principal: AuditPrincipal,
+    source: AuditEndpoint,
+    resource_type: &'static str,
+    resource_name: impl Into<String>,
+    operation: &'static str,
+    time: EpochMs,
+) -> AuditEvent {
+    AuditEvent::AuthorizationDenied {
+        principal,
+        source,
+        resource_type: resource_type.to_owned(),
+        resource_name: resource_name.into(),
+        operation: operation.to_owned(),
+        time_ms: time.into(),
+    }
+}
+
+/// The vendor name in every Krabka audit record. The broker uses the same name.
+const VENDOR_NAME: &str = "Krabka";
+
+/// The product identity that each audit record carries, for the service
+/// `name` at `version`.
+///
+/// A service binary should pass its package name and
+/// `env!("CARGO_PKG_VERSION")`.
+#[must_use]
+pub fn krabka_product(name: &str, version: &str) -> ProductInfo {
+    ProductInfo {
+        vendor_name: VENDOR_NAME.to_owned(),
+        name: name.to_owned(),
+        version: version.to_owned(),
+    }
+}
+
+/// The principal `name`, authenticated with `mechanism`.
+///
+/// `mechanism` is one of [`MECHANISMS`].
+#[must_use]
+pub fn principal(name: impl Into<String>, mechanism: &'static str) -> AuditPrincipal {
+    AuditPrincipal {
+        name: name.into(),
+        auth_method: mechanism.to_owned(),
+    }
+}
+
+/// The resource `name` of the type `resource_type`.
+///
+/// `resource_type` is one of [`RESOURCE_TYPES`].
+#[must_use]
+pub fn resource(resource_type: &'static str, name: impl Into<String>) -> AuditResource {
+    AuditResource {
+        resource_type: resource_type.to_owned(),
+        name: name.into(),
+    }
+}
+
+/// The network source of a request that arrived from `address`.
+///
+/// An IPv4 address in IPv6 form, such as `::ffff:10.0.0.1`, becomes its IPv4
+/// form, so one client has one address in the trail.
+#[must_use]
+pub fn source_endpoint(address: std::net::SocketAddr) -> AuditEndpoint {
+    AuditEndpoint {
+        ip: address.ip().to_canonical().to_string(),
+        port: address.port(),
+    }
+}
+
+/// The principal name for a request that carries no credentials.
+///
+/// The angle brackets keep this name apart from a user name. A credentials
+/// file should not define a user with this name.
+pub const UNAUTHENTICATED_PRINCIPAL_NAME: &str = "<unauthenticated>";
+
+/// The principal of a request that carries no credentials.
+///
+/// An event for such a request should also name the tenant from the request
+/// as a resource, because the principal does not identify the caller.
+#[must_use]
+pub fn unauthenticated_principal() -> AuditPrincipal {
+    AuditPrincipal {
+        name: UNAUTHENTICATED_PRINCIPAL_NAME.to_owned(),
+        auth_method: MECHANISM_NONE.to_owned(),
+    }
+}
+
+/// The network source for a request whose peer address the service does not
+/// know: `0.0.0.0`, port `0`.
+#[must_use]
+pub fn unknown_source_endpoint() -> AuditEndpoint {
+    AuditEndpoint {
+        ip: std::net::Ipv4Addr::UNSPECIFIED.to_string(),
+        port: 0,
+    }
+}

@@ -1,63 +1,46 @@
 use super::{
-    ApiError, Arc, BTreeMap, DiscoveryParams, HeaderMap, IntoResponse, MetricStore, Principal,
-    PrometheusApiState, Response, apply_limit, authorized_tenant_from_headers, discovery_matchers,
-    discovery_window, enforce_query_range_limit, enforce_selected_series_limit,
-    success_data_response,
+    ApiError, Arc, BTreeMap, LabelValuesQuery, MetricStore, PrometheusApiState, Rejection,
+    RequestAuth, Response, discovery_response, discovery_scope, limit_discovery_results,
 };
 
 pub(crate) async fn label_values_dispatch<S: MetricStore>(
     state: &Arc<PrometheusApiState<S>>,
-    headers: &HeaderMap,
-    principal: &Principal,
-    name: String,
-    params: DiscoveryParams,
+    auth: RequestAuth<'_>,
+    query: LabelValuesQuery,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(headers, principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
-    let window = match discovery_window(&params) {
-        Ok(window) => window,
-        Err(error) => return error.into_response(),
-    };
-    let matcher_sets = match discovery_matchers(&params) {
-        Ok(matcher_sets) => matcher_sets,
-        Err(error) => return error.into_response(),
-    };
-    if let Err(error) = enforce_query_range_limit(state, &tenant, window.start_ms, window.end_ms) {
-        return error.into_response();
-    }
+    discovery_response(matched_label_values(state, auth, &query).await)
+}
 
+/// The distinct values of one label across the series that the request's
+/// selectors match.
+async fn matched_label_values<S: MetricStore>(
+    state: &Arc<PrometheusApiState<S>>,
+    auth: RequestAuth<'_>,
+    query: &LabelValuesQuery,
+) -> Result<Vec<String>, Rejection> {
+    let LabelValuesQuery { name, params } = query;
+    let scope = discovery_scope(state, auth, params)?;
     let mut values = BTreeMap::new();
-    for matchers in matcher_sets {
-        match state
+    for matchers in &scope.matcher_sets {
+        let label_values = state
             .store
             .label_values(
-                tenant.as_str(),
-                &name,
-                &matchers,
-                window.start_ms,
-                window.end_ms,
+                scope.tenant.as_str(),
+                name,
+                matchers,
+                scope.start_ms,
+                scope.end_ms,
             )
             .await
-        {
-            Ok(label_values) => {
-                for value in label_values {
-                    values.insert(value.clone(), value);
-                }
-            }
-            Err(error) => return ApiError::from(error).into_response(),
+            .map_err(|error| Rejection::of(ApiError::from(error)))?;
+        for value in label_values {
+            values.insert(value.clone(), value);
         }
     }
     let mut values = values.into_values().collect::<Vec<_>>();
-    if let Err(error) = enforce_selected_series_limit(state, &tenant, values.len()) {
-        return error.into_response();
-    }
-    apply_limit(&mut values, params.limit);
-    success_data_response(
-        values
-            .into_iter()
-            .map(|value| value.as_str().to_owned())
-            .collect::<Vec<_>>(),
-    )
+    limit_discovery_results(state, scope.limits(params), &mut values)?;
+    Ok(values
+        .into_iter()
+        .map(|value| value.as_str().to_owned())
+        .collect())
 }

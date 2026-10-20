@@ -9,6 +9,23 @@ use krabka_pprof::{
 };
 use object_store::{ObjectStore, path::Path};
 
+fn configured_debuginfod_resolvers(
+    urls: Vec<String>,
+    config: DebuginfodConfig,
+    address_fallback: bool,
+) -> Result<Vec<Arc<dyn NativeResolver>>, crate::ProfilesError> {
+    let mut resolvers: Vec<Arc<dyn NativeResolver>> = vec![Arc::new(FileSystemResolver::default())];
+    if !urls.is_empty() {
+        resolvers.push(Arc::new(
+            DebuginfodResolver::with_config(urls, config).map_err(crate::ProfilesError::Block)?,
+        ));
+    }
+    if address_fallback {
+        resolvers.push(Arc::new(AddressFallbackResolver));
+    }
+    Ok(resolvers)
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -18,6 +35,7 @@ mod tests {
     use object_store::{ObjectStoreExt as _, memory::InMemory, path::Path};
 
     use super::*;
+    use crate::test_support::check_falls_back_to_address_frame;
 
     #[test]
     fn fallback_resolver_names_build_id_and_offset() {
@@ -48,17 +66,9 @@ mod tests {
 
     #[test]
     fn native_resolver_falls_back_to_address_frame() {
-        let resolver = native_resolver_from_debuginfod_urls(Vec::new()).unwrap();
-        let out = resolver
-            .symbolize(&SymbolizeRequest {
-                build_id: String::new(),
-                filename: "/missing/native".to_string(),
-                address: 0x99,
-            })
-            .unwrap();
-
-        assert!(out[0].function == "/missing/native+0x99");
-        assert!(out[0].file == "/missing/native");
+        check_falls_back_to_address_frame(
+            &native_resolver_from_debuginfod_urls(Vec::new()).unwrap(),
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -136,15 +146,29 @@ mod tests {
                 .unwrap()
                 == 2
         );
-        for (status, expected) in [("miss", 1), ("hit", 1)] {
+        struct CacheRequestCase {
+            status: &'static str,
+            expected: u64,
+        }
+
+        for case in [
+            CacheRequestCase {
+                status: "miss",
+                expected: 1,
+            },
+            CacheRequestCase {
+                status: "hit",
+                expected: 1,
+            },
+        ] {
             assert!(
                 metrics
                     .symbolizer_cache_requests
                     .get_or_create(&crate::metrics::StatusLabel {
-                        status: status.to_string(),
+                        status: case.status.to_string(),
                     })
                     .get()
-                    == expected
+                    == case.expected
             );
         }
         let updated = store
@@ -162,19 +186,78 @@ mod tests {
 }
 
 mod address_fallback_resolver;
-mod build_label;
-mod native_resolver_from_debuginfod_config;
-mod native_resolver_from_debuginfod_urls;
-mod offline_resolver_from_debuginfod_config;
-mod run;
-mod run_with_config;
 mod symbolize_blocks_once;
 
 pub use address_fallback_resolver::AddressFallbackResolver;
-use build_label::build_label;
-pub use native_resolver_from_debuginfod_config::native_resolver_from_debuginfod_config;
-pub use native_resolver_from_debuginfod_urls::native_resolver_from_debuginfod_urls;
-pub use offline_resolver_from_debuginfod_config::offline_resolver_from_debuginfod_config;
-pub use run::run;
-pub use run_with_config::run_with_config;
 pub use symbolize_blocks_once::symbolize_blocks_once;
+
+pub(crate) fn build_label(request: &SymbolizeRequest) -> String {
+    if request.build_id.is_empty() {
+        request.filename.clone()
+    } else {
+        request.build_id.clone()
+    }
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub fn native_resolver_from_debuginfod_urls(
+    urls: Vec<String>,
+) -> Result<ChainedResolver, crate::ProfilesError> {
+    native_resolver_from_debuginfod_config(urls, DebuginfodConfig::default())
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn run(debuginfod_urls: Vec<String>) -> Result<(), crate::ProfilesError> {
+    run_with_config(debuginfod_urls, DebuginfodConfig::default()).await
+}
+
+/// Build the native resolver chain with explicit debuginfod resource policy.
+///
+/// # Errors
+///
+/// Returns an error when a configured debuginfod URL is invalid or its HTTP
+/// client cannot be built.
+pub fn native_resolver_from_debuginfod_config(
+    urls: Vec<String>,
+    config: DebuginfodConfig,
+) -> Result<ChainedResolver, crate::ProfilesError> {
+    Ok(ChainedResolver::new(configured_debuginfod_resolvers(
+        urls, config, true,
+    )?))
+}
+
+/// Resolver used by the persistent symbolizer. Unlike the query fallback it
+/// leaves misses unresolved so a later debuginfo upload can fill them.
+///
+/// # Errors
+/// Returns an error when the debuginfod client configuration is invalid.
+pub fn offline_resolver_from_debuginfod_config(
+    urls: Vec<String>,
+    config: DebuginfodConfig,
+) -> Result<ChainedResolver, crate::ProfilesError> {
+    Ok(ChainedResolver::new(configured_debuginfod_resolvers(
+        urls, config, false,
+    )?))
+}
+
+/// Run the symbolizer role with explicit debuginfod resource policy.
+///
+/// # Errors
+///
+/// Returns an error when resolver setup fails.
+pub async fn run_with_config(
+    debuginfod_urls: Vec<String>,
+    config: DebuginfodConfig,
+) -> Result<(), crate::ProfilesError> {
+    let _resolver = native_resolver_from_debuginfod_config(debuginfod_urls.clone(), config)?;
+    tracing::info!(
+        debuginfod_urls = ?debuginfod_urls,
+        "profiles symbolizer ready; DWARF/debuginfod resolver integration is loaded"
+    );
+    krabka_observability::shutdown_signal().await;
+    Ok(())
+}

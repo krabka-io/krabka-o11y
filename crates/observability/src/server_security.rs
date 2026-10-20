@@ -84,40 +84,29 @@
 //! A request that sends a credential to a service with no credentials file is
 //! served, and the service ignores the credential.
 
+use std::path::Path;
+
 mod admin_denied;
-mod auth_failure_reason;
-mod auth_method;
-mod authenticate_request;
-mod authenticate_requests;
+mod authentication;
 mod authenticator;
 mod authorize_admin;
 mod authorize_tenant;
 mod client_auth;
 mod client_identity;
-mod configured_principal;
 mod credentials;
 mod credentials_error;
-mod credentials_file;
 mod grpc_authentication;
 mod grpc_authentication_layer;
 mod grpc_connection;
 mod grpc_incoming;
-mod handle_accept_error;
-mod install_crypto_provider;
 mod internal_client;
 mod listener_mode;
-mod load_credentials;
-mod load_internal_client;
-mod load_server_tls;
+mod load_security_config;
 mod no_security_events;
 mod peer_addr;
+mod pem;
 mod presented_credential;
 mod principal;
-mod principal_entry;
-mod read_certificates;
-mod read_file;
-mod read_private_key;
-mod run_tls_accept_loop;
 mod security_event_sink;
 mod security_events;
 mod serve_router;
@@ -127,28 +116,125 @@ mod server_security_error;
 mod server_security_settings;
 mod server_stream;
 mod server_tls;
+mod spawn_router_server;
 mod tenant_denied;
 mod tenant_grant;
 #[cfg(test)]
 mod tests;
-mod tls_handshake;
+mod tls_accept;
 mod token_digest;
 mod unauthenticated_routes;
 mod unauthorized_response;
 mod warn_about_posture;
 
 pub use self::{
-    admin_denied::AdminDenied, auth_failure_reason::AuthFailureReason, auth_method::AuthMethod,
-    authenticate_requests::authenticate_requests, authorize_admin::authorize_admin,
-    authorize_tenant::authorize_tenant, client_auth::ClientAuth, client_identity::ClientIdentity,
-    credentials_error::CredentialsError, grpc_authentication::GrpcAuthentication,
-    grpc_authentication_layer::GrpcAuthenticationLayer, grpc_connection::GrpcConnection,
-    grpc_incoming::grpc_incoming, install_crypto_provider::install_crypto_provider,
-    internal_client::InternalClient, no_security_events::NoSecurityEvents, peer_addr::PeerAddr,
-    principal::Principal, security_event_sink::SecurityEventSink, security_events::SecurityEvents,
-    serve_router::serve_router, server_listener::ServerListener,
-    server_security_args::ServerSecurityArgs, server_security_error::ServerSecurityError,
-    server_security_settings::ServerSecurity, server_stream::ServerStream,
-    tenant_denied::TenantDenied, tenant_grant::TenantGrant,
+    admin_denied::AdminDenied,
+    authentication::authenticate_requests,
+    authorize_admin::authorize_admin,
+    authorize_tenant::authorize_tenant,
+    client_auth::ClientAuth,
+    client_identity::ClientIdentity,
+    credentials_error::CredentialsError,
+    grpc_authentication::GrpcAuthentication,
+    grpc_authentication_layer::GrpcAuthenticationLayer,
+    grpc_connection::GrpcConnection,
+    grpc_incoming::grpc_incoming,
+    internal_client::InternalClient,
+    no_security_events::NoSecurityEvents,
+    peer_addr::PeerAddr,
+    principal::Principal,
+    security_event_sink::SecurityEventSink,
+    security_events::SecurityEvents,
+    serve_router::serve_router,
+    server_listener::ServerListener,
+    server_security_args::ServerSecurityArgs,
+    server_security_error::ServerSecurityError,
+    server_security_settings::ServerSecurity,
+    server_stream::ServerStream,
+    spawn_router_server::{
+        JoinableRouterServer, RouterServer, spawn_router_server, spawn_router_server_joinable,
+        spawn_router_server_until_shutdown,
+    },
+    tenant_denied::TenantDenied,
+    tenant_grant::TenantGrant,
     unauthenticated_routes::UnauthenticatedRoutes,
 };
+
+/// Defines the shared `serve` wrapper used by signal distributors.
+#[macro_export]
+macro_rules! define_distributor_serve {
+    ($state:ty, $router:path, $service:literal, $description:literal) => {
+        #[doc = $description]
+        pub async fn serve(
+            addr: std::net::SocketAddr,
+            state: std::sync::Arc<$state>,
+            security: &$crate::server_security::ServerSecurity,
+            shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+        ) -> std::io::Result<std::net::SocketAddr> {
+            $crate::server_security::spawn_router_server_until_shutdown(
+                addr,
+                $router(state),
+                security,
+                shutdown,
+                $service,
+            )
+            .await
+        }
+    };
+}
+
+/// Makes `ring` the process-wide rustls crypto provider, once.
+///
+/// This workspace compiles rustls with two providers, `ring` and `aws-lc-rs`.
+/// With two compiled in, rustls cannot pick one, so any code that asks it for
+/// the process default panics on its first TLS connection. That includes the
+/// Kafka client, `reqwest`, and tonic. A service binary calls this function
+/// first, before it builds anything that can open a TLS connection.
+///
+/// A second call, or a call after another provider is installed, does nothing.
+/// The listeners in this module do not depend on it, because they name `ring`
+/// themselves.
+pub fn install_crypto_provider() {
+    // An `Err` means a provider is installed already, which is the state this
+    // function exists to reach.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+/// Reads a whole file, with an error that names it.
+fn read_file(path: &Path) -> Result<Vec<u8>, ServerSecurityError> {
+    std::fs::read(path).map_err(|source| ServerSecurityError::ReadFile {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+/// Why a request failed authentication, as a category that never holds the credential.
+///
+/// The 401 response is the same for every reason. Only a
+/// [`SecurityEvents`] implementation sees the reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AuthFailureReason {
+    /// The request sent no `Authorization` header, and its connection has no
+    /// verified client certificate.
+    MissingCredential,
+    /// The `Authorization` header uses a scheme other than `Bearer` or `Basic`.
+    UnsupportedScheme,
+    /// The `Authorization` header could not be decoded, is empty, or appears
+    /// more than once.
+    MalformedCredential,
+    /// The credential matched no principal.
+    UnknownCredential,
+    /// The client certificate names identities of more than one principal.
+    AmbiguousClientCertificate,
+}
+
+/// The kind of credential that authenticated a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AuthMethod {
+    /// An `Authorization: Bearer <token>` header.
+    Bearer,
+    /// An `Authorization: Basic <base64 name:token>` header.
+    Basic,
+    /// The verified client certificate of the TLS connection.
+    ClientCertificate,
+}

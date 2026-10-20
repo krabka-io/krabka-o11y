@@ -48,7 +48,9 @@ impl Annotations {
         for info in &other.infos {
             self.info(info.clone());
         }
-        for (message, repair) in &other.histogram_quantile_repairs {
+        for entry in &other.histogram_quantile_repairs {
+            let message = entry.0;
+            let repair = entry.1;
             self.histogram_quantile_repairs
                 .entry(message.clone())
                 .and_modify(|existing| existing.merge(repair))

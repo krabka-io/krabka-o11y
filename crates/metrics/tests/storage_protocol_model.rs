@@ -9,9 +9,12 @@
 //! Partition revocation is deliberately outside this model. The production
 //! block-builder documents that limitation and issue #266 owns its redesign.
 
-use std::time::Duration;
+use stateright::{Model, Property};
 
-use stateright::{Checker, Model, Property};
+#[path = "support/bounded_model.rs"]
+mod bounded_model;
+
+use bounded_model::{ModelBounds, apply_transition, check_bounded_model};
 
 const MAX_DEPTH: usize = 24;
 const MAX_STATES: usize = 100_000;
@@ -37,7 +40,7 @@ struct StorageState {
     saw_replay: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Start,
     Write,
@@ -49,6 +52,49 @@ enum Action {
 
 struct StorageModel {
     partitions: usize,
+}
+
+impl StorageModel {
+    fn transition(&self, state: &mut StorageState, action: Action) -> bool {
+        match action {
+            Action::Start if matches!(state.phase, Phase::Idle) => {
+                state.phase = Phase::Write(0);
+            }
+            Action::Write => {
+                let Phase::Write(partition) = state.phase else {
+                    return false;
+                };
+                state.saw_replay |= state.durable[partition];
+                state.durable[partition] = true;
+                state.phase = Phase::Publish(partition);
+            }
+            Action::Publish => {
+                let Phase::Publish(partition) = state.phase else {
+                    return false;
+                };
+                state.published[partition] = true;
+                state.phase = if partition + 1 == self.partitions {
+                    Phase::Commit
+                } else {
+                    Phase::Write(partition + 1)
+                };
+            }
+            Action::Commit if matches!(state.phase, Phase::Commit) => {
+                state.committed.fill(true);
+                state.phase = Phase::Idle;
+            }
+            Action::Fail if !matches!(state.phase, Phase::Idle) => {
+                state.saw_failure = true;
+                state.phase = Phase::Idle;
+            }
+            Action::Crash if !matches!(state.phase, Phase::Idle) => {
+                state.saw_crash = true;
+                state.phase = Phase::Idle;
+            }
+            Action::Start | Action::Commit | Action::Fail | Action::Crash => return false,
+        }
+        true
+    }
 }
 
 impl Model for StorageModel {
@@ -84,45 +130,7 @@ impl Model for StorageModel {
     }
 
     fn next_state(&self, last: &Self::State, action: Self::Action) -> Option<Self::State> {
-        let mut state = last.clone();
-        match action {
-            Action::Start if matches!(state.phase, Phase::Idle) => {
-                state.phase = Phase::Write(0);
-            }
-            Action::Write => {
-                let Phase::Write(partition) = state.phase else {
-                    return None;
-                };
-                state.saw_replay |= state.durable[partition];
-                state.durable[partition] = true;
-                state.phase = Phase::Publish(partition);
-            }
-            Action::Publish => {
-                let Phase::Publish(partition) = state.phase else {
-                    return None;
-                };
-                state.published[partition] = true;
-                state.phase = if partition + 1 == self.partitions {
-                    Phase::Commit
-                } else {
-                    Phase::Write(partition + 1)
-                };
-            }
-            Action::Commit if matches!(state.phase, Phase::Commit) => {
-                state.committed.fill(true);
-                state.phase = Phase::Idle;
-            }
-            Action::Fail if !matches!(state.phase, Phase::Idle) => {
-                state.saw_failure = true;
-                state.phase = Phase::Idle;
-            }
-            Action::Crash if !matches!(state.phase, Phase::Idle) => {
-                state.saw_crash = true;
-                state.phase = Phase::Idle;
-            }
-            Action::Start | Action::Commit | Action::Fail | Action::Crash => return None,
-        }
-        Some(state)
+        apply_transition(last, |candidate| self.transition(candidate, action))
     }
 
     fn properties(&self) -> Vec<Property<Self>> {
@@ -165,17 +173,14 @@ impl Model for StorageModel {
 }
 
 fn check(partitions: usize, expected_states: usize) {
-    let checker = StorageModel { partitions }
-        .checker()
-        .target_max_depth(MAX_DEPTH)
-        .target_state_count(MAX_STATES)
-        .timeout(Duration::from_secs(30))
-        .spawn_bfs()
-        .join();
-    assert2::check!(checker.max_depth() < MAX_DEPTH);
-    assert2::check!(checker.state_count() < MAX_STATES);
-    assert2::check!(checker.unique_state_count() == expected_states);
-    checker.assert_properties();
+    check_bounded_model(
+        StorageModel { partitions },
+        &ModelBounds {
+            max_depth: MAX_DEPTH,
+            max_states: MAX_STATES,
+            expected_states,
+        },
+    );
 }
 
 #[test]

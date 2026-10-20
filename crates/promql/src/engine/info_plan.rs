@@ -51,7 +51,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<Option<PlannedInstant>> {
         let context = parse_info_call(call)?;
         let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, &call.args.args[0], time_ms)
+            .histogram_fold_inner_vector(super::InnerVectorQuery::new(
+                tenant,
+                &call.args.args[0],
+                time_ms,
+            ))
             .await?
         else {
             return Ok(None);

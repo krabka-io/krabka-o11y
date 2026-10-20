@@ -1,12 +1,16 @@
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{Router, extract::State, http::Uri};
-use testcontainers::{
-    GenericImage, ImageExt,
-    core::{Host, WaitFor},
-    runners::AsyncRunner,
-};
+use testcontainers::core::Host;
 use tokio::sync::Mutex;
+
+#[path = "support/client_harness.rs"]
+mod client_harness;
+
+use client_harness::{
+    AsyncRunner as _, GenericImage, ImageExt, WaitFor, capture_server, expect_seen,
+    spawn_capture_server,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -26,13 +30,12 @@ scrape_configs:
 #[tokio::test]
 #[ignore = "requires Docker and the digest-pinned Prometheus image"]
 async fn official_prometheus_sends_remote_write_v1_and_v2() -> TestResult {
-    let seen = Arc::new(Mutex::new(BTreeSet::new()));
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
-    let port = listener.local_addr()?.port();
-    let app = Router::new()
-        .fallback(capture)
-        .with_state(Arc::clone(&seen));
-    tokio::spawn(async move { axum::serve(listener, app).await });
+    let (seen, port) = capture_server!(
+        Arc::new(Mutex::new(BTreeSet::new())),
+        Router::new(),
+        capture,
+        spawn_capture_server
+    );
 
     let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG")
         .expect("KRABKA_PROMETHEUS_IMAGE_TAG is set by `bazel test --config=docker`");
@@ -48,16 +51,7 @@ async fn official_prometheus_sends_remote_write_v1_and_v2() -> TestResult {
         .await?;
 
     let expected = BTreeSet::from(["/prom-v1".to_string(), "/prom-v2".to_string()]);
-    tokio::time::timeout(Duration::from_secs(45), async {
-        loop {
-            if *seen.lock().await == expected {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await?;
-    assert2::assert!(*seen.lock().await == expected);
+    expect_seen(&seen, &expected).await?;
     Ok(())
 }
 

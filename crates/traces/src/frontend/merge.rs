@@ -25,15 +25,155 @@ use crate::frontend::{
     wire::{Metrics, SearchResponseJson, SpanSetJson, TraceByIdResponseJson, TraceJson},
 };
 
+/// Merge search partials.
+///
+/// This reunions by `traceID`, accumulates metrics, then applies `limit`
+/// newest-first and `spss` as a per-spanSet span cap. It preserves each
+/// spanSet's `matched` count. It returns the merged `SearchResponseJson`, ready
+/// to serialize.
+#[must_use]
+pub fn merge_search(partials: Vec<SearchPartial>, limit: usize, spss: usize) -> SearchResponseJson {
+    let mut merged: Vec<TraceJson> = Vec::new();
+    let mut metrics = Metrics::default();
+
+    for p in partials {
+        metrics.add(&p.metrics);
+        for trace in p.traces {
+            merge_trace(&mut merged, trace);
+        }
+    }
+
+    apply_search_limits(&mut merged, limit, spss);
+    SearchResponseJson {
+        traces: merged,
+        metrics,
+        // The merge sees only the partials that came back. What the fan-out
+        // could not reach is the frontend's to report, so it fills this in.
+        warnings: Vec::new(),
+    }
+}
+
+/// Reunion spanSets across blocks.
+///
+/// This dedupes spans by `spanID` within the same grouping attributes, and accumulates each
+/// spanSet's true `matched` count. The match count is additive across shards.
+/// This is ported from the legacy `merge_span_sets`.
+pub(crate) fn merge_span_sets(existing: &mut Vec<SpanSetJson>, incoming: Vec<SpanSetJson>) {
+    for span_set in incoming {
+        let Some(first) = existing
+            .iter_mut()
+            .find(|set| set.attributes == span_set.attributes)
+        else {
+            existing.push(span_set);
+            continue;
+        };
+        // `matched` is additive across shards, but only for *distinct* matches:
+        // a span already present (a late-span / overlap duplicate) must not be
+        // counted twice. Subtract the already-seen *returned* spans from this
+        // set's reported `matched` before folding it in.
+        //
+        // Crucially we fold `matched` for EVERY set rather than skipping a set
+        // whose returned spans all happen to be duplicates: under per-shard spss
+        // truncation a set's returned spans are only a subset of what it matched,
+        // so an overlapping returned subset does NOT make the set a pure
+        // duplicate — its non-returned matches (`matched - duplicates`) are still
+        // new and would otherwise be lost (an undercount).
+        let duplicates = span_set
+            .spans
+            .iter()
+            .filter(|s| first.spans.iter().any(|e| e.span_id == s.span_id))
+            .count();
+        let new_matches = span_set
+            .matched
+            .saturating_sub(u32::try_from(duplicates).unwrap_or(u32::MAX));
+        first.matched = first.matched.saturating_add(new_matches);
+        for span in span_set.spans {
+            if !first.spans.iter().any(|s| s.span_id == span.span_id) {
+                first.spans.push(span);
+            }
+        }
+    }
+}
+
+/// The v2 by-id status.
+///
+/// A fully-returned trace is `COMPLETE`. A trace that exceeds the max trace
+/// size is `PARTIAL`, and the response carries an explanatory message rather
+/// than an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceStatus {
+    Complete,
+    Partial,
+}
+
+impl TraceStatus {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TraceStatus::Complete => "COMPLETE",
+            TraceStatus::Partial => "PARTIAL",
+        }
+    }
+}
+
+/// Union another querier's by-id body into the accumulator, and dedupe spans by
+/// `spanId`. This appends new resourceSpans and scopeSpans only as needed.
+pub(crate) fn union_trace_bodies(
+    acc: &mut TraceByIdResponseJson,
+    other: TraceByIdResponseJson,
+    seen: &mut BTreeSet<String>,
+) {
+    for mut rs in other.trace.resource_spans {
+        for ss in &mut rs.scope_spans {
+            // GAP6 (documented-as-acceptable): dedup is global across resources
+            // (one `seen` set), not keyed on `(resource, spanId)`. This matches
+            // OTLP's invariant that a span id is unique within a trace, so the
+            // same span returned by multiple queriers (each reassembles the whole
+            // trace) dedups correctly. The only case it mishandles is *malformed*
+            // input that reuses a span id across resources — then the second
+            // occurrence is dropped. Keying on `(resource, spanId)` would require
+            // serializing each resource `Value` per span (not free) to defend a
+            // spec-violating input, so we keep the cheaper global dedup.
+            ss.spans.retain(|span| seen.insert(span.span_id.clone()));
+        }
+        rs.scope_spans.retain(|ss| !ss.spans.is_empty());
+        if !rs.scope_spans.is_empty() {
+            // Merge into an existing resourceSpans group with an equal resource,
+            // else append a new group.
+            //
+            // GAP4 (documented-as-acceptable): grouping is by raw
+            // `serde_json::Value` equality, so the *same logical resource* with a
+            // different attribute ordering would form two sibling groups. A
+            // correct canonicalization is NOT cheap here: OTLP arrays are
+            // semantically ordered in general, and only the `attributes` array is
+            // order-insensitive — sorting it blindly would require structural
+            // OTLP knowledge this typed-`Value` mirror deliberately doesn't have.
+            // In practice every querier renders a resource through the same
+            // `attrs_json` code path with a deterministic key order, so the same
+            // logical resource serializes identically across queriers and matches
+            // exactly. Duplicated groups would only cosmetically split a resource;
+            // no span is dropped or duplicated.
+            if let Some(existing) = acc
+                .trace
+                .resource_spans
+                .iter_mut()
+                .find(|e| e.resource == rs.resource)
+            {
+                merge_scope_spans(existing, rs.scope_spans);
+            } else {
+                acc.trace.resource_spans.push(rs);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
     use krabka_units::{bytes, millis};
 
     use super::*;
-    use crate::frontend::wire::{
-        OtlpSpanJson, ResourceSpansJson, ScopeSpansJson, SpanJson, TraceEnvelopeJson,
-    };
+    use crate::frontend::wire::{OtlpSpanJson, SpanJson, TraceEnvelopeJson};
 
     fn span(id: &str, start: u64, dur: u64) -> SpanJson {
         SpanJson {
@@ -202,6 +342,14 @@ mod tests {
         }
     }
 
+    fn span_count(response: &SearchResponseJson) -> usize {
+        response.traces[0]
+            .span_sets
+            .iter()
+            .map(|span_set| span_set.spans.len())
+            .sum()
+    }
+
     #[test]
     fn same_trace_across_blocks_reunions_spans() {
         let p0 = partial(
@@ -245,11 +393,7 @@ mod tests {
         let p0 = partial(vec![trace("01", "s", 10, vec![span("07", 10, 5)])], 50);
         let p1 = partial(vec![trace("01", "s", 10, vec![span("07", 10, 5)])], 50);
         let resp = merge_search(vec![p0, p1], 20, 10);
-        let total_spans: usize = resp.traces[0]
-            .span_sets
-            .iter()
-            .map(|ss| ss.spans.len())
-            .sum();
+        let total_spans = span_count(&resp);
         assert2::assert!(total_spans == 1);
     }
 
@@ -276,11 +420,7 @@ mod tests {
             50,
         );
         let resp = merge_search(vec![p0, p1], 20, 10);
-        let total_spans: usize = resp.traces[0]
-            .span_sets
-            .iter()
-            .map(|ss| ss.spans.len())
-            .sum();
+        let total_spans = span_count(&resp);
         assert2::assert!(total_spans == 3);
         assert2::assert!(resp.traces[0].span_sets[0].matched == 3);
     }
@@ -361,15 +501,9 @@ mod tests {
 
     fn by_id_body(span_ids: &[&str], status: &str) -> TraceByIdResponseJson {
         TraceByIdResponseJson {
-            trace: TraceEnvelopeJson {
-                resource_spans: vec![ResourceSpansJson {
-                    resource: serde_json::Value::Null,
-                    scope_spans: vec![ScopeSpansJson {
-                        scope: serde_json::Value::Null,
-                        spans: span_ids.iter().map(|id| otlp_span(id)).collect(),
-                    }],
-                }],
-            },
+            trace: TraceEnvelopeJson::of_unscoped_spans(
+                span_ids.iter().map(|id| otlp_span(id)).collect(),
+            ),
             status: status.to_string(),
             message: String::new(),
         }
@@ -392,9 +526,9 @@ mod tests {
         let p1 = by_id_partial(TraceByIdResponseJson::default(), 5);
         assert2::assert!(
             assemble_trace(vec![p0, p1], bytes(1_000_000))
-                == (
-                    None,
-                    Metrics {
+                == AssembledTrace {
+                    trace: None,
+                    metrics: Metrics {
                         total_jobs: 0,
                         completed_jobs: 2,
                         total_blocks: 0,
@@ -402,8 +536,8 @@ mod tests {
                         inspected_bytes: 10,
                         inspected_spans: 0,
                     },
-                    TraceStatus::Complete,
-                )
+                    status: TraceStatus::Complete,
+                }
         );
     }
 
@@ -412,11 +546,11 @@ mod tests {
         // querier A holds spans 1,2; querier B holds spans 2,3 (2 overlaps).
         let p0 = by_id_partial(by_id_body(&["01", "02"], "COMPLETE"), 100);
         let p1 = by_id_partial(by_id_body(&["02", "03"], "COMPLETE"), 100);
-        let (trace, metrics, status) = assemble_trace(vec![p0, p1], bytes(1_000_000));
-        let trace = trace.unwrap();
+        let assembled = assemble_trace(vec![p0, p1], bytes(1_000_000));
+        let trace = assembled.trace.unwrap();
         check!(assembled_span_count(&trace) == 3);
         check!(
-            metrics
+            assembled.metrics
                 == Metrics {
                     total_jobs: 0,
                     completed_jobs: 2,
@@ -426,22 +560,22 @@ mod tests {
                     inspected_spans: 0,
                 }
         );
-        check!(status == TraceStatus::Complete);
+        check!(assembled.status == TraceStatus::Complete);
     }
 
     #[test]
     fn assemble_flags_partial_over_byte_budget() {
         let p0 = by_id_partial(by_id_body(&["01", "02", "03"], "COMPLETE"), 100);
-        let (trace, _m, status) = assemble_trace(vec![p0], bytes(1));
-        assert2::assert!(trace.is_some());
-        assert2::assert!(matches!(status, TraceStatus::Partial));
+        let assembled = assemble_trace(vec![p0], bytes(1));
+        assert2::assert!(assembled.trace.is_some());
+        assert2::assert!(matches!(assembled.status, TraceStatus::Partial));
     }
 
     #[test]
     fn assemble_propagates_querier_partial_status() {
         let p0 = by_id_partial(by_id_body(&["01"], "PARTIAL"), 100);
-        let (_t, _m, status) = assemble_trace(vec![p0], bytes(1_000_000));
-        assert2::assert!(matches!(status, TraceStatus::Partial));
+        let assembled = assemble_trace(vec![p0], bytes(1_000_000));
+        assert2::assert!(matches!(assembled.status, TraceStatus::Partial));
     }
 
     fn tag_metrics(bytes: u64) -> Metrics {
@@ -471,12 +605,12 @@ mod tests {
         };
         assert2::assert!(
             merge_tag_names(vec![a, b])
-                == (
-                    vec![ScopedTag {
+                == MergedTagNames {
+                    tags: vec![ScopedTag {
                         scope: TagScope::Span,
                         tags: vec!["http.method".to_string(), "http.status_code".to_string()],
                     }],
-                    Metrics {
+                    metrics: Metrics {
                         total_jobs: 2,
                         completed_jobs: 2,
                         total_blocks: 0,
@@ -484,7 +618,7 @@ mod tests {
                         inspected_bytes: 30,
                         inspected_spans: 0,
                     },
-                )
+                }
         );
     }
 
@@ -510,7 +644,7 @@ mod tests {
             ],
             metrics: tag_metrics(1),
         };
-        let (merged, _) = merge_tag_values(vec![a, b]);
+        let merged = merge_tag_values(vec![a, b]).values;
         // sorted by (type, value).
         assert2::assert!(
             merged
@@ -528,32 +662,231 @@ mod tests {
     }
 }
 
-mod apply_search_limits;
-mod assemble_trace;
-mod assembled_span_count;
-mod merge_scope_spans;
-mod merge_search;
-mod merge_span_sets;
-mod merge_tag_names;
-mod merge_tag_values;
-mod merge_trace;
-mod parse_nanos;
-mod scope_key;
-mod seed_seen;
-mod trace_status;
-mod union_trace_bodies;
+/// Total span count of a typed by-id body. This is a helper for callers and
+/// tests.
+#[must_use]
+pub fn assembled_span_count(trace: &TraceByIdResponseJson) -> usize {
+    trace.span_count()
+}
 
-use apply_search_limits::apply_search_limits;
-pub use assemble_trace::assemble_trace;
-pub use assembled_span_count::assembled_span_count;
-use merge_scope_spans::merge_scope_spans;
-pub use merge_search::merge_search;
-use merge_span_sets::merge_span_sets;
-pub use merge_tag_names::merge_tag_names;
-pub use merge_tag_values::merge_tag_values;
-use merge_trace::merge_trace;
-use parse_nanos::parse_nanos;
-use scope_key::scope_key;
-use seed_seen::seed_seen;
-pub use trace_status::TraceStatus;
-use union_trace_bodies::union_trace_bodies;
+pub(crate) fn parse_nanos(s: &str) -> i128 {
+    s.parse().unwrap_or(i128::MIN)
+}
+
+/// Record every spanId in `trace` so later unions can dedup against it.
+pub(crate) fn seed_seen(trace: &TraceByIdResponseJson, seen: &mut BTreeSet<String>) {
+    for rs in &trace.trace.resource_spans {
+        for ss in &rs.scope_spans {
+            for span in &ss.spans {
+                seen.insert(span.span_id.clone());
+            }
+        }
+    }
+}
+
+/// Apply Tempo's post-merge `limit` and `spss` truncation.
+///
+/// This orders traces newest-first by `startTimeUnixNano` and keeps at most
+/// `limit` of them. It then caps the `spans` of each kept trace's spanSets to
+/// `spss`, and preserves each spanSet's `matched` count.
+pub(crate) fn apply_search_limits(traces: &mut Vec<TraceJson>, limit: usize, spss: usize) {
+    traces.sort_by(|a, b| {
+        parse_nanos(&b.start_time_unix_nano).cmp(&parse_nanos(&a.start_time_unix_nano))
+    });
+    if limit > 0 {
+        traces.truncate(limit);
+    }
+    if spss > 0 {
+        for trace in traces.iter_mut() {
+            for ss in &mut trace.span_sets {
+                // `truncate` is already a no-op when the set is shorter.
+                ss.spans.truncate(spss);
+            }
+        }
+    }
+}
+
+pub(crate) fn merge_scope_spans(
+    existing: &mut crate::frontend::wire::ResourceSpansJson,
+    incoming: Vec<crate::frontend::wire::ScopeSpansJson>,
+) {
+    for ss in incoming {
+        if let Some(group) = existing
+            .scope_spans
+            .iter_mut()
+            .find(|e| e.scope == ss.scope)
+        {
+            group.spans.extend(ss.spans);
+        } else {
+            existing.scope_spans.push(ss);
+        }
+    }
+}
+
+/// Fold one trace into the merged set. This appends the trace when it is new.
+/// Otherwise it reunions the trace's spanSets into the existing trace with the
+/// same `traceID`.
+pub(crate) fn merge_trace(merged: &mut Vec<TraceJson>, trace: TraceJson) {
+    let Some(existing) = merged.iter_mut().find(|t| t.trace_id == trace.trace_id) else {
+        merged.push(trace);
+        return;
+    };
+    // Earliest start wins (newest-first ordering uses startTimeUnixNano).
+    if parse_nanos(&trace.start_time_unix_nano) < parse_nanos(&existing.start_time_unix_nano) {
+        existing
+            .start_time_unix_nano
+            .clone_from(&trace.start_time_unix_nano);
+    }
+    if trace.duration > existing.duration {
+        existing.duration = trace.duration;
+    }
+    if existing.root_service_name.is_empty() {
+        existing
+            .root_service_name
+            .clone_from(&trace.root_service_name);
+    }
+    if existing.root_trace_name.is_empty() {
+        existing.root_trace_name.clone_from(&trace.root_trace_name);
+    }
+    merge_span_sets(&mut existing.span_sets, trace.span_sets);
+}
+
+/// Stable string discriminant for a `TagScope`. It is the ordering key and the
+/// dedup key.
+pub(crate) fn scope_key(scope: TagScope) -> &'static str {
+    match scope {
+        TagScope::Resource => "resource",
+        TagScope::Span => "span",
+        TagScope::Intrinsic => "intrinsic",
+        TagScope::Event => "event",
+        TagScope::Link => "link",
+        TagScope::Instrumentation => "instrumentation",
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssembledTrace {
+    pub trace: Option<TraceByIdResponseJson>,
+    pub metrics: Metrics,
+    pub status: TraceStatus,
+}
+
+/// Assemble one trace from per-querier by-id partials.
+///
+/// This unions `resourceSpans`, dedupes spans by `spanId`, and accumulates
+/// metrics. It flags `Partial` when the assembled trace exceeds `max_trace`, or
+/// when any partial reported `PARTIAL`.
+///
+/// It returns `None` when no querier returned the trace.
+#[must_use]
+pub fn assemble_trace(partials: Vec<TracePartial>, max_trace: ByteSize) -> AssembledTrace {
+    let mut metrics = Metrics::default();
+    let mut acc: Option<TraceByIdResponseJson> = None;
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut any_partial = false;
+
+    for p in partials {
+        metrics.add(&p.metrics);
+        if p.trace.status.eq_ignore_ascii_case("PARTIAL") {
+            any_partial = true;
+        }
+        if p.trace.is_empty() {
+            continue;
+        }
+        if let Some(existing) = &mut acc {
+            union_trace_bodies(existing, p.trace, &mut seen);
+        } else {
+            seed_seen(&p.trace, &mut seen);
+            acc = Some(p.trace);
+        }
+    }
+
+    let status = match &acc {
+        Some(t) if any_partial || t.approx_size() > max_trace => TraceStatus::Partial,
+        _ => TraceStatus::Complete,
+    };
+    AssembledTrace {
+        trace: acc,
+        metrics,
+        status,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergedTagNames {
+    pub tags: Vec<ScopedTag>,
+    pub metrics: Metrics,
+}
+
+/// Union scoped tag names across jobs, then dedup and sort per scope. This also
+/// accumulates metrics.
+#[must_use]
+pub fn merge_tag_names(partials: Vec<TagNamesPartial>) -> MergedTagNames {
+    let mut metrics = Metrics::default();
+    // Keyed on a stable scope discriminant so the merged scopes have a
+    // deterministic order without requiring `Ord` on `TagScope`.
+    let mut by_scope: std::collections::BTreeMap<&'static str, ScopedTagAccumulator> =
+        std::collections::BTreeMap::new();
+
+    for partial in partials {
+        metrics.add(&partial.metrics);
+        for st in partial.tags {
+            let key = scope_key(st.scope);
+            let entry = by_scope.entry(key).or_insert_with(|| ScopedTagAccumulator {
+                scope: st.scope,
+                tags: BTreeSet::new(),
+            });
+            entry.tags.extend(st.tags);
+        }
+    }
+
+    let merged = by_scope
+        .into_values()
+        .map(|accumulator| ScopedTag {
+            scope: accumulator.scope,
+            tags: accumulator.tags.into_iter().collect(),
+        })
+        .collect();
+    MergedTagNames {
+        tags: merged,
+        metrics,
+    }
+}
+
+struct ScopedTagAccumulator {
+    scope: TagScope,
+    tags: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MergedTagValues {
+    pub values: Vec<TypedValue>,
+    pub metrics: Metrics,
+}
+
+/// Union typed tag values across jobs, then dedup the `(type, value)` pairs.
+/// This also accumulates metrics.
+#[must_use]
+pub fn merge_tag_values(partials: Vec<TagValuesPartial>) -> MergedTagValues {
+    let mut metrics = Metrics::default();
+    let mut seen: BTreeSet<TypedValue> = BTreeSet::new();
+    let mut out = Vec::new();
+
+    for partial in partials {
+        metrics.add(&partial.metrics);
+        for v in partial.values {
+            if seen.insert(v.clone()) {
+                out.push(v);
+            }
+        }
+    }
+    out.sort_by(|left, right| {
+        left.type_
+            .cmp(&right.type_)
+            .then_with(|| left.value.cmp(&right.value))
+    });
+    MergedTagValues {
+        values: out,
+        metrics,
+    }
+}

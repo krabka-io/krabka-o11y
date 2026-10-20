@@ -1,8 +1,8 @@
-use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_observability::{RoleReadiness, SupervisedTasks};
 
 use super::{
     CancellationToken, Cli, ProcessSecurity, ServiceMetrics, build_distributor_state,
-    load_profiles_limits_overrides_config, serve_supervised,
+    load_profiles_limits_overrides_config, serve_supervised, supervise_until_shutdown,
 };
 
 /// Accepts pushes at the Pyroscope ingest doors and writes the profiles WAL.
@@ -36,7 +36,7 @@ pub(crate) async fn run_distributor(
         return Ok(());
     };
     let mut tasks = SupervisedTasks::new(shutdown.clone());
-    let (bound, server) = serve_supervised(
+    let server = serve_supervised(
         cli.listen,
         state,
         readiness,
@@ -44,14 +44,8 @@ pub(crate) async fn run_distributor(
         shutdown.clone(),
     )
     .await?;
-    tasks.adopt("profiles distributor HTTP", server);
+    let bound = server.address;
+    tasks.adopt("profiles distributor HTTP", server.task);
     tracing::info!(%bound, "profiles distributor listening");
-    let outcome = tokio::select! {
-        () = shutdown.cancelled() => Ok(()),
-        name = tasks.first_unexpected_exit() => {
-            Err(Box::<dyn std::error::Error>::from(CriticalTaskError(name)))
-        }
-    };
-    tasks.shutdown().await;
-    outcome
+    supervise_until_shutdown(tasks, &shutdown).await
 }

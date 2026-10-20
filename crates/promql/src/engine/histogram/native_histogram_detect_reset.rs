@@ -5,6 +5,17 @@ use super::{
     zero_count_at_threshold,
 };
 
+struct BucketLayout<'a> {
+    spans: &'a [krabka_metrics::BucketSpan],
+    counts: &'a [f64],
+    schema: i8,
+}
+
+struct BucketComparison<'a> {
+    previous: BucketLayout<'a>,
+    current: BucketLayout<'a>,
+}
+
 /// Whether `current` restarted the counter that `previous` was measuring.
 ///
 /// This is `FloatHistogram.DetectReset`. A stated hint settles it outright;
@@ -48,41 +59,50 @@ pub(crate) fn native_histogram_detect_reset(
     if zero_bucket_shrank(previous, current) {
         return true;
     }
-    [
-        (
-            &previous.positive_spans,
-            &previous.positive_counts,
-            &current.positive_spans,
-            &current.positive_counts,
-        ),
-        (
-            &previous.negative_spans,
-            &previous.negative_counts,
-            &current.negative_spans,
-            &current.negative_counts,
-        ),
-    ]
-    .into_iter()
-    .any(
-        |(previous_spans, previous_counts, current_spans, current_counts)| {
-            bucket_shrank(
-                &detect_reset_bucket_counts(
-                    previous_spans,
-                    previous_counts,
-                    previous.schema,
-                    current.schema,
-                    current.zero_threshold,
-                ),
-                &detect_reset_bucket_counts(
-                    current_spans,
-                    current_counts,
-                    current.schema,
-                    current.schema,
-                    current.zero_threshold,
-                ),
-            )
+    let layouts = [
+        BucketComparison {
+            previous: BucketLayout {
+                spans: &previous.positive_spans,
+                counts: &previous.positive_counts,
+                schema: previous.schema,
+            },
+            current: BucketLayout {
+                spans: &current.positive_spans,
+                counts: &current.positive_counts,
+                schema: current.schema,
+            },
         },
-    )
+        BucketComparison {
+            previous: BucketLayout {
+                spans: &previous.negative_spans,
+                counts: &previous.negative_counts,
+                schema: previous.schema,
+            },
+            current: BucketLayout {
+                spans: &current.negative_spans,
+                counts: &current.negative_counts,
+                schema: current.schema,
+            },
+        },
+    ];
+    layouts.iter().any(|pair| {
+        bucket_shrank(
+            &detect_reset_bucket_counts(
+                pair.previous.spans,
+                pair.previous.counts,
+                pair.previous.schema,
+                pair.current.schema,
+                current.zero_threshold,
+            ),
+            &detect_reset_bucket_counts(
+                pair.current.spans,
+                pair.current.counts,
+                pair.current.schema,
+                pair.current.schema,
+                current.zero_threshold,
+            ),
+        )
+    })
 }
 
 /// Whether the zero bucket lost population once the previous histogram is read
@@ -94,13 +114,16 @@ pub(crate) fn native_histogram_detect_reset(
 /// reset, and `zero_count_at_threshold` reports exactly that by handing back a
 /// threshold it had to push out past the one it was asked for.
 fn zero_bucket_shrank(previous: &NativeHistogram, current: &NativeHistogram) -> bool {
-    let (previous_zero_count, threshold) =
-        if same_float(current.zero_threshold, previous.zero_threshold) {
-            (previous.zero_count, current.zero_threshold)
-        } else {
-            zero_count_at_threshold(previous, current.zero_threshold)
-        };
-    !same_float(threshold, current.zero_threshold) || current.zero_count < previous_zero_count
+    let zero_count = if same_float(current.zero_threshold, previous.zero_threshold) {
+        super::ZeroCountAtThreshold {
+            count: previous.zero_count,
+            threshold: current.zero_threshold,
+        }
+    } else {
+        zero_count_at_threshold(previous, current.zero_threshold)
+    };
+    !same_float(zero_count.threshold, current.zero_threshold)
+        || current.zero_count < zero_count.count
 }
 
 fn same_float(left: f64, right: f64) -> bool {
@@ -110,11 +133,12 @@ fn same_float(left: f64, right: f64) -> bool {
 /// `detectReset`: a bucket the previous histogram populated that the current
 /// one either lost outright or holds less in.
 fn bucket_shrank(previous: &BTreeMap<i32, f64>, current: &BTreeMap<i32, f64>) -> bool {
-    previous.iter().any(|(index, previous_count)| {
+    previous.keys().any(|index| {
+        let previous_count = previous[index];
         current
             .get(index)
-            .map_or(*previous_count != 0.0, |current_count| {
-                current_count < previous_count
+            .map_or(previous_count != 0.0, |current_count| {
+                *current_count < previous_count
             })
     })
 }
@@ -139,7 +163,10 @@ fn reconciled_buckets_shrank(previous: &NativeHistogram, current: &NativeHistogr
         current_values,
         &shared,
     );
-    previous
-        .into_iter()
-        .any(|(index, count)| current.get(&index).copied().unwrap_or(0.0) < count)
+    for index in previous.keys() {
+        if current.get(index).copied().unwrap_or(0.0) < previous[index] {
+            return true;
+        }
+    }
+    false
 }

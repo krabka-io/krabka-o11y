@@ -1,10 +1,10 @@
 use super::{
-    Arc, CompareSpec, DurationNanos, EngineOpts, MetricsRange, PlannerContext, Query, QueryHints,
-    Result, ScanOptions, ScopedTag, SearchOptions, SearchResponse, SpanStore, TagScope,
-    TraceMetricsResponse, TraceSpans, TypedValue, UnixNano, assemble_compare_response,
-    assemble_metrics_response, assemble_search_response, collect_planned_batches,
-    compare_span_identities, extend_metric_projection_matchers, hinted_max_exemplars, metric_plan,
-    parse, plan_query, validate_compare_selection,
+    Arc, CompareSpec, DurationNanos, EngineOpts, MetricExemplarPolicy, MetricsRange,
+    PlannerContext, Query, QueryHints, Result, ScanOptions, ScopedTag, SearchOptions,
+    SearchResponse, SpanStore, TagScope, TraceMetricsResponse, TraceSpans, TypedValue, UnixNano,
+    assemble_compare_response, assemble_metrics_response, assemble_search_response,
+    collect_planned_batches, compare_span_identities, extend_metric_projection_matchers,
+    hinted_max_exemplars, metric_plan, parse, plan_query, validate_compare_selection,
 };
 
 pub struct TraceqlEngine<S: SpanStore> {
@@ -195,7 +195,11 @@ impl<S: SpanStore> TraceqlEngine<S> {
             return self
                 .query_range_compare(
                     tenant,
-                    (q.root, metric.spanset_pipeline.clone()),
+                    Query {
+                        root: q.root,
+                        pipeline: metric.spanset_pipeline.clone(),
+                        hints: QueryHints::default(),
+                    },
                     compare,
                     MetricsRange {
                         scan_start: UnixNano(start_ns),
@@ -236,7 +240,7 @@ impl<S: SpanStore> TraceqlEngine<S> {
             UnixNano(end_ns),
             DurationNanos(step_ns),
             &metric,
-            (max_exemplars, &self.opts.histogram_buckets),
+            MetricExemplarPolicy::new(max_exemplars, &self.opts.histogram_buckets),
             UnixNano(if metric.instant { end_ns } else { start_ns }),
         )
     }
@@ -255,7 +259,7 @@ impl<S: SpanStore> TraceqlEngine<S> {
     pub(crate) async fn query_range_compare(
         &self,
         tenant: &str,
-        (root, pipeline): (crate::ast::SpansetExpr, Vec<crate::ast::Pipeline>),
+        query: Query,
         compare: CompareSpec,
         range: MetricsRange,
         scan_options: ScanOptions,
@@ -279,11 +283,7 @@ impl<S: SpanStore> TraceqlEngine<S> {
                 end_ns: range.scan_end,
                 scan_options: scan_options.clone(),
             },
-            &Query {
-                root,
-                pipeline,
-                hints: QueryHints::default(),
-            },
+            &query,
         )
         .await?;
         let batches = collect_planned_batches(planned).await?;

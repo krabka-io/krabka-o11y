@@ -18,24 +18,107 @@ use super::{
     s3_role, start,
 };
 
-fn labels(metric: &str, extra: &[(&str, &str)]) -> Vec<pb::v1::Label> {
-    let mut labels: Vec<_> = std::iter::once(("__name__", metric))
-        .chain(extra.iter().copied())
-        .map(|(name, value)| pb::v1::Label {
-            name: name.into(),
-            value: value.into(),
+#[derive(Clone, Copy)]
+struct LabelPair<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+impl<'a> LabelPair<'a> {
+    fn new(name: &'a str, value: &'a str) -> Self {
+        Self { name, value }
+    }
+}
+
+struct ProtocolHeaders {
+    content_type: &'static str,
+    version: &'static str,
+}
+struct Probe<'a> {
+    path: &'static str,
+    params: Vec<QueryParameter<'a>>,
+    expected: Value,
+    empty: Value,
+}
+struct StatusCase {
+    time: i64,
+    expected: StatusCode,
+}
+struct HaWrite {
+    tenant: &'static str,
+    replica: &'static str,
+    value: f64,
+}
+struct TenantSample {
+    tenant: &'static str,
+    value: i32,
+}
+struct TenantFloat {
+    tenant: &'static str,
+    value: f64,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SeriesCase {
+    from: i64,
+    to: i64,
+}
+struct HistogramBound {
+    bound: &'static str,
+    value: i32,
+}
+struct ChunkGolden {
+    metric: &'static str,
+    encoding: pb::v1::chunk::Encoding,
+    goldens: &'static [&'static str],
+}
+struct MetadataCase {
+    metric: &'static str,
+    kind: &'static str,
+    help: &'static str,
+    unit: &'static str,
+}
+
+fn labels(metric: &str, extra: &[LabelPair<'_>]) -> Vec<pb::v1::Label> {
+    let mut pairs = vec![LabelPair::new("__name__", metric)];
+    pairs.extend_from_slice(extra);
+    let mut labels: Vec<_> = pairs
+        .iter()
+        .map(|pair| pb::v1::Label {
+            name: pair.name.into(),
+            value: pair.value.into(),
         })
         .collect();
     labels.sort_by(|a, b| a.name.cmp(&b.name));
     labels
 }
 
-fn floats(metric: &str, samples: &[(i64, f64)], extra: &[(&str, &str)]) -> pb::v1::TimeSeries {
+struct TimedValue<Value> {
+    timestamp_ms: i64,
+    value: Value,
+}
+
+impl<Value> TimedValue<Value> {
+    fn new(timestamp_ms: i64, value: Value) -> Self {
+        Self {
+            timestamp_ms,
+            value,
+        }
+    }
+}
+
+fn floats(
+    metric: &str,
+    samples: &[TimedValue<f64>],
+    extra: &[LabelPair<'_>],
+) -> pb::v1::TimeSeries {
     pb::v1::TimeSeries {
         labels: labels(metric, extra),
         samples: samples
             .iter()
-            .map(|&(timestamp, value)| pb::v1::Sample { timestamp, value })
+            .map(|sample| pb::v1::Sample {
+                timestamp: sample.timestamp_ms,
+                value: sample.value,
+            })
             .collect(),
         ..Default::default()
     }
@@ -178,20 +261,24 @@ async fn write(
     metadata: Vec<pb::v1::MetricMetadata>,
 ) -> TestResult<reqwest::Response> {
     let base = base_url(&deployment.distributor, DATA_PORT).await?;
-    let (content_type, version_header) = match version {
-        RemoteWrite::V1 => ("application/x-protobuf", "0.1.0"),
-        RemoteWrite::V2 => (
-            "application/x-protobuf;proto=io.prometheus.write.v2.Request",
-            "2.0.0",
-        ),
+    let headers = match version {
+        RemoteWrite::V1 => ProtocolHeaders {
+            content_type: "application/x-protobuf",
+            version: "0.1.0",
+        },
+        RemoteWrite::V2 => ProtocolHeaders {
+            content_type: "application/x-protobuf;proto=io.prometheus.write.v2.Request",
+            version: "2.0.0",
+        },
     };
     Ok(deployment
+        .infrastructure
         .client
         .post(format!("{base}/api/v1/push"))
         .header("X-Scope-OrgID", tenant)
-        .header("Content-Type", content_type)
+        .header("Content-Type", headers.content_type)
         .header("Content-Encoding", "snappy")
-        .header("X-Prometheus-Remote-Write-Version", version_header)
+        .header("X-Prometheus-Remote-Write-Version", headers.version)
         .body(write_body(version, series, metadata)?)
         .send()
         .await?)
@@ -215,22 +302,62 @@ fn timestamp(milliseconds: i64) -> Value {
     serde_json::from_str(&seconds(milliseconds)).expect("fixed positive timestamp")
 }
 
-fn api_url(base: &str, path: &str, params: &[(&str, String)]) -> TestResult<url::Url> {
+fn api_url(base: &str, path: &str, params: &[QueryParameter<'_>]) -> TestResult<url::Url> {
     let mut url = url::Url::parse(&format!("{base}{path}"))?;
-    url.query_pairs_mut()
-        .extend_pairs(params.iter().map(|(name, value)| (*name, value.as_str())));
+    let mut query = url.query_pairs_mut();
+    for parameter in params {
+        query.append_pair(parameter.name, &parameter.value);
+    }
+    drop(query);
     Ok(url)
 }
 
-fn range_url(base: &str, query: &str, bounds: (i64, i64, i64)) -> TestResult<url::Url> {
+struct QueryParameter<'a> {
+    name: &'a str,
+    value: String,
+}
+
+struct OtlpProbe {
+    metric: &'static str,
+    expected: Value,
+}
+
+impl<'a> QueryParameter<'a> {
+    fn new(name: &'a str, value: impl Into<String>) -> Self {
+        Self {
+            name,
+            value: value.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+#[allow(clippy::struct_field_names)]
+struct RangeBounds {
+    start_ms: i64,
+    end_ms: i64,
+    step_ms: i64,
+}
+
+impl RangeBounds {
+    fn new(start_ms: i64, end_ms: i64, step_ms: i64) -> Self {
+        Self {
+            start_ms,
+            end_ms,
+            step_ms,
+        }
+    }
+}
+
+fn range_url(base: &str, query: &str, bounds: RangeBounds) -> TestResult<url::Url> {
     api_url(
         base,
         "/api/v1/query_range",
         &[
-            ("query", query.into()),
-            ("start", seconds(bounds.0)),
-            ("end", seconds(bounds.1)),
-            ("step", seconds(bounds.2)),
+            QueryParameter::new("query", query),
+            QueryParameter::new("start", seconds(bounds.start_ms)),
+            QueryParameter::new("end", seconds(bounds.end_ms)),
+            QueryParameter::new("step", seconds(bounds.step_ms)),
         ],
     )
 }
@@ -266,24 +393,18 @@ async fn wait_data(client: &Client, url: &url::Url, tenant: &str, expected: &Val
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn matrix(series: Value) -> Value {
-    Value::Object(
-        [
-            ("resultType".into(), json!("matrix")),
-            ("result".into(), series),
-        ]
-        .into_iter()
-        .collect(),
-    )
+    json!({ "resultType": "matrix", "result": series })
 }
 
-fn float_matrix(metric: &str, samples: &[(i64, i32)], extra: Value) -> Value {
+fn float_matrix(metric: &str, samples: &[TimedValue<i32>], extra: Value) -> Value {
     let Value::Object(mut metric_labels) = extra else {
         panic!("labels object");
     };
     metric_labels.insert("__name__".into(), json!(metric));
     matrix(
-        json!([{"metric": metric_labels, "values": samples.iter().map(|&(time, value)| json!([timestamp(time), value.to_string()])).collect::<Vec<_>>() }]),
+        json!([{"metric": metric_labels, "values": samples.iter().map(|sample| json!([timestamp(sample.timestamp_ms), sample.value.to_string()])).collect::<Vec<_>>() }]),
     )
 }
 
@@ -303,6 +424,7 @@ async fn wait_metric(
     let deadline = tokio::time::Instant::now() + QUERY_TIMEOUT;
     loop {
         let text = deployment
+            .infrastructure
             .client
             .get(format!("{base}/metrics"))
             .send()
@@ -366,8 +488,8 @@ async fn histogram_compaction(version: RemoteWrite) -> TestResult {
             let expected = histogram_matrix(metric, &times[..=usize::from(time != START_MS)]);
             for base in [&hot_base, &cold_base] {
                 wait_data(
-                    &deployment.client,
-                    &range_url(base, metric, (START_MS, time, 1000))?,
+                    &deployment.infrastructure.client,
+                    &range_url(base, metric, RangeBounds::new(START_MS, time, 1000))?,
                     "tenant-a",
                     &expected,
                 )
@@ -376,12 +498,14 @@ async fn histogram_compaction(version: RemoteWrite) -> TestResult {
         }
     }
     builder.stop_with_timeout(Some(30)).await?;
-    let compactor = start(s3_role(&deployment.network, ADMIN_PORT).with_cmd([
-        "krabka-metrics",
-        "--target=compactor",
-        "--object-store-url=s3://metrics",
-        "--compactor-interval=100ms",
-    ]))
+    let compactor = start(
+        s3_role(&deployment.infrastructure.network, ADMIN_PORT).with_cmd([
+            "krabka-metrics",
+            "--target=compactor",
+            "--object-store-url=s3://metrics",
+            "--compactor-interval=100ms",
+        ]),
+    )
     .await?;
     deployment.ready(&compactor, ADMIN_PORT).await?;
     // A nonzero output counter proves a merge ran, rather than merely a ready process.
@@ -398,15 +522,21 @@ async fn histogram_compaction(version: RemoteWrite) -> TestResult {
     let reopened = deployment.cold().await?;
     let base = base_url(&reopened, DATA_PORT).await?;
     for metric in ["integer_histogram", "float_histogram"] {
-        let url = range_url(&base, metric, (START_MS, START_MS + 1000, 1000))?;
+        let url = range_url(
+            &base,
+            metric,
+            RangeBounds::new(START_MS, START_MS + 1000, 1000),
+        )?;
         wait_data(
-            &deployment.client,
+            &deployment.infrastructure.client,
             &url,
             "tenant-a",
             &histogram_matrix(metric, &times),
         )
         .await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == matrix(json!([])));
+        assert!(
+            data(&deployment.infrastructure.client, &url, "tenant-b").await? == matrix(json!([]))
+        );
     }
     Ok(())
 }
@@ -425,7 +555,11 @@ async fn metadata_and_exemplars_v2_survive_storage_and_restart() -> TestResult {
 
 async fn metadata_and_exemplars(version: RemoteWrite) -> TestResult {
     let deployment = Deployment::start().await?;
-    let mut series = floats("requests_total", &[(START_MS, 11.0)], &[("job", "api")]);
+    let mut series = floats(
+        "requests_total",
+        &[TimedValue::new(START_MS, 11.0)],
+        &[LabelPair::new("job", "api")],
+    );
     series.exemplars = vec![pb::v1::Exemplar {
         labels: vec![pb::v1::Label {
             name: "trace_id".into(),
@@ -449,38 +583,44 @@ async fn metadata_and_exemplars(version: RemoteWrite) -> TestResult {
     let expected_metadata = json!({"requests_total": [{"type": "counter", "help": "Requests served", "unit": "requests"}]});
     let expected_exemplars = json!([{"seriesLabels": {"__name__": "requests_total", "job": "api"}, "exemplars": [{"labels": {"trace_id": "0123456789abcdef"}, "value": "3.5", "timestamp": 1_700_000_000}]}]);
     let probes = [
-        (
-            "/api/v1/metadata",
-            vec![("metric", "requests_total".into())],
-            expected_metadata,
-            json!({}),
-        ),
-        (
-            "/api/v1/query_exemplars",
-            vec![
-                ("query", "requests_total".into()),
-                ("start", seconds(START_MS)),
-                ("end", seconds(START_MS)),
+        Probe {
+            path: "/api/v1/metadata",
+            params: vec![QueryParameter::new("metric", "requests_total")],
+            expected: expected_metadata,
+            empty: json!({}),
+        },
+        Probe {
+            path: "/api/v1/query_exemplars",
+            params: vec![
+                QueryParameter::new("query", "requests_total"),
+                QueryParameter::new("start", seconds(START_MS)),
+                QueryParameter::new("end", seconds(START_MS)),
             ],
-            expected_exemplars,
-            json!([]),
-        ),
+            expected: expected_exemplars,
+            empty: json!([]),
+        },
     ];
     let hot = base_url(&deployment.hot, DATA_PORT).await?;
-    for (path, params, expected, empty) in &probes {
-        let url = api_url(&hot, path, params)?;
-        wait_data(&deployment.client, &url, "tenant-a", expected).await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == *empty);
+    for probe in &probes {
+        let url = api_url(&hot, probe.path, &probe.params)?;
+        wait_data(
+            &deployment.infrastructure.client,
+            &url,
+            "tenant-a",
+            &probe.expected,
+        )
+        .await?;
+        assert!(data(&deployment.infrastructure.client, &url, "tenant-b").await? == probe.empty);
     }
     let builder = deployment.builder().await?;
     let cold = deployment.cold().await?;
     let base = base_url(&cold, DATA_PORT).await?;
-    for (path, params, expected, _) in &probes {
+    for probe in &probes {
         wait_data(
-            &deployment.client,
-            &api_url(&base, path, params)?,
+            &deployment.infrastructure.client,
+            &api_url(&base, probe.path, &probe.params)?,
             "tenant-a",
-            expected,
+            &probe.expected,
         )
         .await?;
     }
@@ -489,10 +629,16 @@ async fn metadata_and_exemplars(version: RemoteWrite) -> TestResult {
     cold.rm().await?;
     let reopened = deployment.cold().await?;
     let base = base_url(&reopened, DATA_PORT).await?;
-    for (path, params, expected, empty) in &probes {
-        let url = api_url(&base, path, params)?;
-        wait_data(&deployment.client, &url, "tenant-a", expected).await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == *empty);
+    for probe in &probes {
+        let url = api_url(&base, probe.path, &probe.params)?;
+        wait_data(
+            &deployment.infrastructure.client,
+            &url,
+            "tenant-a",
+            &probe.expected,
+        )
+        .await?;
+        assert!(data(&deployment.infrastructure.client, &url, "tenant-b").await? == probe.empty);
     }
     Ok(())
 }
@@ -508,30 +654,37 @@ async fn out_of_order_floats_and_histograms_obey_the_tenant_window() -> TestResu
     let builder = deployment.builder().await?;
     let cold = deployment.cold().await?;
     for tenant in ["tenant-a", "tenant-b"] {
-        for (time, expected_status) in [
-            (newest, StatusCode::OK),
-            (
-                START_MS,
-                if tenant == "tenant-a" {
+        for case in [
+            StatusCase {
+                time: newest,
+                expected: StatusCode::OK,
+            },
+            StatusCase {
+                time: START_MS,
+                expected: if tenant == "tenant-a" {
                     StatusCode::OK
                 } else {
                     StatusCode::BAD_REQUEST
                 },
-            ),
-            (newest - 600_001, StatusCode::BAD_REQUEST),
+            },
+            StatusCase {
+                time: newest - 600_001,
+                expected: StatusCode::BAD_REQUEST,
+            },
         ] {
             for series in [
-                floats("ooo_float", &[(time, 5.0)], &[]),
-                histograms("ooo_integer_histogram", &[time], false),
-                histograms("ooo_float_histogram", &[time], true),
+                floats("ooo_float", &[TimedValue::new(case.time, 5.0)], &[]),
+                histograms("ooo_integer_histogram", &[case.time], false),
+                histograms("ooo_float_histogram", &[case.time], true),
             ] {
                 let response =
                     write(&deployment, RemoteWrite::V1, tenant, vec![series], vec![]).await?;
                 let status = response.status();
                 let body = response.text().await?;
                 assert!(
-                    status == expected_status,
-                    "{tenant} at {time}: {status}: {body}"
+                    status == case.expected,
+                    "{tenant} at {}: {status}: {body}",
+                    case.time
                 );
             }
         }
@@ -548,7 +701,10 @@ async fn out_of_order_floats_and_histograms_obey_the_tenant_window() -> TestResu
                 let expected = if metric == "ooo_float" {
                     float_matrix(
                         metric,
-                        &times.iter().map(|&time| (time, 5)).collect::<Vec<_>>(),
+                        &times
+                            .iter()
+                            .map(|&time| TimedValue::new(time, 5))
+                            .collect::<Vec<_>>(),
                         json!({}),
                     )
                 } else {
@@ -556,15 +712,19 @@ async fn out_of_order_floats_and_histograms_obey_the_tenant_window() -> TestResu
                 };
                 // Query before the oldest rejected timestamp too: rejected writes must never appear.
                 wait_data(
-                    &deployment.client,
-                    &range_url(&base, metric, (newest - 660_000, newest, 60_000))?,
+                    &deployment.infrastructure.client,
+                    &range_url(
+                        &base,
+                        metric,
+                        RangeBounds::new(newest - 660_000, newest, 60_000),
+                    )?,
                     tenant,
                     &expected,
                 )
                 .await?;
                 wait_data(
-                    &deployment.client,
-                    &range_url(&base, metric, (times[0], newest, 60_000))?,
+                    &deployment.infrastructure.client,
+                    &range_url(&base, metric, RangeBounds::new(times[0], newest, 60_000))?,
                     tenant,
                     &expected,
                 )
@@ -590,27 +750,48 @@ async fn ha_replicas_v2_are_deduplicated_and_tenant_isolated() -> TestResult {
 
 async fn ha_replicas(version: RemoteWrite) -> TestResult {
     let deployment = Deployment::start().await?;
-    for (tenant, replica, value) in [
-        ("tenant-a", "a", 11.0),
-        ("tenant-a", "b", 99.0),
-        ("tenant-b", "b", 23.0),
-        ("tenant-b", "a", 88.0),
+    for case in [
+        HaWrite {
+            tenant: "tenant-a",
+            replica: "a",
+            value: 11.0,
+        },
+        HaWrite {
+            tenant: "tenant-a",
+            replica: "b",
+            value: 99.0,
+        },
+        HaWrite {
+            tenant: "tenant-b",
+            replica: "b",
+            value: 23.0,
+        },
+        HaWrite {
+            tenant: "tenant-b",
+            replica: "a",
+            value: 88.0,
+        },
     ] {
         let response = write(
             &deployment,
             version,
-            tenant,
+            case.tenant,
             vec![floats(
                 "ha_gauge",
-                &[(START_MS, value)],
-                &[("cluster", "prometheus"), ("__replica__", replica)],
+                &[TimedValue::new(START_MS, case.value)],
+                &[
+                    LabelPair::new("cluster", "prometheus"),
+                    LabelPair::new("__replica__", case.replica),
+                ],
             )],
             vec![],
         )
         .await?;
         let status = response.status();
         accepted(response).await?;
-        if (tenant, replica) == ("tenant-a", "b") || (tenant, replica) == ("tenant-b", "a") {
+        if (case.tenant == "tenant-a" && case.replica == "b")
+            || (case.tenant == "tenant-b" && case.replica == "a")
+        {
             assert!(status == StatusCode::ACCEPTED);
         } else {
             assert!(status == StatusCode::OK);
@@ -620,15 +801,28 @@ async fn ha_replicas(version: RemoteWrite) -> TestResult {
     let cold = deployment.cold().await?;
     for container in [&deployment.hot, &cold] {
         let base = base_url(container, DATA_PORT).await?;
-        for (tenant, value) in [("tenant-a", 11), ("tenant-b", 23)] {
-            let url = range_url(&base, "ha_gauge", (START_MS, START_MS, 1000))?;
+        for case in [
+            TenantSample {
+                tenant: "tenant-a",
+                value: 11,
+            },
+            TenantSample {
+                tenant: "tenant-b",
+                value: 23,
+            },
+        ] {
+            let url = range_url(
+                &base,
+                "ha_gauge",
+                RangeBounds::new(START_MS, START_MS, 1000),
+            )?;
             wait_data(
-                &deployment.client,
+                &deployment.infrastructure.client,
                 &url,
-                tenant,
+                case.tenant,
                 &float_matrix(
                     "ha_gauge",
-                    &[(START_MS, value)],
+                    &[TimedValue::new(START_MS, case.value)],
                     json!({"cluster": "prometheus"}),
                 ),
             )
@@ -640,18 +834,85 @@ async fn ha_replicas(version: RemoteWrite) -> TestResult {
 }
 
 async fn frontend(deployment: &Deployment) -> TestResult<ContainerAsync<GenericImage>> {
-    let container = start(super::query_role(&deployment.network).with_cmd([
-        "krabka-metrics-service",
-        "--target=query-frontend",
-        "--listen=0.0.0.0:4041",
-        "--object-store-url=s3://metrics",
-        "--cold-cache-ttl=100ms",
-        "--query-frontend-split=2s",
-        "--query-frontend-max-cache-freshness=1ms",
-    ]))
+    let container = start(
+        super::query_role(&deployment.infrastructure.network).with_cmd([
+            "krabka-metrics-service",
+            "--target=query-frontend",
+            "--listen=0.0.0.0:4041",
+            "--object-store-url=s3://metrics",
+            "--cold-cache-ttl=100ms",
+            "--query-frontend-split=2s",
+            "--query-frontend-max-cache-freshness=1ms",
+        ]),
+    )
     .await?;
     deployment.ready(&container, DATA_PORT).await?;
     Ok(container)
+}
+
+// Both tenants' gauge and histogram ranges, as the frontend answers them.
+// The ranges span `times` at a one-second step.
+async fn assert_frontend_ranges(deployment: &Deployment, base: &str, times: &[i64]) -> TestResult {
+    let bounds = RangeBounds::new(times[0], times[times.len() - 1], 1000);
+    for FrontendRange {
+        tenant,
+        metric,
+        expected,
+    } in frontend_ranges(times)
+    {
+        assert!(
+            data(
+                &deployment.infrastructure.client,
+                &range_url(base, metric, bounds)?,
+                tenant
+            )
+            .await?
+                == expected
+        );
+    }
+    Ok(())
+}
+
+// One tenant's expected answer to one frontend range query.
+struct FrontendRange {
+    tenant: &'static str,
+    metric: &'static str,
+    expected: Value,
+}
+
+// Both tenants' gauge and histogram ranges over `times`, as the frontend
+// answers them.
+fn frontend_ranges(times: &[i64]) -> Vec<FrontendRange> {
+    let mut ranges = Vec::new();
+    for case in [
+        TenantSample {
+            tenant: "tenant-a",
+            value: 7,
+        },
+        TenantSample {
+            tenant: "tenant-b",
+            value: 19,
+        },
+    ] {
+        ranges.push(FrontendRange {
+            tenant: case.tenant,
+            metric: "frontend_gauge",
+            expected: float_matrix(
+                "frontend_gauge",
+                &times
+                    .iter()
+                    .map(|&time| TimedValue::new(time, case.value))
+                    .collect::<Vec<_>>(),
+                json!({}),
+            ),
+        });
+        ranges.push(FrontendRange {
+            tenant: case.tenant,
+            metric: "frontend_histogram",
+            expected: histogram_matrix("frontend_histogram", times),
+        });
+    }
+    ranges
 }
 
 #[tokio::test]
@@ -662,14 +923,27 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
     let builder = deployment.builder().await?;
     let cold = deployment.cold().await?;
     let cold_base = base_url(&cold, DATA_PORT).await?;
-    for (tenant, value) in [("tenant-a", 7.0), ("tenant-b", 19.0)] {
+    for case in [
+        TenantFloat {
+            tenant: "tenant-a",
+            value: 7.0,
+        },
+        TenantFloat {
+            tenant: "tenant-b",
+            value: 19.0,
+        },
+    ] {
         accepted(
             write(
                 &deployment,
                 RemoteWrite::V1,
-                tenant,
+                case.tenant,
                 vec![
-                    floats("frontend_gauge", &[(START_MS, value)], &[]),
+                    floats(
+                        "frontend_gauge",
+                        &[TimedValue::new(START_MS, case.value)],
+                        &[],
+                    ),
                     histograms("frontend_histogram", &[START_MS], true),
                 ],
                 vec![],
@@ -679,63 +953,28 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
         .await?;
     }
     let times: Vec<_> = (0..7).map(|step| START_MS + 125 + step * 1000).collect();
-    let bounds = (times[0], times[6], 1000);
+    let bounds = RangeBounds::new(times[0], times[6], 1000);
     // Every evaluation is 125ms off the step grid and crosses four split windows.
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        for (metric, expected) in [
-            (
-                "frontend_gauge",
-                float_matrix(
-                    "frontend_gauge",
-                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                    json!({}),
-                ),
-            ),
-            (
-                "frontend_histogram",
-                histogram_matrix("frontend_histogram", &times),
-            ),
-        ] {
-            wait_data(
-                &deployment.client,
-                &range_url(&cold_base, metric, bounds)?,
-                tenant,
-                &expected,
-            )
-            .await?;
-        }
+    for FrontendRange {
+        tenant,
+        metric,
+        expected,
+    } in frontend_ranges(&times)
+    {
+        wait_data(
+            &deployment.infrastructure.client,
+            &range_url(&cold_base, metric, bounds)?,
+            tenant,
+            &expected,
+        )
+        .await?;
     }
     builder.stop_with_timeout(Some(30)).await?;
     deployment.hot.stop_with_timeout(Some(30)).await?;
     let frontend = frontend(&deployment).await?;
     let base = base_url(&frontend, DATA_PORT).await?;
     for _ in 0..2 {
-        for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-            for (metric, expected) in [
-                (
-                    "frontend_gauge",
-                    float_matrix(
-                        "frontend_gauge",
-                        &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                        json!({}),
-                    ),
-                ),
-                (
-                    "frontend_histogram",
-                    histogram_matrix("frontend_histogram", &times),
-                ),
-            ] {
-                assert!(
-                    data(
-                        &deployment.client,
-                        &range_url(&base, metric, bounds)?,
-                        tenant
-                    )
-                    .await?
-                        == expected
-                );
-            }
-        }
+        assert_frontend_ranges(&deployment, &base, &times).await?;
     }
     wait_metric(
         &deployment,
@@ -748,32 +987,7 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
     // A fresh process must hit the same object-store cache, with tenant keys intact.
     let reopened = self::frontend(&deployment).await?;
     let base = base_url(&reopened, DATA_PORT).await?;
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        for (metric, expected) in [
-            (
-                "frontend_gauge",
-                float_matrix(
-                    "frontend_gauge",
-                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                    json!({}),
-                ),
-            ),
-            (
-                "frontend_histogram",
-                histogram_matrix("frontend_histogram", &times),
-            ),
-        ] {
-            assert!(
-                data(
-                    &deployment.client,
-                    &range_url(&base, metric, bounds)?,
-                    tenant
-                )
-                .await?
-                    == expected
-            );
-        }
-    }
+    assert_frontend_ranges(&deployment, &base, &times).await?;
     wait_metric(
         &deployment,
         &reopened,
@@ -848,6 +1062,7 @@ async fn remote_read(
     request: &pb::v1::ReadRequest,
 ) -> TestResult<reqwest::Response> {
     Ok(deployment
+        .infrastructure
         .client
         .post(format!("{base}/api/v1/read"))
         .header("X-Scope-OrgID", tenant)
@@ -868,9 +1083,9 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
         floats(
             "read_float",
             &[
-                (START_MS, 7.0),
-                (START_MS + 1000, 8.0),
-                (START_MS + 2000, 9.0),
+                TimedValue::new(START_MS, 7.0),
+                TimedValue::new(START_MS + 1000, 8.0),
+                TimedValue::new(START_MS + 2000, 9.0),
             ],
             &[],
         ),
@@ -897,20 +1112,32 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
     for container in [&deployment.hot, &cold] {
         let base = base_url(container, DATA_PORT).await?;
         wait_data(
-            &deployment.client,
-            &range_url(&base, "read_float", (START_MS, START_MS + 2000, 1000))?,
+            &deployment.infrastructure.client,
+            &range_url(
+                &base,
+                "read_float",
+                RangeBounds::new(START_MS, START_MS + 2000, 1000),
+            )?,
             "tenant-a",
             &float_matrix(
                 "read_float",
-                &[(START_MS, 7), (START_MS + 1000, 8), (START_MS + 2000, 9)],
+                &[
+                    TimedValue::new(START_MS, 7),
+                    TimedValue::new(START_MS + 1000, 8),
+                    TimedValue::new(START_MS + 2000, 9),
+                ],
                 json!({}),
             ),
         )
         .await?;
         for metric in ["read_integer_histogram", "read_float_histogram"] {
             wait_data(
-                &deployment.client,
-                &range_url(&base, metric, (START_MS, START_MS + 1000, 1000))?,
+                &deployment.infrastructure.client,
+                &range_url(
+                    &base,
+                    metric,
+                    RangeBounds::new(START_MS, START_MS + 1000, 1000),
+                )?,
                 "tenant-a",
                 &histogram_matrix(metric, &[START_MS, START_MS + 1000]),
             )
@@ -918,23 +1145,20 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
         }
         for hint_range in [
             None,
-            Some((START_MS, START_MS + 2000)),
-            Some((START_MS + 1000, START_MS + 1000)),
+            Some(SeriesCase {
+                from: START_MS,
+                to: START_MS + 2000,
+            }),
+            Some(SeriesCase {
+                from: START_MS + 1000,
+                to: START_MS + 1000,
+            }),
         ] {
-            let query = pb::v1::Query {
-                start_timestamp_ms: START_MS,
-                end_timestamp_ms: START_MS + 2000,
-                matchers: vec![pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Re as i32,
-                    name: "__name__".into(),
-                    value: "read_.*".into(),
-                }],
-                hints: hint_range.map(|(start_ms, end_ms)| pb::v1::ReadHints {
-                    start_ms,
-                    end_ms,
-                    ..Default::default()
-                }),
-            };
+            let query = read_metrics_query(hint_range.map(|window| pb::v1::ReadHints {
+                start_ms: window.from,
+                end_ms: window.to,
+                ..Default::default()
+            }));
             let request = pb::v1::ReadRequest {
                 queries: vec![query.clone()],
                 accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
@@ -945,7 +1169,12 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
             let bytes = snap::raw::Decoder::new().decompress_vec(&response.bytes().await?)?;
             let mut actual = pb::v1::ReadResponse::decode(bytes.as_slice())?;
             let mut expected = input.clone();
-            if hint_range == Some((START_MS + 1000, START_MS + 1000)) {
+            if hint_range
+                == Some(SeriesCase {
+                    from: START_MS + 1000,
+                    to: START_MS + 1000,
+                })
+            {
                 for series in &mut expected {
                     series
                         .samples
@@ -978,20 +1207,11 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
         }
         for narrowed in [false, true] {
             let request = pb::v1::ReadRequest {
-                queries: vec![pb::v1::Query {
-                    start_timestamp_ms: START_MS,
-                    end_timestamp_ms: START_MS + 2000,
-                    matchers: vec![pb::v1::LabelMatcher {
-                        r#type: pb::v1::label_matcher::Type::Re as i32,
-                        name: "__name__".into(),
-                        value: "read_.*".into(),
-                    }],
-                    hints: narrowed.then_some(pb::v1::ReadHints {
-                        start_ms: START_MS + 1000,
-                        end_ms: START_MS + 1000,
-                        ..Default::default()
-                    }),
-                }],
+                queries: vec![read_metrics_query(narrowed.then_some(pb::v1::ReadHints {
+                    start_ms: START_MS + 1000,
+                    end_ms: START_MS + 1000,
+                    ..Default::default()
+                }))],
                 accepted_response_types: vec![
                     pb::v1::ResponseType::StreamedXorChunks as i32,
                     pb::v1::ResponseType::Samples as i32,
@@ -1016,29 +1236,30 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
                     }),
                 }],
             }];
-            for (metric, encoding, goldens) in [
-                (
-                    "read_float_histogram",
-                    pb::v1::chunk::Encoding::FloatHistogram,
-                    FLOAT_GOLDENS,
-                ),
-                (
-                    "read_integer_histogram",
-                    pb::v1::chunk::Encoding::Histogram,
-                    INTEGER_GOLDENS,
-                ),
+            for case in [
+                ChunkGolden {
+                    metric: "read_float_histogram",
+                    encoding: pb::v1::chunk::Encoding::FloatHistogram,
+                    goldens: &FLOAT_GOLDENS,
+                },
+                ChunkGolden {
+                    metric: "read_integer_histogram",
+                    encoding: pb::v1::chunk::Encoding::Histogram,
+                    goldens: &INTEGER_GOLDENS,
+                },
             ] {
                 expected.push(pb::v1::ChunkedSeries {
-                    labels: labels(metric, &[]),
-                    chunks: goldens
+                    labels: labels(case.metric, &[]),
+                    chunks: case
+                        .goldens
                         .iter()
                         .zip([START_MS, START_MS + 1000])
-                        .filter(|(_, time)| !narrowed || *time == START_MS + 1000)
-                        .map(|(golden, time)| pb::v1::Chunk {
-                            min_time_ms: time,
-                            max_time_ms: time,
-                            r#type: encoding as i32,
-                            data: hex_bytes(golden),
+                        .filter(|entry| !narrowed || entry.1 == START_MS + 1000)
+                        .map(|entry| pb::v1::Chunk {
+                            min_time_ms: entry.1,
+                            max_time_ms: entry.1,
+                            r#type: case.encoding as i32,
+                            data: hex_bytes(entry.0),
                         })
                         .collect(),
                 });
@@ -1058,6 +1279,7 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
 
 #[tokio::test]
 #[ignore = "requires the Bazel Docker deployment"]
+#[allow(clippy::too_many_lines)]
 async fn otlp_gauges_counters_and_histograms_preserve_translation_and_metadata() -> TestResult {
     use opentelemetry_proto::tonic::{
         common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value},
@@ -1168,6 +1390,7 @@ async fn otlp_gauges_counters_and_histograms_preserve_translation_and_metadata()
     let deployment = Deployment::start().await?;
     let write_base = base_url(&deployment.distributor, DATA_PORT).await?;
     let response = deployment
+        .infrastructure
         .client
         .post(format!("{write_base}/otlp/v1/metrics"))
         .header("X-Scope-OrgID", "tenant-a")
@@ -1190,43 +1413,67 @@ async fn otlp_gauges_counters_and_histograms_preserve_translation_and_metadata()
         .expect("metric labels")
         .extend(common.as_object().expect("labels").clone());
     let mut probes = vec![
-        (
-            "room_temperature_celsius",
-            float_matrix("room_temperature_celsius", &[(START_MS, 7)], common.clone()),
-        ),
-        (
-            "requests_total",
-            float_matrix("requests_total", &[(START_MS, 11)], common.clone()),
-        ),
-        (
-            "request_duration_seconds_count",
-            float_matrix(
+        OtlpProbe {
+            metric: "room_temperature_celsius",
+            expected: float_matrix(
+                "room_temperature_celsius",
+                &[TimedValue::new(START_MS, 7)],
+                common.clone(),
+            ),
+        },
+        OtlpProbe {
+            metric: "requests_total",
+            expected: float_matrix(
+                "requests_total",
+                &[TimedValue::new(START_MS, 11)],
+                common.clone(),
+            ),
+        },
+        OtlpProbe {
+            metric: "request_duration_seconds_count",
+            expected: float_matrix(
                 "request_duration_seconds_count",
-                &[(START_MS, 5)],
+                &[TimedValue::new(START_MS, 5)],
                 common.clone(),
             ),
-        ),
-        (
-            "request_duration_seconds_sum",
-            float_matrix(
+        },
+        OtlpProbe {
+            metric: "request_duration_seconds_sum",
+            expected: float_matrix(
                 "request_duration_seconds_sum",
-                &[(START_MS, 8)],
+                &[TimedValue::new(START_MS, 8)],
                 common.clone(),
             ),
-        ),
-        ("queue_duration_seconds", histogram_expected),
+        },
+        OtlpProbe {
+            metric: "queue_duration_seconds",
+            expected: histogram_expected,
+        },
     ];
-    for (bound, value) in [("1", 2), ("2", 5), ("+Inf", 5)] {
+    for bucket in [
+        HistogramBound {
+            bound: "1",
+            value: 2,
+        },
+        HistogramBound {
+            bound: "2",
+            value: 5,
+        },
+        HistogramBound {
+            bound: "+Inf",
+            value: 5,
+        },
+    ] {
         let mut extra = common.clone();
-        extra["le"] = json!(bound);
-        probes.push((
-            "request_duration_seconds_bucket",
-            float_matrix(
+        extra["le"] = json!(bucket.bound);
+        probes.push(OtlpProbe {
+            metric: "request_duration_seconds_bucket",
+            expected: float_matrix(
                 "request_duration_seconds_bucket",
-                &[(START_MS, value)],
+                &[TimedValue::new(START_MS, bucket.value)],
                 extra,
             ),
-        ));
+        });
     }
     let hot = base_url(&deployment.hot, DATA_PORT).await?;
     check_otlp(&deployment, &hot, &probes).await?;
@@ -1243,9 +1490,11 @@ async fn otlp_gauges_counters_and_histograms_preserve_translation_and_metadata()
     Ok(())
 }
 
-async fn check_otlp(deployment: &Deployment, base: &str, probes: &[(&str, Value)]) -> TestResult {
-    for (metric, expected) in probes {
-        let query = if *metric == "request_duration_seconds_bucket" {
+async fn check_otlp(deployment: &Deployment, base: &str, probes: &[OtlpProbe]) -> TestResult {
+    for probe in probes {
+        let metric = probe.metric;
+        let expected = &probe.expected;
+        let query = if metric == "request_duration_seconds_bucket" {
             format!(
                 "{metric}{{le=\"{}\"}}",
                 expected["result"][0]["metric"]["le"]
@@ -1255,35 +1504,71 @@ async fn check_otlp(deployment: &Deployment, base: &str, probes: &[(&str, Value)
         } else {
             (*metric).to_owned()
         };
-        let url = range_url(base, &query, (START_MS, START_MS, 1000))?;
-        wait_data(&deployment.client, &url, "tenant-a", expected).await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == matrix(json!([])));
-    }
-    for (metric, kind, help, unit) in [
-        (
-            "room_temperature_celsius",
-            "gauge",
-            "Room temperature",
-            "Cel",
-        ),
-        ("requests_total", "counter", "Requests served", "1"),
-        (
-            "request_duration_seconds",
-            "histogram",
-            "Request duration",
-            "s",
-        ),
-        ("queue_duration_seconds", "histogram", "Queue duration", "s"),
-    ] {
-        let url = api_url(base, "/api/v1/metadata", &[("metric", metric.into())])?;
+        let url = range_url(base, &query, RangeBounds::new(START_MS, START_MS, 1000))?;
         wait_data(
-            &deployment.client,
+            &deployment.infrastructure.client,
             &url,
             "tenant-a",
-            &json!({metric: [{"type": kind, "help": help, "unit": unit}]}),
+            expected,
         )
         .await?;
-        assert!(data(&deployment.client, &url, "tenant-b").await? == json!({}));
+        assert!(
+            data(&deployment.infrastructure.client, &url, "tenant-b").await? == matrix(json!([]))
+        );
+    }
+    for item in [
+        MetadataCase {
+            metric: "room_temperature_celsius",
+            kind: "gauge",
+            help: "Room temperature",
+            unit: "Cel",
+        },
+        MetadataCase {
+            metric: "requests_total",
+            kind: "counter",
+            help: "Requests served",
+            unit: "1",
+        },
+        MetadataCase {
+            metric: "request_duration_seconds",
+            kind: "histogram",
+            help: "Request duration",
+            unit: "s",
+        },
+        MetadataCase {
+            metric: "queue_duration_seconds",
+            kind: "histogram",
+            help: "Queue duration",
+            unit: "s",
+        },
+    ] {
+        let url = api_url(
+            base,
+            "/api/v1/metadata",
+            &[QueryParameter::new("metric", item.metric)],
+        )?;
+        wait_data(
+            &deployment.infrastructure.client,
+            &url,
+            "tenant-a",
+            &json!({item.metric: [{"type": item.kind, "help": item.help, "unit": item.unit}]}),
+        )
+        .await?;
+        assert!(data(&deployment.infrastructure.client, &url, "tenant-b").await? == json!({}));
     }
     Ok(())
+}
+
+/// A remote-read query for every `read_.*` series over the two seeded samples.
+fn read_metrics_query(hints: Option<pb::v1::ReadHints>) -> pb::v1::Query {
+    pb::v1::Query {
+        start_timestamp_ms: START_MS,
+        end_timestamp_ms: START_MS + 2000,
+        matchers: vec![pb::v1::LabelMatcher {
+            r#type: pb::v1::label_matcher::Type::Re as i32,
+            name: "__name__".into(),
+            value: "read_.*".into(),
+        }],
+        hints,
+    }
 }

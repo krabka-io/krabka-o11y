@@ -1,14 +1,40 @@
 //! Nested-set interval assignment for one trace's span forest.
 
-use std::collections::HashMap;
+use std::borrow::Borrow;
+
+use krabka_blockstore::{CycleSpans, SpanNode};
 
 use super::Span;
+
+/// Assign modified pre-order traversal intervals to spans of one trace.
+///
+/// Delegates to [`krabka_blockstore::assign_nested_set`], which owns the
+/// traversal and the Tempo `-1` root sentinel. Spans caught in a parent cycle
+/// are left at `{0, 0, 0}` ([`CycleSpans::LeaveUnassigned`]), as this crate's
+/// block writer and live store have always written them.
+#[must_use]
+pub fn assign_nested_set(spans: &[impl Borrow<Span>]) -> Vec<NestedSet> {
+    let nodes: Vec<SpanNode> = spans
+        .iter()
+        .map(|span| {
+            let span = span.borrow();
+            SpanNode {
+                span_id: span.span_id,
+                parent_span_id: span.parent_span_id,
+            }
+        })
+        .collect();
+    krabka_blockstore::assign_nested_set(&nodes, CycleSpans::LeaveUnassigned)
+        .into_iter()
+        .map(NestedSet::from)
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use crate::span::{AttrValue, KeyValue, SpanKind, StatusCode};
+    use crate::span::{SpanKind, test_span::string_attr};
 
     fn span(id: u8, parent: Option<u8>) -> Span {
         Span {
@@ -17,19 +43,9 @@ mod tests {
             parent_span_id: parent.map(|p| [p; 8]),
             name: format!("s{id}"),
             kind: SpanKind::Internal,
-            start_ns: 0,
             duration_ns: 1,
-            status: StatusCode::Unset,
-            status_message: String::new(),
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            resource_attrs: vec![string_attr("service.name", "api")],
+            ..Span::default()
         }
     }
 
@@ -93,6 +109,32 @@ mod tests {
         assert2::assert!(ns[1].parent_id == -1);
     }
 
+    /// Spans whose parent links form a cycle are reachable from no root.
+    /// This crate leaves them unassigned at `{0, 0, 0}` rather than seeding
+    /// them as extra roots, so its block writer and live store keep the
+    /// structural columns they have always written for such traces.
+    #[test]
+    fn spans_in_a_parent_cycle_stay_unassigned() {
+        let spans = vec![span(1, None), span(2, Some(3)), span(3, Some(2))];
+        let unassigned = NestedSet {
+            left: 0,
+            right: 0,
+            parent_id: 0,
+        };
+        assert2::assert!(
+            assign_nested_set(&spans)
+                == vec![
+                    NestedSet {
+                        left: 1,
+                        right: 2,
+                        parent_id: -1
+                    },
+                    unassigned,
+                    unassigned,
+                ]
+        );
+    }
+
     #[test]
     fn every_interval_has_left_before_right() {
         let spans = vec![span(1, None), span(2, Some(1)), span(3, Some(1))];
@@ -102,8 +144,7 @@ mod tests {
     }
 }
 
-mod assign_nested_set;
-mod nested_set_type;
+mod batch_nested_sets;
 
-pub use assign_nested_set::assign_nested_set;
-pub use nested_set_type::NestedSet;
+pub(crate) use batch_nested_sets::{BatchNestedSets, SpanIdColumns, batch_nested_sets};
+pub use krabka_traceql::NestedSet;

@@ -8,6 +8,11 @@ const ALERTMANAGER_PREFIX: &str = "mimir-configs/alertmanager";
 const ALERTS_PREFIX: &str = "mimir-configs/alertmanager-alerts";
 const SILENCES_PREFIX: &str = "mimir-configs/alertmanager-silences";
 
+struct TenantValue<T> {
+    tenant: TenantId,
+    value: T,
+}
+
 impl<S: MetricStore> PrometheusApiState<S> {
     /// Reloads every persisted tenant configuration before the role starts evaluating.
     ///
@@ -22,82 +27,89 @@ impl<S: MetricStore> PrometheusApiState<S> {
         let mut loaded_alertmanager = Vec::new();
         let mut loaded_alerts = Vec::new();
         let mut loaded_silences = Vec::new();
-        for (prefix, is_ruler) in [(RULER_PREFIX, true), (ALERTMANAGER_PREFIX, false)] {
-            let mut objects = store.list(Some(&Path::from(prefix)));
-            while let Some(object) = objects.next().await {
-                let object = object.map_err(|error| error.to_string())?;
-                let Some(name) = object.location.filename() else {
-                    continue;
-                };
-                let Some(tenant_name) = name.strip_suffix(".yaml") else {
-                    continue;
-                };
-                let tenant = TenantId::new(tenant_name).map_err(|error| error.to_string())?;
-                let bytes = store
-                    .get(&object.location)
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .bytes()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if is_ruler {
-                    let namespaces =
-                        serde_yaml::from_slice(&bytes).map_err(|error| error.to_string())?;
-                    loaded_rules.push((tenant, namespaces));
-                } else {
-                    let config =
-                        String::from_utf8(bytes.to_vec()).map_err(|error| error.to_string())?;
-                    loaded_alertmanager.push((tenant, config));
-                }
-            }
+        let store = store.as_ref();
+        for_each_tenant_object(
+            store,
+            TenantObjectListing::yaml(RULER_PREFIX),
+            |tenant, bytes| {
+                let namespaces =
+                    serde_yaml::from_slice(bytes).map_err(|error| error.to_string())?;
+                loaded_rules.push(TenantValue {
+                    tenant,
+                    value: namespaces,
+                });
+                Ok(())
+            },
+        )
+        .await?;
+        for_each_tenant_object(
+            store,
+            TenantObjectListing::yaml(ALERTMANAGER_PREFIX),
+            |tenant, bytes| {
+                let config =
+                    String::from_utf8(bytes.to_vec()).map_err(|error| error.to_string())?;
+                loaded_alertmanager.push(TenantValue {
+                    tenant,
+                    value: config,
+                });
+                Ok(())
+            },
+        )
+        .await?;
+        for_each_tenant_object(
+            store,
+            TenantObjectListing::json(ALERTS_PREFIX),
+            |tenant, bytes| {
+                let alerts = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+                loaded_alerts.push(TenantValue {
+                    tenant,
+                    value: alerts,
+                });
+                Ok(())
+            },
+        )
+        .await?;
+        for_each_tenant_object(
+            store,
+            TenantObjectListing::json(SILENCES_PREFIX),
+            |tenant, bytes| {
+                let silences = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+                loaded_silences.push(TenantValue {
+                    tenant,
+                    value: silences,
+                });
+                Ok(())
+            },
+        )
+        .await?;
+        let mut rules = self
+            .ruler_rules
+            .write()
+            .map_err(|_| "ruler rules lock poisoned")?;
+        for entry in loaded_rules {
+            rules.insert(entry.tenant, entry.value);
         }
-        for (prefix, silences) in [(ALERTS_PREFIX, false), (SILENCES_PREFIX, true)] {
-            let mut objects = store.list(Some(&Path::from(prefix)));
-            while let Some(object) = objects.next().await {
-                let object = object.map_err(|error| error.to_string())?;
-                let Some(name) = object.location.filename() else {
-                    continue;
-                };
-                let Some(tenant_name) = name.strip_suffix(".json") else {
-                    continue;
-                };
-                let tenant = TenantId::new(tenant_name).map_err(|error| error.to_string())?;
-                let bytes = store
-                    .get(&object.location)
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .bytes()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if silences {
-                    loaded_silences.push((
-                        tenant,
-                        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
-                    ));
-                } else {
-                    loaded_alerts.push((
-                        tenant,
-                        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
-                    ));
-                }
-            }
+        let mut configs = self
+            .alertmanager_configs
+            .write()
+            .map_err(|_| "alertmanager configs lock poisoned")?;
+        for entry in loaded_alertmanager {
+            configs.insert(entry.tenant, entry.value);
         }
-        self.ruler_rules
+        let mut alerts = self
+            .alertmanager_alerts
             .write()
-            .map_err(|_| "ruler rules lock poisoned")?
-            .extend(loaded_rules);
-        self.alertmanager_configs
+            .map_err(|_| "alertmanager alerts lock poisoned")?;
+        for entry in loaded_alerts {
+            alerts.insert(entry.tenant, entry.value);
+        }
+        let mut silences = self
+            .alertmanager_silences
             .write()
-            .map_err(|_| "alertmanager configs lock poisoned")?
-            .extend(loaded_alertmanager);
-        self.alertmanager_alerts
-            .write()
-            .map_err(|_| "alertmanager alerts lock poisoned")?
-            .extend(loaded_alerts);
-        self.alertmanager_silences
-            .write()
-            .map_err(|_| "alertmanager silences lock poisoned")?
-            .extend(loaded_silences);
+            .map_err(|_| "alertmanager silences lock poisoned")?;
+        for entry in loaded_silences {
+            silences.insert(entry.tenant, entry.value);
+        }
         Ok(())
     }
 
@@ -180,6 +192,60 @@ impl<S: MetricStore> PrometheusApiState<S> {
         )
         .await
     }
+}
+
+/// The persisted objects of one configuration kind: one object per tenant,
+/// named `<prefix>/<tenant><extension>`.
+struct TenantObjectListing {
+    prefix: &'static str,
+    extension: &'static str,
+}
+
+impl TenantObjectListing {
+    const fn yaml(prefix: &'static str) -> Self {
+        Self {
+            prefix,
+            extension: ".yaml",
+        }
+    }
+
+    const fn json(prefix: &'static str) -> Self {
+        Self {
+            prefix,
+            extension: ".json",
+        }
+    }
+}
+
+/// Reads every tenant object of `listing` and hands each tenant and its bytes
+/// to `on_object`, in listing order.
+///
+/// Objects whose name lacks the listing's extension are skipped.
+async fn for_each_tenant_object(
+    store: &dyn ObjectStore,
+    listing: TenantObjectListing,
+    mut on_object: impl FnMut(TenantId, &[u8]) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut objects = store.list(Some(&Path::from(listing.prefix)));
+    while let Some(object) = objects.next().await {
+        let object = object.map_err(|error| error.to_string())?;
+        let Some(name) = object.location.filename() else {
+            continue;
+        };
+        let Some(tenant_name) = name.strip_suffix(listing.extension) else {
+            continue;
+        };
+        let tenant = TenantId::new(tenant_name).map_err(|error| error.to_string())?;
+        let bytes = store
+            .get(&object.location)
+            .await
+            .map_err(|error| error.to_string())?
+            .bytes()
+            .await
+            .map_err(|error| error.to_string())?;
+        on_object(tenant, &bytes)?;
+    }
+    Ok(())
 }
 
 async fn persist_json<T: serde::Serialize>(

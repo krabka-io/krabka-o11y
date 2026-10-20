@@ -64,27 +64,26 @@ impl HistogramAccumulator {
             ));
         }
         let [mut sum, mut compensation, increment] = aligned;
-        (sum.count, compensation.count) =
-            kahan_sum_inc(increment.count, sum.count, compensation.count);
-        (sum.sum, compensation.sum) = kahan_sum_inc(increment.sum, sum.sum, compensation.sum);
-        (sum.zero_count, compensation.zero_count) = kahan_sum_inc(
+        kahan_sum_inc(increment.count, &mut sum.count, &mut compensation.count);
+        kahan_sum_inc(increment.sum, &mut sum.sum, &mut compensation.sum);
+        kahan_sum_inc(
             increment.zero_count,
-            sum.zero_count,
-            compensation.zero_count,
+            &mut sum.zero_count,
+            &mut compensation.zero_count,
         );
-        for ((sum, compensation), increment) in sum
-            .positive_counts
-            .iter_mut()
-            .zip(&mut compensation.positive_counts)
-            .zip(&increment.positive_counts)
-            .chain(
-                sum.negative_counts
-                    .iter_mut()
-                    .zip(&mut compensation.negative_counts)
-                    .zip(&increment.negative_counts),
-            )
-        {
-            (*sum, *compensation) = kahan_sum_inc(*increment, *sum, *compensation);
+        for index in 0..sum.positive_counts.len() {
+            kahan_sum_inc(
+                increment.positive_counts[index],
+                &mut sum.positive_counts[index],
+                &mut compensation.positive_counts[index],
+            );
+        }
+        for index in 0..sum.negative_counts.len() {
+            kahan_sum_inc(
+                increment.negative_counts[index],
+                &mut sum.negative_counts[index],
+                &mut compensation.negative_counts[index],
+            );
         }
         sum.reset_hint = hint;
         self.value = sum;

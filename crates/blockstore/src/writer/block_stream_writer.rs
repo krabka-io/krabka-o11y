@@ -126,7 +126,7 @@ impl BlockStreamWriter {
         let Some(mut writer) = self.writer.take() else {
             return Err(self.poisoned());
         };
-        let (min_ts, max_ts, row_count, fingerprints) = match self.summary.finish() {
+        let summary = match self.summary.finish() {
             Ok(summary) => summary,
             Err(error) => {
                 writer.into_inner().abort().await?;
@@ -138,10 +138,10 @@ impl BlockStreamWriter {
         Ok(BlockMeta {
             tenant: self.tenant,
             object_key: self.object_key,
-            min_ts,
-            max_ts,
-            row_count,
-            fingerprints,
+            min_ts: summary.min_ts,
+            max_ts: summary.max_ts,
+            row_count: summary.row_count,
+            fingerprints: summary.fingerprints,
             // A writer encodes rows; it never sees where they came from. An
             // index promotes the record when it registers a block against the
             // blocks it replaces, which is the only place the inputs -- and so

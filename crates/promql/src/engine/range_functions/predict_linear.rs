@@ -6,10 +6,10 @@ use super::{Time, TimeExt, regression_slope_and_intercept};
 /// intercept at the query's evaluation time rather than at the end of the
 /// regression window.
 pub(crate) fn predict_linear(
-    samples: &[(i64, f64)],
+    samples: &[super::FloatSample],
     intercept_ms: i64,
     duration: Time,
 ) -> Option<f64> {
-    let (slope, intercept) = regression_slope_and_intercept(samples, intercept_ms)?;
-    Some(intercept + (slope * duration.secs_f64()))
+    let fit = regression_slope_and_intercept(samples, intercept_ms)?;
+    Some(fit.intercept + (fit.slope * duration.secs_f64()))
 }

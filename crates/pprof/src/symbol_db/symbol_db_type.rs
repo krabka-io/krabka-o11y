@@ -3,7 +3,7 @@ use super::{
     LocationRec, MappingRec, MappingSymbolization, NativeResolver, Partition, ProfileError,
     RawLocation, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SerdeCompat,
     Serialize, SymbolSource, SymbolizeRequest, TreeNode, WincodeDeserialize, WincodeSerialize,
-    drop_go_type_parameters, remap_index,
+    drop_go_type_parameters, partition::TreeChildKey, remap_index,
 };
 
 /// Deduplicated symbol database for a profile block.
@@ -22,6 +22,12 @@ pub struct SymbolDb {
     #[serde(skip)]
     pub(crate) mapping_index: HashMap<MappingRec, u32>,
     pub(crate) partitions: HashMap<u64, Partition>,
+}
+
+struct PendingSymbolization {
+    location_index: usize,
+    mapping_id: u32,
+    request: SymbolizeRequest,
 }
 
 impl SymbolDb {
@@ -138,7 +144,10 @@ impl SymbolDb {
         let mut parent = -1;
         for location_ref in location_refs.iter().rev() {
             let location_ref = i32::try_from(*location_ref).expect("location ref fits i32");
-            let key = (parent, location_ref);
+            let key = TreeChildKey {
+                parent,
+                location_ref,
+            };
             if let Some(child) = part.children.get(&key) {
                 parent = i32::try_from(*child).expect("node index fits i32");
                 continue;
@@ -259,46 +268,24 @@ impl SymbolDb {
     /// # Panics
     /// Panics if decoded profile indexes reference a missing string, mapping, function, or location that validation promised was present.
     pub fn resolve(&self, partition: u64, stacktrace_id: u32) -> Vec<Frame> {
-        if stacktrace_id == EMPTY_STACKTRACE_ID {
-            return Vec::new();
-        }
-        let Some(part) = self.partitions.get(&partition) else {
-            return Vec::new();
-        };
         let mut frames = Vec::new();
-        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
-        for _ in 0..part.nodes.len() {
-            if current < 0 {
-                break;
+        for location in self.stack_locations(partition, stacktrace_id) {
+            for line in &location.lines {
+                let function = self
+                    .functions
+                    .get(usize::try_from(line.function_id).expect("u32 fits usize"));
+                frames.push(Frame {
+                    function: function
+                        .map_or(Cow::Borrowed(""), |func| {
+                            drop_go_type_parameters(self.string(func.name))
+                        })
+                        .into_owned(),
+                    file: function
+                        .map_or("", |func| self.string(func.filename))
+                        .to_string(),
+                    line: line.line,
+                });
             }
-            let Some(node) = part
-                .nodes
-                .get(usize::try_from(current).expect("non-negative"))
-            else {
-                break;
-            };
-            if let Some(location) = self
-                .locations
-                .get(usize::try_from(node.location_ref).expect("non-negative"))
-            {
-                for line in &location.lines {
-                    let function = self
-                        .functions
-                        .get(usize::try_from(line.function_id).expect("u32 fits usize"));
-                    frames.push(Frame {
-                        function: function
-                            .map_or(Cow::Borrowed(""), |func| {
-                                drop_go_type_parameters(self.string(func.name))
-                            })
-                            .into_owned(),
-                        file: function
-                            .map_or("", |func| self.string(func.filename))
-                            .to_string(),
-                        line: line.line,
-                    });
-                }
-            }
-            current = node.parent;
         }
         frames
     }
@@ -415,30 +402,11 @@ impl SymbolDb {
     /// # Panics
     /// Panics if decoded profile indexes reference a missing string, mapping, function, or location that validation promised was present.
     pub fn raw_locations(&self, partition: u64, stacktrace_id: u32) -> Vec<RawLocation> {
-        if stacktrace_id == EMPTY_STACKTRACE_ID {
-            return Vec::new();
-        }
-        let Some(part) = self.partitions.get(&partition) else {
-            return Vec::new();
-        };
         let mut locations = Vec::new();
-        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
-        for _ in 0..part.nodes.len() {
-            if current < 0 {
-                break;
-            }
-            let Some(node) = part
-                .nodes
-                .get(usize::try_from(current).expect("non-negative"))
-            else {
-                break;
-            };
-            if let Some(location) = self
-                .locations
-                .get(usize::try_from(node.location_ref).expect("non-negative"))
-                && let Some(mapping) = self
-                    .mappings
-                    .get(usize::try_from(location.mapping_id).expect("u32 fits usize"))
+        for location in self.stack_locations(partition, stacktrace_id) {
+            if let Some(mapping) = self
+                .mappings
+                .get(usize::try_from(location.mapping_id).expect("u32 fits usize"))
             {
                 locations.push(RawLocation {
                     address: location.address,
@@ -447,39 +415,67 @@ impl SymbolDb {
                     build_id: self.string(mapping.build_id).to_string(),
                 });
             }
-            current = node.parent;
         }
         locations
+    }
+
+    /// The stored locations of a stack, leaf first. The walk visits at most
+    /// one node per partition node, stops at the root or at a dangling node
+    /// index, and skips a node whose location is missing.
+    fn stack_locations(
+        &self,
+        partition: u64,
+        stacktrace_id: u32,
+    ) -> impl Iterator<Item = &LocationRec> {
+        let nodes = if stacktrace_id == EMPTY_STACKTRACE_ID {
+            &[][..]
+        } else {
+            self.partitions
+                .get(&partition)
+                .map_or(&[][..], |part| part.nodes.as_slice())
+        };
+        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
+        std::iter::from_fn(move || {
+            if current < 0 {
+                return None;
+            }
+            let node = nodes.get(usize::try_from(current).expect("non-negative"))?;
+            current = node.parent;
+            Some(node)
+        })
+        .take(nodes.len())
+        .filter_map(|node| {
+            self.locations
+                .get(usize::try_from(node.location_ref).expect("non-negative"))
+        })
     }
 
     /// Resolve every location that does not already carry function metadata.
     /// Returns the number of locations updated.
     pub fn symbolize_native(&mut self, resolver: &dyn NativeResolver) -> usize {
-        let pending = self
-            .locations
-            .iter()
-            .enumerate()
-            .filter(|(_, location)| location.lines.is_empty())
-            .filter_map(|(location_index, location)| {
+        let pending = (0..self.locations.len())
+            .filter_map(|location_index| {
+                let location = &self.locations[location_index];
+                if !location.lines.is_empty() {
+                    return None;
+                }
                 let mapping = self.mappings.get(location.mapping_id as usize)?;
-                (!mapping.symbolization.has_functions()).then(|| {
-                    (
-                        location_index,
-                        location.mapping_id,
-                        SymbolizeRequest {
-                            build_id: self.string(mapping.build_id).to_string(),
-                            filename: self.string(mapping.filename).to_string(),
-                            address: location.address.saturating_sub(mapping.memory_start)
-                                + mapping.file_offset,
-                        },
-                    )
+                (!mapping.symbolization.has_functions()).then(|| PendingSymbolization {
+                    location_index,
+                    mapping_id: location.mapping_id,
+                    request: SymbolizeRequest {
+                        build_id: self.string(mapping.build_id).to_string(),
+                        filename: self.string(mapping.filename).to_string(),
+                        address: location.address.saturating_sub(mapping.memory_start)
+                            + mapping.file_offset,
+                    },
                 })
             })
             .collect::<Vec<_>>();
         let mut resolved_mappings = HashSet::new();
         let mut updated = 0;
-        for (location_index, mapping_id, request) in pending {
-            let Some(symbols) = resolver.symbolize(&request) else {
+        for pending in pending {
+            let Some(symbols) = resolver.symbolize(&pending.request) else {
                 continue;
             };
             let lines = symbols
@@ -502,8 +498,8 @@ impl SymbolDb {
             if lines.is_empty() {
                 continue;
             }
-            self.locations[location_index].lines = lines;
-            resolved_mappings.insert(mapping_id);
+            self.locations[pending.location_index].lines = lines;
+            resolved_mappings.insert(pending.mapping_id);
             updated += 1;
         }
         for mapping_id in resolved_mappings {
@@ -513,7 +509,13 @@ impl SymbolDb {
                 .filter(|location| location.mapping_id == mapping_id)
                 .all(|location| !location.lines.is_empty());
             if complete && let Some(mapping) = self.mappings.get_mut(mapping_id as usize) {
-                mapping.symbolization = MappingSymbolization::from_parts((true, true, true, true));
+                mapping.symbolization =
+                    MappingSymbolization::from_parts(super::MappingSymbolizationParts {
+                        functions: true,
+                        filenames: true,
+                        line_numbers: true,
+                        inline_frames: true,
+                    });
             }
         }
         if updated != 0 {
@@ -540,7 +542,10 @@ impl SymbolDb {
             })
             .collect::<Vec<_>>();
         requests.sort_by(|a, b| {
-            (&a.build_id, &a.filename, a.address).cmp(&(&b.build_id, &b.filename, b.address))
+            a.build_id
+                .cmp(&b.build_id)
+                .then_with(|| a.filename.cmp(&b.filename))
+                .then_with(|| a.address.cmp(&b.address))
         });
         requests.dedup();
         requests
@@ -563,30 +568,34 @@ impl SymbolDb {
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
-        self.string_index = self
-            .strings
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (value.clone(), u32::try_from(idx).expect("idx fits u32")))
-            .collect();
-        self.function_index = self
-            .functions
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (*value, u32::try_from(idx).expect("idx fits u32")))
-            .collect();
-        self.location_index = self
-            .locations
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (value.clone(), u32::try_from(idx).expect("idx fits u32")))
-            .collect();
-        self.mapping_index = self
-            .mappings
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (*value, u32::try_from(idx).expect("idx fits u32")))
-            .collect();
+        self.string_index.clear();
+        for idx in 0..self.strings.len() {
+            self.string_index.insert(
+                self.strings[idx].clone(),
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
+        self.function_index.clear();
+        for idx in 0..self.functions.len() {
+            self.function_index.insert(
+                self.functions[idx],
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
+        self.location_index.clear();
+        for idx in 0..self.locations.len() {
+            self.location_index.insert(
+                self.locations[idx].clone(),
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
+        self.mapping_index.clear();
+        for idx in 0..self.mappings.len() {
+            self.mapping_index.insert(
+                self.mappings[idx],
+                u32::try_from(idx).expect("idx fits u32"),
+            );
+        }
         for partition in self.partitions.values_mut() {
             partition.rebuild_children();
         }

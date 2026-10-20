@@ -7,20 +7,19 @@ use std::{
 
 use super::Location;
 mod recurrence;
-use recurrence::Recurrence;
+pub(super) use recurrence::ZoneInfo;
+use recurrence::{Recurrence, ZoneLookup};
 
 const ARCHIVE: &[u8] = include_bytes!("zoneinfo.zip");
 static ZONES: LazyLock<BTreeMap<&'static str, Arc<Zone>>> = LazyLock::new(|| {
-    entries(ARCHIVE)
-        .expect("pinned stored ZIP")
-        .into_iter()
-        .map(|(name, data)| {
-            (
-                name,
-                Arc::new(Zone::parse(name, data).expect("pinned TZif data")),
-            )
-        })
-        .collect()
+    let mut zones = BTreeMap::new();
+    for entry in entries(ARCHIVE).expect("pinned stored ZIP") {
+        zones.insert(
+            entry.name,
+            Arc::new(Zone::parse(entry.name, entry.data).expect("pinned TZif data")),
+        );
+    }
+    zones
 });
 
 #[derive(Clone, Debug)]
@@ -119,17 +118,17 @@ impl Zone {
     }
     pub(super) fn reflection_data(&self, seconds: i64) -> super::location_reflection::LocationData {
         use super::location_reflection::{LocationData, Transition};
-        let mut transitions = self
-            .indices
-            .iter()
-            .enumerate()
-            .map(|(i, index)| Transition {
-                when: self.transition(i),
-                index: *index,
-                standard: self.standard.get(i).is_some_and(|flag| *flag != 0),
-                utc: self.utc.get(i).is_some_and(|flag| *flag != 0),
-            })
-            .collect::<Vec<_>>();
+        let mut transitions = Vec::with_capacity(self.indices.len());
+        let mut index = 0;
+        while index < self.indices.len() {
+            transitions.push(Transition {
+                when: self.transition(index),
+                index: self.indices[index],
+                standard: self.standard.get(index).is_some_and(|flag| *flag != 0),
+                utc: self.utc.get(index).is_some_and(|flag| *flag != 0),
+            });
+            index += 1;
+        }
         if transitions.is_empty() {
             transitions.push(Transition {
                 when: i64::MIN,
@@ -151,17 +150,20 @@ impl Zone {
             if i + 1 == data.transitions.len()
                 && let Some(recurrence) = &self.recurrence
             {
-                (data.cache_start, data.cache_end) =
-                    recurrence.cache_bounds(data.cache_start, seconds);
-                let (name, offset, daylight) = recurrence.lookup_full(seconds);
+                let bounds = recurrence.cache_bounds(data.cache_start, seconds);
+                data.cache_start = bounds.start;
+                data.cache_end = bounds.end;
+                let lookup = recurrence.lookup_full(seconds);
                 data.cache_index = data.definitions.iter().position(|zone| {
-                    zone.name == name && zone.offset == offset && zone.daylight == daylight
+                    zone.name == lookup.name
+                        && zone.offset == lookup.offset
+                        && zone.daylight == lookup.daylight
                 });
                 if data.cache_index.is_none() {
                     data.cache_extra = Some(Box::new(Definition {
-                        name,
-                        offset,
-                        daylight,
+                        name: lookup.name,
+                        offset: lookup.offset,
+                        daylight: lookup.daylight,
                     }));
                 }
             }
@@ -196,11 +198,14 @@ impl Zone {
             .position(|zone| !zone.daylight)
             .unwrap_or(0)
     }
-    pub(super) fn lookup(&self, seconds: i64) -> (String, i32) {
-        let (name, offset, _) = self.lookup_full(seconds);
-        (name, offset)
+    pub(super) fn lookup(&self, seconds: i64) -> ZoneInfo {
+        let lookup = self.lookup_full(seconds);
+        ZoneInfo {
+            name: lookup.name,
+            offset: lookup.offset,
+        }
     }
-    pub(super) fn lookup_full(&self, seconds: i64) -> (String, i32, bool) {
+    pub(super) fn lookup_full(&self, seconds: i64) -> ZoneLookup {
         let mut low = 0;
         let mut high = self.indices.len();
         while low < high {
@@ -222,11 +227,11 @@ impl Zone {
             usize::from(self.indices[low - 1])
         };
         let definition = &self.definitions[index];
-        (
-            definition.name.clone(),
-            definition.offset,
-            definition.daylight,
-        )
+        ZoneLookup {
+            name: definition.name.clone(),
+            offset: definition.offset,
+            daylight: definition.daylight,
+        }
     }
     fn lookup_name(&self, name: &str, seconds: i64) -> Option<i32> {
         let mut first = None;
@@ -235,9 +240,9 @@ impl Zone {
                 continue;
             }
             first.get_or_insert(definition.offset);
-            let (actual, offset) = self.lookup(seconds - i64::from(definition.offset));
-            if actual == name {
-                return Some(offset);
+            let actual = self.lookup(seconds - i64::from(definition.offset));
+            if actual.name == name {
+                return Some(actual.offset);
             }
         }
         first
@@ -264,17 +269,24 @@ fn counts(data: &[u8]) -> Option<[usize; 6]> {
         return None;
     }
     let mut counts = [0; 6];
-    for (index, count) in counts.iter_mut().enumerate() {
-        *count = usize::try_from(u32::from_be_bytes(
+    let mut index = 0;
+    while index < counts.len() {
+        counts[index] = usize::try_from(u32::from_be_bytes(
             data.get(20 + index * 4..24 + index * 4)?.try_into().ok()?,
         ))
         .ok()?;
+        index += 1;
     }
     Some(counts)
 }
 
 /// The pinned Go archive uses stored entries, so no decompressor is required.
-fn entries(mut data: &[u8]) -> Option<Vec<(&str, &[u8])>> {
+struct ZoneArchiveEntry<'a> {
+    name: &'a str,
+    data: &'a [u8],
+}
+
+fn entries(mut data: &[u8]) -> Option<Vec<ZoneArchiveEntry<'_>>> {
     let mut entries = Vec::new();
     while data.get(..4)? == b"PK\x03\x04" {
         let word = |index: usize| {
@@ -295,7 +307,10 @@ fn entries(mut data: &[u8]) -> Option<Vec<(&str, &[u8])>> {
         let body = name_end.checked_add(word(28)?)?;
         let end = body.checked_add(dword(18)?)?;
         let name = std::str::from_utf8(data.get(30..name_end)?).ok()?;
-        entries.push((name, data.get(body..end)?));
+        entries.push(ZoneArchiveEntry {
+            name,
+            data: data.get(body..end)?,
+        });
         data = data.get(end..)?;
     }
     (data.starts_with(b"PK\x01\x02") && !entries.is_empty()).then_some(entries)
@@ -313,9 +328,12 @@ mod tests {
             assert2::check!(fields.len() == 4);
             let zone = load(fields[0]).unwrap();
             let seconds = fields[1].parse::<i64>().unwrap();
-            let expected = (fields[3].to_string(), fields[2].parse::<i32>().unwrap());
             assert2::check!(
-                zone.lookup(seconds) == expected,
+                zone.lookup(seconds)
+                    == (ZoneInfo {
+                        name: fields[3].to_owned(),
+                        offset: fields[2].parse::<i32>().unwrap(),
+                    }),
                 "zone={} seconds={seconds}",
                 fields[0]
             );
@@ -327,23 +345,33 @@ mod tests {
         let data = entries(ARCHIVE)
             .unwrap()
             .into_iter()
-            .find(|(name, _)| *name == "America/New_York")
+            .find(|entry| entry.name == "America/New_York")
             .unwrap()
-            .1;
+            .data;
         let mut wrong = Zone::parse("America/New_York", data).unwrap();
         for definition in &mut wrong.definitions {
             definition.offset += 60;
         }
-        assert2::check!(wrong.lookup(0) != ("EST".into(), -18000));
+        assert2::check!(
+            wrong.lookup(0)
+                != (ZoneInfo {
+                    name: "EST".into(),
+                    offset: -18000
+                })
+        );
     }
     #[test]
     fn every_pinned_archive_entry_is_complete_and_has_valid_recurrence() {
         assert2::check!(ZONES.len() == 598);
         assert2::check!(
-            load("America/Coyhaique").unwrap().lookup(1_751_328_000) == ("-03".into(), -10800)
+            load("America/Coyhaique").unwrap().lookup(1_751_328_000)
+                == (ZoneInfo {
+                    name: "-03".into(),
+                    offset: -10800
+                })
         );
-        for (name, data) in entries(ARCHIVE).unwrap() {
-            assert2::check!(Zone::parse(name, data).is_some());
+        for entry in entries(ARCHIVE).unwrap() {
+            assert2::check!(Zone::parse(entry.name, entry.data).is_some());
         }
         assert2::check!(entries(b"PK\x03\x04").is_none());
         assert2::check!(counts(b"TZif").is_none());

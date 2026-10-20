@@ -1,22 +1,17 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRange,
-    Principal, ProfileStore, ProfileType, QuerierState, authorize_tenant, connect_error, pb,
-    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    ConnectError, ConnectQueryRequest, ConnectResponse, MetadataRange, ProfileStore, ProfileType,
+    connect_error, pb,
 };
 
 pub(crate) async fn profile_types_inner<S>(
-    Extension(state): Extension<Arc<QuerierState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    req: ConnectRequest<pb::querier::v1::ProfileTypesRequest>,
+    request: ConnectQueryRequest<S, pb::querier::v1::ProfileTypesRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::ProfileTypesResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
-        .map_err(|error| tenant_connect_error(&error))?;
-    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
-    let req = req.0;
+    let tenant = request.authorized_tenant()?;
+    let state = request.state.0;
+    let req = request.request.0;
     let range = MetadataRange::from_request(req.start, req.end)
         .validate(&state, &tenant)
         .map_err(connect_error)?;

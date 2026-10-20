@@ -1,9 +1,47 @@
 use super::{
     Arc, BTreeMap, BlockIndex, CachedDynamicIndex, CachedShardRanges, DynamicIndexCacheKey,
     DynamicShardIndexCacheKey, DynamicShardRangesCacheKey, Instant, LabelIndex, Mutex,
-    NonZeroUsize, StdDurationExt, Time, TimeRange, minutes, secs,
+    NonZeroUsize, StdDurationExt, TenantIndexPair, Time, TimeRange, minutes, secs,
 };
 use crate::SharedCompactionFrontier;
+
+// `>` is deliberate: a monotonic clock does not hand out the exact TTL age,
+// so changing this to `>=` survives ordinary cache tests.
+fn get_cached_index<K: Ord>(
+    entries: &mut BTreeMap<K, CachedDynamicIndex>,
+    key: &K,
+    ttl: Time,
+) -> Option<TenantIndexPair> {
+    let entry = entries.get(key)?;
+    if entry.loaded_at.elapsed().as_time() > ttl {
+        entries.remove(key);
+        return None;
+    }
+    Some(TenantIndexPair {
+        label_index: Arc::clone(&entry.label_index),
+        block_index: Arc::clone(&entry.block_index),
+    })
+}
+
+fn insert_cached_index<K: Ord>(
+    entries: &mut BTreeMap<K, CachedDynamicIndex>,
+    key: K,
+    ttl: Time,
+    label_index: impl Into<Arc<LabelIndex>>,
+    block_index: impl Into<Arc<BlockIndex>>,
+) {
+    // Moving windows and retired shards may never request the same key again.
+    // Reclaim their expired snapshots when admitting a new one.
+    entries.retain(|_, entry| entry.loaded_at.elapsed().as_time() <= ttl);
+    entries.insert(
+        key,
+        CachedDynamicIndex {
+            loaded_at: Instant::now(),
+            label_index: label_index.into(),
+            block_index: block_index.into(),
+        },
+    );
+}
 
 #[derive(Clone, Default)]
 struct IndexCacheMaps {
@@ -37,7 +75,7 @@ impl DynamicIndexCache {
             .expect("index generation lock poisoned");
         let same_owner = current
             .as_ref()
-            .is_some_and(|cache| Arc::ptr_eq(&cache.owner.frontier, &owner.frontier));
+            .is_some_and(|cache| cache.owner.same_owner(owner));
         let maps = if same_owner
             && current
                 .as_ref()
@@ -88,26 +126,12 @@ impl DynamicIndexCache {
             .clear();
     }
 
-    pub(crate) fn get(
-        &self,
-        key: &DynamicIndexCacheKey,
-    ) -> Option<(Arc<LabelIndex>, Arc<BlockIndex>)> {
+    pub(crate) fn get(&self, key: &DynamicIndexCacheKey) -> Option<TenantIndexPair> {
         let mut entries = self
             .entries
             .lock()
             .expect("dynamic index cache lock poisoned");
-        let entry = entries.get(key)?;
-        // `>` is a permanent mutation survivor against `>=` in all three of
-        // these lookups: they differ only for an entry whose age equals its TTL
-        // to the nanosecond, which a monotonic clock does not hand out.
-        if entry.loaded_at.elapsed().as_time() > self.cache_ttl {
-            entries.remove(key);
-            return None;
-        }
-        Some((
-            Arc::clone(&entry.label_index),
-            Arc::clone(&entry.block_index),
-        ))
+        get_cached_index(&mut entries, key, self.cache_ttl)
     }
 
     pub(crate) fn insert(
@@ -120,17 +144,7 @@ impl DynamicIndexCache {
             .entries
             .lock()
             .expect("dynamic index cache lock poisoned");
-        // Moving windows and retired shards may never request the same key
-        // again. Reclaim their expired snapshots when admitting a new one.
-        entries.retain(|_, entry| entry.loaded_at.elapsed().as_time() <= self.cache_ttl);
-        entries.insert(
-            key,
-            CachedDynamicIndex {
-                loaded_at: Instant::now(),
-                label_index: label_index.into(),
-                block_index: block_index.into(),
-            },
-        );
+        insert_cached_index(&mut entries, key, self.cache_ttl, label_index, block_index);
     }
 
     pub(crate) fn get_shard_ranges(
@@ -180,22 +194,12 @@ impl DynamicIndexCache {
     pub(crate) fn get_shard_index(
         &self,
         key: &DynamicShardIndexCacheKey,
-    ) -> Option<(Arc<LabelIndex>, Arc<BlockIndex>)> {
+    ) -> Option<TenantIndexPair> {
         let mut entries = self
             .shard_indexes
             .lock()
             .expect("dynamic index shard cache lock poisoned");
-        let entry = entries.get(key)?;
-        // The TTL comparison is a permanent survivor for the reason given at
-        // `DynamicIndexCache::get`.
-        if entry.loaded_at.elapsed().as_time() > self.shard_cache_ttl {
-            entries.remove(key);
-            return None;
-        }
-        Some((
-            Arc::clone(&entry.label_index),
-            Arc::clone(&entry.block_index),
-        ))
+        get_cached_index(&mut entries, key, self.shard_cache_ttl)
     }
 
     pub(crate) fn insert_shard_index(
@@ -208,16 +212,12 @@ impl DynamicIndexCache {
             .shard_indexes
             .lock()
             .expect("dynamic index shard cache lock poisoned");
-        // Moving windows and retired shards may never request the same key
-        // again. Reclaim their expired snapshots when admitting a new one.
-        entries.retain(|_, entry| entry.loaded_at.elapsed().as_time() <= self.shard_cache_ttl);
-        entries.insert(
+        insert_cached_index(
+            &mut entries,
             key,
-            CachedDynamicIndex {
-                loaded_at: Instant::now(),
-                label_index: label_index.into(),
-                block_index: block_index.into(),
-            },
+            self.shard_cache_ttl,
+            label_index,
+            block_index,
         );
     }
 }
@@ -252,7 +252,10 @@ mod tests {
             tenant: "tenant".to_string(),
         };
         let mut first_labels = LabelIndex::default();
-        let api = first_labels.insert_series("tenant", labels([("app", "api")]));
+        let api = first_labels.insert_series(
+            "tenant",
+            labels([krabka_blockstore::LabelPair::new("app", "api")]),
+        );
         let mut first_blocks = BlockIndex::default();
         first_blocks.insert(BlockDescriptor::new(
             BlockKey::new("tenant", 0, 1, 2, TimeRange::new(10, 20).unwrap()),
@@ -262,7 +265,10 @@ mod tests {
         let captured = cache.get(&key).unwrap();
 
         let mut second_labels = LabelIndex::default();
-        let worker = second_labels.insert_series("tenant", labels([("app", "worker")]));
+        let worker = second_labels.insert_series(
+            "tenant",
+            labels([krabka_blockstore::LabelPair::new("app", "worker")]),
+        );
         let mut second_blocks = BlockIndex::default();
         second_blocks.insert(BlockDescriptor::new(
             BlockKey::new("tenant", 0, 3, 4, TimeRange::new(30, 40).unwrap()),
@@ -273,18 +279,16 @@ mod tests {
         cache.clear();
 
         assert2::assert!(cache.get(&key).is_none());
-        assert2::assert!(
-            (captured.0.as_ref(), captured.1.as_ref()) == (&first_labels, &first_blocks)
-        );
-        assert2::assert!(
-            (replacement.0.as_ref(), replacement.1.as_ref()) == (&second_labels, &second_blocks)
-        );
+        assert2::assert!(captured.label_index.as_ref() == &first_labels);
+        assert2::assert!(captured.block_index.as_ref() == &first_blocks);
+        assert2::assert!(replacement.label_index.as_ref() == &second_labels);
+        assert2::assert!(replacement.block_index.as_ref() == &second_blocks);
     }
 
     #[test]
     fn admission_reclaims_unrequested_expired_keys_and_keeps_live_snapshots() {
         let cache = DynamicIndexCache::default();
-        let labels = krabka_blockstore::labels([("app", "api")]);
+        let labels = krabka_blockstore::labels([krabka_blockstore::LabelPair::new("app", "api")]);
         let mut index = LabelIndex::default();
         index.insert_series("tenant-a", labels);
         let range = TimeRange::new(10, 19).unwrap();
@@ -308,22 +312,22 @@ mod tests {
         }
         // Age entries directly: no wall-clock sleeps or requests to old keys.
         let expired = Instant::now().checked_sub(minutes(6).to_std()).unwrap();
-        for (key, entry) in cache.entries.lock().unwrap().iter_mut() {
-            if *key != query_key(31) {
-                entry.loaded_at = expired;
+        for cached in cache.entries.lock().unwrap().iter_mut() {
+            if *cached.0 != query_key(31) {
+                cached.1.loaded_at = expired;
             }
         }
-        for (key, entry) in cache.shard_indexes.lock().unwrap().iter_mut() {
-            if *key != shard_key(31) {
-                entry.loaded_at = expired;
+        for cached in cache.shard_indexes.lock().unwrap().iter_mut() {
+            if *cached.0 != shard_key(31) {
+                cached.1.loaded_at = expired;
             }
         }
-        for (key, entry) in cache.shard_ranges.lock().unwrap().iter_mut() {
-            if *key != range_key(31) {
-                entry.loaded_at = expired;
+        for cached in cache.shard_ranges.lock().unwrap().iter_mut() {
+            if *cached.0 != range_key(31) {
+                cached.1.loaded_at = expired;
             }
         }
-        let captured = cache.get(&query_key(31)).unwrap().0;
+        let captured = cache.get(&query_key(31)).unwrap().label_index;
         cache.insert(query_key(32), index.clone(), BlockIndex::default());
         cache.insert_shard_index(shard_key(32), index, BlockIndex::default());
         cache.insert_shard_ranges(range_key(32), 0, vec![range]);
@@ -334,7 +338,7 @@ mod tests {
             cache
                 .get(&query_key(31))
                 .unwrap()
-                .0
+                .label_index
                 .label_values("tenant-a", "app")
                 == captured.label_values("tenant-a", "app")
         );

@@ -64,31 +64,24 @@ mod tests {
         value.to_bits() == expected.to_bits()
     }
 
-    #[test]
-    fn ignores_nan_in_mixed_group() {
-        // min/max are taken over the non-NaN values; NaN appearing first then
-        // non-NaN still yields the non-NaN extremum.
-        for (extremum, samples, want) in [
-            (Extremum::Min, &[f64::NAN, 3.0, 1.0, f64::NAN][..], 1.0),
-            (Extremum::Max, &[f64::NAN, 3.0, 1.0, f64::NAN][..], 3.0),
-            (Extremum::Min, &[f64::NAN, 5.0][..], 5.0),
-            (Extremum::Max, &[f64::NAN, 5.0][..], 5.0),
-        ] {
-            assert2::assert!(bits_eq(float(run(extremum, samples)), want));
-        }
+    #[yare::parameterized(
+        min_mixed = { Extremum::Min, &[f64::NAN, 3.0, 1.0, f64::NAN], 1.0 },
+        max_mixed = { Extremum::Max, &[f64::NAN, 3.0, 1.0, f64::NAN], 3.0 },
+        min_after_nan = { Extremum::Min, &[f64::NAN, 5.0], 5.0 },
+        max_after_nan = { Extremum::Max, &[f64::NAN, 5.0], 5.0 },
+    )]
+    fn ignores_nan_in_mixed_group(extremum: Extremum, samples: &[f64], want: f64) {
+        assert2::assert!(bits_eq(float(run(extremum, samples)), want));
     }
 
-    #[test]
-    fn all_nan_group_yields_nan() {
-        // A single NaN sample is still NaN (seen, never displaced).
-        for (extremum, samples) in [
-            (Extremum::Min, &[f64::NAN, f64::NAN][..]),
-            (Extremum::Max, &[f64::NAN, f64::NAN][..]),
-            (Extremum::Min, &[f64::NAN][..]),
-            (Extremum::Max, &[f64::NAN][..]),
-        ] {
-            assert2::assert!(float(run(extremum, samples)).is_nan());
-        }
+    #[yare::parameterized(
+        min_two_nan = { Extremum::Min, &[f64::NAN, f64::NAN] },
+        max_two_nan = { Extremum::Max, &[f64::NAN, f64::NAN] },
+        min_one_nan = { Extremum::Min, &[f64::NAN] },
+        max_one_nan = { Extremum::Max, &[f64::NAN] },
+    )]
+    fn all_nan_group_yields_nan(extremum: Extremum, samples: &[f64]) {
+        assert2::assert!(float(run(extremum, samples)).is_nan());
     }
 
     #[test]
@@ -96,35 +89,28 @@ mod tests {
         assert2::assert!(
             float(run(Extremum::Min, &[f64::INFINITY, 1.0, f64::NEG_INFINITY])).is_infinite()
         );
-        for (extremum, samples, want) in [
-            (
-                Extremum::Min,
-                &[1.0, f64::NEG_INFINITY][..],
-                f64::NEG_INFINITY,
-            ),
-            (Extremum::Max, &[1.0, f64::INFINITY][..], f64::INFINITY),
-            (
-                Extremum::Max,
-                &[f64::NEG_INFINITY, f64::NAN][..],
-                f64::NEG_INFINITY,
-            ),
-        ] {
-            assert2::assert!(bits_eq(float(run(extremum, samples)), want));
-        }
+        assert2::assert!(bits_eq(
+            float(run(Extremum::Min, &[1.0, f64::NEG_INFINITY])),
+            f64::NEG_INFINITY
+        ));
+        assert2::assert!(bits_eq(
+            float(run(Extremum::Max, &[1.0, f64::INFINITY])),
+            f64::INFINITY
+        ));
+        assert2::assert!(bits_eq(
+            float(run(Extremum::Max, &[f64::NEG_INFINITY, f64::NAN])),
+            f64::NEG_INFINITY
+        ));
     }
 
     #[test]
     fn signed_zero_keeps_first_seen() {
         // `0.0 {>,<} -0.0` is false, so the first-observed zero is retained,
         // matching Prometheus and the interpreter.
-        for (extremum, samples, want) in [
-            (Extremum::Min, [0.0, -0.0], 0.0),
-            (Extremum::Min, [-0.0, 0.0], -0.0),
-            (Extremum::Max, [0.0, -0.0], 0.0),
-            (Extremum::Max, [-0.0, 0.0], -0.0),
-        ] {
-            assert2::assert!(bits_eq(float(run(extremum, &samples)), want));
-        }
+        assert2::assert!(bits_eq(float(run(Extremum::Min, &[0.0, -0.0]),), 0.0));
+        assert2::assert!(bits_eq(float(run(Extremum::Min, &[-0.0, 0.0])), -0.0));
+        assert2::assert!(bits_eq(float(run(Extremum::Max, &[0.0, -0.0])), 0.0));
+        assert2::assert!(bits_eq(float(run(Extremum::Max, &[-0.0, 0.0])), -0.0));
     }
 
     #[test]
@@ -223,19 +209,52 @@ mod tests {
 }
 
 mod extremum;
-mod extremum_udaf;
 mod prom_extremum_accumulator;
-mod prom_max_udaf;
-mod prom_max_udaf_name;
-mod prom_min_udaf;
-mod prom_min_udaf_name;
-mod register_aggregate_udafs;
 
 use extremum::Extremum;
-use extremum_udaf::extremum_udaf;
 use prom_extremum_accumulator::PromExtremumAccumulator;
-pub use prom_max_udaf::prom_max_udaf;
-pub use prom_max_udaf_name::PROM_MAX_UDAF_NAME;
-pub use prom_min_udaf::prom_min_udaf;
-pub use prom_min_udaf_name::PROM_MIN_UDAF_NAME;
-pub use register_aggregate_udafs::register_aggregate_udafs;
+
+/// Registered name of the NaN-ignoring `max` aggregate UDAF.
+pub const PROM_MAX_UDAF_NAME: &str = "prom_max";
+
+/// Registered name of the NaN-ignoring `min` aggregate UDAF.
+pub const PROM_MIN_UDAF_NAME: &str = "prom_min";
+
+/// The NaN-ignoring `max` aggregate UDAF.
+#[must_use]
+pub fn prom_max_udaf() -> AggregateUDF {
+    extremum_udaf(Extremum::Max)
+}
+
+/// The NaN-ignoring `min` aggregate UDAF.
+#[must_use]
+pub fn prom_min_udaf() -> AggregateUDF {
+    extremum_udaf(Extremum::Min)
+}
+
+/// Registers `prom_min`/`prom_max` on `ctx` so the aggregation planner can lower
+/// `min`/`max` onto NaN-ignoring UDAFs that match the interpreter.
+pub fn register_aggregate_udafs(ctx: &SessionContext) {
+    ctx.register_udaf(prom_min_udaf());
+    ctx.register_udaf(prom_max_udaf());
+}
+
+/// Builds the NaN-ignoring `prom_min` or `prom_max` aggregate UDAF.
+#[must_use]
+pub(crate) fn extremum_udaf(extremum: Extremum) -> AggregateUDF {
+    let name = match extremum {
+        Extremum::Min => PROM_MIN_UDAF_NAME,
+        Extremum::Max => PROM_MAX_UDAF_NAME,
+    };
+    create_udaf(
+        name,
+        vec![DataType::Float64],
+        Arc::new(DataType::Float64),
+        Volatility::Immutable,
+        Arc::new(move |_args: AccumulatorArgs| {
+            Ok(Box::new(PromExtremumAccumulator::new(extremum)) as Box<dyn Accumulator>)
+        }),
+        // (running extremum, seen flag) intermediate state.
+        Arc::new(vec![DataType::Float64, DataType::Boolean]),
+    )
+}

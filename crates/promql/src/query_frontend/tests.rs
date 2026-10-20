@@ -3,66 +3,88 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use krabka_blockstore::{Labels, MatchOp};
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_query_frontend::QueryCache;
 
 use super::*;
 use crate::{
-    AnnotatedQueryResult, Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult,
-    RangeSeries, SampleValue, test_support::tenant_id,
+    AnnotatedQueryResult, Annotations, EngineOpts, PromqlEngine, QueryResult, RangeSeries,
+    RangeSeriesSample, SampleValue,
+    test_support::{labels, tenant_id},
 };
 
-mod a_cached_range_query_reports_the_annotations_of_the_miss;
-mod an_object_store_cached_range_query_reports_the_annotations_of_the_miss;
-mod avg_partial_recording_executor;
+mod cached_up_matrix;
 mod concurrency_probe_executor;
-mod frontend_range_execution_dispatches_subqueries_concurrently;
-mod frontend_range_execution_reduces_sharded_avg_from_sum_and_count_partials;
-mod frontend_range_execution_reduces_sharded_stddev_from_moment_partials;
-mod frontend_range_execution_reduces_sharded_stdvar_from_moment_partials;
-mod frontend_range_execution_reduces_sharded_topk_from_rank_candidates;
-mod frontend_range_execution_retries_only_executor_classified_failures;
-mod frontend_range_execution_runs_against_promql_engine;
-mod frontend_range_execution_uses_cache_and_merges_subquery_results;
-mod in_memory_round_trips_then_expires;
-mod in_memory_without_ttl_never_expires;
-mod labels;
+mod frontend_requests;
 mod manual_clock;
-mod moment_partial_recording_executor;
-mod moving_window_reuses_cached_subranges;
-mod native_histogram_with_positive_buckets;
-mod object_store_range_result_cache_expires_stale_objects;
-mod object_store_range_result_cache_persists_across_instances;
-mod range_query_merge_combines_time_split_samples_for_same_series;
-mod range_query_merge_rejects_non_matrix_subquery_results;
-mod range_query_merge_sums_native_histograms_with_different_span_layouts;
-mod range_query_merge_sums_sharded_partial_float_samples_for_same_series;
-mod range_query_plan_aligns_subranges_to_absolute_split_grid;
-mod range_query_plan_allows_resolution_at_point_cap_boundary;
-mod range_query_plan_expands_each_split_across_mimir_query_shards;
-mod range_query_plan_rejects_resolution_over_point_cap;
-mod range_query_plan_shards_avg_for_partial_sum_count_reduction;
-mod range_query_plan_shards_group_aggregate_reducer;
-mod range_query_plan_shards_min_and_max_aggregate_reducers;
-mod range_query_plan_shards_stddev_and_stdvar_for_moment_reduction;
-mod range_query_plan_shards_topk_and_bottomk_for_final_rank_reduction;
-mod range_query_plan_skips_nested_avg_until_rewrite_is_aggregate_aware;
-mod range_query_plan_skips_shards_for_unsupported_aggregate_reducers;
-mod range_query_plan_splits_on_step_grid_without_duplicate_steps;
-mod range_result_cache_is_scoped_by_tenant_query_range_step_and_shard;
-mod range_result_cache_returns_owned_results;
+mod partial_recording_executor;
 mod rank_recording_executor;
-mod rank_reduction_ranks_nan_last_for_top_and_bottom;
-mod recording_executor;
-mod shard_query_injection_adds_mimir_selector_to_vector_and_matrix_selectors;
+mod shard_calls;
 mod unannotated;
+mod unlabeled_matrix;
 mod warning_executor;
 
-use avg_partial_recording_executor::AvgPartialRecordingExecutor;
+mod execution_cases;
+mod range_merge_cases;
+mod range_planning_cases;
+use cached_up_matrix::{FloatPoint, one_sample_matrix, up_api_matrix, up_range_query};
 use concurrency_probe_executor::ConcurrencyProbeExecutor;
-use labels::labels;
+use frontend_requests::{split_up_request, two_shard_instant_request};
 use manual_clock::ManualClock;
-use moment_partial_recording_executor::MomentPartialRecordingExecutor;
 use native_histogram_with_positive_buckets::native_histogram_with_positive_buckets;
+use partial_recording_executor::PartialRecordingExecutor;
 use rank_recording_executor::RankRecordingExecutor;
 use recording_executor::RecordingExecutor;
-use unannotated::unannotated;
+use shard_calls::{on_both_shards, shard_calls};
+use unannotated::{unannotated, unlabeled_partial};
+use unlabeled_matrix::UnlabeledMatrix;
 use warning_executor::WarningExecutor;
+
+fn range_series(labels: Labels, samples: Vec<RangeSeriesSample>) -> RangeSeries {
+    RangeSeries {
+        drop_name: false,
+        start_timestamps_ms: std::collections::BTreeMap::new(),
+        labels: labels.into(),
+        samples,
+    }
+}
+
+#[derive(bon::Builder)]
+struct UpQueryAndResult {
+    query: FrontendRangeQuery,
+    result: AnnotatedQueryResult,
+}
+
+fn up_query_and_result() -> UpQueryAndResult {
+    UpQueryAndResult::builder()
+        .query(up_range_query(0, None))
+        .result(one_sample_matrix(labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "up"),
+        ])))
+        .build()
+}
+
+async fn assert_ttl_hit_then_miss<
+    C: QueryCache<AnnotatedQueryResult, Error = crate::PromqlError>,
+>(
+    cache: &C,
+    clock: &ManualClock,
+    query: &FrontendRangeQuery,
+    result: &AnnotatedQueryResult,
+    within_ttl_ms: i64,
+    past_ttl_ms: i64,
+) {
+    let key = super::cache::range_cache_key("tenant-a", query);
+    QueryCache::insert(cache, &key, result).await.unwrap();
+    clock.advance(within_ttl_ms);
+    assert2::assert!(QueryCache::get(cache, &key).await.unwrap() == Some(result.clone()));
+    clock.advance(past_ttl_ms);
+    assert2::assert!(QueryCache::get(cache, &key).await.unwrap() == None);
+}
+
+mod cache_semantics;
+
+mod support;
+pub(crate) use support::{
+    native_histogram_with_positive_buckets, range_query_plan_skips_unsupported_shards,
+    recording_executor,
+};

@@ -1,8 +1,9 @@
-use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_observability::{RoleReadiness, SupervisedTasks};
 
 use super::{
-    Arc, CancellationToken, Cli, ServiceMetrics, build_object_store, compaction_loop,
-    load_profiles_limits_overrides_config,
+    Arc, CancellationToken, Cli, ServiceMetrics,
+    build_ready_object_store::build_ready_object_store, compaction_loop,
+    load_profiles_limits_overrides_config, supervise_until_shutdown,
 };
 
 /// Merges blocks that are already in object storage into larger ones, and
@@ -29,12 +30,7 @@ pub(crate) async fn run_compactor(
     readiness: RoleReadiness,
     shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let object_store_gate = readiness.gate("object-store");
-    let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
-        .await
-        .map_err(|e| format!("object store: {e}"))?;
-    object_store_gate.mark_ready();
-    let index_key = cli.index_object_key.clone();
+    let (configured, index_key) = build_ready_object_store(&cli, &metrics, &readiness).await?;
     // The same file the ingest and query roles read. Retention is a per-tenant
     // limit, so a compactor that read no overrides would keep every block of
     // every tenant forever.
@@ -52,15 +48,5 @@ pub(crate) async fn run_compactor(
             shutdown.clone(),
         ),
     );
-    let outcome = tokio::select! {
-        () = shutdown.cancelled() => Ok(()),
-        name = tasks.first_unexpected_exit() => {
-            Err(Box::<dyn std::error::Error>::from(CriticalTaskError(name)))
-        }
-    };
-    // A pass already under way finishes before this returns, so `--target all`
-    // stops this stage and moves to the next one rather than leaving a loop
-    // running behind the drain.
-    tasks.shutdown().await;
-    outcome
+    supervise_until_shutdown(tasks, &shutdown).await
 }

@@ -2,7 +2,7 @@ use krabka_observability::RoleReadiness;
 
 use super::{
     CancellationToken, Cli, ClientSecurity, ServiceMetrics, block_builder_config,
-    build_object_store,
+    build_ready_object_store::build_ready_object_store,
 };
 
 /// Consumes the profiles WAL and writes blocks, symbol databases and index
@@ -19,13 +19,8 @@ pub(crate) async fn run_block_builder(
     shutdown: CancellationToken,
     wal_security: Option<ClientSecurity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let object_store_gate = readiness.gate("object-store");
     let wal_catch_up_gate = readiness.gate("wal-catch-up");
-    let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
-        .await
-        .map_err(|e| format!("object store: {e}"))?;
-    object_store_gate.mark_ready();
-    let index_key = cli.index_object_key.clone();
+    let (configured, index_key) = build_ready_object_store(&cli, &metrics, &readiness).await?;
     let config = block_builder_config(
         &cli,
         configured.store,

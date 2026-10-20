@@ -1,14 +1,7 @@
 use super::{ApiError, HeaderMap, StatusCode, header, header_list_includes};
 
 pub(crate) fn require_remote_read_headers(headers: &HeaderMap) -> Result<(), ApiError> {
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim();
+    let content_type = super::super::request_content_type(headers);
     if !content_type.eq_ignore_ascii_case("application/x-protobuf") {
         return Err(ApiError {
             status: StatusCode::UNSUPPORTED_MEDIA_TYPE,

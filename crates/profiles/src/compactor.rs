@@ -7,7 +7,6 @@ use std::{
 
 use arrow::{
     array::{Array, ArrayRef, AsArray, BinaryArray, UInt64Array},
-    compute::concat_batches,
     datatypes::{Int32Type, Int64Type, SchemaRef, UInt64Type},
     record_batch::RecordBatch,
 };
@@ -32,6 +31,13 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    use arrow::compute::concat_batches;
+
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../blockstore/tests/support/compaction_levels.rs"
+    ));
+
     use std::sync::Arc;
 
     use assert2::{assert, check};
@@ -39,6 +45,28 @@ mod tests {
     use krabka_pprof::{EngineOpts, FlameEngine, ProfileStore};
     use krabka_units::{days, hours};
     use object_store::{ObjectStore, memory::InMemory};
+
+    struct TenantSegmentCase {
+        tenant: &'static str,
+        segment: &'static str,
+    }
+    struct WindowCase {
+        name: &'static str,
+        second_min_ts: i64,
+        expected_jobs: usize,
+    }
+
+    fn index_with_two_profile_blocks<'a>(
+        records: impl IntoIterator<Item = &'a crate::wal::ProfileRecord>,
+        first: &BlockMeta,
+        second: &BlockMeta,
+    ) -> ProfileIndex {
+        let mut index = index_with_series(records, &[first]);
+        index.add_profile_block("t", &first.object_key, vec![STACKTRACE_PARTITION]);
+        index.add_block(second);
+        index.add_profile_block("t", &second.object_key, vec![STACKTRACE_PARTITION]);
+        index
+    }
 
     /// The compacted object key spans the whole job -- the earliest start and
     /// the latest end across every input -- and names the level the output
@@ -79,9 +107,22 @@ mod tests {
     // segment the block-builder writes, and the unescape gives the tenant back.
     #[test]
     fn a_compacted_key_escapes_the_tenant_into_one_segment() {
-        for (tenant, segment) in [("a*b", "a!2Ab"), ("a!b", "a!21b"), ("tenant-a", "tenant-a")] {
+        for case in [
+            TenantSegmentCase {
+                tenant: "a*b",
+                segment: "a!2Ab",
+            },
+            TenantSegmentCase {
+                tenant: "a!b",
+                segment: "a!21b",
+            },
+            TenantSegmentCase {
+                tenant: "tenant-a",
+                segment: "tenant-a",
+            },
+        ] {
             let job = CompactionJob {
-                tenant: tenant.to_string(),
+                tenant: case.tenant.to_string(),
                 input_keys: vec!["a".to_string()],
                 output_level: BlockLevel(1),
                 min_ts: 100,
@@ -89,19 +130,22 @@ mod tests {
                 row_count: 0,
             };
             let key = super::compacted_key(&job);
-            let block_key = crate::blockbuilder::object_key(tenant, 0, 1, 2, 100, 500);
+            let block_key = crate::blockbuilder::object_key(case.tenant, 0, 1, 2, 100, 500);
 
             let path = Path::from(key.as_str());
             let parts: Vec<_> = path.parts().collect();
             check!(parts.len() == 4, "{key}");
-            check!(parts.get(1).map(|part| part.as_ref().to_string()) == Some(segment.to_string()));
             check!(
-                block_key.split('/').nth(1) == Some(segment),
+                parts.get(1).map(|part| part.as_ref().to_string())
+                    == Some(case.segment.to_string())
+            );
+            check!(
+                block_key.split('/').nth(1) == Some(case.segment),
                 "the block-builder writes the same segment"
             );
             check!(
-                krabka_blockstore::unescape_object_path_segment(segment)
-                    == Some(tenant.to_string())
+                krabka_blockstore::unescape_object_path_segment(case.segment)
+                    == Some(case.tenant.to_string())
             );
         }
     }
@@ -110,7 +154,10 @@ mod tests {
     use crate::{
         blockbuilder::build_block,
         cold_store::ColdProfileStore,
-        wal::{ProfileRecord, WalSample, WalSymbolSet},
+        test_support::{
+            CpuRecord, build_test_block, cold_api_flamegraph, cpu_record, index_with_series,
+        },
+        wal::ProfileRecord,
     };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -154,39 +201,9 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec_a = record("t", "api", 5, "main");
         let rec_b = record("t", "api", 7, "worker");
-        let meta_a = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec_a),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let meta_b = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&rec_b),
-            (1, 1),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in [&rec_a, &rec_b] {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta_a);
-        index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
-        index.add_block(&meta_b);
-        index.add_profile_block("t", &meta_b.object_key, vec![STACKTRACE_PARTITION]);
+        let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), 0).await;
+        let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), 1).await;
+        let mut index = index_with_two_profile_blocks([&rec_a, &rec_b], &meta_a, &meta_b);
 
         let meta = compact_blocks(
             &store,
@@ -202,12 +219,7 @@ mod tests {
         assert!(
             BlockIndex::candidate_blocks(&index, "t", 0, i64::MAX) == vec![meta.object_key.clone()]
         );
-        let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-        let engine = FlameEngine::new(cold, EngineOpts::default());
-        let fg = engine
-            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-            .await
-            .unwrap();
+        let fg = cold_api_flamegraph(store, index).await;
 
         check!(fg.total == 12);
         for name in ["main", "worker"] {
@@ -220,28 +232,8 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let old_record = record("t", "api", 5, "old");
         let other_record = record("t", "api", 7, "other");
-        let old_input = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&old_record),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
-        let other_input = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&other_record),
-            (1, 1),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
+        let old_input = build_test_block(&store, std::slice::from_ref(&old_record), 0).await;
+        let other_input = build_test_block(&store, std::slice::from_ref(&other_record), 1).await;
         let make_index = |first: &BlockMeta, first_record: &ProfileRecord| {
             let mut index = ProfileIndex::new();
             for record in [first_record, &other_record] {
@@ -285,17 +277,8 @@ mod tests {
             .unwrap();
 
         let replacement_record = record("t", "api", 11, "replacement");
-        let replacement_input = build_block(
-            &store,
-            "t",
-            0,
-            std::slice::from_ref(&replacement_record),
-            (0, 0),
-            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-        )
-        .await
-        .unwrap()
-        .remove(0);
+        let replacement_input =
+            build_test_block(&store, std::slice::from_ref(&replacement_record), 0).await;
         check!(replacement_input.object_key == old_input.object_key);
         let mut replacement_index = make_index(&replacement_input, &replacement_record);
         let new = compact_blocks(
@@ -344,24 +327,24 @@ mod tests {
             "t",
             0,
             &[
-                (
-                    crate::wal::WalPosition {
+                crate::blockbuilder::PositionedProfileRecord::new(
+                    Some(crate::wal::WalPosition {
                         partition: 0,
                         offset: 0,
                         record_hash: [42; 32],
-                    },
+                    }),
                     rec_a.clone(),
                 ),
-                (
-                    crate::wal::WalPosition {
+                crate::blockbuilder::PositionedProfileRecord::new(
+                    Some(crate::wal::WalPosition {
                         partition: 0,
                         offset: 1,
                         record_hash: [42; 32],
-                    },
+                    }),
                     rec_b.clone(),
                 ),
             ],
-            (0, 1),
+            krabka_blockstore::OffsetRange::new(0, 1),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
@@ -371,31 +354,21 @@ mod tests {
             &store,
             "t",
             0,
-            &[(
-                crate::wal::WalPosition {
+            &[crate::blockbuilder::PositionedProfileRecord::new(
+                Some(crate::wal::WalPosition {
                     partition: 0,
                     offset: 2,
                     record_hash: [42; 32],
-                },
+                }),
                 rec_c.clone(),
             )],
-            (2, 2),
+            krabka_blockstore::OffsetRange::new(2, 2),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
         .unwrap()
         .remove(0);
-        let mut index = ProfileIndex::new();
-        for rec in [&rec_a, &rec_b, &rec_c] {
-            let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index
-                .add_series("t", labels.fingerprint(), &labels)
-                .unwrap();
-        }
-        index.add_block(&meta_a);
-        index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
-        index.add_block(&meta_b);
-        index.add_profile_block("t", &meta_b.object_key, vec![STACKTRACE_PARTITION]);
+        let mut index = index_with_two_profile_blocks([&rec_a, &rec_b, &rec_c], &meta_a, &meta_b);
 
         let meta = compact_blocks_with_policy(
             &store,
@@ -414,7 +387,7 @@ mod tests {
         let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
         let hot = crate::hot_store::WalTailProfileStore::new();
         hot.append_records_with_positions([
-            (
+            crate::hot_store::PositionedWalRecord::new(
                 rec_a,
                 Some(crate::wal::WalPosition {
                     partition: 0,
@@ -422,7 +395,7 @@ mod tests {
                     record_hash: [42; 32],
                 }),
             ),
-            (
+            crate::hot_store::PositionedWalRecord::new(
                 rec_b,
                 Some(crate::wal::WalPosition {
                     partition: 0,
@@ -430,7 +403,7 @@ mod tests {
                     record_hash: [42; 32],
                 }),
             ),
-            (
+            crate::hot_store::PositionedWalRecord::new(
                 rec_c,
                 Some(crate::wal::WalPosition {
                     partition: 0,
@@ -508,13 +481,13 @@ mod tests {
         let mut index = ProfileIndex::new();
 
         let mut metas = Vec::new();
-        for (idx, rec) in [&rec_a, &rec_b, &rec_c, &rec_d].into_iter().enumerate() {
+        for (idx, rec) in [&rec_a, &rec_b, &rec_c, &rec_d].iter().enumerate() {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
             index
                 .add_series("t", labels.fingerprint(), &labels)
                 .unwrap();
             let offset = i64::try_from(idx).unwrap();
-            let bounds = (offset, offset);
+            let bounds = krabka_blockstore::OffsetRange::new(offset, offset);
             let meta = build_block(
                 &store,
                 "t",
@@ -619,11 +592,11 @@ mod tests {
         let map = destination_partitions(1, &sources).unwrap();
         let base = 2_u64 << 32;
         assert!(
-            map == BTreeMap::from([
-                (1_u64 << 32, base),
-                (2_u64 << 32, base | 1),
-                (3_u64 << 32, base | 2),
-            ])
+            map == maplit::btreemap! {
+                1_u64 << 32 => base,
+                2_u64 << 32 => base | 1,
+                3_u64 << 32 => base | 2,
+            }
         );
         let dests: BTreeSet<u64> = map.values().copied().collect();
         assert!(dests.len() == 3);
@@ -650,7 +623,7 @@ mod tests {
         .unwrap();
 
         let remapped =
-            remap_partitions(&batch, &BTreeMap::from([(7_u64, 42_u64)])).expect("remaps");
+            remap_partitions(&batch, &maplit::btreemap! { 7_u64 => 42_u64 }).expect("remaps");
 
         let column = remapped.column(0).as_primitive::<UInt64Type>();
         let values = (0..remapped.num_rows())
@@ -699,26 +672,38 @@ mod tests {
             BlockTimestampUnit::Millis,
         );
 
-        for (name, second_min_ts, want_jobs) in [
-            ("inside one window", 1_000_i64, 1),
-            ("three hours apart", THREE_HOURS_MS, 0),
+        for case in [
+            WindowCase {
+                name: "inside one window",
+                second_min_ts: 1_000_i64,
+                expected_jobs: 1,
+            },
+            WindowCase {
+                name: "three hours apart",
+                second_min_ts: THREE_HOURS_MS,
+                expected_jobs: 0,
+            },
         ] {
             let mut index = ProfileIndex::new();
             index.replace_profile_blocks(
                 "t",
                 &[],
                 &[
-                    (meta("a.parquet", 0, 500, 1), vec![0]),
-                    (
-                        meta("b.parquet", second_min_ts, second_min_ts + 500, 1),
-                        vec![0],
-                    ),
+                    krabka_blockstore::ProfileBlockRegistration {
+                        meta: meta("a.parquet", 0, 500, 1),
+                        partitions: vec![0],
+                    },
+                    krabka_blockstore::ProfileBlockRegistration {
+                        meta: meta("b.parquet", case.second_min_ts, case.second_min_ts + 500, 1),
+                        partitions: vec![0],
+                    },
                 ],
             );
 
             check!(
-                plan_compactions(&index, policy).len() == want_jobs,
-                "{name}"
+                plan_compactions(&index, policy).len() == case.expected_jobs,
+                "{}",
+                case.name
             );
         }
     }
@@ -730,8 +715,14 @@ mod tests {
             "t",
             &[],
             &[
-                (meta("b.parquet", 10, 20, 1), vec![0]),
-                (meta("a.parquet", 0, 5, 1), vec![0]),
+                krabka_blockstore::ProfileBlockRegistration {
+                    meta: meta("b.parquet", 10, 20, 1),
+                    partitions: vec![0],
+                },
+                krabka_blockstore::ProfileBlockRegistration {
+                    meta: meta("a.parquet", 0, 5, 1),
+                    partitions: vec![0],
+                },
             ],
         );
 
@@ -757,17 +748,7 @@ mod tests {
             index
                 .add_series("t", labels.fingerprint(), &labels)
                 .unwrap();
-            let block = build_block(
-                &store,
-                "t",
-                0,
-                std::slice::from_ref(&rec),
-                (n, n),
-                &krabka_blockstore::ObjectStoreMetrics::unregistered(),
-            )
-            .await
-            .unwrap()
-            .remove(0);
+            let block = build_test_block(&store, std::slice::from_ref(&rec), n).await;
             index.add_block(&block);
             index.add_profile_block("t", &block.object_key, vec![STACKTRACE_PARTITION]);
             records.push(rec);
@@ -786,12 +767,9 @@ mod tests {
             }
             passes += 1;
             assert!(passes <= 4, "compaction did not converge");
-            levels.push(
-                metas
-                    .iter()
-                    .map(|meta| index.block_level(&meta.object_key))
-                    .collect::<Vec<_>>(),
-            );
+            levels.push(block_levels(&metas, |meta| {
+                index.block_level(&meta.object_key)
+            }));
         }
 
         // Four blocks pair into two at level 1, then into one at level 2,
@@ -801,12 +779,7 @@ mod tests {
         check!(BlockIndex::block_count(&index, "t") == 1);
 
         // The surviving block still answers the query the four inputs did.
-        let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-        let engine = FlameEngine::new(cold, EngineOpts::default());
-        let fg = engine
-            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-            .await
-            .unwrap();
+        let fg = cold_api_flamegraph(store, index).await;
         check!(fg.total == 4);
     }
 
@@ -821,72 +794,118 @@ mod tests {
         function: &str,
         timestamp_ns: i64,
     ) -> ProfileRecord {
-        ProfileRecord {
-            tenant: tenant.to_string(),
-            labels: vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
-                ("service_name".to_string(), service.to_string()),
-            ],
-            profile_type: PT.to_string(),
-            samples: vec![WalSample {
-                stacktrace_location_refs: vec![0],
-                value,
-                timestamp_ns,
-                span_id: None,
-                trace_id: None,
-            }],
-            symbols: symbols(function),
-        }
-    }
-
-    fn symbols(function: &str) -> WalSymbolSet {
-        WalSymbolSet {
-            strings: vec![String::new(), function.to_string()],
-            functions: vec![crate::wal::WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![crate::wal::WalLocation {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![(0, 1)],
-            }],
-            mappings: Vec::new(),
-        }
+        cpu_record(CpuRecord {
+            tenant,
+            service,
+            stack: vec![0],
+            value,
+            timestamp_ns,
+            function,
+        })
     }
 }
-
-mod compact_blocks;
 mod compact_blocks_with_policy;
-mod compact_once;
 mod compact_once_with_policy;
-mod compacted_key;
 mod compaction_pass;
 mod destination_partitions;
 mod downsample_batches;
-mod downsample_key;
-mod downsample_policy;
+mod downsample_types;
 mod load_symdb;
-mod plan_compactions;
-mod remap_partitions;
 mod sample_group_buffer;
-mod source_partitions;
-
-pub use compact_blocks::compact_blocks;
 pub use compact_blocks_with_policy::compact_blocks_with_policy;
-pub use compact_once::compact_once;
 pub use compact_once_with_policy::compact_once_with_policy;
-use compacted_key::compacted_key;
 pub use compaction_pass::CompactionPass;
 use destination_partitions::destination_partitions;
 use downsample_batches::downsample_batches;
-use downsample_key::DownsampleKey;
-pub use downsample_policy::DownsamplePolicy;
+use downsample_types::DownsampleKey;
+pub use downsample_types::DownsamplePolicy;
 use load_symdb::load_symdb;
-pub use plan_compactions::plan_compactions;
-use remap_partitions::remap_partitions;
 use sample_group_buffer::SampleGroupBuffer;
-use source_partitions::source_partitions;
+
+/// Plans the merges the profile index is due, under `policy`.
+///
+/// The planner itself is signal-agnostic: the index only has to say what
+/// blocks it holds, at what level, over what time range, and how large they
+/// are. See [`plan_level_compactions`] for why the plan terminates.
+#[must_use]
+pub fn plan_compactions(index: &ProfileIndex, policy: CompactionPolicy) -> Vec<CompactionJob> {
+    plan_level_compactions(&index.compaction_candidates(), policy)
+}
+
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn compact_blocks(
+    store: &Arc<dyn ObjectStore>,
+    index: &mut ProfileIndex,
+    tenant: &str,
+    input_keys: &[String],
+    output_key: &str,
+) -> Result<BlockMeta, ProfilesError> {
+    compact_blocks_with_policy(store, index, tenant, input_keys, output_key, None).await
+}
+
+/// Runs one compaction pass over the whole index, without downsampling.
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub async fn compact_once(
+    store: &Arc<dyn ObjectStore>,
+    index: &mut ProfileIndex,
+    policy: CompactionPolicy,
+) -> Result<CompactionPass, ProfilesError> {
+    compact_once_with_policy(store, index, policy, None).await
+}
+
+/// Names the block a job writes.
+///
+/// The level is in the name because it is the first thing anyone reading a
+/// bucket listing wants to know, and the fingerprint of the input keys is what
+/// keeps two jobs over the same time range from colliding. The tenant goes
+/// through [`escape_object_path_segment`], as it does in
+/// [`crate::blockbuilder::object_key`], so a compacted block sits under the
+/// same tenant segment as its inputs.
+pub(crate) fn compacted_key(job: &CompactionJob) -> String {
+    let tenant = escape_object_path_segment(&job.tenant);
+    let level = job.output_level;
+    let min_ts = job.min_ts;
+    let max_ts = job.max_ts;
+    format!(
+        "{BLOCK_OBJECT_PREFIX}/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
+        input_key_fingerprint(&job.input_keys)
+    )
+}
+
+pub(crate) fn remap_partitions(
+    batch: &RecordBatch,
+    partition_map: &BTreeMap<u64, u64>,
+) -> Result<RecordBatch, ProfilesError> {
+    let partition_idx = batch
+        .schema()
+        .column_with_name(PCOL_STACKTRACE_PARTITION)
+        .ok_or_else(|| {
+            ProfilesError::Block(format!("missing `{PCOL_STACKTRACE_PARTITION}` column"))
+        })?
+        .0;
+    let partitions = batch.column(partition_idx).as_primitive::<UInt64Type>();
+    let remapped = UInt64Array::from_iter_values((0..batch.num_rows()).map(|row| {
+        let partition = partitions.value(row);
+        partition_map.get(&partition).copied().unwrap_or(partition)
+    }));
+    let mut columns = batch.columns().to_vec();
+    columns[partition_idx] = Arc::new(remapped) as ArrayRef;
+    RecordBatch::try_new(batch.schema(), columns)
+        .map_err(|err| ProfilesError::Block(err.to_string()))
+}
+
+pub(crate) fn source_partitions(index: &ProfileIndex, block_key: &str) -> Vec<u64> {
+    let mut partitions = index.stacktrace_partitions(block_key);
+    if partitions.is_empty() {
+        return vec![STACKTRACE_PARTITION];
+    }
+    // Sort + dedup so the dense local re-basing in `destination_partitions` is
+    // deterministic regardless of the order the index recorded partitions in.
+    partitions.sort_unstable();
+    partitions.dedup();
+    partitions
+}

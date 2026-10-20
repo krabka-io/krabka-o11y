@@ -1,6 +1,6 @@
 use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{
-    persisted_format::validate_persisted_format, wal_group_assignment::WalAssignmentWatch,
+    persisted_format::validate_consumer_record, wal_group_assignment::WalAssignmentWatch,
 };
 use krabka_units::convert::TimeExt;
 
@@ -91,26 +91,22 @@ pub async fn run_wal_tail_with_topic(
             .observe_consumer(&consumer, !records.is_empty())
             .await;
         for record in &records {
-            validate_persisted_format(
-                record
-                    .headers
-                    .iter()
-                    .map(|header| (header.key.as_str(), header.value.as_deref())),
-            )
-            .map_err(|error| ProfilesError::Wal(error.to_string()))?;
+            validate_consumer_record(record)
+                .map_err(|error| ProfilesError::Wal(error.to_string()))?;
         }
         // Decoded outside the store's write lock, then applied as one batch:
         // the store copies itself on write while a query holds a snapshot, and
         // a batch pays that once instead of once per record.
         let decoded = records
             .iter()
-            .filter_map(|record| record.value.as_deref().map(|value| (record, value)))
-            .map(|(record, value)| {
-                ProfileRecord::decode(value).map(|decoded| {
-                    (
-                        decoded,
-                        Some(crate::wal::WalPosition::from_record(record, value)),
-                    )
+            .filter_map(|record| {
+                record.value.as_deref().map(|value| {
+                    ProfileRecord::decode(value).map(|decoded| {
+                        crate::hot_store::PositionedWalRecord::new(
+                            decoded,
+                            Some(crate::wal::WalPosition::from_record(record, value)),
+                        )
+                    })
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;

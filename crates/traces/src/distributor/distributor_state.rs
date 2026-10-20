@@ -1,7 +1,8 @@
 use super::{
-    Arc, ByteSize, IngestEnforcer, Limits, OverridesProvider, Principal, ServiceMetrics, Span,
-    TenantId, TenantPolicy, TracesError, WalSink, authorize_tenant, limit_error_to_traces_error,
-    mebibytes, validate_shared,
+    Arc, AsciiMetadataValue, ByteSize, GrpcRequest, GrpcStatus, IngestEnforcer, Limits,
+    OverridesProvider, Principal, ServiceMetrics, Span, TENANT_HEADER, TenantId, TenantPolicy,
+    TracesError, WalSink, authorize_tenant, grpc_status_from_error, limit_error_to_traces_error,
+    mebibytes, produce_spans, request_principal, validate_shared,
 };
 
 /// Shared distributor state.
@@ -63,6 +64,36 @@ impl DistributorState {
         let tenant = TenantId::resolve(value, &self.tenant_policy)?;
         authorize_tenant(principal, &tenant)?;
         Ok(tenant)
+    }
+
+    /// Resolves the tenant of one gRPC push from its `X-Scope-OrgID`
+    /// metadata, and checks that the request's principal may use it.
+    pub(crate) fn resolve_grpc_tenant<T>(
+        &self,
+        request: &GrpcRequest<T>,
+    ) -> Result<TenantId, GrpcStatus> {
+        self.resolve_tenant(
+            request_principal(request)?,
+            request
+                .metadata()
+                .get(TENANT_HEADER)
+                .map(AsciiMetadataValue::as_bytes),
+        )
+        .map_err(|err| grpc_status_from_error(&err))
+    }
+
+    /// Enforces `tenant`'s ingest limits on one gRPC push's decoded spans,
+    /// then appends them to the WAL.
+    pub(crate) async fn ingest_grpc_spans(
+        &self,
+        tenant: &TenantId,
+        spans: Vec<Span>,
+    ) -> Result<(), GrpcStatus> {
+        self.enforce_ingest(tenant, &spans)
+            .map_err(|err| grpc_status_from_error(&err))?;
+        produce_spans(self.sink.as_ref(), tenant, spans)
+            .await
+            .map_err(|err| GrpcStatus::internal(err.to_string()))
     }
 
     pub(crate) fn enforce_ingest(

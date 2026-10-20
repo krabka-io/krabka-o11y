@@ -2,10 +2,15 @@ use object_store::ObjectMeta;
 
 use super::{Arc, ObjectStore, ObjectStoreExt, Path, ProfilesError, SymbolDb, symdb_key};
 
+pub(crate) struct LoadedSymbolDb {
+    pub(crate) metadata: ObjectMeta,
+    pub(crate) symbols: SymbolDb,
+}
+
 pub(crate) async fn load_symdb(
     store: &Arc<dyn ObjectStore>,
     block_key: &str,
-) -> Result<(ObjectMeta, SymbolDb), ProfilesError> {
+) -> Result<LoadedSymbolDb, ProfilesError> {
     let result = store
         .get(&Path::from(symdb_key(block_key)))
         .await
@@ -16,5 +21,8 @@ pub(crate) async fn load_symdb(
         .await
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
     let symbols = SymbolDb::decode(&bytes).map_err(|err| ProfilesError::Block(err.to_string()))?;
-    Ok((meta, symbols))
+    Ok(LoadedSymbolDb {
+        metadata: meta,
+        symbols,
+    })
 }

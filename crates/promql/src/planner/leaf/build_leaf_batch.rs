@@ -1,13 +1,14 @@
 use super::{
     Arc, ArrayRef, BinaryBuilder, Float64Array, Int64Array, LabeledSeries, PromqlError,
-    RecordBatch, Result, Schema,
+    RecordBatch, Result, SAMPLE_TIME_COLUMN, Schema,
 };
 
 /// Builds the leaf batch for one window's worth of matched series.
 ///
 /// `series` arrive grouped, one entry per series, with their samples already in
 /// timestamp order, so each label column is written run by run: one lookup per
-/// series rather than one per sample.
+/// series rather than one per sample. The sample-time duplicate column follows
+/// the value column when `schema` has that column; see [`super::leaf_schema`].
 pub(crate) fn build_leaf_batch(
     schema: Arc<Schema>,
     label_names: &[String],
@@ -43,7 +44,9 @@ pub(crate) fn build_leaf_batch(
             .iter()
             .flat_map(|one| one.samples.iter().map(|sample| sample.value)),
     )));
-    // Duplicate of the sample timestamp, carried through the chain unchanged.
-    columns.push(Arc::new(Int64Array::from_iter_values(timestamps)));
+    if schema.column_with_name(SAMPLE_TIME_COLUMN).is_some() {
+        // Duplicate of the sample timestamp, carried through the chain unchanged.
+        columns.push(Arc::new(Int64Array::from_iter_values(timestamps)));
+    }
     RecordBatch::try_new(schema, columns).map_err(|error| PromqlError::Exec(error.to_string()))
 }

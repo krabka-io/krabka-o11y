@@ -158,14 +158,13 @@ impl LineFormat {
         context.external_url = variables
             .get("externalURL")
             .map_or_else(String::new, super::TemplateRuntimeValue::as_rendered_string);
-        context
-            .variables
-            .extend(variables.iter().map(|(name, value)| {
-                (
-                    name.clone(),
-                    Rc::new(RefCell::new(value.clone_for_query_execution())),
-                )
-            }));
+        for name in variables.keys() {
+            let value = &variables[name];
+            context.variables.insert(
+                name.clone(),
+                Rc::new(RefCell::new(value.clone_for_query_execution())),
+            );
+        }
         context.queries.clone_from(queries);
         let rendered = render_template_parts(&self.parts, &context);
         if let Some(query) = context.pending_query.borrow().clone() {
@@ -220,9 +219,9 @@ fn collect_query_calls_from_parts(parts: &[TemplatePart], queries: &mut BTreeSet
                 collect_query_calls_from_expression(expression, queries);
             }
             TemplatePart::Conditional(conditional) => {
-                for (condition, parts) in &conditional.branches {
-                    collect_query_calls_from_expression(&condition.expression, queries);
-                    collect_query_calls_from_parts(parts, queries);
+                for branch in &conditional.branches {
+                    collect_query_calls_from_expression(&branch.condition.expression, queries);
+                    collect_query_calls_from_parts(&branch.parts, queries);
                 }
                 collect_query_calls_from_parts(&conditional.else_parts, queries);
             }
@@ -256,7 +255,7 @@ fn collect_query_calls_from_expression(
                     collect_query_calls_from_value(arg, queries);
                 }
             }
-            TemplateCommand::Function { name, args } => {
+            TemplateCommand::Function { name, args, .. } => {
                 if name == "query"
                     && let Some(TemplateValue::String(query)) = args.first()
                 {
@@ -292,8 +291,8 @@ fn validate_template_flow(parts: &[TemplatePart], in_range: bool) -> Result<(), 
                 validate_template_flow(&range.else_parts, in_range)?;
             }
             TemplatePart::Conditional(conditional) => {
-                for (_, parts) in &conditional.branches {
-                    validate_template_flow(parts, in_range)?;
+                for branch in &conditional.branches {
+                    validate_template_flow(&branch.parts, in_range)?;
                 }
                 validate_template_flow(&conditional.else_parts, in_range)?;
             }
@@ -347,8 +346,8 @@ fn collect_template_definitions(
                 collect_template_definitions(&with.else_parts, templates, false)?;
             }
             TemplatePart::Conditional(conditional) => {
-                for (_, parts) in &conditional.branches {
-                    collect_template_definitions(parts, templates, false)?;
+                for branch in &conditional.branches {
+                    collect_template_definitions(&branch.parts, templates, false)?;
                 }
                 collect_template_definitions(&conditional.else_parts, templates, false)?;
             }
@@ -375,9 +374,9 @@ fn validate_template_function_profile(
                 ..
             } => validate_function_expression(expression, prometheus)?,
             TemplatePart::Conditional(conditional) => {
-                for (condition, parts) in &conditional.branches {
-                    validate_function_expression(&condition.expression, prometheus)?;
-                    validate_template_function_profile(parts, prometheus)?;
+                for branch in &conditional.branches {
+                    validate_function_expression(&branch.condition.expression, prometheus)?;
+                    validate_template_function_profile(&branch.parts, prometheus)?;
                 }
                 validate_template_function_profile(&conditional.else_parts, prometheus)?;
             }
@@ -406,7 +405,7 @@ fn validate_function_expression(
 ) -> Result<(), ParseError> {
     for command in &expression.commands {
         match command {
-            TemplateCommand::Function { name, args } => {
+            TemplateCommand::Function { name, args, .. } => {
                 validate_function_name(name, prometheus)?;
                 for value in args {
                     validate_function_value(value, prometheus)?;

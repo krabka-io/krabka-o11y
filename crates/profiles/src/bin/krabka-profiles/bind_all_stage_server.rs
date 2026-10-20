@@ -2,6 +2,11 @@ use tokio::net::TcpListener;
 
 use super::{AllStage, ServerListener, ServerSecurity, SocketAddr, serve_router};
 
+pub(crate) struct BoundAllStageServer {
+    pub(crate) address: SocketAddr,
+    pub(crate) stage: AllStage,
+}
+
 /// Binds `addr` now and returns the address it got, together with the stage
 /// that serves `app` there until its token is cancelled.
 ///
@@ -22,7 +27,7 @@ pub(crate) async fn bind_all_stage_server(
     app: axum::Router,
     role: &'static str,
     security: &ServerSecurity,
-) -> Result<(SocketAddr, AllStage), Box<dyn std::error::Error>> {
+) -> Result<BoundAllStageServer, Box<dyn std::error::Error>> {
     let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)?;
     let bound = listener.local_addr();
     let server = serve_router(listener, app, security);
@@ -36,5 +41,8 @@ pub(crate) async fn bind_all_stage_server(
             }
         })
     });
-    Ok((bound, stage))
+    Ok(BoundAllStageServer {
+        address: bound,
+        stage,
+    })
 }

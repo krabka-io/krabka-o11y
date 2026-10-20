@@ -18,26 +18,22 @@
 #![recursion_limit = "512"]
 
 use std::{
-    collections::BTreeMap,
-    net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use assert2::assert;
 use bytes::Bytes;
-use futures::StreamExt;
-use krabka_metrics::{
-    WalRecord,
-    distributor::{DistributorState, ProduceError, WalSink},
-    wire::pb,
-};
+use krabka_metrics::wire::pb;
 use krabka_promql::{InMemoryMetricStore, MergedMetricStore, WalHead};
 use opentelemetry_proto::tonic::metrics::v1::{
     Gauge, Metric, MetricsData, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
     number_data_point,
 };
-use promql_corpus::{CorpusCase, CorpusSeries, KnownDivergence, PromqlCorpus, QueryKind};
+use promql_corpus::{
+    CorpusCase, CorpusFloatSample, CorpusLabel, CorpusSeries, KnownDivergence, PromqlCorpus,
+    QueryKind,
+};
 use prost::Message as _;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -46,19 +42,43 @@ use testcontainers::{
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
-use tokio::sync::oneshot;
+
+struct NumericScenario {
+    name: &'static str,
+    values: Vec<f64>,
+    operations: Vec<&'static str>,
+}
+
+struct EngineEndpoint<'a> {
+    base: &'a str,
+    prefix: &'a str,
+}
+
+struct OverflowExpectation<'a> {
+    endpoint: EngineEndpoint<'a>,
+    shards: Option<&'a str>,
+    value: String,
+}
 
 // `normalize` lives with the hand-written seed dataset that `grafana_integration`
 // asserts against; `promql_corpus` reaches it through this module. Nothing else
 // in it belongs to this suite.
+#[path = "support/corpus_differential.rs"]
+mod corpus_differential;
+#[path = "support/upstream_http.rs"]
+mod upstream_http;
+
+use self::{
+    corpus_differential::{CorpusDiff, PromApi, QueryParam, query_url, quoted, seconds_param},
+    upstream_http::{KrabkaServer, TestResult, mapped_base_url, wait_for_http_ok},
+};
+
 #[allow(dead_code)]
 #[path = "../../metrics/tests/support/diff_corpus.rs"]
 mod diff_corpus;
 
 #[path = "support/promql_corpus.rs"]
 mod promql_corpus;
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The deadline for a container to start, which includes the image pull.
 ///
@@ -79,9 +99,6 @@ const TENANT: &str = "compliance";
 /// In monolithic mode, this port serves `/ready`, `/api/v1/push`, and the
 /// `/prometheus/api/v1/query*` read endpoints.
 const MIMIR_PORT: u16 = 9009;
-
-/// Samples per `remote_write` request.
-const SAMPLES_PER_BATCH: usize = 20_000;
 
 /// Queries in flight against one engine.
 ///
@@ -278,10 +295,20 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
     // Real Mimir in monolithic mode.
     let mimir = start_mimir().await?;
     let mimir_base = mapped_base_url(&mimir, MIMIR_PORT).await?;
-    wait_for_http_ok(&client, &mimir_base, "/ready").await?;
+    wait_for_http_ok(
+        &client,
+        &format!("{mimir_base}/ready"),
+        Duration::from_mins(1),
+    )
+    .await?;
     let mimir_alertmanager = start_mimir_alertmanager().await?;
     let mimir_alertmanager_base = mapped_base_url(&mimir_alertmanager, MIMIR_PORT).await?;
-    wait_for_http_ok(&client, &mimir_alertmanager_base, "/ready").await?;
+    wait_for_http_ok(
+        &client,
+        &format!("{mimir_alertmanager_base}/ready"),
+        Duration::from_mins(1),
+    )
+    .await?;
 
     // In-process Krabka write+query path (identical to diff_prometheus.rs).
     let krabka = start_krabka_query_server().await?;
@@ -292,18 +319,33 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
         &mimir_alertmanager_base,
     )
     .await?;
-    seed_both(&client, &krabka.base_url, &mimir_base, &corpus).await?;
-    verify_ingest_contract(&client, &krabka.base_url, &mimir_base).await?;
+    mimir_diff(&krabka.base_url, &mimir_base)
+        .seed(&client, &corpus)
+        .await?;
+    let engines = EnginePair {
+        client: &client,
+        krabka_base: &krabka.base_url,
+        mimir_base: &mimir_base,
+    };
+    verify_ingest_contract(engines).await?;
 
-    let mut mismatches = run_corpus(&client, &krabka.base_url, &mimir_base, &corpus).await?;
+    let mut mismatches = mimir_diff(&krabka.base_url, &mimir_base)
+        .run(&client, &corpus)
+        .await?;
     // Seed these after the vendored cases, whose broad selectors must not see
     // additional extreme-valued series.
     let at_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? - 1_000;
     let numeric = last_operation_numeric_corpus(at_ms);
-    seed_both(&client, &krabka.base_url, &mimir_base, &numeric).await?;
-    verify_numeric_seed(&client, &krabka.base_url, &mimir_base, &numeric).await?;
-    verify_numeric_overflow(&client, &krabka.base_url, &mimir_base, &numeric).await?;
-    mismatches.extend(run_corpus(&client, &krabka.base_url, &mimir_base, &numeric).await?);
+    mimir_diff(&krabka.base_url, &mimir_base)
+        .seed(&client, &numeric)
+        .await?;
+    verify_numeric_seed(engines, &numeric).await?;
+    verify_numeric_overflow(engines, &numeric).await?;
+    mismatches.extend(
+        mimir_diff(&krabka.base_url, &mimir_base)
+            .run(&client, &numeric)
+            .await?,
+    );
     corpus.series.extend(numeric.series);
     corpus.cases.extend(numeric.cases);
     promql_corpus::write_report(
@@ -337,32 +379,54 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
 
 fn last_operation_numeric_corpus(at_ms: i64) -> PromqlCorpus {
     let mut corpus = PromqlCorpus::default();
-    for (scenario, values, operations) in [
-        ("overflow", vec![f64::MAX, f64::MAX], &["avg"][..]),
-        (
-            "cancellation",
-            vec![f64::MAX, -f64::MAX],
-            &["sum", "avg"][..],
-        ),
-        ("compensation", vec![1e16, 1.0, 1.0], &["sum", "avg"][..]),
+    for scenario in [
+        NumericScenario {
+            name: "overflow",
+            values: vec![f64::MAX, f64::MAX],
+            operations: vec!["avg"],
+        },
+        NumericScenario {
+            name: "cancellation",
+            values: vec![f64::MAX, -f64::MAX],
+            operations: vec!["sum", "avg"],
+        },
+        NumericScenario {
+            name: "compensation",
+            values: vec![1e16, 1.0, 1.0],
+            operations: vec!["sum", "avg"],
+        },
     ] {
-        for (index, value) in values.into_iter().enumerate() {
+        for entry in scenario.values.into_iter().enumerate() {
+            let index = entry.0;
+            let value = entry.1;
             corpus.series.push(CorpusSeries {
                 labels: vec![
-                    ("__name__".into(), "mimir_last_operation_fold".into()),
-                    ("scenario".into(), scenario.into()),
-                    ("series".into(), index.to_string()),
+                    CorpusLabel {
+                        name: "__name__".into(),
+                        value: "mimir_last_operation_fold".into(),
+                    },
+                    CorpusLabel {
+                        name: "scenario".into(),
+                        value: scenario.name.into(),
+                    },
+                    CorpusLabel {
+                        name: "series".into(),
+                        value: index.to_string(),
+                    },
                 ],
-                floats: vec![(at_ms, value)],
+                floats: vec![CorpusFloatSample {
+                    timestamp_ms: at_ms,
+                    value,
+                }],
                 ..Default::default()
             });
         }
-        for operation in operations {
+        for operation in scenario.operations {
             corpus.cases.push(CorpusCase {
-                name: format!("last_operation_numeric:{scenario}:{operation}"),
+                name: format!("last_operation_numeric:{}:{operation}", scenario.name),
                 promql: format!(
                     "{operation}(last_over_time(mimir_last_operation_fold{{scenario={}}}[30m]))",
-                    quoted(scenario)
+                    quoted(scenario.name)
                 ),
                 kind: QueryKind::Instant { time: at_ms },
                 expects_failure: false,
@@ -372,22 +436,24 @@ fn last_operation_numeric_corpus(at_ms: i64) -> PromqlCorpus {
     corpus
 }
 
-async fn verify_numeric_seed(
-    client: &reqwest::Client,
-    krabka_base: &str,
-    mimir_base: &str,
-    corpus: &PromqlCorpus,
-) -> TestResult {
+async fn verify_numeric_seed(engines: EnginePair<'_>, corpus: &PromqlCorpus) -> TestResult {
+    let EnginePair {
+        client,
+        krabka_base,
+        mimir_base,
+    } = engines;
     // Comparing an aggregate alone could hide missing cancelling samples.
     // Each full selector must return its exact identity, timestamp and value.
     for series in &corpus.series {
         let selector = series
             .labels
             .iter()
-            .map(|(name, value)| format!("{name}={}", quoted(value)))
+            .map(|label| format!("{}={}", label.name, quoted(&label.value)))
             .collect::<Vec<_>>()
             .join(",");
-        let (at_ms, value) = series.floats[0];
+        let sample = series.floats[0];
+        let at_ms = sample.timestamp_ms;
+        let value = sample.value;
         let case = CorpusCase {
             name: format!("last_operation_numeric:seed:{{{selector}}}"),
             promql: format!("{{{selector}}}"),
@@ -399,7 +465,10 @@ async fn verify_numeric_seed(
                 .trim_end_matches('0')
                 .trim_end_matches('.'),
         )?;
-        let labels: BTreeMap<_, _> = series.labels.iter().cloned().collect();
+        let mut labels = serde_json::Map::new();
+        for label in &series.labels {
+            labels.insert(label.name.clone(), Value::String(label.value.clone()));
+        }
         let expected = serde_json::json!({
             "status": "success",
             "data": {
@@ -407,20 +476,35 @@ async fn verify_numeric_seed(
                 "result": [{"metric": labels, "value": [timestamp, value.to_string()]}]
             }
         });
-        for (base, prefix) in [(krabka_base, ""), (mimir_base, "/prometheus")] {
-            wait_for_query_ready(
-                client,
-                base,
-                &format!("{prefix}/api/v1/query"),
-                &case.promql,
-                at_ms,
-            )
+        for endpoint in [
+            EngineEndpoint {
+                base: krabka_base,
+                prefix: "",
+            },
+            EngineEndpoint {
+                base: mimir_base,
+                prefix: "/prometheus",
+            },
+        ] {
+            PromApi {
+                base: endpoint.base,
+                prefix: endpoint.prefix,
+                tenant: Some(TENANT),
+            }
+            .wait_for_query_ready(client, &case.promql, at_ms)
             .await?;
-            let response = query_case(client, base, prefix, &case).await?;
+            let response = PromApi {
+                base: endpoint.base,
+                prefix: endpoint.prefix,
+                tenant: Some(TENANT),
+            }
+            .query_case(client, &case)
+            .await?;
             let mismatch = promql_corpus::compare_case(&case, &response, &expected);
             assert!(
                 mismatch.is_none(),
-                "{base}: {}",
+                "{}: {}",
+                endpoint.base,
                 mismatch.unwrap_or_default()
             );
         }
@@ -432,12 +516,12 @@ async fn verify_numeric_seed(
     Ok(())
 }
 
-async fn verify_numeric_overflow(
-    client: &reqwest::Client,
-    krabka_base: &str,
-    mimir_base: &str,
-    corpus: &PromqlCorpus,
-) -> TestResult {
+async fn verify_numeric_overflow(engines: EnginePair<'_>, corpus: &PromqlCorpus) -> TestResult {
+    let EnginePair {
+        client,
+        krabka_base,
+        mimir_base,
+    } = engines;
     let case = corpus
         .cases
         .iter()
@@ -453,38 +537,69 @@ async fn verify_numeric_overflow(
     )?;
     // Keep the default sharded disagreement, but do not let its exemption hide
     // an incorrect finite result or an unrelated upstream error.
-    for (base, prefix, shards, value) in [
-        (krabka_base, "", None, f64::MAX.to_string()),
-        (mimir_base, "/prometheus", Some("0"), f64::MAX.to_string()),
-        (mimir_base, "/prometheus", None, "+Inf".into()),
+    for expected in [
+        OverflowExpectation {
+            endpoint: EngineEndpoint {
+                base: krabka_base,
+                prefix: "",
+            },
+            shards: None,
+            value: f64::MAX.to_string(),
+        },
+        OverflowExpectation {
+            endpoint: EngineEndpoint {
+                base: mimir_base,
+                prefix: "/prometheus",
+            },
+            shards: Some("0"),
+            value: f64::MAX.to_string(),
+        },
+        OverflowExpectation {
+            endpoint: EngineEndpoint {
+                base: mimir_base,
+                prefix: "/prometheus",
+            },
+            shards: None,
+            value: "+Inf".into(),
+        },
     ] {
         let mut request = client
             .get(query_url(
-                base,
-                &format!("{prefix}/api/v1/query"),
+                expected.endpoint.base,
+                &format!("{}/api/v1/query", expected.endpoint.prefix),
                 &[
-                    ("query", case.promql.clone()),
-                    ("time", seconds_param(time)),
+                    QueryParam {
+                        name: "query",
+                        argument: case.promql.clone(),
+                    },
+                    QueryParam {
+                        name: "time",
+                        argument: seconds_param(time),
+                    },
                 ],
             ))
             .header("X-Scope-OrgID", TENANT);
-        if let Some(shards) = shards {
+        if let Some(shards) = expected.shards {
             request = request.header("Sharding-Control", shards);
         }
         let response = request.send().await?;
         assert!(
             response.status() == StatusCode::OK,
-            "{base}, shards={shards:?}"
+            "{}, shards={:?}",
+            expected.endpoint.base,
+            expected.shards
         );
         let response: Value = response.json().await?;
-        let expected = serde_json::json!({
+        let expected_json = serde_json::json!({
             "status": "success",
-            "data": {"resultType": "vector", "result": [{"metric": {}, "value": [timestamp, value]}]}
+            "data": {"resultType": "vector", "result": [{"metric": {}, "value": [timestamp, expected.value]}]}
         });
-        let mismatch = promql_corpus::compare_case(case, &response, &expected);
+        let mismatch = promql_corpus::compare_case(case, &response, &expected_json);
         assert!(
             mismatch.is_none(),
-            "{base}, shards={shards:?}: {}",
+            "{}, shards={:?}: {}",
+            expected.endpoint.base,
+            expected.shards,
             mismatch.unwrap_or_default()
         );
     }
@@ -625,9 +740,21 @@ struct IngestResponse {
     body: Bytes,
 }
 
+#[derive(Clone, Copy)]
+struct RequestHeader<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+impl<'a> RequestHeader<'a> {
+    fn new(name: &'a str, value: &'a str) -> Self {
+        Self { name, value }
+    }
+}
+
 struct IngestCase<'a> {
     path: &'a str,
-    request_headers: &'a [(&'a str, &'a str)],
+    request_headers: &'a [RequestHeader<'a>],
     response_headers: &'a [&'a str],
     metric: &'a str,
     expected_value: &'a str,
@@ -639,11 +766,7 @@ impl IngestResponse {
     }
 }
 
-async fn verify_ingest_contract(
-    client: &reqwest::Client,
-    krabka_base: &str,
-    mimir_base: &str,
-) -> TestResult {
+async fn verify_ingest_contract(engines: EnginePair<'_>) -> TestResult {
     let now_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? - 1_000;
 
     let v1 = pb::v1::WriteRequest {
@@ -667,21 +790,21 @@ async fn verify_ingest_contract(
         ..Default::default()
     };
     compare_ingest(
-        client,
-        krabka_base,
-        mimir_base,
+        engines,
         IngestCase {
             path: "/api/v1/push",
             request_headers: &[
-                ("Content-Type", "application/x-protobuf"),
-                ("Content-Encoding", "snappy"),
+                RequestHeader::new("Content-Type", "application/x-protobuf"),
+                RequestHeader::new("Content-Encoding", "snappy"),
             ],
             response_headers: &[],
             metric: "m11_remote_write_v1",
             expected_value: "1",
         },
-        snappy(&v1.encode_to_vec())?,
-        now_ms,
+        IngestPayload {
+            body: snappy(&v1.encode_to_vec())?,
+            at_ms: now_ms,
+        },
     )
     .await?;
 
@@ -704,18 +827,16 @@ async fn verify_ingest_contract(
         }],
     };
     compare_ingest(
-        client,
-        krabka_base,
-        mimir_base,
+        engines,
         IngestCase {
             path: "/api/v1/push",
             request_headers: &[
-                (
+                RequestHeader::new(
                     "Content-Type",
                     "application/x-protobuf;proto=io.prometheus.write.v2.Request",
                 ),
-                ("Content-Encoding", "snappy"),
-                ("X-Prometheus-Remote-Write-Version", "2.0.0"),
+                RequestHeader::new("Content-Encoding", "snappy"),
+                RequestHeader::new("X-Prometheus-Remote-Write-Version", "2.0.0"),
             ],
             response_headers: &[
                 "x-prometheus-remote-write-samples-written",
@@ -725,8 +846,10 @@ async fn verify_ingest_contract(
             metric: "m11_remote_write_v2",
             expected_value: "2",
         },
-        snappy(&v2.encode_to_vec())?,
-        now_ms,
+        IngestPayload {
+            body: snappy(&v2.encode_to_vec())?,
+            at_ms: now_ms,
+        },
     )
     .await?;
 
@@ -751,47 +874,65 @@ async fn verify_ingest_contract(
         }],
     };
     compare_ingest(
-        client,
-        krabka_base,
-        mimir_base,
+        engines,
         IngestCase {
             path: "/otlp/v1/metrics",
-            request_headers: &[("Content-Type", "application/x-protobuf")],
+            request_headers: &[RequestHeader::new("Content-Type", "application/x-protobuf")],
             response_headers: &["content-type", "content-length", "x-content-type-options"],
             metric: "m11_otlp_gauge",
             expected_value: "3",
         },
-        otlp.encode_to_vec(),
-        now_ms,
+        IngestPayload {
+            body: otlp.encode_to_vec(),
+            at_ms: now_ms,
+        },
     )
     .await?;
 
     compare_ingest(
-        client,
-        krabka_base,
-        mimir_base,
+        engines,
         IngestCase {
             path: "/api/v1/push/influx/write?precision=ms",
-            request_headers: &[("Content-Type", "text/plain")],
+            request_headers: &[RequestHeader::new("Content-Type", "text/plain")],
             response_headers: &["content-type", "content-length"],
             metric: "m11_influx",
             expected_value: "4",
         },
-        format!("m11_influx,source=differential value=4 {now_ms}\n").into_bytes(),
-        now_ms,
+        IngestPayload {
+            body: format!("m11_influx,source=differential value=4 {now_ms}\n").into_bytes(),
+            at_ms: now_ms,
+        },
     )
     .await?;
     Ok(())
 }
 
-async fn compare_ingest(
-    client: &reqwest::Client,
-    krabka_base: &str,
-    mimir_base: &str,
-    case: IngestCase<'_>,
+/// The two engines a Mimir differential check compares, and the client it
+/// reaches them with.
+#[derive(Clone, Copy)]
+struct EnginePair<'a> {
+    client: &'a reqwest::Client,
+    krabka_base: &'a str,
+    mimir_base: &'a str,
+}
+
+/// One ingest request body, and the time its samples are queried at.
+struct IngestPayload {
     body: Vec<u8>,
     at_ms: i64,
+}
+
+async fn compare_ingest(
+    engines: EnginePair<'_>,
+    case: IngestCase<'_>,
+    payload: IngestPayload,
 ) -> TestResult {
+    let EnginePair {
+        client,
+        krabka_base,
+        mimir_base,
+    } = engines;
+    let IngestPayload { body, at_ms } = payload;
     let krabka = post_ingest(client, krabka_base, case.path, case.request_headers, &body).await?;
     let mimir = post_ingest(client, mimir_base, case.path, case.request_headers, &body).await?;
     assert!(
@@ -819,24 +960,33 @@ async fn compare_ingest(
         mimir
     );
 
-    wait_for_query_ready(client, krabka_base, "/api/v1/query", case.metric, at_ms).await?;
-    wait_for_query_ready(
-        client,
-        mimir_base,
-        "/prometheus/api/v1/query",
-        case.metric,
-        at_ms,
-    )
+    PromApi {
+        base: krabka_base,
+        prefix: "",
+        tenant: Some(TENANT),
+    }
+    .wait_for_query_ready(client, case.metric, at_ms)
     .await?;
-    let krabka_query =
-        query_instant(client, krabka_base, "/api/v1/query", case.metric, at_ms).await?;
-    let mimir_query = query_instant(
-        client,
-        mimir_base,
-        "/prometheus/api/v1/query",
-        case.metric,
-        at_ms,
-    )
+    PromApi {
+        base: mimir_base,
+        prefix: "/prometheus",
+        tenant: Some(TENANT),
+    }
+    .wait_for_query_ready(client, case.metric, at_ms)
+    .await?;
+    let krabka_query = PromApi {
+        base: krabka_base,
+        prefix: "",
+        tenant: Some(TENANT),
+    }
+    .query_instant(client, case.metric, at_ms)
+    .await?;
+    let mimir_query = PromApi {
+        base: mimir_base,
+        prefix: "/prometheus",
+        tenant: Some(TENANT),
+    }
+    .query_instant(client, case.metric, at_ms)
     .await?;
     assert!(
         krabka_query["data"]["result"] == mimir_query["data"]["result"],
@@ -859,15 +1009,19 @@ async fn compare_ingest(
         format!("sum(last_over_time({}[30m]))", case.metric),
         format!("avg(last_over_time({}[30m]))", case.metric),
     ] {
-        let krabka_query =
-            query_instant(client, krabka_base, "/api/v1/query", &query, at_ms).await?;
-        let mimir_query = query_instant(
-            client,
-            mimir_base,
-            "/prometheus/api/v1/query",
-            &query,
-            at_ms,
-        )
+        let krabka_query = PromApi {
+            base: krabka_base,
+            prefix: "",
+            tenant: Some(TENANT),
+        }
+        .query_instant(client, &query, at_ms)
+        .await?;
+        let mimir_query = PromApi {
+            base: mimir_base,
+            prefix: "/prometheus",
+            tenant: Some(TENANT),
+        }
+        .query_instant(client, &query, at_ms)
         .await?;
         assert!(
             krabka_query == mimir_query && mimir_query == expected,
@@ -881,15 +1035,15 @@ async fn post_ingest(
     client: &reqwest::Client,
     base: &str,
     path: &str,
-    headers: &[(&str, &str)],
+    headers: &[RequestHeader<'_>],
     body: &[u8],
 ) -> TestResult<IngestResponse> {
     let mut request = client
         .post(format!("{base}{path}"))
         .header("X-Scope-OrgID", TENANT)
         .body(body.to_vec());
-    for (name, value) in headers {
-        request = request.header(*name, *value);
+    for header in headers {
+        request = request.header(header.name, header.value);
     }
     let response = request.send().await?;
     Ok(IngestResponse {
@@ -901,92 +1055,6 @@ async fn post_ingest(
 
 fn snappy(body: &[u8]) -> TestResult<Vec<u8>> {
     Ok(snap::raw::Encoder::new().compress_vec(body)?)
-}
-
-/// Writes the whole corpus to both engines, in batch order.
-///
-/// Mimir's `remote_write` receiver lives at `/api/v1/push`; Krabka's is the
-/// Prometheus one.
-async fn seed_both(
-    client: &reqwest::Client,
-    krabka_base: &str,
-    mimir_base: &str,
-    corpus: &PromqlCorpus,
-) -> TestResult {
-    let batches = promql_corpus::remote_write_batches(&corpus.series, SAMPLES_PER_BATCH);
-    println!(
-        "diff_mimir: seeding {} series / {} samples in {} batches",
-        corpus.series.len(),
-        corpus.sample_count(),
-        batches.len()
-    );
-    // The upstream first: it is the stricter receiver of the two, and a corpus
-    // shape it refuses is a fault in the seed rather than in Krabka.
-    for batch in &batches {
-        post_remote_write(client, mimir_base, "/api/v1/push", batch).await?;
-        post_remote_write(client, krabka_base, "/api/v1/write", batch).await?;
-    }
-
-    let (probe, at) = corpus_probe(corpus).ok_or("the corpus seeded no float samples")?;
-    wait_for_query_ready(client, krabka_base, "/api/v1/query", &probe, at).await?;
-    wait_for_query_ready(client, mimir_base, "/prometheus/api/v1/query", &probe, at).await?;
-    Ok(())
-}
-
-/// A selector and timestamp that must return something once the seed has
-/// landed, taken from the corpus rather than assumed.
-fn corpus_probe(corpus: &PromqlCorpus) -> Option<(String, i64)> {
-    let series = corpus
-        .series
-        .iter()
-        .find(|series| !series.floats.is_empty())?;
-    let selector = series
-        .labels
-        .iter()
-        .map(|(name, value)| format!("{name}={}", quoted(value)))
-        .collect::<Vec<_>>()
-        .join(",");
-    Some((format!("{{{selector}}}"), series.floats.first()?.0))
-}
-
-fn quoted(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// Runs every case against both engines and returns the disagreements.
-async fn run_corpus(
-    client: &reqwest::Client,
-    krabka_base: &str,
-    mimir_base: &str,
-    corpus: &PromqlCorpus,
-) -> TestResult<Vec<(String, String)>> {
-    let started = std::time::Instant::now();
-    let mut mismatches: Vec<(String, String)> = futures::stream::iter(corpus.cases.iter())
-        .map(|case| async move {
-            let krabka = query_case(client, krabka_base, "", case).await;
-            let upstream = query_case(client, mimir_base, "/prometheus", case).await;
-            let detail = match (krabka, upstream) {
-                (Ok(krabka), Ok(upstream)) => promql_corpus::compare_case(case, &krabka, &upstream),
-                (krabka, upstream) => Some(format!(
-                    "{} `{}`: transport failure\n      krabka:   {krabka:?}\n      upstream: {upstream:?}",
-                    case.name, case.promql
-                )),
-            };
-            detail.map(|detail| (case.name.clone(), detail))
-        })
-        .buffer_unordered(QUERY_CONCURRENCY)
-        .filter_map(|mismatch| async move { mismatch })
-        .collect()
-        .await;
-    mismatches.sort();
-    println!(
-        "diff_mimir: {} cases in {:.1}s, {} skipped, {} disagreed",
-        corpus.cases.len(),
-        started.elapsed().as_secs_f64(),
-        corpus.skipped.len(),
-        mismatches.len()
-    );
-    Ok(mismatches)
 }
 
 async fn start_mimir() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
@@ -1057,27 +1125,6 @@ async fn start_mimir_alertmanager() -> TestResult<testcontainers::ContainerAsync
     .await??)
 }
 
-async fn mapped_base_url(
-    container: &testcontainers::ContainerAsync<GenericImage>,
-    port: u16,
-) -> TestResult<String> {
-    let mapped = container.get_host_port_ipv4(port.tcp()).await?;
-    Ok(format!("http://127.0.0.1:{mapped}"))
-}
-
-struct KrabkaServer {
-    base_url: String,
-    shutdown: Option<oneshot::Sender<()>>,
-}
-
-impl KrabkaServer {
-    fn shutdown(mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
-
 fn candidate_engine_opts() -> krabka_promql::EngineOpts {
     krabka_promql::EngineOpts {
         enable_type_and_unit_labels: false,
@@ -1097,197 +1144,23 @@ async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let query_router = krabka_promql::mimir_ruler_prometheus_router(Arc::clone(&state))
         .merge(krabka_promql::mimir_ruler_router(Arc::clone(&state)))
         .merge(krabka_promql::mimir_alertmanager_router(state));
-    let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
-    let distributor = Arc::new(DistributorState::new(sink));
-    let router = query_router.merge(krabka_metrics::distributor::router(distributor));
-    let (tx, rx) = oneshot::channel();
-    let addr: SocketAddr = "127.0.0.1:0".parse()?;
-    let bound = krabka_metrics_service::serve_prometheus_router(
-        addr,
-        router,
-        &krabka_observability::server_security::ServerSecurity::default(),
-        async move {
-            let _ = rx.await;
+    KrabkaServer::start(query_router, head, "127.0.0.1:0".parse()?).await
+}
+
+fn mimir_diff<'a>(krabka_base: &'a str, mimir_base: &'a str) -> CorpusDiff<'a> {
+    CorpusDiff {
+        suite: "diff_mimir",
+        krabka: PromApi {
+            base: krabka_base,
+            prefix: "",
+            tenant: Some(TENANT),
         },
-    )
-    .await?;
-
-    Ok(KrabkaServer {
-        base_url: format!("http://{bound}"),
-        shutdown: Some(tx),
-    })
-}
-
-struct WalHeadSink {
-    head: WalHead,
-}
-
-#[async_trait::async_trait]
-impl WalSink for WalHeadSink {
-    async fn append(&self, _key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
-        self.head.apply_wal_record(&record);
-        Ok(())
+        upstream: PromApi {
+            base: mimir_base,
+            prefix: "/prometheus",
+            tenant: Some(TENANT),
+        },
+        upstream_write_path: "/api/v1/push",
+        query_concurrency: QUERY_CONCURRENCY,
     }
-}
-
-async fn post_remote_write(
-    client: &reqwest::Client,
-    base: &str,
-    path: &str,
-    body: &[u8],
-) -> TestResult {
-    let response = client
-        .post(format!("{base}{path}"))
-        .header("Content-Type", "application/x-protobuf")
-        .header("Content-Encoding", "snappy")
-        .header("X-Scope-OrgID", TENANT)
-        .body(body.to_vec())
-        .send()
-        .await?;
-    let status = response.status();
-    if !(status == StatusCode::OK || status == StatusCode::NO_CONTENT) {
-        let detail = response.text().await.unwrap_or_default();
-        return Err(format!("remote_write to {base}{path} returned {status}: {detail}").into());
-    }
-    Ok(())
-}
-
-async fn wait_for_http_ok(client: &reqwest::Client, base: &str, path: &str) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_mins(1);
-    while std::time::Instant::now() < deadline {
-        if client
-            .get(format!("{base}{path}"))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    Err(format!("{base}{path} did not become ready").into())
-}
-
-async fn wait_for_query_ready(
-    client: &reqwest::Client,
-    base: &str,
-    query_path: &str,
-    query: &str,
-    at_ms: i64,
-) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while std::time::Instant::now() < deadline {
-        let json = query_instant(client, base, query_path, query, at_ms).await?;
-        if json["data"]["result"]
-            .as_array()
-            .is_some_and(|result| !result.is_empty())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    Err(format!("query `{query}` did not become non-empty on {base}").into())
-}
-
-async fn query_case(
-    client: &reqwest::Client,
-    base: &str,
-    prefix: &str,
-    case: &CorpusCase,
-) -> TestResult<Value> {
-    match case.kind {
-        QueryKind::Instant { time } => {
-            query_instant(
-                client,
-                base,
-                &format!("{prefix}/api/v1/query"),
-                &case.promql,
-                time,
-            )
-            .await
-        }
-        QueryKind::Range { start, end, step } => {
-            query_range(
-                client,
-                base,
-                &format!("{prefix}/api/v1/query_range"),
-                &case.promql,
-                (start, end, step),
-            )
-            .await
-        }
-    }
-}
-
-async fn query_instant(
-    client: &reqwest::Client,
-    base: &str,
-    path: &str,
-    promql: &str,
-    time_ms: i64,
-) -> TestResult<Value> {
-    json_body(
-        client
-            .get(query_url(
-                base,
-                path,
-                &[
-                    ("query", promql.to_string()),
-                    ("time", seconds_param(time_ms)),
-                ],
-            ))
-            .header("X-Scope-OrgID", TENANT),
-    )
-    .await
-}
-
-async fn query_range(
-    client: &reqwest::Client,
-    base: &str,
-    path: &str,
-    promql: &str,
-    range: (i64, i64, i64),
-) -> TestResult<Value> {
-    let (start_ms, end_ms, step_ms) = range;
-    json_body(
-        client
-            .get(query_url(
-                base,
-                path,
-                &[
-                    ("query", promql.to_string()),
-                    ("start", seconds_param(start_ms)),
-                    ("end", seconds_param(end_ms)),
-                    ("step", seconds_param(step_ms)),
-                ],
-            ))
-            .header("X-Scope-OrgID", TENANT),
-    )
-    .await
-}
-
-/// The JSON body of a query response, whatever its status.
-///
-/// A corpus case the upstream file marks `expect fail` is answered with 400 or
-/// 422 and a body that says which kind of failure it was, and that body is the
-/// thing being compared. `error_for_status` would throw it away.
-async fn json_body(request: reqwest::RequestBuilder) -> TestResult<Value> {
-    let response = request.send().await?;
-    let status = response.status();
-    let text = response.text().await?;
-    serde_json::from_str(&text)
-        .map_err(|error| format!("{status} response was not JSON: {error}: {text}").into())
-}
-
-fn query_url(base: &str, path: &str, params: &[(&str, String)]) -> String {
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(params.iter().map(|(name, value)| (*name, value.as_str())))
-        .finish();
-    format!("{base}{path}?{query}")
-}
-
-fn seconds_param(ms: i64) -> String {
-    let sign = if ms < 0 { "-" } else { "" };
-    let abs_ms = i128::from(ms).abs();
-    format!("{sign}{}.{:03}", abs_ms / 1000, abs_ms % 1000)
 }

@@ -62,14 +62,15 @@ mod tests {
 
     use super::*;
 
-    /// A scenario name, the given parts, the omitted parts, and the result.
-    type Case = (
-        &'static str,
-        &'static [&'static str],
-        &'static [&'static str],
-        Expected,
-    );
     type Expected = Result<(), &'static str>;
+
+    /// A scenario name, the given parts, the omitted parts, and the result.
+    struct Case {
+        name: &'static str,
+        parts: &'static [&'static str],
+        omitted: &'static [&'static str],
+        expected: Expected,
+    }
 
     #[test]
     fn every_deployment_part_is_given_or_explicitly_omitted() {
@@ -83,11 +84,21 @@ mod tests {
         ];
         const ALL_IN_ONE: [&str; 5] = ["metrics", "logs", "traces", "profiles", "logs-data-root"];
         let cases: [Case; 8] = [
-            ("split logs roles", &SPLIT, &[], Ok(())),
-            ("an all-in-one logs role", &ALL_IN_ONE, &[], Ok(())),
-            (
-                "an extra part, such as traces-overrides",
-                &[
+            Case {
+                name: "split logs roles",
+                parts: &SPLIT,
+                omitted: &[],
+                expected: Ok(()),
+            },
+            Case {
+                name: "an all-in-one logs role",
+                parts: &ALL_IN_ONE,
+                omitted: &[],
+                expected: Ok(()),
+            },
+            Case {
+                name: "an extra part, such as traces-overrides",
+                parts: &[
                     "metrics",
                     "logs",
                     "traces",
@@ -95,62 +106,67 @@ mod tests {
                     "logs-data-root",
                     "traces-overrides",
                 ],
-                &[],
-                Ok(()),
-            ),
-            (
-                "a signal bucket left out",
-                &["metrics", "logs", "traces", "logs-data-root"],
-                &[],
-                Err(
+                omitted: &[],
+                expected: Ok(()),
+            },
+            Case {
+                name: "a signal bucket left out",
+                parts: &["metrics", "logs", "traces", "logs-data-root"],
+                omitted: &[],
+                expected: Err(
                     "the parts [\"profiles\"] are missing; give each one with --part, or pass \
                      --omit-part for a part that this deployment does not have",
                 ),
-            ),
-            (
-                "a data-root volume left out",
-                &[
+            },
+            Case {
+                name: "a data-root volume left out",
+                parts: &[
                     "metrics",
                     "logs",
                     "traces",
                     "profiles",
                     "logs-querier-data-root",
                 ],
-                &[],
-                Err(
+                omitted: &[],
+                expected: Err(
                     "the parts [\"logs-block-builder-data-root\"] are missing; give each one \
                      with --part, or pass --omit-part for a part that this deployment does not \
                      have",
                 ),
-            ),
-            (
-                "a deployment with no profiles role",
-                &["metrics", "logs", "traces", "logs-data-root"],
-                &["profiles"],
-                Ok(()),
-            ),
-            (
-                "a part given and omitted",
-                &ALL_IN_ONE,
-                &["profiles"],
-                Err("part `profiles` is given and omitted"),
-            ),
-            (
-                "an omitted name that is not a part",
-                &ALL_IN_ONE,
-                &["profile"],
-                Err(
+            },
+            Case {
+                name: "a deployment with no profiles role",
+                parts: &["metrics", "logs", "traces", "logs-data-root"],
+                omitted: &["profiles"],
+                expected: Ok(()),
+            },
+            Case {
+                name: "a part given and omitted",
+                parts: &ALL_IN_ONE,
+                omitted: &["profiles"],
+                expected: Err("part `profiles` is given and omitted"),
+            },
+            Case {
+                name: "an omitted name that is not a part",
+                parts: &ALL_IN_ONE,
+                omitted: &["profile"],
+                expected: Err(
                     "--omit-part `profile` is not a deployment part; the parts are \
                      {\"logs\", \"logs-block-builder-data-root\", \"logs-data-root\", \
                      \"logs-querier-data-root\", \"metrics\", \"profiles\", \"traces\"}",
                 ),
-            ),
+            },
         ];
-        for (name, parts, omitted, expected) in cases {
-            let omitted = omitted.iter().map(ToString::to_string).collect::<Vec<_>>();
+        for case in cases {
+            let omitted = case
+                .omitted
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
             check!(
-                refuse_missing_parts(parts, &omitted) == expected.map_err(String::from),
-                "{name}"
+                refuse_missing_parts(case.parts, &omitted) == case.expected.map_err(String::from),
+                "{}",
+                case.name
             );
         }
     }

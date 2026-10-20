@@ -33,7 +33,8 @@ pub trait BrokerState: Send + Sync {
         offset: i64,
         next_offset: i64,
     ) -> Result<u64, String> {
-        let _ = (topic, partition);
+        let _ = topic;
+        let _ = partition;
         Ok(u64::try_from(next_offset.saturating_sub(offset)).unwrap_or(0))
     }
 }

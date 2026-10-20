@@ -5,46 +5,66 @@ use super::{
     intern_string, jfr_method_name,
 };
 
-const TYPES: &[(&str, &str, &str, &str, &str)] = &[
-    ("cpu", "nanoseconds", "process_cpu", "cpu", "nanoseconds"),
-    ("wall", "nanoseconds", "wall", "wall", "nanoseconds"),
-    (
+struct SampleTypeSpec {
+    profile_type: &'static str,
+    profile_unit: &'static str,
+    metric: &'static str,
+    period_type: &'static str,
+    period_unit: &'static str,
+}
+
+macro_rules! sample_type {
+    ($profile_type:expr, $profile_unit:expr, $metric:expr, $period_type:expr, $period_unit:expr) => {
+        SampleTypeSpec {
+            profile_type: $profile_type,
+            profile_unit: $profile_unit,
+            metric: $metric,
+            period_type: $period_type,
+            period_unit: $period_unit,
+        }
+    };
+}
+
+const TYPES: &[SampleTypeSpec] = &[
+    sample_type!("cpu", "nanoseconds", "process_cpu", "cpu", "nanoseconds"),
+    sample_type!("wall", "nanoseconds", "wall", "wall", "nanoseconds"),
+    sample_type!(
         "alloc_in_new_tlab_objects",
         "count",
         "memory",
         "space",
-        "bytes",
+        "bytes"
     ),
-    (
+    sample_type!(
         "alloc_in_new_tlab_bytes",
         "bytes",
         "memory",
         "space",
-        "bytes",
+        "bytes"
     ),
-    (
+    sample_type!(
         "alloc_outside_tlab_objects",
         "count",
         "memory",
         "space",
-        "bytes",
+        "bytes"
     ),
-    (
+    sample_type!(
         "alloc_outside_tlab_bytes",
         "bytes",
         "memory",
         "space",
-        "bytes",
+        "bytes"
     ),
-    ("contentions", "count", "mutex", "mutex", "count"),
-    ("delay", "nanoseconds", "mutex", "mutex", "count"),
-    ("contentions", "count", "block", "block", "count"),
-    ("delay", "nanoseconds", "block", "block", "count"),
-    ("live", "count", "memory", "objects", "count"),
-    ("alloc_sample_objects", "count", "memory", "space", "bytes"),
-    ("alloc_sample_bytes", "bytes", "memory", "space", "bytes"),
-    ("malloc_objects", "count", "memory", "", ""),
-    ("malloc_bytes", "bytes", "memory", "", ""),
+    sample_type!("contentions", "count", "mutex", "mutex", "count"),
+    sample_type!("delay", "nanoseconds", "mutex", "mutex", "count"),
+    sample_type!("contentions", "count", "block", "block", "count"),
+    sample_type!("delay", "nanoseconds", "block", "block", "count"),
+    sample_type!("live", "count", "memory", "objects", "count"),
+    sample_type!("alloc_sample_objects", "count", "memory", "space", "bytes"),
+    sample_type!("alloc_sample_bytes", "bytes", "memory", "space", "bytes"),
+    sample_type!("malloc_objects", "count", "memory", "", ""),
+    sample_type!("malloc_bytes", "bytes", "memory", "", ""),
 ];
 
 #[derive(Deserialize)]
@@ -83,8 +103,26 @@ const fn one() -> i64 {
     1
 }
 
-type Stack = Vec<(String, i32)>;
-type SampleKey = (usize, Stack, Vec<(String, String)>);
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct StackFrame {
+    name: String,
+    line: i32,
+}
+
+type Stack = Vec<StackFrame>;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct JfrSampleKey {
+    type_index: usize,
+    stack: Stack,
+    labels: Vec<krabka_blockstore::LabelPair>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct LocationKey {
+    function_id: u64,
+    line: i32,
+}
 
 pub(crate) fn binary_jfr_to_pprof(
     name: &str,
@@ -94,12 +132,14 @@ pub(crate) fn binary_jfr_to_pprof(
 ) -> Result<PprofProfile, ProfilesError> {
     let period = (1_000_000_000_i64 / i64::from(query.sample_rate)).max(1);
     let mut event_mode = query.jfr_event.clone();
-    let mut samples = BTreeMap::<SampleKey, Vec<i64>>::new();
+    let mut samples = BTreeMap::<JfrSampleKey, Vec<i64>>::new();
     let mut reader = jfrs::reader::JfrReader::new(Cursor::new(raw.to_vec()));
 
     for chunk in reader.chunks() {
-        let (mut chunk_reader, chunk) =
+        let chunk_parts =
             chunk.map_err(|err| ProfilesError::Decode(format!("jfr chunk decode: {err}")))?;
+        let mut chunk_reader = chunk_parts.0;
+        let chunk = chunk_parts.1;
         for event in chunk_reader.events(&chunk) {
             let event =
                 event.map_err(|err| ProfilesError::Decode(format!("jfr event decode: {err}")))?;
@@ -225,33 +265,37 @@ fn stack_frames(stack: &StackTrace<'_>) -> Option<Stack> {
         .filter_map(|frame| {
             let method = frame.method.as_ref()?;
             let method_name = method.name.as_ref()?.string?;
-            Some((
-                jfr_method_name(method.class.as_ref(), method_name),
-                frame.line_number,
-            ))
+            Some(StackFrame {
+                name: jfr_method_name(method.class.as_ref(), method_name),
+                line: frame.line_number,
+            })
         })
         .collect::<Vec<_>>();
     (!frames.is_empty()).then_some(frames)
 }
 
 fn add_sample(
-    samples: &mut BTreeMap<SampleKey, Vec<i64>>,
+    samples: &mut BTreeMap<JfrSampleKey, Vec<i64>>,
     type_index: usize,
     stack: &Stack,
-    labels: &[(String, String)],
+    labels: &[krabka_blockstore::LabelPair],
     value: i64,
 ) {
     let values = samples
-        .entry((type_index, stack.clone(), labels.to_vec()))
+        .entry(JfrSampleKey {
+            type_index,
+            stack: stack.clone(),
+            labels: labels.to_vec(),
+        })
         .or_insert_with(|| vec![0; TYPES.len()]);
     values[type_index] = values[type_index].saturating_add(value);
 }
 
 fn add_pair(
-    samples: &mut BTreeMap<SampleKey, Vec<i64>>,
+    samples: &mut BTreeMap<JfrSampleKey, Vec<i64>>,
     type_index: usize,
     stack: &Stack,
-    labels: &[(String, String)],
+    labels: &[krabka_blockstore::LabelPair],
     second: i64,
 ) {
     add_sample(samples, type_index, stack, labels, 1);
@@ -262,18 +306,17 @@ fn build_profile(
     name: &str,
     period: i64,
     event_mode: &str,
-    samples_by_stack: BTreeMap<SampleKey, Vec<i64>>,
+    samples_by_stack: BTreeMap<JfrSampleKey, Vec<i64>>,
 ) -> PprofProfile {
     let mut strings = vec![String::new()];
-    let mut string_ids = BTreeMap::from([(String::new(), 0_i64)]);
+    let mut string_ids = BTreeMap::new();
+    string_ids.insert(String::new(), 0_i64);
     let sample_type = TYPES
         .iter()
-        .map(
-            |(sample_type, unit, _, _, _)| krabka_pprof::proto::ValueType {
-                r#type: intern_string(&mut strings, &mut string_ids, sample_type),
-                unit: intern_string(&mut strings, &mut string_ids, unit),
-            },
-        )
+        .map(|spec| krabka_pprof::proto::ValueType {
+            r#type: intern_string(&mut strings, &mut string_ids, spec.profile_type),
+            unit: intern_string(&mut strings, &mut string_ids, spec.profile_unit),
+        })
         .collect();
     let mut functions = Vec::new();
     let mut function_ids = BTreeMap::new();
@@ -281,12 +324,19 @@ fn build_profile(
     let mut location_ids = BTreeMap::new();
     let mut samples = Vec::new();
 
-    for ((type_index, stack, context_labels), values) in samples_by_stack {
+    for sample_entry in samples_by_stack {
+        let sample_key = sample_entry.0;
+        let values = sample_entry.1;
+        let JfrSampleKey {
+            type_index,
+            stack,
+            labels: context_labels,
+        } = sample_key;
         let mut stack_locations = Vec::new();
-        for (frame, line) in stack {
-            let function_id = *function_ids.entry(frame.clone()).or_insert_with(|| {
+        for frame in stack {
+            let function_id = *function_ids.entry(frame.name.clone()).or_insert_with(|| {
                 let id = u64::try_from(functions.len() + 1).expect("function id fits u64");
-                let name_ref = intern_string(&mut strings, &mut string_ids, &frame);
+                let name_ref = intern_string(&mut strings, &mut string_ids, &frame.name);
                 functions.push(krabka_pprof::proto::Function {
                     id,
                     name: name_ref,
@@ -296,36 +346,40 @@ fn build_profile(
                 });
                 id
             });
-            let location_id = *location_ids.entry((function_id, line)).or_insert_with(|| {
-                let id = u64::try_from(locations.len() + 1).expect("location id fits u64");
-                locations.push(krabka_pprof::proto::Location {
-                    id,
-                    line: vec![krabka_pprof::proto::Line {
-                        function_id,
-                        line: i64::from(line),
-                        column: 0,
-                    }],
-                    ..Default::default()
+            let location_id = *location_ids
+                .entry(LocationKey {
+                    function_id,
+                    line: frame.line,
+                })
+                .or_insert_with(|| {
+                    let id = u64::try_from(locations.len() + 1).expect("location id fits u64");
+                    locations.push(krabka_pprof::proto::Location {
+                        id,
+                        line: vec![krabka_pprof::proto::Line {
+                            function_id,
+                            line: i64::from(frame.line),
+                            column: 0,
+                        }],
+                        ..Default::default()
+                    });
+                    id
                 });
-                id
-            });
             stack_locations.push(location_id);
         }
-        let (_, _, metric, period_type, period_unit) = TYPES[type_index];
+        let spec = &TYPES[type_index];
         let metadata = [
-            ("__name__", metric),
-            ("__period_type__", period_type),
-            ("__period_unit__", period_unit),
-            ("jfr_event", event_mode),
+            krabka_blockstore::LabelPair::new("__name__", spec.metric),
+            krabka_blockstore::LabelPair::new("__period_type__", spec.period_type),
+            krabka_blockstore::LabelPair::new("__period_unit__", spec.period_unit),
+            krabka_blockstore::LabelPair::new("jfr_event", event_mode),
         ];
         let labels = metadata
             .into_iter()
-            .filter(|(_, value)| !value.is_empty())
-            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .filter(|label| !label.value.is_empty())
             .chain(context_labels)
-            .map(|(key, value)| krabka_pprof::proto::Label {
-                key: intern_string(&mut strings, &mut string_ids, &key),
-                str: intern_string(&mut strings, &mut string_ids, &value),
+            .map(|label| krabka_pprof::proto::Label {
+                key: intern_string(&mut strings, &mut string_ids, &label.name),
+                str: intern_string(&mut strings, &mut string_ids, &label.value),
                 num: 0,
                 num_unit: 0,
             })

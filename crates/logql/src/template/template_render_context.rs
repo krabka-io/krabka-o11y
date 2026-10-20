@@ -68,25 +68,7 @@ impl<'a> TemplateRenderContext<'a> {
     pub(crate) fn with_variable(&self, name: String, value: TemplateRuntimeValue) -> Self {
         let mut variables = self.variables.clone();
         variables.insert(name, Rc::new(RefCell::new(value)));
-        Self {
-            templates: self.templates,
-            depth: self.depth,
-            prometheus_timestamp_ms: self.prometheus_timestamp_ms,
-            discover_queries: self.discover_queries,
-            external_url: self.external_url.clone(),
-            query_index: Rc::clone(&self.query_index),
-            query_results: self.query_results.clone(),
-            pending_query: Rc::clone(&self.pending_query),
-            root_dot: self.root_dot.clone(),
-            flow: Rc::clone(&self.flow),
-            error: Rc::clone(&self.error),
-            line: self.line,
-            fields: self.fields,
-            timestamp_ns: self.timestamp_ns,
-            variables,
-            queries: self.queries.clone(),
-            current_dot: self.current_dot.clone(),
-        }
+        self.sharing_state_with(variables, self.current_dot.clone())
     }
 
     pub(crate) fn assign_variable(&self, name: &str, value: TemplateRuntimeValue) {
@@ -106,12 +88,13 @@ impl<'a> TemplateRenderContext<'a> {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .clone_into(&mut self.external_url);
-        self.variables.extend(variables.iter().map(|(name, value)| {
-            (
+        for name in variables.keys() {
+            let value = &variables[name];
+            self.variables.insert(
                 name.clone(),
                 Rc::new(RefCell::new(TemplateRuntimeValue::Json(value.clone()))),
-            )
-        }));
+            );
+        }
         self
     }
 
@@ -119,14 +102,26 @@ impl<'a> TemplateRenderContext<'a> {
         mut self,
         queries: &BTreeMap<String, serde_json::Value>,
     ) -> Self {
-        self.queries = queries
-            .iter()
-            .map(|(key, value)| (key.clone(), TemplateRuntimeValue::Json(value.clone())))
-            .collect();
+        self.queries.clear();
+        for key in queries.keys() {
+            let value = &queries[key];
+            self.queries
+                .insert(key.clone(), TemplateRuntimeValue::Json(value.clone()));
+        }
         self
     }
 
     pub(crate) fn with_current_dot(&self, value: TemplateRuntimeValue) -> Self {
+        self.sharing_state_with(self.variables.clone(), Some(value))
+    }
+
+    /// Builds a context that shares this one's render state (query cursor,
+    /// flow control, and error slot) but scopes its own variables and dot.
+    fn sharing_state_with(
+        &self,
+        variables: BTreeMap<String, Rc<RefCell<TemplateRuntimeValue>>>,
+        current_dot: Option<TemplateRuntimeValue>,
+    ) -> Self {
         Self {
             templates: self.templates,
             depth: self.depth,
@@ -142,9 +137,9 @@ impl<'a> TemplateRenderContext<'a> {
             line: self.line,
             fields: self.fields,
             timestamp_ns: self.timestamp_ns,
-            variables: self.variables.clone(),
+            variables,
             queries: self.queries.clone(),
-            current_dot: Some(value),
+            current_dot,
         }
     }
 }

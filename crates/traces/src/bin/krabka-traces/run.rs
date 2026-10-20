@@ -2,14 +2,15 @@ use std::sync::Arc;
 
 use krabka_observability::{
     CriticalTaskError, RoleReadiness, SupervisedTasks,
-    audit::{AuditService, krabka_product},
+    audit::{AuditService, AuditServiceParts, krabka_product},
 };
 use tokio::net::TcpListener;
 
 use super::{
-    CancellationToken, Cli, OtlpConfig, ProcessSecurity, ServiceMetrics, SharedObjectStore,
-    SocketAddr, Target, require_role_topics, run_all, run_block_builder, run_compactor,
-    run_distributor, run_live_store, run_metrics_generator, run_querier, run_query_frontend,
+    CancellationToken, Cli, DistributorRole, ListeningRole, OtlpConfig, PrimaryListen,
+    ProcessSecurity, ServiceMetrics, SharedObjectStore, SocketAddr, Target, require_role_topics,
+    run_all, run_block_builder, run_compactor, run_distributor, run_live_store,
+    run_metrics_generator, run_querier, run_query_frontend,
 };
 
 pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -53,11 +54,11 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
         // the seven roles take `for_role` views of this one list, so `/ready`
         // stays a single answer and names the role whose gate is holding the
         // process back.
-        let readiness = RoleReadiness::new();
-        if cli.target != Target::All {
-            readiness.track_wal_consumer(metrics.wal_consumer.clone());
-        }
-        readiness.track_object_store(metrics.object_store.clone());
+        let readiness = RoleReadiness::from_target_metrics(
+            cli.target != Target::All,
+            metrics.wal_consumer.clone(),
+            metrics.object_store.clone(),
+        );
         let admin = krabka_telemetry::profiling::spawn_admin_with_config(
             cli.admin_listen_addr,
             krabka_traces::metrics::metrics_router(metrics.registry.clone())
@@ -78,7 +79,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
         // tenant denial. With no `--audit-topic` the handle discards every
         // event and no writer runs.
         let audit_shutdown = CancellationToken::new();
-        let (audit, audit_writer) = AuditService::start(
+        let AuditServiceParts { handle: audit, writer: audit_writer } = AuditService::start(
             &cli.audit,
             krabka_product("krabka-traces", env!("CARGO_PKG_VERSION")),
             Some(&cli.bootstrap),
@@ -108,7 +109,15 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
             let object_store = SharedObjectStore::new();
             match cli.target {
                 Target::Distributor => {
-                    run_distributor(cli, metrics, readiness, shutdown, true, &security).await?;
+                    run_distributor(DistributorRole {
+                        cli,
+                        metrics,
+                        readiness,
+                        shutdown,
+                        primary_listen: PrimaryListen::Serve,
+                        security: &security,
+                    })
+                    .await?;
                 }
                 Target::BlockBuilder => {
                     run_block_builder(cli, metrics, readiness, shutdown, &object_store, &security)
@@ -116,18 +125,28 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
                 }
                 Target::LiveStore => {
                     let listener = TcpListener::bind(cli.listen.parse::<SocketAddr>()?).await?;
-                    run_live_store(cli, metrics, readiness, shutdown, listener, &security).await?;
-                }
-                Target::Querier => {
-                    let listener = TcpListener::bind(cli.listen.parse::<SocketAddr>()?).await?;
-                    run_querier(
+                    run_live_store(ListeningRole {
                         cli,
                         metrics,
                         readiness,
                         shutdown,
                         listener,
+                        security: &security,
+                    })
+                    .await?;
+                }
+                Target::Querier => {
+                    let listener = TcpListener::bind(cli.listen.parse::<SocketAddr>()?).await?;
+                    run_querier(
+                        ListeningRole {
+                            cli,
+                            metrics,
+                            readiness,
+                            shutdown,
+                            listener,
+                            security: &security,
+                        },
                         &object_store,
-                        &security,
                     )
                     .await?;
                 }

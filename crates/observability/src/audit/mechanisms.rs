@@ -1,3 +1,5 @@
+use crate::server_security::AuthMethod;
+
 /// No credentials. The request did not authenticate.
 pub const MECHANISM_NONE: &str = "none";
 
@@ -20,3 +22,13 @@ pub const MECHANISMS: [&str; 4] = [
     MECHANISM_BEARER,
     MECHANISM_MTLS,
 ];
+
+/// The audit mechanism string for the credential kind that authenticated a request.
+#[must_use]
+pub const fn mechanism_of(method: AuthMethod) -> &'static str {
+    match method {
+        AuthMethod::Bearer => MECHANISM_BEARER,
+        AuthMethod::Basic => MECHANISM_BASIC,
+        AuthMethod::ClientCertificate => MECHANISM_MTLS,
+    }
+}

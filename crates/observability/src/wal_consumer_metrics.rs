@@ -74,15 +74,36 @@ use prometheus_client::{
 mod tests;
 
 mod wal_consumer_metrics_bundle;
-mod wal_partition_label;
 mod wal_poll_outcome;
-mod wal_poll_outcome_label;
 
 pub use self::{
     wal_consumer_metrics_bundle::{
-        WalConsumerMetrics, WalPartitionRecoveryStatus, WalRecoveryStatus,
+        WalConsumerMetrics, WalPartitionAssignment, WalPartitionRecoveryStatus, WalRecoveryStatus,
     },
-    wal_partition_label::WalPartitionLabel,
     wal_poll_outcome::WalPollOutcome,
-    wal_poll_outcome_label::WalPollOutcomeLabel,
 };
+
+/// The `topic` and `partition` labels the WAL consumer families carry.
+///
+/// A role subscribes to one topic and is assigned a subset of its partitions,
+/// so the label set is bounded by the partition count the topic contract
+/// provisions.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct WalPartitionLabel {
+    pub topic: String,
+    pub partition: i32,
+}
+
+/// The `outcome` label the poll counter carries.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct WalPollOutcomeLabel {
+    pub outcome: &'static str,
+}
+
+impl From<WalPollOutcome> for WalPollOutcomeLabel {
+    fn from(outcome: WalPollOutcome) -> Self {
+        Self {
+            outcome: outcome.as_str(),
+        }
+    }
+}

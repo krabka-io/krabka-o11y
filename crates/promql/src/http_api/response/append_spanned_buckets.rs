@@ -1,4 +1,5 @@
 use super::{BucketSpan, HistogramBucketJson};
+use crate::engine::for_each_spanned_histogram_count;
 
 pub(crate) fn append_spanned_buckets(
     buckets: &mut Vec<HistogramBucketJson>,
@@ -6,25 +7,11 @@ pub(crate) fn append_spanned_buckets(
     counts: &[f64],
     mut bucket_for_index: impl FnMut(i32) -> HistogramBucketJson,
 ) {
-    let mut index = 0;
-    let mut count_index = 0;
-    for (span_index, span) in spans.iter().enumerate() {
-        if span_index == 0 {
-            index = span.offset;
-        } else {
-            index += span.offset;
+    for_each_spanned_histogram_count(spans, counts, |index, count| {
+        let mut bucket = bucket_for_index(index);
+        bucket.count = count;
+        if count != 0.0 || count.is_nan() {
+            buckets.push(bucket);
         }
-        for _ in 0..span.length {
-            let Some(count) = counts.get(count_index).copied() else {
-                return;
-            };
-            let mut bucket = bucket_for_index(index);
-            bucket.count = count;
-            if count != 0.0 || count.is_nan() {
-                buckets.push(bucket);
-            }
-            index += 1;
-            count_index += 1;
-        }
-    }
+    });
 }

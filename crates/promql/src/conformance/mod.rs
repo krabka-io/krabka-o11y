@@ -8,6 +8,52 @@ use krabka_units::prelude::*;
 
 use crate::{PromqlError, error::Result};
 
+/// Two whitespace-delimited parts of one conformance directive.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct HeadTail<'a> {
+    pub head: &'a str,
+    pub tail: &'a str,
+}
+
+/// Histogram literal with a repeated sample count.
+pub(crate) struct HistogramRepetition {
+    pub histogram: NativeHistogram,
+    pub count: u32,
+}
+
+/// Starting histogram, increment histogram, and number of generated samples.
+pub(crate) struct HistogramExpansion {
+    pub start: NativeHistogram,
+    pub step: NativeHistogram,
+    pub count: u32,
+}
+
+/// Features observed while parsing one query and its evaluation error, if any.
+struct CaseEvidence {
+    features: case_features::CaseFeatures,
+    evaluation_error: Option<String>,
+}
+
+/// A rendered label key paired with one evaluated sample.
+#[derive(Clone, Debug, PartialEq)]
+struct InstantSample {
+    labels: String,
+    value: crate::SampleValue,
+}
+
+/// A parsed scalar or histogram sample paired with its timestamp.
+#[derive(Clone, Debug, PartialEq)]
+struct TimestampedSample {
+    timestamp: i64,
+    value: crate::SampleValue,
+}
+
+/// A borrowed label pair passed to the stable label-key encoder.
+struct LabelPairRef<'a, V: ?Sized> {
+    name: &'a str,
+    value: &'a V,
+}
+
 /// Runs parsed `.test` files through the in-memory `PromQL` engine.
 pub mod testkit {
     use std::{
@@ -18,13 +64,13 @@ pub mod testkit {
     };
 
     use krabka_blockstore::{Labels, TenantId};
-    use krabka_metrics::{NativeHistogram, ResetHint};
+    use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
     use krabka_units::prelude::*;
 
-    use super::Result;
+    use super::{CaseEvidence, InstantSample, LabelPairRef, Result, TimestampedSample};
     use crate::{
-        Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult,
-        SampleValue,
+        AnnotatedQueryResult, Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine,
+        PromqlError, QueryResult, SampleValue,
         conformance::{
             AnnotationExpect, CaseOutcome, ChunkResetHints, ExpectLine, ExpectedFailure,
             RangeExpect, SampleSpec, Statement, TestFile, compacted_native_histogram,
@@ -36,6 +82,38 @@ pub mod testkit {
     /// Default relative error for sample values in Prometheus promqltest.
     const FLOAT_TOLERANCE: f64 = 1e-6;
     const STALE_NAN_BITS: u64 = 0x7ff0_0000_0000_0002;
+
+    struct FeatureDisabledEval<'a> {
+        expr: &'a str,
+        kind: &'static str,
+        expected_rejection: bool,
+        context: crate::DurationExprContext,
+    }
+
+    /// A schema-0 integer histogram with two observations in its first
+    /// positive bucket, summing to 3: the smallest histogram sample a store
+    /// or engine test can write and read back.
+    #[must_use]
+    pub fn count_two_sum_three_histogram() -> NativeHistogram {
+        NativeHistogram {
+            schema: 0,
+            is_float: false,
+            reset_hint: ResetHint::No,
+            zero_threshold: 1e-128,
+            zero_count: 0.0,
+            count: 2.0,
+            sum: 3.0,
+            positive_spans: vec![BucketSpan {
+                offset: 0,
+                length: 1,
+            }],
+            positive_counts: vec![2.0],
+            negative_spans: Vec::new(),
+            negative_counts: Vec::new(),
+            custom_values: None,
+            start_timestamp_ms: None,
+        }
+    }
 
     /// Per-file result for a Prometheus `.test` corpus run.
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -189,18 +267,18 @@ pub mod testkit {
                     // the LAST definition: upstream's `loadCmd.set` writes into a
                     // map keyed by the series, so the second line replaces the
                     // first rather than colliding with it at the same timestamps.
-                    let last_definition: BTreeMap<&str, usize> = series
-                        .iter()
-                        .enumerate()
-                        .map(|(index, load_series)| (load_series.metric.as_str(), index))
-                        .collect();
+                    let mut last_definition = BTreeMap::new();
+                    for (index, item) in series.iter().enumerate() {
+                        last_definition.insert(item.metric.as_str(), index);
+                    }
                     for (index, load_series) in series.iter().enumerate() {
                         if last_definition.get(load_series.metric.as_str()) != Some(&index) {
                             continue;
                         }
                         let labels = metric_to_labels(&load_series.metric);
                         let hints = hints.entry(load_series.metric.clone()).or_default();
-                        for (index, sample) in load_series.values.iter().enumerate() {
+                        for index in 0..load_series.values.len() {
+                            let sample = &load_series.values[index];
                             let timestamp_ms = index_to_timestamp(index, *step)?;
                             let start_timestamp_ms =
                                 match load_series.start_offsets_ms.get(index).copied().flatten() {
@@ -276,11 +354,19 @@ pub mod testkit {
                     let evaluation_error = result.as_ref().err().map(ToString::to_string);
                     let case = handle_instant_eval_result(
                         result,
-                        expect,
-                        annotations,
-                        *ordered,
-                        range_expect.as_ref(),
-                        fail_message.as_ref(),
+                        InstantEvalExpect {
+                            lines: expect,
+                            outcome: EvalOutcomeExpect {
+                                annotations,
+                                fail_message: fail_message.as_ref(),
+                            },
+                            order: if *ordered {
+                                ResultOrder::AsWritten
+                            } else {
+                                ResultOrder::Any
+                            },
+                            range_expect: range_expect.as_ref(),
+                        },
                     )
                     .map_err(|error| add_eval_context(error, "instant", expr));
                     record_case(
@@ -289,13 +375,13 @@ pub mod testkit {
                         expr,
                         "instant",
                         fail_message.is_some(),
-                        (
-                            super::case_features::CaseFeatures::from_query_with_context(
+                        CaseEvidence {
+                            features: super::case_features::CaseFeatures::from_query_with_context(
                                 expr,
                                 crate::DurationExprContext::instant(*at_ms),
                             ),
                             evaluation_error,
-                        ),
+                        },
                         case,
                     );
                 }
@@ -322,11 +408,17 @@ pub mod testkit {
                     let evaluation_error = result.as_ref().err().map(ToString::to_string);
                     let case = handle_range_eval_result(
                         result,
-                        expect,
-                        annotations,
-                        fail_message.as_ref(),
-                        *start_ms,
-                        *step,
+                        RangeEvalExpect {
+                            lines: expect,
+                            outcome: EvalOutcomeExpect {
+                                annotations,
+                                fail_message: fail_message.as_ref(),
+                            },
+                            grid: RangeExpect {
+                                start_ms: *start_ms,
+                                step: *step,
+                            },
+                        },
                     )
                     .map_err(|error| add_eval_context(error, "range", expr));
                     record_case(
@@ -335,13 +427,13 @@ pub mod testkit {
                         expr,
                         "range",
                         fail_message.is_some(),
-                        (
-                            super::case_features::CaseFeatures::from_query_with_context(
+                        CaseEvidence {
+                            features: super::case_features::CaseFeatures::from_query_with_context(
                                 expr,
                                 crate::DurationExprContext::range(*start_ms, *end_ms, *step),
                             ),
                             evaluation_error,
-                        ),
+                        },
                         case,
                     );
                 }
@@ -366,15 +458,16 @@ pub mod testkit {
         expr: &str,
         kind: &str,
         expected_rejection: bool,
-        evidence: (super::case_features::CaseFeatures, Option<String>),
+        evidence: CaseEvidence,
         case: Result<()>,
     ) {
         outcome.total_cases += 1;
-        let (features, evaluation_error) = evidence;
-        let disabled_features = features.disabled_features(expr, evaluation_error.as_deref());
-        let observed_status = match (divergence, &case) {
-            (None, Ok(())) => "matched",
-            (Some(_), Err(_)) => "expected_divergence",
+        let disabled_features = evidence
+            .features
+            .disabled_features(expr, evidence.evaluation_error.as_deref());
+        let observed_status = match divergence {
+            None if case.is_ok() => "matched",
+            Some(_) if case.is_err() => "expected_divergence",
             _ => "mismatch",
         }
         .to_owned();
@@ -388,8 +481,8 @@ pub mod testkit {
             query: expr.to_owned(),
             kind: kind.to_owned(),
             expected_rejection,
-            features,
-            evaluation_error,
+            features: evidence.features,
+            evaluation_error: evidence.evaluation_error,
             status: if disabled_features.is_empty() {
                 observed_status.clone()
             } else {
@@ -400,15 +493,17 @@ pub mod testkit {
             disabled_features,
             detail,
         });
-        match (divergence, case) {
-            (None, Ok(())) => outcome.passed_cases += 1,
-            (None, Err(error)) => outcome.failures.push(error),
-            (Some(reason), Err(_)) => {
-                outcome.divergences.push(format!("`{expr}`: {reason}"));
-            }
-            (Some(reason), Ok(())) => outcome.failures.push(PromqlError::Exec(format!(
-                "eval `{expr}` is annotated as the known divergence `{reason}`, but it now matches Prometheus; drop the annotation"
-            ))),
+        match divergence {
+            None => match case {
+                Ok(()) => outcome.passed_cases += 1,
+                Err(error) => outcome.failures.push(error),
+            },
+            Some(reason) => match case {
+                Err(_) => outcome.divergences.push(format!("`{expr}`: {reason}")),
+                Ok(()) => outcome.failures.push(PromqlError::Exec(format!(
+                    "eval `{expr}` is annotated as the known divergence `{reason}`, but it now matches Prometheus; drop the annotation"
+                ))),
+            },
         }
     }
 
@@ -525,6 +620,7 @@ pub mod testkit {
     }
 
     fn feature_disabled_cases(file: &TestFile) -> Vec<CaseOutcome> {
+        let mut ordinal = 0;
         file.statements
             .iter()
             .filter_map(|statement| match statement {
@@ -533,12 +629,12 @@ pub mod testkit {
                     at_ms,
                     fail_message,
                     ..
-                } => Some((
+                } => Some(FeatureDisabledEval {
                     expr,
-                    "instant",
-                    fail_message.is_some(),
-                    crate::DurationExprContext::instant(*at_ms),
-                )),
+                    kind: "instant",
+                    expected_rejection: fail_message.is_some(),
+                    context: crate::DurationExprContext::instant(*at_ms),
+                }),
                 Statement::EvalRange {
                     expr,
                     start_ms,
@@ -546,24 +642,26 @@ pub mod testkit {
                     step,
                     fail_message,
                     ..
-                } => Some((
+                } => Some(FeatureDisabledEval {
                     expr,
-                    "range",
-                    fail_message.is_some(),
-                    crate::DurationExprContext::range(*start_ms, *end_ms, *step),
-                )),
+                    kind: "range",
+                    expected_rejection: fail_message.is_some(),
+                    context: crate::DurationExprContext::range(*start_ms, *end_ms, *step),
+                }),
                 _ => None,
             })
-            .enumerate()
-            .map(|(index, (expr, kind, expected_rejection, context))| {
-                let features =
-                    super::case_features::CaseFeatures::from_query_with_context(expr, context);
+            .map(|eval| {
+                ordinal += 1;
+                let features = super::case_features::CaseFeatures::from_query_with_context(
+                    eval.expr,
+                    eval.context,
+                );
                 let disabled_features = super::case_features::disabled_limit_aggregators(&features);
                 CaseOutcome {
-                    ordinal: index + 1,
-                    query: expr.clone(),
-                    kind: kind.to_owned(),
-                    expected_rejection,
+                    ordinal,
+                    query: eval.expr.to_owned(),
+                    kind: eval.kind.to_owned(),
+                    expected_rejection: eval.expected_rejection,
                     features,
                     evaluation_error: None,
                     disabled_features,
@@ -595,6 +693,7 @@ pub mod testkit {
                 };
             }
         };
+        let mut declared_ordinal = 0;
         let declared = src
             .lines()
             .filter_map(|line| {
@@ -613,9 +712,9 @@ pub mod testkit {
                     detail: None,
                 })
             })
-            .enumerate()
-            .map(|(index, mut case)| {
-                case.ordinal = index + 1;
+            .map(|mut case| {
+                declared_ordinal += 1;
+                case.ordinal = declared_ordinal;
                 case
             })
             .collect::<Vec<_>>();
@@ -674,7 +773,12 @@ pub mod testkit {
         }
     }
 
-    pub(crate) fn metric_to_labels(metric: &str) -> Labels {
+    /// Parses a `.test` series selector such as `http_requests{job="api"}`
+    /// into its label set, with the metric name as `__name__`.
+    ///
+    /// Quoted label values are unescaped; a pair without `=` is skipped.
+    #[must_use]
+    pub fn metric_to_labels(metric: &str) -> Labels {
         let mut labels = Labels::new();
         let Some(open) = metric.find('{') else {
             labels.insert("__name__", metric);
@@ -686,61 +790,115 @@ pub mod testkit {
         }
         let inside = metric[open + 1..].strip_suffix('}').unwrap_or_default();
         for pair in split_label_pairs(inside) {
-            let Some((key, value)) = pair.split_once('=') else {
+            let Some(separator) = pair.find('=') else {
                 continue;
             };
-            labels.insert(key.trim(), unquote_label_value(value.trim()));
+            let key = pair[..separator].trim();
+            let value = pair[separator + 1..].trim();
+            labels.insert(key, unquote_label_value(value));
         }
         labels
     }
 
+    /// How an instant evaluation's result must compare with its expectation.
+    #[derive(Clone, Copy)]
+    struct InstantEvalExpect<'a> {
+        /// The expected result lines.
+        lines: &'a [ExpectLine],
+        /// The annotations or failure the evaluation must produce.
+        outcome: EvalOutcomeExpect<'a>,
+        /// Whether the `expect ordered` directive applies.
+        order: ResultOrder,
+        /// The sample grid when the instant query returns a range vector.
+        range_expect: Option<&'a RangeExpect>,
+    }
+
+    /// Whether an instant vector must match its expectation position by position.
+    #[derive(Clone, Copy)]
+    enum ResultOrder {
+        /// `expect ordered`: compare samples in the order written.
+        AsWritten,
+        /// Compare samples irrespective of order.
+        Any,
+    }
+
     fn handle_instant_eval_result(
-        result: Result<(QueryResult, Annotations)>,
-        expect: &[ExpectLine],
-        annotations: &[AnnotationExpect],
-        ordered: bool,
-        range_expect: Option<&RangeExpect>,
-        fail_message: Option<&ExpectedFailure>,
+        result: Result<AnnotatedQueryResult>,
+        expectation: InstantEvalExpect<'_>,
     ) -> Result<()> {
-        match (result, fail_message) {
-            (Ok(_), Some(_)) => Err(PromqlError::Exec(
-                "query succeeded but test expected failure".to_string(),
-            )),
-            (Err(error), Some(expected)) => compare_expected_failure(&error, expected),
-            (Err(error), None) => Err(error),
-            (Ok((result, raised)), None) => {
-                compare_annotations(annotations, &raised)?;
-                match range_expect {
-                    Some(range_expect) => compare_range_result(
-                        result,
-                        expect,
-                        range_expect.start_ms,
-                        range_expect.step,
-                    ),
-                    None => compare_instant_result(result, expect, ordered),
-                }
+        let InstantEvalExpect {
+            lines,
+            outcome,
+            order,
+            range_expect,
+        } = expectation;
+        handle_eval_result(result, outcome, |result| match range_expect {
+            Some(range_expect) => {
+                compare_range_result(result, lines, range_expect.start_ms, range_expect.step)
             }
-        }
+            None => compare_instant_result(result, lines, order),
+        })
+    }
+
+    /// How a range evaluation's result must compare with its expectation.
+    struct RangeEvalExpect<'a> {
+        /// The expected result lines.
+        lines: &'a [ExpectLine],
+        /// The annotations or failure the evaluation must produce.
+        outcome: EvalOutcomeExpect<'a>,
+        /// The evaluation's first timestamp and step.
+        grid: RangeExpect,
     }
 
     fn handle_range_eval_result(
-        result: Result<(QueryResult, Annotations)>,
-        expect: &[ExpectLine],
-        annotations: &[AnnotationExpect],
-        fail_message: Option<&ExpectedFailure>,
-        start_ms: i64,
-        step: Time,
+        result: Result<AnnotatedQueryResult>,
+        expectation: RangeEvalExpect<'_>,
     ) -> Result<()> {
-        match (result, fail_message) {
-            (Ok(_), Some(_)) => Err(PromqlError::Exec(
+        let RangeEvalExpect {
+            lines,
+            outcome,
+            grid,
+        } = expectation;
+        handle_eval_result(result, outcome, |result| {
+            compare_range_result(result, lines, grid.start_ms, grid.step)
+        })
+    }
+
+    /// What an evaluation directive expects of the outcome besides its value.
+    #[derive(Clone, Copy)]
+    struct EvalOutcomeExpect<'a> {
+        /// The annotation directives a successful evaluation must satisfy.
+        annotations: &'a [AnnotationExpect],
+        /// The failure the evaluation must raise instead, if any.
+        fail_message: Option<&'a ExpectedFailure>,
+    }
+
+    /// Checks an evaluation against an expected failure, or else checks its
+    /// annotations and hands the result to `compare_result`.
+    fn handle_eval_result(
+        result: Result<AnnotatedQueryResult>,
+        expect: EvalOutcomeExpect<'_>,
+        compare_result: impl FnOnce(QueryResult) -> Result<()>,
+    ) -> Result<()> {
+        let EvalOutcomeExpect {
+            annotations,
+            fail_message,
+        } = expect;
+        match fail_message {
+            Some(_) if result.is_ok() => Err(PromqlError::Exec(
                 "query succeeded but test expected failure".to_string(),
             )),
-            (Err(error), Some(expected)) => compare_expected_failure(&error, expected),
-            (Err(error), None) => Err(error),
-            (Ok((result, raised)), None) => {
-                compare_annotations(annotations, &raised)?;
-                compare_range_result(result, expect, start_ms, step)
-            }
+            Some(expected) => match result {
+                Err(error) => compare_expected_failure(&error, expected),
+                Ok(_) => unreachable!("successful result handled above"),
+            },
+            None => match result {
+                Err(error) => Err(error),
+                Ok(annotated) => {
+                    compare_annotations(annotations, &annotated.annotations)?;
+                    compare_result(annotated.result)
+                }
+            },
         }
     }
 
@@ -781,13 +939,18 @@ pub mod testkit {
     // Upstream promqltest compares annotation errors without rendered positions.
     // API responses keep positions; remove only the numeric display suffix here.
     fn annotation_message(message: &str) -> &str {
-        let Some((text, position)) = message.rsplit_once(" (") else {
+        let Some(start) = message.rfind(" (") else {
             return message;
         };
-        let Some((line, column)) = position.strip_suffix(')').and_then(|p| p.split_once(':'))
-        else {
+        let text = &message[..start];
+        let Some(position) = message[start + 2..].strip_suffix(')') else {
             return message;
         };
+        let Some(separator) = position.find(':') else {
+            return message;
+        };
+        let line = &position[..separator];
+        let column = &position[separator + 1..];
         if !line.is_empty()
             && !column.is_empty()
             && line.bytes().all(|b| b.is_ascii_digit())
@@ -831,14 +994,14 @@ pub mod testkit {
 
     /// Compares an instant result against the expectation block.
     ///
-    /// `ordered` carries the `expect ordered` directive. It selects a
+    /// `order` carries the `expect ordered` directive. It selects a
     /// positional comparison of the instant vector, the way Prometheus
     /// promqltest does. Without it the comparison ignores the result order,
     /// because most queries do not promise one.
     fn compare_instant_result(
         result: QueryResult,
         expect: &[ExpectLine],
-        ordered: bool,
+        order: ResultOrder,
     ) -> Result<()> {
         if let QueryResult::Str { value, .. } = result {
             let expected = expect_single_string(expect)?;
@@ -862,7 +1025,13 @@ pub mod testkit {
         let actual = match result {
             QueryResult::InstantVector(samples) => samples
                 .into_iter()
-                .map(|sample| (labels_key(sample.labels.iter()), sample.value))
+                .map(|sample| InstantSample {
+                    labels: labels_key(sample.labels.iter().map(|pair| LabelPairRef {
+                        name: pair.name,
+                        value: pair.value,
+                    })),
+                    value: sample.value,
+                })
                 .collect::<Vec<_>>(),
             other => {
                 return Err(PromqlError::Exec(format!(
@@ -874,7 +1043,14 @@ pub mod testkit {
         let mut expected = Vec::with_capacity(expect.len());
         let mut seen = BTreeSet::new();
         for line in expect {
-            let key = labels_key(metric_to_labels(&line.metric).iter());
+            let key = labels_key(
+                metric_to_labels(&line.metric)
+                    .iter()
+                    .map(|pair| LabelPairRef {
+                        name: pair.name,
+                        value: pair.value,
+                    }),
+            );
             let value = expect_single_instant_value(line)?;
             // Two `expect` lines collapsing to the same labelset would make one
             // of them unreachable and weaken the count check below; reject the
@@ -884,7 +1060,7 @@ pub mod testkit {
                     "duplicate expected series {key}"
                 )));
             }
-            expected.push((key, value));
+            expected.push(InstantSample { labels: key, value });
         }
 
         if actual.len() != expected.len() {
@@ -894,18 +1070,25 @@ pub mod testkit {
                 actual.len()
             )));
         }
-        if ordered {
+        if matches!(order, ResultOrder::AsWritten) {
             return compare_ordered_instant_samples(&actual, &expected);
         }
 
-        let actual = actual.into_iter().collect::<BTreeMap<_, _>>();
-        for (labels, expected_value) in expected {
-            let Some(actual_value) = actual.get(&labels) else {
-                return Err(PromqlError::Exec(format!("missing sample for {labels}")));
-            };
-            if !instant_values_equal(actual_value, &expected_value) {
+        let mut actual_by_labels = BTreeMap::new();
+        for sample in actual {
+            actual_by_labels.insert(sample.labels, sample.value);
+        }
+        for sample in expected {
+            let Some(actual_value) = actual_by_labels.get(&sample.labels) else {
                 return Err(PromqlError::Exec(format!(
-                    "value mismatch for {labels}: expected {expected_value:?}, got {actual_value:?}"
+                    "missing sample for {}",
+                    sample.labels
+                )));
+            };
+            if !instant_values_equal(actual_value, &sample.value) {
+                return Err(PromqlError::Exec(format!(
+                    "value mismatch for {}: expected {:?}, got {actual_value:?}",
+                    sample.labels, sample.value
                 )));
             }
         }
@@ -919,26 +1102,27 @@ pub mod testkit {
     /// block writes at the same position. A position alone does not say which
     /// series moved, so a mismatch reports both orders in full.
     fn compare_ordered_instant_samples(
-        actual: &[(String, SampleValue)],
-        expected: &[(String, SampleValue)],
+        actual: &[InstantSample],
+        expected: &[InstantSample],
     ) -> Result<()> {
-        for (index, ((actual_labels, actual_value), (expected_labels, expected_value))) in
-            actual.iter().zip(expected).enumerate()
-        {
-            if actual_labels != expected_labels {
+        for index in 0..actual.len() {
+            let actual_sample = &actual[index];
+            let expected_sample = &expected[index];
+            if actual_sample.labels != expected_sample.labels {
                 return Err(PromqlError::Exec(format!(
                     "order mismatch at position {}: expected `{}`, got `{}`; \
                      expected order [{}], got [{}]",
                     index + 1,
-                    describe_labels_key(expected_labels),
-                    describe_labels_key(actual_labels),
+                    describe_labels_key(&expected_sample.labels),
+                    describe_labels_key(&actual_sample.labels),
                     describe_order(expected),
                     describe_order(actual),
                 )));
             }
-            if !instant_values_equal(actual_value, expected_value) {
+            if !instant_values_equal(&actual_sample.value, &expected_sample.value) {
                 return Err(PromqlError::Exec(format!(
-                    "value mismatch for {actual_labels}: expected {expected_value:?}, got {actual_value:?}"
+                    "value mismatch for {}: expected {:?}, got {:?}",
+                    actual_sample.labels, expected_sample.value, actual_sample.value
                 )));
             }
         }
@@ -978,10 +1162,10 @@ pub mod testkit {
     }
 
     /// Renders the labelsets of an instant vector in their result order.
-    fn describe_order(samples: &[(String, SampleValue)]) -> String {
+    fn describe_order(samples: &[InstantSample]) -> String {
         samples
             .iter()
-            .map(|(labels, _)| describe_labels_key(labels))
+            .map(|sample| describe_labels_key(&sample.labels))
             .collect::<Vec<_>>()
             .join(" | ")
     }
@@ -993,17 +1177,26 @@ pub mod testkit {
         step: Time,
     ) -> Result<()> {
         let actual = match result {
-            QueryResult::RangeMatrix(series) => series
-                .into_iter()
-                .map(|series| {
-                    let samples = series
-                        .samples
-                        .into_iter()
-                        .map(|(timestamp, value)| Ok((timestamp, value)))
-                        .collect::<Result<Vec<_>>>()?;
-                    Ok((labels_key(series.labels.iter()), samples))
-                })
-                .collect::<Result<BTreeMap<_, _>>>()?,
+            QueryResult::RangeMatrix(series) => {
+                let mut grouped_samples = BTreeMap::new();
+                for series in series {
+                    let mut samples = Vec::new();
+                    for sample in series.samples {
+                        samples.push(TimestampedSample {
+                            timestamp: sample.timestamp_ms,
+                            value: sample.value,
+                        });
+                    }
+                    grouped_samples.insert(
+                        labels_key(series.labels.iter().map(|pair| LabelPairRef {
+                            name: pair.name,
+                            value: pair.value,
+                        })),
+                        samples,
+                    );
+                }
+                grouped_samples
+            }
             other => {
                 return Err(PromqlError::Exec(format!(
                     "expected range matrix result, got {}",
@@ -1011,15 +1204,21 @@ pub mod testkit {
                 )));
             }
         };
-        let expected = expect
-            .iter()
-            .map(|line| {
-                Ok((
-                    labels_key(metric_to_labels(&line.metric).iter()),
-                    expected_range_samples(line, start_ms, step)?,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+        let mut expected = BTreeMap::new();
+        for line in expect {
+            let samples = expected_range_samples(line, start_ms, step)?;
+            expected.insert(
+                labels_key(
+                    metric_to_labels(&line.metric)
+                        .iter()
+                        .map(|pair| LabelPairRef {
+                            name: pair.name,
+                            value: pair.value,
+                        }),
+                ),
+                samples,
+            );
+        }
 
         if actual.len() != expected.len() {
             return Err(PromqlError::Exec(format!(
@@ -1028,8 +1227,9 @@ pub mod testkit {
                 actual.len()
             )));
         }
-        for (labels, expected_samples) in expected {
-            let Some(actual_samples) = actual.get(&labels) else {
+        for labels in expected.keys() {
+            let expected_samples = &expected[labels];
+            let Some(actual_samples) = actual.get(labels) else {
                 return Err(PromqlError::Exec(format!("missing series for {labels}")));
             };
             if actual_samples.len() != expected_samples.len() {
@@ -1039,17 +1239,19 @@ pub mod testkit {
                     actual_samples.len()
                 )));
             }
-            for ((actual_ts, actual_value), (expected_ts, expected_value)) in
-                actual_samples.iter().zip(expected_samples)
-            {
-                if *actual_ts != expected_ts {
+            for index in 0..actual_samples.len() {
+                let actual = &actual_samples[index];
+                let expected = &expected_samples[index];
+                if actual.timestamp != expected.timestamp {
                     return Err(PromqlError::Exec(format!(
-                        "timestamp mismatch for {labels}: expected {expected_ts}, got {actual_ts}"
+                        "timestamp mismatch for {labels}: expected {}, got {}",
+                        expected.timestamp, actual.timestamp
                     )));
                 }
-                if !instant_values_equal(actual_value, &expected_value) {
+                if !instant_values_equal(&actual.value, &expected.value) {
                     return Err(PromqlError::Exec(format!(
-                        "value mismatch for {labels} at {expected_ts}: expected {expected_value:?}, got {actual_value:?}"
+                        "value mismatch for {labels} at {}: expected {:?}, got {:?}",
+                        expected.timestamp, expected.value, actual.value
                     )));
                 }
             }
@@ -1107,14 +1309,15 @@ pub mod testkit {
     }
 
     fn instant_values_equal(actual: &SampleValue, expected: &SampleValue) -> bool {
-        match (actual, expected) {
-            (SampleValue::Float(actual), SampleValue::Float(expected)) => {
-                floats_equal(*actual, *expected)
-            }
-            (SampleValue::Histogram(actual), SampleValue::Histogram(expected)) => {
-                histograms_equal(actual, expected)
-            }
-            _ => false,
+        match actual {
+            SampleValue::Float(actual) => match expected {
+                SampleValue::Float(expected) => floats_equal(*actual, *expected),
+                SampleValue::Histogram(_) => false,
+            },
+            SampleValue::Histogram(actual) => match expected {
+                SampleValue::Float(_) => false,
+                SampleValue::Histogram(expected) => histograms_equal(actual, expected),
+            },
         }
     }
 
@@ -1168,10 +1371,7 @@ pub mod testkit {
     /// Whether two bucket-count lists agree, to the corpus' float tolerance.
     fn bucket_counts_equal(actual: &[f64], expected: &[f64]) -> bool {
         actual.len() == expected.len()
-            && actual
-                .iter()
-                .zip(expected)
-                .all(|(actual, expected)| floats_equal(*actual, *expected))
+            && (0..actual.len()).all(|index| floats_equal(actual[index], expected[index]))
     }
 
     /// Whether a stated counter-reset hint matches.
@@ -1225,26 +1425,30 @@ pub mod testkit {
         line: &ExpectLine,
         start_ms: i64,
         step: Time,
-    ) -> Result<Vec<(i64, SampleValue)>> {
+    ) -> Result<Vec<TimestampedSample>> {
         let step_ms = step.millis_i64();
-        line.values
-            .iter()
-            .enumerate()
-            .filter_map(|(index, sample)| match sample {
-                SampleSpec::Value(value) => Some(Ok((
-                    start_ms + i64::try_from(index).expect("sample index fits i64") * step_ms,
-                    SampleValue::Float(*value),
-                ))),
-                SampleSpec::Histogram(histogram) => Some(Ok((
-                    start_ms + i64::try_from(index).expect("sample index fits i64") * step_ms,
-                    SampleValue::Histogram(histogram.clone()),
-                ))),
-                SampleSpec::Missing | SampleSpec::Stale => None,
-                SampleSpec::String(_) => Some(Err(PromqlError::Exec(
-                    "string assertions are only valid for instant string results".to_string(),
-                ))),
-            })
-            .collect()
+        let mut samples = Vec::new();
+        for (index, sample) in line.values.iter().enumerate() {
+            let timestamp =
+                start_ms + i64::try_from(index).expect("sample index fits i64") * step_ms;
+            match sample {
+                SampleSpec::Value(value) => samples.push(TimestampedSample {
+                    timestamp,
+                    value: SampleValue::Float(*value),
+                }),
+                SampleSpec::Histogram(histogram) => samples.push(TimestampedSample {
+                    timestamp,
+                    value: SampleValue::Histogram(histogram.clone()),
+                }),
+                SampleSpec::Missing | SampleSpec::Stale => {}
+                SampleSpec::String(_) => {
+                    return Err(PromqlError::Exec(
+                        "string assertions are only valid for instant string results".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(samples)
     }
 
     fn index_to_timestamp(index: usize, step: Time) -> Result<i64> {
@@ -1255,13 +1459,13 @@ pub mod testkit {
             .ok_or_else(|| PromqlError::Exec("sample timestamp overflow".to_string()))
     }
 
-    fn labels_key<'a, V: AsRef<[u8]> + 'a>(
-        labels: impl Iterator<Item = (&'a String, &'a V)>,
+    fn labels_key<'a, V: AsRef<[u8]> + ?Sized + 'a>(
+        labels: impl Iterator<Item = LabelPairRef<'a, V>>,
     ) -> String {
-        crate::PromqlLabels::from_pairs(labels.map(|(name, value)| {
-            (
-                name.clone(),
-                crate::PromqlString::from(value.as_ref().to_vec()),
+        crate::PromqlLabels::from_pairs(labels.map(|pair| {
+            krabka_metrics::MetricLabelPair::new(
+                pair.name.to_owned(),
+                crate::PromqlString::from(pair.value.as_ref().to_vec()),
             )
         }))
         .order_key()
@@ -1276,15 +1480,16 @@ pub mod testkit {
         let mut start = 0;
         let mut in_quotes = false;
         let mut escaped = false;
-        for (index, ch) in inside.char_indices() {
+        for index in 0..inside.len() {
+            let ch = inside.as_bytes()[index];
             if escaped {
                 escaped = false;
                 continue;
             }
             match ch {
-                '\\' if in_quotes => escaped = true,
-                '"' => in_quotes = !in_quotes,
-                ',' if !in_quotes => {
+                b'\\' if in_quotes => escaped = true,
+                b'"' => in_quotes = !in_quotes,
+                b',' if !in_quotes => {
                     pairs.push(inside[start..index].trim());
                     start = index + 1;
                 }
@@ -1311,6 +1516,48 @@ pub mod testkit {
         use krabka_metrics::{NativeHistogram, ResetHint};
 
         use super::*;
+
+        struct CorpusPathCase {
+            path: &'static str,
+            needs_experimental_functions: bool,
+        }
+
+        struct InstantValueErrorCase {
+            name: &'static str,
+            values: Vec<SampleSpec>,
+            message: &'static str,
+        }
+
+        struct AnnotationExpectationCase<'a> {
+            expectation: AnnotationExpect,
+            raised: &'a Annotations,
+            unsatisfied_description: Option<&'static str>,
+        }
+
+        struct ExpectedFailureMessageCase {
+            expected: &'static str,
+            matches: bool,
+        }
+
+        struct LabelPairSplitCase {
+            name: &'static str,
+            input: &'static str,
+            expected: Vec<&'static str>,
+        }
+
+        struct FloatComparisonCase {
+            name: &'static str,
+            actual: f64,
+            expected: f64,
+            equal: bool,
+        }
+
+        struct InstantComparisonCase {
+            name: &'static str,
+            actual: SampleValue,
+            expected: SampleValue,
+            equal: bool,
+        }
 
         #[test]
         fn disabled_corpus_cases_preserve_expression_and_unexecuted_outcome() {
@@ -1348,7 +1595,7 @@ pub mod testkit {
                         .iter()
                         .enumerate()
                         .map(|(index, value)| {
-                            (
+                            crate::RangeSeriesSample::new(
                                 i64::try_from(index).expect("index fits i64") * 60_000,
                                 SampleValue::Float(*value),
                             )
@@ -1405,7 +1652,20 @@ pub mod testkit {
         /// with satisfied annotations passes.
         #[test]
         fn a_range_evaluation_routes_its_outcome_by_what_the_test_expected() {
-            let step = krabka_units::minutes(1);
+            fn range_expectation<'a>(
+                lines: &'a [ExpectLine],
+                outcome: EvalOutcomeExpect<'a>,
+            ) -> RangeEvalExpect<'a> {
+                RangeEvalExpect {
+                    lines,
+                    outcome,
+                    grid: RangeExpect {
+                        start_ms: 0,
+                        step: krabka_units::minutes(1),
+                    },
+                }
+            }
+
             let expect = vec![ExpectLine {
                 metric: r#"up{job="api"}"#.to_owned(),
                 values: vec![SampleSpec::Value(7.0)],
@@ -1415,43 +1675,58 @@ pub mod testkit {
                     drop_name: false,
                     labels: metric_to_labels(r#"up{job="api"}"#).into(),
                     start_timestamps_ms: BTreeMap::new(),
-                    samples: vec![(0, SampleValue::Float(value))],
+                    samples: vec![crate::RangeSeriesSample::new(0, SampleValue::Float(value))],
                 }])
             };
             let raised = Annotations::default();
-
+            let boom = ExpectedFailure::Message("boom".into());
             check!(
                 handle_range_eval_result(
-                    Ok((matrix(7.0), raised.clone())),
-                    &expect,
-                    &[],
-                    None,
-                    0,
-                    step
+                    Ok(crate::AnnotatedQueryResult {
+                        result: matrix(7.0),
+                        annotations: raised.clone()
+                    }),
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_ok(),
                 "a matching result passes"
             );
             check!(
                 handle_range_eval_result(
-                    Ok((matrix(8.0), raised.clone())),
-                    &expect,
-                    &[],
-                    None,
-                    0,
-                    step
+                    Ok(crate::AnnotatedQueryResult {
+                        result: matrix(8.0),
+                        annotations: raised.clone()
+                    }),
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_err(),
                 "a differing result is refused"
             );
             check!(
                 handle_range_eval_result(
-                    Ok((matrix(7.0), raised.clone())),
-                    &expect,
-                    &[],
-                    Some(&ExpectedFailure::Message("boom".into())),
-                    0,
-                    step
+                    Ok(crate::AnnotatedQueryResult {
+                        result: matrix(7.0),
+                        annotations: raised.clone()
+                    }),
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: Some(&boom),
+                        },
+                    ),
                 )
                 .is_err(),
                 "a success where failure was expected is refused"
@@ -1459,11 +1734,13 @@ pub mod testkit {
             check!(
                 handle_range_eval_result(
                     Err(PromqlError::Exec("boom happened".to_owned())),
-                    &expect,
-                    &[],
-                    Some(&ExpectedFailure::Message("boom".into())),
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: Some(&boom),
+                        },
+                    ),
                 )
                 .is_ok(),
                 "the expected failure passes"
@@ -1471,23 +1748,30 @@ pub mod testkit {
             check!(
                 handle_range_eval_result(
                     Err(PromqlError::Exec("boom happened".to_owned())),
-                    &expect,
-                    &[],
-                    None,
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_err(),
                 "an unexpected failure is refused"
             );
             check!(
                 handle_range_eval_result(
-                    Ok((matrix(7.0), raised)),
-                    &expect,
-                    &[AnnotationExpect::AnyWarn],
-                    None,
-                    0,
-                    step
+                    Ok(crate::AnnotatedQueryResult {
+                        result: matrix(7.0),
+                        annotations: raised
+                    }),
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[AnnotationExpect::AnyWarn],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_err(),
                 "an unsatisfied annotation is refused"
@@ -1538,17 +1822,37 @@ eval instant at 2m down{job="api"}
         /// not the whole path, so a directory of that name does not count.
         #[test]
         fn only_the_limit_corpus_file_needs_experimental_functions() {
-            for (path, needs) in [
-                ("corpus/limit.test", true),
-                ("limit.test", true),
-                ("corpus/limits.test", false),
-                ("corpus/limit.test/inner.test", false),
-                ("corpus/aggregators.test", false),
-                ("", false),
+            for case in [
+                CorpusPathCase {
+                    path: "corpus/limit.test",
+                    needs_experimental_functions: true,
+                },
+                CorpusPathCase {
+                    path: "limit.test",
+                    needs_experimental_functions: true,
+                },
+                CorpusPathCase {
+                    path: "corpus/limits.test",
+                    needs_experimental_functions: false,
+                },
+                CorpusPathCase {
+                    path: "corpus/limit.test/inner.test",
+                    needs_experimental_functions: false,
+                },
+                CorpusPathCase {
+                    path: "corpus/aggregators.test",
+                    needs_experimental_functions: false,
+                },
+                CorpusPathCase {
+                    path: "",
+                    needs_experimental_functions: false,
+                },
             ] {
                 check!(
-                    corpus_path_needs_experimental_functions(Path::new(path)) == needs,
-                    "{path}"
+                    corpus_path_needs_experimental_functions(Path::new(case.path))
+                        == case.needs_experimental_functions,
+                    "{}",
+                    case.path
                 );
             }
         }
@@ -1611,29 +1915,29 @@ eval instant at 2m down{job="api"}
                 .expect("one value is accepted");
             check!(single == SampleValue::Float(2.5));
 
-            for (name, values, message) in [
-                (
-                    "no value at all",
-                    Vec::new(),
-                    "execution error: expected one value for instant expectation `m`",
-                ),
-                (
-                    "a placeholder",
-                    vec![SampleSpec::Missing],
-                    "execution error: expected one value for instant expectation `m`",
-                ),
-                (
-                    "two values",
-                    vec![SampleSpec::Value(1.0), SampleSpec::Value(2.0)],
-                    "execution error: expected one value for instant expectation `m`, got 2",
-                ),
+            for case in [
+                InstantValueErrorCase {
+                    name: "no value at all",
+                    values: Vec::new(),
+                    message: "execution error: expected one value for instant expectation `m`",
+                },
+                InstantValueErrorCase {
+                    name: "a placeholder",
+                    values: vec![SampleSpec::Missing],
+                    message: "execution error: expected one value for instant expectation `m`",
+                },
+                InstantValueErrorCase {
+                    name: "two values",
+                    values: vec![SampleSpec::Value(1.0), SampleSpec::Value(2.0)],
+                    message: "execution error: expected one value for instant expectation `m`, got 2",
+                },
             ] {
-                let error = expect_single_instant_value(&line(values))
+                let error = expect_single_instant_value(&line(case.values))
                     .expect_err("not a single instant value");
                 // Exact, not `contains`: the fall-through message starts with
                 // the same words and only adds a count, so a substring check
                 // would accept either arm answering for the other.
-                check!(error.to_string() == message, "{name}: {error}");
+                check!(error.to_string() == case.message, "{}: {error}", case.name);
             }
         }
 
@@ -1669,16 +1973,24 @@ eval instant at 2m down{job="api"}
                 expected_line(r#"up{job="b"}"#, 2.0),
             ];
 
-            check!(compare_instant_result(result(), &written_in_result_order, true).is_ok());
-            check!(compare_instant_result(result(), &written_in_result_order, false).is_ok());
             check!(
-                compare_instant_result(result(), &written_in_another_order, false).is_ok(),
+                compare_instant_result(result(), &written_in_result_order, ResultOrder::AsWritten)
+                    .is_ok()
+            );
+            check!(
+                compare_instant_result(result(), &written_in_result_order, ResultOrder::Any)
+                    .is_ok()
+            );
+            check!(
+                compare_instant_result(result(), &written_in_another_order, ResultOrder::Any)
+                    .is_ok(),
                 "without the directive the order does not matter"
             );
 
-            let message = compare_instant_result(result(), &written_in_another_order, true)
-                .expect_err("the written order is not the result order")
-                .to_string();
+            let message =
+                compare_instant_result(result(), &written_in_another_order, ResultOrder::AsWritten)
+                    .expect_err("the written order is not the result order")
+                    .to_string();
             check!(
                 message
                     == "execution error: order mismatch at position 1: \
@@ -1717,52 +2029,98 @@ eval instant at 2m down{job="api"}
                 ..crate::Annotations::default()
             };
 
-            for (expect, raised, unsatisfied_description) in [
-                (AnnotationExpect::AnyWarn, &warned, None),
-                (AnnotationExpect::AnyWarn, &none, Some("expect warn")),
-                (AnnotationExpect::AnyInfo, &informed, None),
-                (AnnotationExpect::AnyInfo, &none, Some("expect info")),
-                (AnnotationExpect::NoWarn, &none, None),
-                (AnnotationExpect::NoWarn, &warned, Some("expect no_warn")),
-                (AnnotationExpect::NoInfo, &none, None),
-                (AnnotationExpect::NoInfo, &informed, Some("expect no_info")),
-                (AnnotationExpect::WarnMsg("w one".to_owned()), &warned, None),
-                (
-                    AnnotationExpect::WarnMsg("w one".to_owned()),
-                    &positioned,
-                    None,
-                ),
-                (
-                    AnnotationExpect::WarnMsg("w one".to_owned()),
-                    &malformed_position,
-                    Some("expect warn msg:w one"),
-                ),
-                (
-                    AnnotationExpect::WarnMsg("w two".to_owned()),
-                    &warned,
-                    Some("expect warn msg:w two"),
-                ),
-                (
-                    AnnotationExpect::InfoMsg("i one".to_owned()),
-                    &informed,
-                    None,
-                ),
-                (
-                    AnnotationExpect::InfoMsg("i two".to_owned()),
-                    &informed,
-                    Some("expect info msg:i two"),
-                ),
+            for case in [
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::AnyWarn,
+                    raised: &warned,
+                    unsatisfied_description: None,
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::AnyWarn,
+                    raised: &none,
+                    unsatisfied_description: Some("expect warn"),
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::AnyInfo,
+                    raised: &informed,
+                    unsatisfied_description: None,
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::AnyInfo,
+                    raised: &none,
+                    unsatisfied_description: Some("expect info"),
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::NoWarn,
+                    raised: &none,
+                    unsatisfied_description: None,
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::NoWarn,
+                    raised: &warned,
+                    unsatisfied_description: Some("expect no_warn"),
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::NoInfo,
+                    raised: &none,
+                    unsatisfied_description: None,
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::NoInfo,
+                    raised: &informed,
+                    unsatisfied_description: Some("expect no_info"),
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::WarnMsg("w one".to_owned()),
+                    raised: &warned,
+                    unsatisfied_description: None,
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::WarnMsg("w one".to_owned()),
+                    raised: &positioned,
+                    unsatisfied_description: None,
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::WarnMsg("w one".to_owned()),
+                    raised: &malformed_position,
+                    unsatisfied_description: Some("expect warn msg:w one"),
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::WarnMsg("w two".to_owned()),
+                    raised: &warned,
+                    unsatisfied_description: Some("expect warn msg:w two"),
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::InfoMsg("i one".to_owned()),
+                    raised: &informed,
+                    unsatisfied_description: None,
+                },
+                AnnotationExpectationCase {
+                    expectation: AnnotationExpect::InfoMsg("i two".to_owned()),
+                    raised: &informed,
+                    unsatisfied_description: Some("expect info msg:i two"),
+                },
             ] {
-                let result = compare_annotations(std::slice::from_ref(&expect), raised);
-                match unsatisfied_description {
+                let result =
+                    compare_annotations(std::slice::from_ref(&case.expectation), case.raised);
+                match case.unsatisfied_description {
                     None => {
-                        check!(result.is_ok(), "{expect:?} against {raised:?}");
+                        check!(
+                            result.is_ok(),
+                            "{:?} against {:?}",
+                            case.expectation,
+                            case.raised
+                        );
                     }
                     Some(description) => {
                         let message = result
                             .expect_err("the expectation is not satisfied")
                             .to_string();
-                        check!(message.contains(description), "{expect:?}: {message}");
+                        check!(
+                            message.contains(description),
+                            "{:?}: {message}",
+                            case.expectation
+                        );
                     }
                 }
             }
@@ -1784,17 +2142,33 @@ eval instant at 2m down{job="api"}
                 compare_expected_failure(&error, &ExpectedFailure::Regex("^wrong".into())).is_err()
             );
             check!(compare_expected_failure(&error, &ExpectedFailure::Regex("[".into())).is_err());
-            for (expected, matches) in [
-                ("", true),
-                ("cannot contain", true),
-                ("vector cannot contain metrics", true),
-                ("some other failure", false),
+            for case in [
+                ExpectedFailureMessageCase {
+                    expected: "",
+                    matches: true,
+                },
+                ExpectedFailureMessageCase {
+                    expected: "cannot contain",
+                    matches: true,
+                },
+                ExpectedFailureMessageCase {
+                    expected: "vector cannot contain metrics",
+                    matches: true,
+                },
+                ExpectedFailureMessageCase {
+                    expected: "some other failure",
+                    matches: false,
+                },
             ] {
                 check!(
-                    compare_expected_failure(&error, &ExpectedFailure::Message(expected.into()))
-                        .is_ok()
-                        == matches,
-                    "{expected:?}"
+                    compare_expected_failure(
+                        &error,
+                        &ExpectedFailure::Message(case.expected.into())
+                    )
+                    .is_ok()
+                        == case.matches,
+                    "{:?}",
+                    case.expected
                 );
             }
         }
@@ -1805,40 +2179,48 @@ eval instant at 2m down{job="api"}
         /// than starting an empty pair.
         #[test]
         fn label_pairs_split_only_on_commas_outside_quotes() {
-            for (name, inside, expected) in [
-                (
-                    "two plain pairs",
-                    r#"a="x",b="y""#,
-                    vec![r#"a="x""#, r#"b="y""#],
-                ),
-                (
-                    "surrounding space is trimmed",
-                    r#"a="x" , b="y""#,
-                    vec![r#"a="x""#, r#"b="y""#],
-                ),
-                (
-                    "a comma inside a value does not separate",
-                    r#"a="x,y",b="z""#,
-                    vec![r#"a="x,y""#, r#"b="z""#],
-                ),
-                (
-                    "an escaped quote does not end the value",
-                    r#"a="x\",y",b="z""#,
-                    vec![r#"a="x\",y""#, r#"b="z""#],
-                ),
-                (
-                    "a backslash outside a value escapes nothing",
-                    r#"a=\,b="x""#,
-                    vec![r"a=\", r#"b="x""#],
-                ),
-                (
-                    "a trailing comma ends the list",
-                    r#"a="x","#,
-                    vec![r#"a="x""#],
-                ),
-                ("nothing at all", "", Vec::new()),
+            for case in [
+                LabelPairSplitCase {
+                    name: "two plain pairs",
+                    input: r#"a="x",b="y""#,
+                    expected: vec![r#"a="x""#, r#"b="y""#],
+                },
+                LabelPairSplitCase {
+                    name: "surrounding space is trimmed",
+                    input: r#"a="x" , b="y""#,
+                    expected: vec![r#"a="x""#, r#"b="y""#],
+                },
+                LabelPairSplitCase {
+                    name: "a comma inside a value does not separate",
+                    input: r#"a="x,y",b="z""#,
+                    expected: vec![r#"a="x,y""#, r#"b="z""#],
+                },
+                LabelPairSplitCase {
+                    name: "an escaped quote does not end the value",
+                    input: r#"a="x\",y",b="z""#,
+                    expected: vec![r#"a="x\",y""#, r#"b="z""#],
+                },
+                LabelPairSplitCase {
+                    name: "a backslash outside a value escapes nothing",
+                    input: r#"a=\,b="x""#,
+                    expected: vec![r"a=\", r#"b="x""#],
+                },
+                LabelPairSplitCase {
+                    name: "a trailing comma ends the list",
+                    input: r#"a="x","#,
+                    expected: vec![r#"a="x""#],
+                },
+                LabelPairSplitCase {
+                    name: "nothing at all",
+                    input: "",
+                    expected: Vec::new(),
+                },
             ] {
-                check!(split_label_pairs(inside) == expected, "{name}");
+                check!(
+                    split_label_pairs(case.input) == case.expected,
+                    "{}",
+                    case.name
+                );
             }
         }
 
@@ -1847,48 +2229,95 @@ eval instant at 2m down{job="api"}
         /// accept every wrong answer the engine could give.
         #[test]
         fn float_comparison_accepts_only_what_prometheus_calls_equal() {
-            for (name, actual, expected, equal) in [
-                ("plainly different values", 1.0, 2.0, false),
-                ("the same value", 1.0, 1.0, true),
-                ("two zeroes", 0.0, 0.0, true),
-                ("matching infinities", f64::INFINITY, f64::INFINITY, true),
-                (
-                    "opposing infinities",
-                    f64::INFINITY,
-                    f64::NEG_INFINITY,
-                    false,
-                ),
-                ("an infinity against a number", f64::INFINITY, 1.0, false),
-                ("two NaNs", f64::NAN, f64::NAN, true),
-                ("a NaN against a number", f64::NAN, 1.0, false),
-            ] {
-                check!(floats_equal(actual, expected) == equal, "{name}");
-            }
-
-            for (name, actual, expected, equal) in [
-                // Half the tolerance apart relative to their sum, and one and
-                // a half times it relative to their product: the denominator
-                // has to be the sum.
-                ("just inside the tolerance", 1.0, 1.000_001_5, true),
-                // Zero against a value far above the absolute band. The band
-                // is the tolerance times the smallest normal, not either one
-                // of them on its own.
-                ("zero against a small number", 0.0, 1e-300, false),
-                // Exactly on the absolute band, which is excluded.
-                (
-                    "zero against the band itself",
-                    0.0,
-                    FLOAT_TOLERANCE * f64::MIN_POSITIVE,
-                    false,
-                ),
-                // Neither is zero and neither rounds to it, but together they
-                // fall under the smallest normal, so the absolute band decides
-                // -- by relative difference they are a third apart.
-                ("two subnormals", 1e-320, 2e-320, true),
+            for case in [
+                FloatComparisonCase {
+                    name: "plainly different values",
+                    actual: 1.0,
+                    expected: 2.0,
+                    equal: false,
+                },
+                FloatComparisonCase {
+                    name: "the same value",
+                    actual: 1.0,
+                    expected: 1.0,
+                    equal: true,
+                },
+                FloatComparisonCase {
+                    name: "two zeroes",
+                    actual: 0.0,
+                    expected: 0.0,
+                    equal: true,
+                },
+                FloatComparisonCase {
+                    name: "matching infinities",
+                    actual: f64::INFINITY,
+                    expected: f64::INFINITY,
+                    equal: true,
+                },
+                FloatComparisonCase {
+                    name: "opposing infinities",
+                    actual: f64::INFINITY,
+                    expected: f64::NEG_INFINITY,
+                    equal: false,
+                },
+                FloatComparisonCase {
+                    name: "an infinity against a number",
+                    actual: f64::INFINITY,
+                    expected: 1.0,
+                    equal: false,
+                },
+                FloatComparisonCase {
+                    name: "two NaNs",
+                    actual: f64::NAN,
+                    expected: f64::NAN,
+                    equal: true,
+                },
+                FloatComparisonCase {
+                    name: "a NaN against a number",
+                    actual: f64::NAN,
+                    expected: 1.0,
+                    equal: false,
+                },
             ] {
                 check!(
-                    relative_floats_equal(actual, expected) == equal,
-                    "{name}: {actual} vs {expected}"
+                    floats_equal(case.actual, case.expected) == case.equal,
+                    "{}",
+                    case.name
+                );
+            }
+
+            for case in [
+                FloatComparisonCase {
+                    name: "just inside the tolerance",
+                    actual: 1.0,
+                    expected: 1.000_001_5,
+                    equal: true,
+                },
+                FloatComparisonCase {
+                    name: "zero against a small number",
+                    actual: 0.0,
+                    expected: 1e-300,
+                    equal: false,
+                },
+                FloatComparisonCase {
+                    name: "zero against the band itself",
+                    actual: 0.0,
+                    expected: FLOAT_TOLERANCE * f64::MIN_POSITIVE,
+                    equal: false,
+                },
+                FloatComparisonCase {
+                    name: "two subnormals",
+                    actual: 1e-320,
+                    expected: 2e-320,
+                    equal: true,
+                },
+            ] {
+                check!(
+                    relative_floats_equal(case.actual, case.expected) == case.equal,
+                    "{}: {} vs {}",
+                    case.name,
+                    case.actual,
+                    case.expected
                 );
             }
         }
@@ -1911,42 +2340,64 @@ eval instant at 2m down{job="api"}
                 custom_values: None,
                 start_timestamp_ms: None,
             });
-            for (name, actual, expected, equal) in [
-                (
-                    "equal floats",
-                    SampleValue::Float(1.0),
-                    SampleValue::Float(1.0),
-                    true,
-                ),
-                (
-                    "different floats",
-                    SampleValue::Float(1.0),
-                    SampleValue::Float(2.0),
-                    false,
-                ),
-                (
-                    "equal histograms",
-                    histogram.clone(),
-                    histogram.clone(),
-                    true,
-                ),
-                (
-                    "a float against a histogram",
-                    SampleValue::Float(0.0),
-                    histogram.clone(),
-                    false,
-                ),
-                (
-                    "a histogram against a float",
-                    histogram,
-                    SampleValue::Float(0.0),
-                    false,
-                ),
+            for case in [
+                InstantComparisonCase {
+                    name: "equal floats",
+                    actual: SampleValue::Float(1.0),
+                    expected: SampleValue::Float(1.0),
+                    equal: true,
+                },
+                InstantComparisonCase {
+                    name: "different floats",
+                    actual: SampleValue::Float(1.0),
+                    expected: SampleValue::Float(2.0),
+                    equal: false,
+                },
+                InstantComparisonCase {
+                    name: "equal histograms",
+                    actual: histogram.clone(),
+                    expected: histogram.clone(),
+                    equal: true,
+                },
+                InstantComparisonCase {
+                    name: "a float against a histogram",
+                    actual: SampleValue::Float(0.0),
+                    expected: histogram.clone(),
+                    equal: false,
+                },
+                InstantComparisonCase {
+                    name: "a histogram against a float",
+                    actual: histogram,
+                    expected: SampleValue::Float(0.0),
+                    equal: false,
+                },
             ] {
-                check!(instant_values_equal(&actual, &expected) == equal, "{name}");
+                check!(
+                    instant_values_equal(&case.actual, &case.expected) == case.equal,
+                    "{}",
+                    case.name
+                );
             }
         }
     }
+}
+
+#[cfg(test)]
+struct SampleTokenCase {
+    token: &'static str,
+    samples: Vec<SampleSpec>,
+}
+
+#[cfg(test)]
+struct InfiniteBoundCase {
+    input: &'static str,
+    positive: bool,
+}
+
+#[cfg(test)]
+struct InvalidOrderedExpectationCase {
+    source: &'static str,
+    expected_message: &'static str,
 }
 
 #[cfg(test)]
@@ -2064,47 +2515,66 @@ load 1m
 
         assert2::assert!(
             split_metric_and_tail(line.trimmed, line).unwrap()
-                == (
-                    r#"metric{label="hello world",brace="{",escaped="quoted \" space",rbrace="}" next="value"}"#,
-                    "1 2",
-                )
+                == HeadTail {
+                    head: r#"metric{label="hello world",brace="{",escaped="quoted \" space",rbrace="}" next="value"}"#,
+                    tail: "1 2",
+                }
         );
 
         let line = test_line(r"metric\ 1 2");
-        assert2::assert!(split_metric_and_tail(line.trimmed, line).unwrap() == (r"metric\", "1 2"));
+        assert2::assert!(
+            split_metric_and_tail(line.trimmed, line).unwrap()
+                == HeadTail {
+                    head: r"metric\",
+                    tail: "1 2"
+                }
+        );
     }
 
     #[test]
     fn parses_signed_expanding_point_notation() {
-        for (token, want) in [
-            (
-                "+1+2x2",
-                vec![
+        for case in [
+            SampleTokenCase {
+                token: "+1+2x2",
+                samples: vec![
                     SampleSpec::Value(1.0),
                     SampleSpec::Value(3.0),
                     SampleSpec::Value(5.0),
                 ],
-            ),
-            (
-                "-1+2x2",
-                vec![
+            },
+            SampleTokenCase {
+                token: "-1+2x2",
+                samples: vec![
                     SampleSpec::Value(-1.0),
                     SampleSpec::Value(1.0),
                     SampleSpec::Value(3.0),
                 ],
-            ),
+            },
         ] {
-            let line = test_line(token);
-            assert2::assert!(parse_sample_token(line.trimmed, line).unwrap() == want);
+            let line = test_line(case.token);
+            assert2::assert!(parse_sample_token(line.trimmed, line).unwrap() == case.samples);
         }
     }
 
     #[test]
     fn parses_infinite_native_histogram_bucket_bounds() {
-        for (input, want_positive) in [("+Inf", true), ("Inf", true), ("-Inf", false)] {
-            let bound = parse_bucket_bound(input, test_line(input)).unwrap();
+        for case in [
+            InfiniteBoundCase {
+                input: "+Inf",
+                positive: true,
+            },
+            InfiniteBoundCase {
+                input: "Inf",
+                positive: true,
+            },
+            InfiniteBoundCase {
+                input: "-Inf",
+                positive: false,
+            },
+        ] {
+            let bound = parse_bucket_bound(case.input, test_line(case.input)).unwrap();
             assert2::assert!(bound.is_infinite());
-            assert2::assert!(bound.is_sign_positive() == want_positive);
+            assert2::assert!(bound.is_sign_positive() == case.positive);
         }
     }
 
@@ -2216,25 +2686,25 @@ eval instant at 0 sort_desc(up)
     /// ignoring it.
     #[test]
     fn expect_ordered_is_refused_where_no_result_order_exists() {
-        for (src, expected) in [
-            (
-                "eval range from 0 to 1m step 1m up\n  expect ordered\n  up 1 2\n",
-                "expect ordered is only valid for instant evals",
-            ),
-            (
-                concat!(
+        for case in [
+            InvalidOrderedExpectationCase {
+                source: "eval range from 0 to 1m step 1m up\n  expect ordered\n  up 1 2\n",
+                expected_message: "expect ordered is only valid for instant evals",
+            },
+            InvalidOrderedExpectationCase {
+                source: concat!(
                     "eval instant at 1m up[1m]\n",
                     "  expect ordered\n",
                     "  expect range vector from 0 to 1m step 1m\n",
                     "  up 1 2\n",
                 ),
-                "expect ordered is not valid with expect range vector",
-            ),
+                expected_message: "expect ordered is not valid with expect range vector",
+            },
         ] {
-            let message = parse_test_file(src)
+            let message = parse_test_file(case.source)
                 .expect_err("the directive is refused")
                 .to_string();
-            assert2::assert!(message.contains(expected), "{message}");
+            assert2::assert!(message.contains(case.expected_message), "{message}");
         }
     }
 
@@ -2647,10 +3117,10 @@ mod annotation_expect;
 mod case_features;
 mod case_outcome;
 mod chunk_reset_hints;
-mod compact_spanned_histogram_counts;
 mod compacted_native_histogram;
 mod conformance_labels_key;
 mod cumulative_to_bucket_counts;
+mod directives;
 mod escape_label_value;
 mod expect_block;
 mod expect_directive;
@@ -2671,27 +3141,13 @@ mod native_custom_bucket_histogram;
 mod nhcb_bucket_series;
 mod nhcb_group;
 mod nhcb_sample_at;
-mod parse_bucket_bound;
-mod parse_duration_ms;
-mod parse_error;
-mod parse_expect_directive;
-mod parse_expect_string;
-mod parse_float;
 mod parse_histogram_expansion;
 mod parse_histogram_literal;
-mod parse_histogram_repetition;
-mod parse_optional_histogram_buckets;
-mod parse_optional_histogram_f64;
-mod parse_optional_histogram_i32;
-mod parse_optional_histogram_i8;
-mod parse_optional_histogram_reset_hint;
-mod parse_range_vector_directive;
 mod parse_sample_token;
-mod parse_start_offset_token;
 mod parse_test_file;
+mod parsing;
 mod range_expect;
 mod sample_spec;
-mod spanned_histogram_counts;
 mod split_metric_and_tail;
 mod split_once_whitespace;
 mod split_sample_tokens;
@@ -2703,10 +3159,14 @@ use add_histogram_step::add_histogram_step;
 pub use annotation_expect::AnnotationExpect;
 pub use case_outcome::CaseOutcome;
 use chunk_reset_hints::ChunkResetHints;
-use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 use compacted_native_histogram::compacted_native_histogram;
 use conformance_labels_key::conformance_labels_key;
 use cumulative_to_bucket_counts::cumulative_to_bucket_counts;
+use directives::{
+    parse_error, parse_expect_directive, parse_expect_string, parse_histogram_repetition,
+    parse_optional_histogram_buckets, parse_optional_histogram_reset_hint,
+    parse_range_vector_directive, parse_start_offset_token,
+};
 use escape_label_value::escape_label_value;
 use expect_block::ExpectBlock;
 use expect_directive::ExpectDirective;
@@ -2727,29 +3187,21 @@ use native_custom_bucket_histogram::native_custom_bucket_histogram;
 use nhcb_bucket_series::NhcbBucketSeries;
 use nhcb_group::NhcbGroup;
 use nhcb_sample_at::nhcb_sample_at;
-use parse_bucket_bound::parse_bucket_bound;
-use parse_duration_ms::parse_duration_ms;
-use parse_error::parse_error;
-use parse_expect_directive::parse_expect_directive;
-use parse_expect_string::parse_expect_string;
-use parse_float::parse_float;
 use parse_histogram_expansion::parse_histogram_expansion;
 use parse_histogram_literal::parse_histogram_literal;
-use parse_histogram_repetition::parse_histogram_repetition;
-use parse_optional_histogram_buckets::parse_optional_histogram_buckets;
-use parse_optional_histogram_f64::parse_optional_histogram_f64;
-use parse_optional_histogram_i8::parse_optional_histogram_i8;
-use parse_optional_histogram_i32::parse_optional_histogram_i32;
-use parse_optional_histogram_reset_hint::parse_optional_histogram_reset_hint;
-use parse_range_vector_directive::parse_range_vector_directive;
 use parse_sample_token::parse_sample_token;
 pub use parse_test_file::parse_test_file;
+use parsing::{
+    parse_bucket_bound, parse_duration_ms, parse_float, parse_optional_histogram_f64,
+    parse_optional_histogram_i8, parse_optional_histogram_i32,
+};
 pub use range_expect::RangeExpect;
 pub use sample_spec::SampleSpec;
-use spanned_histogram_counts::spanned_histogram_counts;
 use split_metric_and_tail::split_metric_and_tail;
 use split_once_whitespace::split_once_whitespace;
 use split_sample_tokens::split_sample_tokens;
 pub use statement::Statement;
 pub use test_file::TestFile;
 use test_parser::TestParser;
+
+use crate::engine::{compact_spanned_histogram_counts, spanned_histogram_counts};

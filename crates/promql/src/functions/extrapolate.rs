@@ -28,6 +28,21 @@ mod tests {
         (left - right).abs() < 1e-9
     }
 
+    fn rate_over_minute(timestamps: &[i64], values: &[f64]) -> Option<f64> {
+        extrapolated_rate(
+            RateWindow {
+                timestamps,
+                values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 60_000,
+                },
+                range: millis(60_000),
+            },
+            RangeKind::Rate,
+        )
+    }
+
     /// Pins `rate` to `engine.rs::instant_rate_extrapolates_counter_window`:
     /// samples at 0..240s that step by 1.0, `rate(...[5m])` at t=300s == 5/300.
     #[test]
@@ -36,11 +51,15 @@ mod tests {
         let values = [0.0, 1.0, 2.0, 3.0, 4.0];
         // range_end = 300_000, range = 300_000 (5m) => range_start = 0.
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            300_000,
-            millis(300_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 300_000,
+                },
+                range: millis(300_000),
+            },
             RangeKind::Rate,
         )
         .unwrap();
@@ -56,11 +75,15 @@ mod tests {
         let values = [1.0, 2.0, 1.0];
         // range_end = 120_000, range = 120_000 (2m) => range_start = 0.
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            120_000,
-            millis(120_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 120_000,
+                },
+                range: millis(120_000),
+            },
             RangeKind::Increase,
         )
         .unwrap();
@@ -77,11 +100,15 @@ mod tests {
         let values = [4.0, 3.0];
         // range_end = 60_000, range = 60_000 (1m) => range_start = 0.
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            60_000,
-            millis(60_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 60_000,
+                },
+                range: millis(60_000),
+            },
             RangeKind::Delta,
         )
         .unwrap();
@@ -96,11 +123,15 @@ mod tests {
         let timestamps = [11_050_i64, 21_050];
         let values = [2.0, 12.0];
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            21_050,
-            millis(21_050),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 21_050,
+                },
+                range: millis(21_050),
+            },
             RangeKind::Delta,
         )
         .unwrap();
@@ -114,11 +145,15 @@ mod tests {
         let timestamps = [5_000_i64, 15_000];
         let values = [1.0, 4.0];
         let got = extrapolated_rate(
-            &timestamps,
-            &values,
-            0,
-            15_000,
-            millis(15_000),
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms: 0,
+                    range_end_ms: 15_000,
+                },
+                range: millis(15_000),
+            },
             RangeKind::Increase,
         )
         .unwrap();
@@ -130,17 +165,7 @@ mod tests {
     fn single_sample_yields_none() {
         let timestamps = [60_000_i64];
         let values = [1.0];
-        assert2::assert!(
-            extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
-            )
-            .is_none()
-        );
+        assert2::assert!(rate_over_minute(&timestamps, &values).is_none());
         assert2::assert!(instant_delta(&timestamps, &values, InstantKind::Irate).is_none());
     }
 
@@ -149,17 +174,7 @@ mod tests {
     fn mismatched_range_lengths_yield_none() {
         let timestamps = [0_i64, 60_000];
         let values = [1.0];
-        assert2::assert!(
-            extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
-            )
-            .is_none()
-        );
+        assert2::assert!(rate_over_minute(&timestamps, &values).is_none());
     }
 
     /// Two coincident timestamps make a zero-width sampled interval, which
@@ -168,17 +183,7 @@ mod tests {
     fn zero_width_sampled_interval_yields_none() {
         let timestamps = [60_000_i64, 60_000];
         let values = [1.0, 2.0];
-        assert2::assert!(
-            extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
-            )
-            .is_none()
-        );
+        assert2::assert!(rate_over_minute(&timestamps, &values).is_none());
     }
 
     /// Pins `irate` to `engine.rs::instant_irate_uses_last_two_samples_per_second`:
@@ -227,17 +232,42 @@ mod tests {
     }
 }
 
-mod extrapolated_rate;
-mod instant_delta;
-mod instant_kind;
-mod range_kind;
-
-pub use extrapolated_rate::extrapolated_rate;
-pub use instant_delta::instant_delta;
-pub use instant_kind::InstantKind;
-pub use range_kind::RangeKind;
+pub use rate_types::{InstantKind, RangeKind, extrapolated_rate};
 
 mod extrapolated_rate_with_starts;
+mod rate_types;
 mod start_timestamp_reset;
+mod window_spacing;
 pub(crate) use extrapolated_rate_with_starts::extrapolated_rate_with_starts;
+pub(crate) use rate_types::RateWindow;
 pub(crate) use start_timestamp_reset::start_timestamp_reset;
+pub(crate) use window_spacing::{WindowBounds, WindowSpacing, window_spacing};
+
+/// Prometheus' instant estimator, shared by `irate`/`idelta`.
+///
+/// This function is a direct port of the engine's `instant_delta`. It uses only
+/// the last two samples, and it clamps a negative `irate` delta to the last
+/// value on a counter reset. It divides by the inter-sample interval for `irate`
+/// only.
+#[must_use]
+pub fn instant_delta(timestamps: &[i64], values: &[f64], kind: InstantKind) -> Option<f64> {
+    let n = timestamps.len();
+    if n < 2 || values.len() != n {
+        return None;
+    }
+    let previous = values[n - 2];
+    let last = values[n - 1];
+    let mut result = last - previous;
+    if matches!(kind, InstantKind::Irate) && result < 0.0 {
+        result = last;
+    }
+
+    if matches!(kind, InstantKind::Irate) {
+        let interval = (timestamps[n - 1] - timestamps[n - 2]).to_f64()? / 1000.0;
+        if interval <= 0.0 {
+            return None;
+        }
+        result /= interval;
+    }
+    Some(result)
+}

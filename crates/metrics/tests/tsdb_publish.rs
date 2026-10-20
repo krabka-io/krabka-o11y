@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_statements)]
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
@@ -5,22 +7,20 @@ use std::{
 };
 
 use assert2::{assert, check};
-use async_trait::async_trait;
-use futures::{TryStreamExt as _, stream::BoxStream};
+use futures::TryStreamExt as _;
 use krabka_blockstore::BlockLevel;
 use krabka_metrics::{
     CompactionIndex, CompactionIndexListing, CompactionIndexManifest, CompactionSeriesLabels,
-    DecodedTsdbBlock, MetricBlockKind, TsdbBlockFiles, TsdbBlockMeta, TsdbImportLimits,
-    TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportTarget, TsdbPublishError,
-    decode_float_samples, decode_native_histograms, decode_tsdb_block,
+    DecodedTsdbBlock, MetricBlockKind, NativeHistogramRow, TsdbBlockFiles, TsdbBlockMeta,
+    TsdbImportLimits, TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportTarget,
+    TsdbPublishError, decode_float_samples, decode_native_histograms, decode_tsdb_block,
     enforce_compaction_retention, list_compaction_index, list_compaction_manifests,
     publish_tsdb_import, tsdb_block_sha256,
 };
 use krabka_units::{Time, secs};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
-    path::Path,
+    MultipartUpload, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload,
+    PutResult, memory::InMemory, path::Path,
 };
 use tsdb_fixture::{FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, fixture_files};
 
@@ -40,8 +40,84 @@ const RECORD_PREFIX: &str = "mimir-block-uploads";
 /// that earlier builds made.
 const FIXTURE_SHA256: &str = "62593eb43039a3ec287a9d7c86438e77741886b170bf178933676504148f1236";
 
+struct RefusalCase {
+    refused: String,
+    remaining: BTreeSet<String>,
+}
+struct OutcomeCase {
+    ulid: &'static str,
+    expected: TsdbImportOutcome,
+}
+struct ImportCrashCase {
+    key_part: &'static str,
+    occurrence: usize,
+    live: bool,
+}
+
 /// The fixture decoded with or without its tombstones, and its content hash.
-fn fixture_block(with_tombstones: bool) -> (DecodedTsdbBlock, String) {
+/// The fixture import into a fresh store, stopped by a crash at one write
+/// and left as that crash left it.
+struct InterruptedImport {
+    store: Arc<dyn ObjectStore>,
+    block: DecodedTsdbBlock,
+    sha256: String,
+    /// The record the import would have published.
+    record: TsdbImportRecord,
+}
+
+impl InterruptedImport {
+    async fn stop_at(crash_point: CrashPoint) -> Self {
+        let fixture = fixture_block(true);
+        let block = fixture.block;
+        let sha256 = fixture.sha256;
+        let record = expected_record(FIXTURE_ULID, &sha256, &block);
+        let crashing = Arc::new(CrashingStore::default());
+        let store: Arc<dyn ObjectStore> = crashing.clone();
+        crashing.crash_at(Some(crash_point));
+        publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
+            .await
+            .expect_err("the process stops at the crash point");
+        crashing.crash_at(None);
+        Self {
+            store,
+            block,
+            sha256,
+            record,
+        }
+    }
+}
+
+/// A store that holds the tombstoned fixture block, published under
+/// [`FIXTURE_ULID`].
+struct PublishedFixture {
+    store: Arc<dyn ObjectStore>,
+    block: DecodedTsdbBlock,
+    sha256: String,
+}
+
+impl PublishedFixture {
+    async fn publish() -> Self {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let fixture = fixture_block(true);
+        let block = fixture.block;
+        let sha256 = fixture.sha256;
+        publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
+            .await
+            .expect("the first import publishes");
+        Self {
+            store,
+            block,
+            sha256,
+        }
+    }
+}
+
+struct FixtureBlock {
+    block: DecodedTsdbBlock,
+    sha256: String,
+}
+
+fn fixture_block(with_tombstones: bool) -> FixtureBlock {
     let files = fixture_files();
     let segments = [files.chunks.as_slice()];
     let block_files = TsdbBlockFiles {
@@ -56,7 +132,10 @@ fn fixture_block(with_tombstones: bool) -> (DecodedTsdbBlock, String) {
     };
     let block = decode_tsdb_block(TENANT, &meta, block_files, &TsdbImportLimits::default())
         .expect("the fixture decodes");
-    (block, tsdb_block_sha256(block_files))
+    FixtureBlock {
+        block,
+        sha256: tsdb_block_sha256(block_files),
+    }
 }
 
 fn target<'a>(ulid: &'a str, sha256: &'a str) -> TsdbImportTarget<'a> {
@@ -66,6 +145,17 @@ fn target<'a>(ulid: &'a str, sha256: &'a str) -> TsdbImportTarget<'a> {
         sha256,
         manifest_prefix: MANIFEST_PREFIX,
         record_prefix: RECORD_PREFIX,
+    }
+}
+
+async fn delete_import_objects(store: &dyn ObjectStore, record: &TsdbImportRecord) {
+    for object in &record.objects {
+        for key in [&object.block_key, &object.index_key] {
+            store
+                .delete(&Path::from(key.as_str()))
+                .await
+                .expect("delete the object");
+        }
     }
 }
 
@@ -88,9 +178,17 @@ fn import_directory(ulid: &str, sha256: &str) -> String {
     format!("metrics/{TENANT}/uploaded/{ulid}-{}", &sha256[..16])
 }
 
-fn object_keys(ulid: &str, sha256: &str, kind: &str) -> (String, String) {
+struct TestObjectKeys {
+    block_key: String,
+    index_key: String,
+}
+
+fn object_keys(ulid: &str, sha256: &str, kind: &str) -> TestObjectKeys {
     let stem = format!("{}/{kind}", import_directory(ulid, sha256));
-    (format!("{stem}.parquet"), format!("{stem}.index"))
+    TestObjectKeys {
+        block_key: format!("{stem}.parquet"),
+        index_key: format!("{stem}.index"),
+    }
 }
 
 fn marker_key(ulid: &str, sha256: &str) -> String {
@@ -98,8 +196,8 @@ fn marker_key(ulid: &str, sha256: &str) -> String {
 }
 
 fn expected_record(ulid: &str, sha256: &str, block: &DecodedTsdbBlock) -> TsdbImportRecord {
-    let (float_block, float_index) = object_keys(ulid, sha256, "float");
-    let (histogram_block, histogram_index) = object_keys(ulid, sha256, "native-histograms");
+    let float_keys = object_keys(ulid, sha256, "float");
+    let histogram_keys = object_keys(ulid, sha256, "native-histograms");
     TsdbImportRecord {
         version: 1,
         ulid: ulid.to_owned(),
@@ -108,14 +206,14 @@ fn expected_record(ulid: &str, sha256: &str, block: &DecodedTsdbBlock) -> TsdbIm
         objects: vec![
             TsdbImportObject {
                 kind: MetricBlockKind::Float,
-                block_key: float_block,
-                index_key: float_index,
+                block_key: float_keys.block_key,
+                index_key: float_keys.index_key,
                 rows: u64::try_from(block.rows.float_rows.len()).expect("row count"),
             },
             TsdbImportObject {
                 kind: MetricBlockKind::NativeHistograms,
-                block_key: histogram_block,
-                index_key: histogram_index,
+                block_key: histogram_keys.block_key,
+                index_key: histogram_keys.index_key,
                 rows: u64::try_from(block.rows.histogram_rows.len()).expect("row count"),
             },
         ],
@@ -127,24 +225,32 @@ fn expected_manifest(
     object: &TsdbImportObject,
     block: &DecodedTsdbBlock,
 ) -> CompactionIndexManifest {
-    let samples: Vec<(u64, i64)> = match object.kind {
+    struct SampleKey {
+        fingerprint: u64,
+        timestamp_ms: i64,
+    }
+
+    let samples: Vec<SampleKey> = match object.kind {
         MetricBlockKind::Float => block
             .rows
             .float_rows
             .iter()
-            .map(|row| (row.fingerprint, row.timestamp_ms))
+            .map(|row| SampleKey {
+                fingerprint: row.fingerprint,
+                timestamp_ms: row.timestamp_ms,
+            })
             .collect(),
         _ => block
             .rows
             .histogram_rows
             .iter()
-            .map(|row| (row.fingerprint, row.timestamp_ms))
+            .map(|row| SampleKey {
+                fingerprint: row.fingerprint,
+                timestamp_ms: row.timestamp_ms,
+            })
             .collect(),
     };
-    let fingerprints: BTreeSet<u64> = samples
-        .iter()
-        .map(|(fingerprint, _)| *fingerprint)
-        .collect();
+    let fingerprints: BTreeSet<u64> = samples.iter().map(|sample| sample.fingerprint).collect();
     CompactionIndexManifest {
         tenant: TENANT.to_owned(),
         kind: object.kind,
@@ -154,8 +260,16 @@ fn expected_manifest(
         first_offset: 0,
         last_offset: 0,
         row_count: samples.len(),
-        min_ts: samples.iter().map(|(_, ts)| *ts).min().expect("samples"),
-        max_ts: samples.iter().map(|(_, ts)| *ts).max().expect("samples"),
+        min_ts: samples
+            .iter()
+            .map(|sample| sample.timestamp_ms)
+            .min()
+            .expect("samples"),
+        max_ts: samples
+            .iter()
+            .map(|sample| sample.timestamp_ms)
+            .max()
+            .expect("samples"),
         fingerprints: fingerprints.iter().copied().collect(),
         series: fingerprints
             .iter()
@@ -169,7 +283,8 @@ fn expected_manifest(
 
 #[test]
 fn the_fixture_content_hash_is_stable() {
-    let (_, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let sha256 = fixture.sha256;
 
     check!(sha256 == FIXTURE_SHA256);
 }
@@ -178,8 +293,8 @@ fn the_fixture_content_hash_is_stable() {
 fn the_content_hash_changes_when_bytes_move_between_files() {
     let files = fixture_files();
     let whole = [files.chunks.as_slice()];
-    let (head, tail) = files.chunks.split_at(files.chunks.len() / 2);
-    let split = [head, tail];
+    let split_chunks = files.chunks.split_at(files.chunks.len() / 2);
+    let split = [split_chunks.0, split_chunks.1];
     let hash = |segments: &[&[u8]], tombstones: Option<&[u8]>| {
         tsdb_block_sha256(TsdbBlockFiles {
             index: &files.index,
@@ -199,7 +314,9 @@ fn the_content_hash_changes_when_bytes_move_between_files() {
 #[tokio::test]
 async fn an_import_publishes_blocks_that_read_back_as_the_decoded_rows() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (block, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let block = fixture.block;
+    let sha256 = fixture.sha256;
 
     let outcome = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
         .await
@@ -220,22 +337,32 @@ async fn an_import_publishes_blocks_that_read_back_as_the_decoded_rows() {
     let float_batches = krabka_blockstore::read_block(store.clone(), &record.objects[0].block_key)
         .await
         .expect("read the float block");
+    #[derive(PartialEq)]
+    struct FloatRowSnapshot {
+        fingerprint: u64,
+        timestamp_ms: i64,
+        value_bits: u64,
+        start_timestamp_ms: Option<i64>,
+    }
     let floats: Vec<_> = float_batches
         .iter()
         .flat_map(|batch| decode_float_samples(batch).expect("decode floats"))
-        .map(|(fingerprint, ts, value, start)| (fingerprint, ts, value.to_bits(), start))
+        .map(|row| FloatRowSnapshot {
+            fingerprint: row.fingerprint,
+            timestamp_ms: row.timestamp_ms,
+            value_bits: row.value.to_bits(),
+            start_timestamp_ms: row.start_timestamp_ms,
+        })
         .collect();
     let expected_floats: Vec<_> = block
         .rows
         .float_rows
         .iter()
-        .map(|row| {
-            (
-                row.fingerprint,
-                row.timestamp_ms,
-                row.value.to_bits(),
-                row.start_timestamp_ms,
-            )
+        .map(|row| FloatRowSnapshot {
+            fingerprint: row.fingerprint,
+            timestamp_ms: row.timestamp_ms,
+            value_bits: row.value.to_bits(),
+            start_timestamp_ms: row.start_timestamp_ms,
         })
         .collect();
     check!(floats == expected_floats);
@@ -252,18 +379,22 @@ async fn an_import_publishes_blocks_that_read_back_as_the_decoded_rows() {
         .rows
         .histogram_rows
         .iter()
-        .map(|row| (row.fingerprint, row.timestamp_ms, row.hist.clone()))
+        .map(|row| NativeHistogramRow {
+            fingerprint: row.fingerprint,
+            timestamp_ms: row.timestamp_ms,
+            hist: row.hist.clone(),
+        })
         .collect();
     check!(histograms == expected_histograms);
 }
 
 #[tokio::test]
 async fn a_repeated_import_reports_the_existing_content_and_writes_nothing() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (block, sha256) = fixture_block(true);
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect("the first import publishes");
+    let PublishedFixture {
+        store,
+        block,
+        sha256,
+    } = PublishedFixture::publish().await;
     let before = all_keys(store.as_ref()).await;
 
     let outcomes = [
@@ -294,13 +425,15 @@ async fn a_repeated_import_reports_the_existing_content_and_writes_nothing() {
 
 #[tokio::test]
 async fn other_content_under_an_imported_ulid_conflicts_and_writes_nothing() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (block, sha256) = fixture_block(true);
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect("the first import publishes");
+    let PublishedFixture {
+        store,
+        block: _,
+        sha256,
+    } = PublishedFixture::publish().await;
     let before = all_keys(store.as_ref()).await;
-    let (other_block, other_sha256) = fixture_block(false);
+    let other_fixture = fixture_block(false);
+    let other_block = other_fixture.block;
+    let other_sha256 = other_fixture.sha256;
 
     let error = publish_tsdb_import(&store, target(FIXTURE_ULID, &other_sha256), &other_block)
         .await
@@ -349,8 +482,10 @@ impl std::fmt::Display for RefusingStore {
     }
 }
 
-#[async_trait]
-impl ObjectStore for RefusingStore {
+krabka_blockstore::delegate_object_store! {
+    RefusingStore => inner;
+    forward [get_opts, delete_stream, list, list_with_delimiter, copy_opts];
+
     async fn put_opts(
         &self,
         location: &Path,
@@ -369,43 +504,13 @@ impl ObjectStore for RefusingStore {
         self.check(location)?;
         self.inner.put_multipart_opts(location, options).await
     }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
 }
 
 #[tokio::test]
 async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
-    let (block, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let block = fixture.block;
+    let sha256 = fixture.sha256;
     let record = expected_record(FIXTURE_ULID, &sha256, &block);
     let binding = format!("{RECORD_PREFIX}/{TENANT}/{FIXTURE_ULID}/import.json");
     let committed = format!("{RECORD_PREFIX}/{TENANT}/by-sha256/{sha256}.json");
@@ -424,33 +529,56 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
     // manifests of a committed import stay, but no query reads them before
     // the marker exists.
     let cases = [
-        ("/import.json".to_owned(), BTreeSet::new()),
-        ("/float.parquet".to_owned(), BTreeSet::new()),
-        ("/native-histograms.parquet".to_owned(), BTreeSet::new()),
-        (format!("/{sha256}.json"), BTreeSet::new()),
-        ("/float.index".to_owned(), committed_keys(0)),
-        ("/native-histograms.index".to_owned(), committed_keys(1)),
-        ("/_published".to_owned(), committed_keys(2)),
+        RefusalCase {
+            refused: "/import.json".to_owned(),
+            remaining: BTreeSet::new(),
+        },
+        RefusalCase {
+            refused: "/float.parquet".to_owned(),
+            remaining: BTreeSet::new(),
+        },
+        RefusalCase {
+            refused: "/native-histograms.parquet".to_owned(),
+            remaining: BTreeSet::new(),
+        },
+        RefusalCase {
+            refused: format!("/{sha256}.json"),
+            remaining: BTreeSet::new(),
+        },
+        RefusalCase {
+            refused: "/float.index".to_owned(),
+            remaining: committed_keys(0),
+        },
+        RefusalCase {
+            refused: "/native-histograms.index".to_owned(),
+            remaining: committed_keys(1),
+        },
+        RefusalCase {
+            refused: "/_published".to_owned(),
+            remaining: committed_keys(2),
+        },
     ];
 
-    for (refused, remaining) in cases {
+    for case in cases {
         let refusing = Arc::new(RefusingStore::new());
         let store: Arc<dyn ObjectStore> = refusing.clone();
-        refusing.refuse(Some(refused.clone()));
+        refusing.refuse(Some(case.refused.clone()));
 
         let error = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block).await;
 
-        check!(error.is_err(), "refused: {refused}");
+        check!(error.is_err(), "refused: {}", case.refused);
         check!(
             list_compaction_manifests(&store)
                 .await
                 .expect("list manifests")
                 .is_empty(),
-            "refused: {refused}"
+            "refused: {}",
+            case.refused
         );
         check!(
-            all_keys(store.as_ref()).await == remaining,
-            "refused: {refused}"
+            all_keys(store.as_ref()).await == case.remaining,
+            "refused: {}",
+            case.refused
         );
 
         refusing.refuse(None);
@@ -459,7 +587,8 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
             .expect("the retry publishes");
         check!(
             retry == TsdbImportOutcome::Imported(record.clone()),
-            "refused: {refused}"
+            "refused: {}",
+            case.refused
         );
         check!(
             list_compaction_manifests(&store)
@@ -467,25 +596,31 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
                 .expect("list manifests")
                 .len()
                 == 2,
-            "refused: {refused}"
+            "refused: {}",
+            case.refused
         );
     }
 }
 
 #[tokio::test]
 async fn an_import_that_stopped_between_its_manifests_is_finished_by_the_next_import() {
-    let (block, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let block = fixture.block;
+    let sha256 = fixture.sha256;
     let record = expected_record(FIXTURE_ULID, &sha256, &block);
     let committed = Path::from(format!("{RECORD_PREFIX}/{TENANT}/by-sha256/{sha256}.json"));
     let cases = [
-        (FIXTURE_ULID, TsdbImportOutcome::Imported(record.clone())),
-        (
-            OTHER_ULID,
-            TsdbImportOutcome::AlreadyImported(record.clone()),
-        ),
+        OutcomeCase {
+            ulid: FIXTURE_ULID,
+            expected: TsdbImportOutcome::Imported(record.clone()),
+        },
+        OutcomeCase {
+            ulid: OTHER_ULID,
+            expected: TsdbImportOutcome::AlreadyImported(record.clone()),
+        },
     ];
 
-    for (ulid, expected) in cases {
+    for case in cases {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
             .await
@@ -518,11 +653,11 @@ async fn an_import_that_stopped_between_its_manifests_is_finished_by_the_next_im
             .await
             .expect("list manifests");
 
-        let outcome = publish_tsdb_import(&store, target(ulid, &sha256), &block)
+        let outcome = publish_tsdb_import(&store, target(case.ulid, &sha256), &block)
             .await
             .expect("the next import finishes the first");
 
-        check!(outcome == expected, "ULID: {ulid}");
+        check!(outcome == case.expected, "ULID: {}", case.ulid);
         let manifests = list_compaction_manifests(&store)
             .await
             .expect("list manifests");
@@ -531,29 +666,22 @@ async fn an_import_that_stopped_between_its_manifests_is_finished_by_the_next_im
             .iter()
             .map(|object| expected_manifest(object, &block))
             .collect();
-        check!(hidden.is_empty(), "ULID: {ulid}");
-        check!(manifests == expected_manifests, "ULID: {ulid}");
+        check!(hidden.is_empty(), "ULID: {}", case.ulid);
+        check!(manifests == expected_manifests, "ULID: {}", case.ulid);
     }
 }
 
 #[tokio::test]
 async fn a_published_import_is_not_restored_after_compaction_removed_its_manifests() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (block, sha256) = fixture_block(true);
+    let PublishedFixture {
+        store,
+        block,
+        sha256,
+    } = PublishedFixture::publish().await;
     let record = expected_record(FIXTURE_ULID, &sha256, &block);
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect("the first import publishes");
     // Compaction merges the imported blocks into other blocks and deletes
     // them with their manifests.
-    for object in &record.objects {
-        for key in [&object.block_key, &object.index_key] {
-            store
-                .delete(&Path::from(key.as_str()))
-                .await
-                .expect("delete the object");
-        }
-    }
+    delete_import_objects(store.as_ref(), &record).await;
 
     let outcome = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
         .await
@@ -568,7 +696,9 @@ async fn a_published_import_is_not_restored_after_compaction_removed_its_manifes
 
 #[tokio::test]
 async fn an_import_record_from_a_newer_build_stops_the_import_before_it_writes() {
-    let (block, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let block = fixture.block;
+    let sha256 = fixture.sha256;
     let future = serde_json::to_vec(&serde_json::json!({"version": 2, "future": true}))
         .expect("encode the record");
     let binding = format!("{RECORD_PREFIX}/{TENANT}/{FIXTURE_ULID}/import.json");
@@ -596,7 +726,9 @@ async fn an_import_record_from_a_newer_build_stops_the_import_before_it_writes()
 
 #[tokio::test]
 async fn an_invalid_target_is_rejected_before_any_write() {
-    let (block, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let block = fixture.block;
+    let sha256 = fixture.sha256;
     let upper = sha256.to_uppercase();
     let cases = [
         TsdbImportTarget {
@@ -654,7 +786,9 @@ async fn missing_blocks(store: &Arc<dyn ObjectStore>) -> Vec<String> {
 
 #[tokio::test]
 async fn an_import_that_stops_at_any_write_is_live_whole_or_not_at_all() {
-    let (block, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let block = fixture.block;
+    let sha256 = fixture.sha256;
     let record = expected_record(FIXTURE_ULID, &sha256, &block);
     let all_manifests: Vec<_> = record
         .objects
@@ -664,30 +798,62 @@ async fn an_import_that_stops_at_any_write_is_live_whole_or_not_at_all() {
     // The write where the process stops, and whether the import is live after
     // the stop.
     let cases = [
-        ("/import.json", 1, false),
-        ("/float.parquet", 1, false),
-        ("/native-histograms.parquet", 1, false),
-        ("/by-sha256/", 1, false),
-        ("/float.index", 1, false),
-        ("/native-histograms.index", 1, false),
-        ("/_published", 1, false),
-        ("/by-sha256/", 2, true),
+        ImportCrashCase {
+            key_part: "/import.json",
+            occurrence: 1,
+            live: false,
+        },
+        ImportCrashCase {
+            key_part: "/float.parquet",
+            occurrence: 1,
+            live: false,
+        },
+        ImportCrashCase {
+            key_part: "/native-histograms.parquet",
+            occurrence: 1,
+            live: false,
+        },
+        ImportCrashCase {
+            key_part: "/by-sha256/",
+            occurrence: 1,
+            live: false,
+        },
+        ImportCrashCase {
+            key_part: "/float.index",
+            occurrence: 1,
+            live: false,
+        },
+        ImportCrashCase {
+            key_part: "/native-histograms.index",
+            occurrence: 1,
+            live: false,
+        },
+        ImportCrashCase {
+            key_part: "/_published",
+            occurrence: 1,
+            live: false,
+        },
+        ImportCrashCase {
+            key_part: "/by-sha256/",
+            occurrence: 2,
+            live: true,
+        },
     ];
 
-    for (key_part, occurrence, live) in cases {
+    for case in cases {
         let crashing = Arc::new(CrashingStore::default());
         let store: Arc<dyn ObjectStore> = crashing.clone();
         crashing.crash_at(Some(CrashPoint {
-            key_part: key_part.to_owned(),
-            occurrence,
+            key_part: case.key_part.to_owned(),
+            occurrence: case.occurrence,
         }));
 
         let stopped = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block).await;
 
-        let case = format!("{key_part} #{occurrence}");
-        check!(crashing.crashed(), "case: {case}");
-        check!(stopped.is_err(), "case: {case}");
-        let expected = if live {
+        let case_name = format!("{} #{}", case.key_part, case.occurrence);
+        check!(crashing.crashed(), "case: {case_name}");
+        check!(stopped.is_err(), "case: {case_name}");
+        let expected = if case.live {
             all_manifests.clone()
         } else {
             Vec::new()
@@ -697,7 +863,7 @@ async fn an_import_that_stops_at_any_write_is_live_whole_or_not_at_all() {
                 .await
                 .expect("list manifests")
                 == expected,
-            "case: {case}"
+            "case: {case_name}"
         );
 
         // Another process sweeps orphans after the grace period, then a retry
@@ -706,40 +872,38 @@ async fn an_import_that_stops_at_any_write_is_live_whole_or_not_at_all() {
         enforce_compaction_retention(&store, after_the_sweep_grace(), &Windows(secs(0)))
             .await
             .expect("sweep orphans");
-        check!(missing_blocks(&store).await.is_empty(), "case: {case}");
+        check!(missing_blocks(&store).await.is_empty(), "case: {case_name}");
         let retry = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
             .await
             .expect("the retry publishes");
 
         check!(
             retry == TsdbImportOutcome::Imported(record.clone()),
-            "case: {case}"
+            "case: {case_name}"
         );
         check!(
             list_compaction_manifests(&store)
                 .await
                 .expect("list manifests")
                 == all_manifests,
-            "case: {case}"
+            "case: {case_name}"
         );
-        check!(missing_blocks(&store).await.is_empty(), "case: {case}");
+        check!(missing_blocks(&store).await.is_empty(), "case: {case_name}");
     }
 }
 
 #[tokio::test]
 async fn retention_and_the_orphan_sweep_keep_an_unpublished_import() {
-    let (block, sha256) = fixture_block(true);
-    let record = expected_record(FIXTURE_ULID, &sha256, &block);
-    let crashing = Arc::new(CrashingStore::default());
-    let store: Arc<dyn ObjectStore> = crashing.clone();
-    crashing.crash_at(Some(CrashPoint {
+    let InterruptedImport {
+        store,
+        block,
+        sha256: _,
+        record,
+    } = InterruptedImport::stop_at(CrashPoint {
         key_part: "/_published".to_owned(),
         occurrence: 1,
-    }));
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect_err("the process stops before the marker");
-    crashing.crash_at(None);
+    })
+    .await;
     let before = keys_under(store.as_ref(), MANIFEST_PREFIX).await;
 
     // A one-second window expires every live block of the fixture.
@@ -764,28 +928,19 @@ async fn retention_and_the_orphan_sweep_keep_an_unpublished_import() {
 
 #[tokio::test]
 async fn an_import_that_stopped_after_its_marker_is_not_published_again() {
-    let (block, sha256) = fixture_block(true);
-    let record = expected_record(FIXTURE_ULID, &sha256, &block);
-    let crashing = Arc::new(CrashingStore::default());
-    let store: Arc<dyn ObjectStore> = crashing.clone();
-    crashing.crash_at(Some(CrashPoint {
+    let InterruptedImport {
+        store,
+        block,
+        sha256,
+        record,
+    } = InterruptedImport::stop_at(CrashPoint {
         key_part: "/by-sha256/".to_owned(),
         occurrence: 2,
-    }));
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect_err("the process stops before the record is published");
-    crashing.crash_at(None);
+    })
+    .await;
     // Compaction merges the live blocks into other blocks and deletes them
     // with their manifests.
-    for object in &record.objects {
-        for key in [&object.block_key, &object.index_key] {
-            store
-                .delete(&Path::from(key.as_str()))
-                .await
-                .expect("delete the object");
-        }
-    }
+    delete_import_objects(store.as_ref(), &record).await;
 
     let outcome = publish_tsdb_import(&store, target(OTHER_ULID, &sha256), &block)
         .await
@@ -893,7 +1048,9 @@ fn the_tenant_keys_name_live_and_pending_objects_and_markers_of_one_tenant() {
 async fn the_storage_audit_reports_no_damage_or_orphan_in_an_import() {
     use krabka_blockstore::{StorageAuditOptions, StorageSignal, audit_store};
 
-    let (block, sha256) = fixture_block(true);
+    let fixture = fixture_block(true);
+    let block = fixture.block;
+    let sha256 = fixture.sha256;
     let audit = |store: Arc<dyn ObjectStore>| async move {
         let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
         options.signal = Some(StorageSignal::Metrics);

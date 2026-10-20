@@ -1,4 +1,4 @@
-use super::{ProfileRecord, ProfilesError, WalBatchError};
+use super::{ProfileRecord, ProfilesError, WalBatchError, write_batch_serially};
 
 #[async_trait::async_trait]
 pub trait WalSink: Send + Sync {
@@ -20,12 +20,6 @@ pub trait WalSink: Send + Sync {
         &self,
         records: Vec<ProfileRecord>,
     ) -> Result<(), WalBatchError<ProfilesError>> {
-        let total = records.len();
-        for (appended, record) in records.into_iter().enumerate() {
-            if let Err(source) = self.append(record).await {
-                return Err(WalBatchError::new(appended, total, source));
-            }
-        }
-        Ok(())
+        write_batch_serially(records, |record| self.append(record)).await
     }
 }

@@ -53,7 +53,7 @@
 //! under `{:?}`. See [`WalClientSecurityArgs::load`].
 
 use std::{
-    fmt, fs, io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -64,20 +64,76 @@ use krabka_client_core::{
 };
 use krabka_security::{ListenerProtocol, SaslMechanism};
 use thiserror::Error;
-
-mod check_readable;
-mod read_password_file;
 #[cfg(test)]
 mod tests;
 mod wal_client_security_args;
 mod wal_client_security_error;
 mod wal_sasl_mechanism;
 mod wal_security_protocol;
-mod with_client_security;
 
-use self::{check_readable::check_readable, read_password_file::read_password_file};
 pub use self::{
     wal_client_security_args::WalClientSecurityArgs,
     wal_client_security_error::WalClientSecurityError, wal_sasl_mechanism::WalSaslMechanism,
-    wal_security_protocol::WalSecurityProtocol, with_client_security::with_client_security,
+    wal_security_protocol::WalSecurityProtocol,
 };
+
+/// Returns an error that names `flag` and `path` when the process cannot read
+/// the file.
+///
+/// The check reads the whole file, because opening a directory succeeds on
+/// Linux and only the read fails. It drops the bytes at once and puts none of
+/// them in the error.
+pub(crate) fn check_readable(
+    flag: &'static str,
+    path: &Path,
+) -> Result<(), WalClientSecurityError> {
+    fs::read(path)
+        .map(drop)
+        .map_err(|source| WalClientSecurityError::UnreadableFile {
+            flag,
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+/// Reads a SASL password from `path`, without its trailing line breaks.
+///
+/// An editor or `echo` ends the file with a line break, and the broker would
+/// refuse a password that kept it. Line breaks are the only characters the
+/// function removes, because spaces can be part of a password.
+pub(crate) fn read_password_file(path: &Path) -> Result<String, WalClientSecurityError> {
+    let bytes = fs::read(path).map_err(|source| WalClientSecurityError::UnreadableFile {
+        flag: "--wal-sasl-password-path",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    // `FromUtf8Error` holds the bytes, so it must not reach the error.
+    let contents =
+        String::from_utf8(bytes).map_err(|_| WalClientSecurityError::PasswordFileNotUtf8 {
+            path: path.to_path_buf(),
+        })?;
+    let password = contents.trim_end_matches(['\r', '\n']);
+    if password.is_empty() {
+        return Err(WalClientSecurityError::EmptyPasswordFile {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(password.to_owned())
+}
+
+/// Returns `options` with its security policy replaced by `security`.
+///
+/// `None` gives a plaintext connection, which is the default of
+/// [`ConnectionOptions`]. Every other field keeps its value. Use this function
+/// at a site that builds its own [`ConnectionOptions`]. A producer or
+/// consumer builder takes the policy through `.maybe_security(..)` instead.
+#[must_use]
+pub fn with_client_security(
+    options: ConnectionOptions,
+    security: Option<&ClientSecurity>,
+) -> ConnectionOptions {
+    ConnectionOptions {
+        security: security.cloned().map(Box::new),
+        ..options
+    }
+}

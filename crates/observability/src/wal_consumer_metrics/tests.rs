@@ -2,7 +2,7 @@ use assert2::check;
 use krabka_client_consumer::ConsumerRecord;
 use prometheus_client::registry::Registry;
 
-use super::{WalConsumerMetrics, WalPollOutcome};
+use super::{WalConsumerMetrics, WalPartitionAssignment, WalPollOutcome};
 
 fn record(topic: &str, partition: i32, offset: i64, timestamp: i64) -> ConsumerRecord {
     ConsumerRecord {
@@ -87,7 +87,13 @@ fn the_consumed_offset_only_advances_with_the_records_it_was_given() {
 #[test]
 fn recovery_status_separates_consumed_committed_and_caught_up() {
     let metrics = WalConsumerMetrics::unregistered();
-    metrics.record_assignment(&[("wal".to_owned(), 0)], false);
+    metrics.record_assignment(
+        &[WalPartitionAssignment {
+            topic: "wal".to_owned(),
+            partition: 0,
+        }],
+        false,
+    );
     metrics.record_poll_at(&[record("wal", 0, 7, 1_000)], 1_000);
 
     let before = metrics.recovery_status();
@@ -97,7 +103,13 @@ fn recovery_status_separates_consumed_committed_and_caught_up() {
     check!(before.partitions[0].lag.is_none());
 
     metrics.record_commit();
-    metrics.record_assignment(&[("wal".to_owned(), 0)], true);
+    metrics.record_assignment(
+        &[WalPartitionAssignment {
+            topic: "wal".to_owned(),
+            partition: 0,
+        }],
+        true,
+    );
     let after = metrics.recovery_status();
     check!(after.caught_up);
     check!(after.partitions[0].committed_offset == Some(8));
@@ -108,8 +120,20 @@ fn recovery_status_separates_consumed_committed_and_caught_up() {
 fn recovery_sources_share_instruments_without_overwriting_status() {
     let first = WalConsumerMetrics::unregistered();
     let second = first.with_fresh_recovery();
-    first.record_assignment(&[("first".to_string(), 0)], true);
-    second.record_assignment(&[("second".to_string(), 1)], false);
+    first.record_assignment(
+        &[WalPartitionAssignment {
+            topic: "first".to_string(),
+            partition: 0,
+        }],
+        true,
+    );
+    second.record_assignment(
+        &[WalPartitionAssignment {
+            topic: "second".to_string(),
+            partition: 1,
+        }],
+        false,
+    );
 
     check!(first.recovery_status().partitions[0].topic == "first");
     check!(second.recovery_status().partitions[0].topic == "second");

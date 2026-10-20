@@ -13,11 +13,11 @@ impl IpMatcher {
     /// # Errors
     /// Returns an error when an address, range, or prefix is invalid.
     pub fn parse(pattern: &str) -> Result<Self, ParseError> {
-        let range = if let Some((start, end)) = pattern.split_once('-') {
-            IpRange::range(parse_ip_addr(start)?, parse_ip_addr(end)?)?
-        } else if let Some((base, prefix)) = pattern.split_once('/') {
-            let base = parse_ip_addr(base)?;
-            let prefix = prefix.parse::<u8>().map_err(|_| ParseError::Syntax {
+        let range = if let Some(parts) = pattern.split_once('-') {
+            IpRange::range(parse_ip_addr(parts.0)?, parse_ip_addr(parts.1)?)?
+        } else if let Some(parts) = pattern.split_once('/') {
+            let base = parse_ip_addr(parts.0)?;
+            let prefix = parts.1.parse::<u8>().map_err(|_| ParseError::Syntax {
                 message: "invalid ip CIDR prefix".to_string(),
                 position: 0,
             })?;

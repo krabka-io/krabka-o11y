@@ -17,6 +17,59 @@ use crate::{
     symbolizer::{NativeResolver, SymbolizeRequest},
 };
 
+/// Stacktrace id reserved for samples with no frames. It stays distinct from
+/// node `0`, the root of the first real stacktrace.
+pub const EMPTY_STACKTRACE_ID: u32 = u32::MAX;
+
+/// A function record whose strings index into the `SymbolDb` string table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FunctionRec {
+    pub name: u32,
+    pub system_name: u32,
+    pub filename: u32,
+    pub start_line: i64,
+}
+
+/// One inlined line within a location.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LineRec {
+    pub function_id: u32,
+    pub line: i32,
+}
+
+/// A program location and its inlined lines, innermost first.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LocationRec {
+    pub address: u64,
+    pub mapping_id: u32,
+    pub lines: Vec<LineRec>,
+}
+
+/// A binary mapping record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MappingRec {
+    pub memory_start: u64,
+    pub memory_limit: u64,
+    pub file_offset: u64,
+    pub filename: u32,
+    pub build_id: u32,
+    pub symbolization: MappingSymbolization,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawLocation {
+    pub address: u64,
+    pub mapping: MappingRec,
+    pub filename: String,
+    pub build_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TreeNode {
+    pub(crate) parent: i32,
+    pub(crate) location_ref: i32,
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -36,7 +89,12 @@ mod tests {
     #[test]
     fn mapping_symbolization_round_trips_every_flag_combination() {
         for bits in 0_u8..16 {
-            let parts = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+            let parts = MappingSymbolizationParts {
+                functions: bits & 1 != 0,
+                filenames: bits & 2 != 0,
+                line_numbers: bits & 4 != 0,
+                inline_frames: bits & 8 != 0,
+            };
             let flags = MappingSymbolization::from_parts(parts);
             check!(
                 (
@@ -44,7 +102,12 @@ mod tests {
                     flags.has_filenames(),
                     flags.has_line_numbers(),
                     flags.has_inline_frames(),
-                ) == parts,
+                ) == (
+                    parts.functions,
+                    parts.filenames,
+                    parts.line_numbers,
+                    parts.inline_frames
+                ),
                 "combination {bits:#06b}"
             );
         }
@@ -53,12 +116,24 @@ mod tests {
         // what a flag stored at the wrong bit would do.
         let mut seen = std::collections::HashSet::new();
         for bits in 0_u8..16 {
-            let parts = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
+            let parts = MappingSymbolizationParts {
+                functions: bits & 1 != 0,
+                filenames: bits & 2 != 0,
+                line_numbers: bits & 4 != 0,
+                inline_frames: bits & 8 != 0,
+            };
             check!(seen.insert(MappingSymbolization::from_parts(parts)));
         }
     }
 
-    fn db_with_abc() -> (SymbolDb, [u32; 3]) {
+    struct SymbolDbWithAbc {
+        db: SymbolDb,
+        a: u32,
+        b: u32,
+        c: u32,
+    }
+
+    fn db_with_abc() -> SymbolDbWithAbc {
         let mut db = SymbolDb::new();
         let mk = |db: &mut SymbolDb, name: &str| {
             let name_ref = db.intern_string(name);
@@ -81,7 +156,7 @@ mod tests {
         let a = mk(&mut db, "a");
         let b = mk(&mut db, "b");
         let c = mk(&mut db, "c");
-        (db, [a, b, c])
+        SymbolDbWithAbc { db, a, b, c }
     }
 
     #[test]
@@ -102,7 +177,7 @@ mod tests {
 
     #[test]
     fn identical_stacks_dedup_to_same_leaf() {
-        let (mut db, [a, b, c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, c } = db_with_abc();
         let id1 = db.intern_stacktrace(0, &[a, b, c]);
         let id2 = db.intern_stacktrace(0, &[a, b, c]);
         assert!(id1 == id2);
@@ -110,7 +185,7 @@ mod tests {
 
     #[test]
     fn intern_stacktrace_roots_first_node_at_sentinel_parent() {
-        let (mut db, [a, b, _c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, .. } = db_with_abc();
         let id = db.intern_stacktrace(0, &[a, b]);
         let part = db.partitions.get(&0).unwrap();
 
@@ -121,7 +196,7 @@ mod tests {
 
     #[test]
     fn resolve_stops_at_corrupt_parent_cycle() {
-        let (mut db, [a, b, _c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, .. } = db_with_abc();
         let id = db.intern_stacktrace(0, &[a, b]);
         db.partitions.get_mut(&0).unwrap().nodes[0].parent = 1;
 
@@ -132,7 +207,7 @@ mod tests {
 
     #[test]
     fn divergent_stacks_get_distinct_leaves_but_share_prefix() {
-        let (mut db, [a, b, c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, c } = db_with_abc();
         let abc = db.intern_stacktrace(0, &[a, b, c]);
         let ab = db.intern_stacktrace(0, &[a, b]);
         assert!(abc != ab);
@@ -142,7 +217,7 @@ mod tests {
 
     #[test]
     fn empty_stack_interns_to_sentinel_and_resolves_to_no_frames() {
-        let (mut db, [a, _b, _c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, .. } = db_with_abc();
         // The first real stacktrace owns node 0; an empty stack must not collide
         // with it (which would borrow node 0's root frame) — it gets the sentinel.
         let first = db.intern_stacktrace(0, &[a]);
@@ -158,7 +233,7 @@ mod tests {
 
     #[test]
     fn resolve_climbs_leaf_to_root() {
-        let (mut db, [a, b, c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, c } = db_with_abc();
         let id = db.intern_stacktrace(0, &[a, b, c]);
         let frames = db.resolve(0, id);
         let names: Vec<&str> = frames.iter().map(|frame| frame.function.as_str()).collect();
@@ -167,7 +242,7 @@ mod tests {
 
     #[test]
     fn invalid_large_stacktrace_ids_resolve_to_empty() {
-        let (mut db, [a, b, c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, c } = db_with_abc();
         let _ = db.intern_stacktrace(0, &[a, b, c]);
         let invalid = u32::try_from(i64::from(i32::MAX) + 1).unwrap();
 
@@ -287,7 +362,7 @@ mod tests {
 
     #[test]
     fn encode_decode_round_trips() {
-        let (mut db, [a, b, c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, c } = db_with_abc();
         let id = db.intern_stacktrace(0, &[a, b, c]);
         let bytes = db.encode();
         let mut back = SymbolDb::decode(&bytes).unwrap();
@@ -298,7 +373,7 @@ mod tests {
 
     #[test]
     fn symbol_source_impl_delegates_to_resolve() {
-        let (mut db, [a, b, c]) = db_with_abc();
+        let SymbolDbWithAbc { mut db, a, b, c } = db_with_abc();
         let id = db.intern_stacktrace(0, &[a, b, c]);
         let source: &dyn SymbolSource = &db;
         assert!(source.resolve(0, id) == db.resolve(0, id));
@@ -306,7 +381,12 @@ mod tests {
 
     #[test]
     fn copy_partition_preserves_stacktrace_ids_with_remapped_symbols() {
-        let (mut source, [a, b, _]) = db_with_abc();
+        let SymbolDbWithAbc {
+            db: mut source,
+            a,
+            b,
+            ..
+        } = db_with_abc();
         let id = source.intern_stacktrace(0, &[a, b]);
         let mut dest = SymbolDb::new();
         let pre_name = dest.intern_string("preexisting");
@@ -332,7 +412,12 @@ mod tests {
 
     #[test]
     fn copy_partition_rebuilds_children_and_rejects_nonempty_destination() {
-        let (mut source, [a, b, _]) = db_with_abc();
+        let SymbolDbWithAbc {
+            db: mut source,
+            a,
+            b,
+            ..
+        } = db_with_abc();
         let id = source.intern_stacktrace(0, &[a, b]);
         let mut dest = SymbolDb::new();
 
@@ -343,30 +428,55 @@ mod tests {
     }
 }
 
-mod drop_go_type_parameters;
-mod empty_stacktrace_id;
-mod function_rec;
-mod go_shape_prefix;
-mod line_rec;
-mod location_rec;
-mod mapping_rec;
 mod mapping_symbolization;
 mod partition;
-mod raw_location;
-mod remap_index;
 mod symbol_db_type;
-mod tree_node;
 
-use drop_go_type_parameters::drop_go_type_parameters;
-pub use empty_stacktrace_id::EMPTY_STACKTRACE_ID;
-pub use function_rec::FunctionRec;
-use go_shape_prefix::GO_SHAPE_PREFIX;
-pub use line_rec::LineRec;
-pub use location_rec::LocationRec;
-pub use mapping_rec::MappingRec;
-pub use mapping_symbolization::MappingSymbolization;
+pub use mapping_symbolization::{MappingSymbolization, MappingSymbolizationParts};
 use partition::Partition;
-pub use raw_location::RawLocation;
-use remap_index::remap_index;
 pub use symbol_db_type::SymbolDb;
-use tree_node::TreeNode;
+
+pub(crate) const GO_SHAPE_PREFIX: &str = "[go.shape.";
+
+pub(crate) fn drop_go_type_parameters(input: &str) -> Cow<'_, str> {
+    if !input.contains(GO_SHAPE_PREFIX) {
+        return Cow::Borrowed(input);
+    }
+
+    let mut result = String::with_capacity(input.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = input[cursor..].find(GO_SHAPE_PREFIX) {
+        let start = cursor + relative_start;
+        result.push_str(&input[cursor..start]);
+
+        let mut depth = 0_i32;
+        let mut end = None;
+        for (offset, byte) in input[start..].bytes().enumerate() {
+            match byte {
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(start + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(next) = end else {
+            result.push_str(&input[start..]);
+            return Cow::Owned(result);
+        };
+        cursor = next;
+    }
+    result.push_str(&input[cursor..]);
+    Cow::Owned(result)
+}
+
+pub(crate) fn remap_index(index: u32, remapped: &[u32]) -> u32 {
+    remapped
+        .get(usize::try_from(index).expect("u32 fits usize"))
+        .copied()
+        .unwrap_or(index)
+}

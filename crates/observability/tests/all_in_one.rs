@@ -10,25 +10,30 @@
 //! Neither passes this suite, because it pushes at the ingest route and reads
 //! back at the query route, against a real broker, in one process.
 
-use std::{
-    collections::BTreeMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+#[path = "support/loki_push_body.rs"]
+mod loki_push_body;
+#[path = "support/parquet_files.rs"]
+mod parquet_files;
+#[path = "support/wal_broker.rs"]
+mod wal_broker;
+
+use std::time::{Duration, Instant};
 
 use assert2::{assert, check};
 use krabka_blockstore::{BlockKey, TimeRange, read_log_block_from_object_store};
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle, authorizer::SimpleAclAuthorizer};
-use krabka_client_admin::{
-    AclEntry, AclOperation, AdminClient, CreateTopicSpec, PatternType, PermissionType, ResourceType,
-};
+use krabka_broker::BrokerHandle;
 use krabka_observability::{
     CancellationToken, QuerierIndexSource, Role, ServiceConfig, build_service_dependencies,
     serve_all_service_listener, wal_consumer_metrics::WalConsumerMetrics,
 };
-use krabka_units::{days, secs};
+use krabka_units::days;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::{Value, json};
+
+use self::{
+    parquet_files::parquet_files_under,
+    wal_broker::{WalBroker, start_wal_broker},
+};
 
 const TENANT: &str = "tenant-a";
 const INDEX_PREFIX: &str = "observability/logs";
@@ -51,7 +56,7 @@ const DEADLINE: Duration = Duration::from_secs(45);
 async fn a_line_pushed_into_the_all_in_one_comes_back_out_of_its_query_api() {
     let stack = Box::pin(AllInOne::start()).await;
 
-    let pushed = stack.push(push_body()).await;
+    let pushed = stack.push(loki_push_body::push_body()).await;
     check!(pushed == reqwest::StatusCode::NO_CONTENT);
 
     let result = stack.query_until_answered().await;
@@ -85,19 +90,24 @@ async fn a_line_pushed_into_the_all_in_one_comes_back_out_of_its_query_api() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_drain_request_takes_the_all_in_one_out_of_rotation() {
     let stack = Box::pin(AllInOne::start()).await;
-    check!(!stack.ready_body().await.1.contains("accepting-writes"));
+    check!(!stack.ready_body().await.body.contains("accepting-writes"));
 
     let drained = stack.prepare_shutdown().await;
     check!(drained == reqwest::StatusCode::NO_CONTENT);
 
-    let (status, body) = stack.ready_body().await;
-    check!(status == reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let response = stack.ready_body().await;
+    check!(response.status == reqwest::StatusCode::SERVICE_UNAVAILABLE);
     // Once, not twice. The querier's own gates flap as its hot tail
     // reconnects and disconnects, so the rest of the line is not this test's
     // business; what is its business is that one drain request moved one gate.
     check!(
-        body.matches("distributor/accepting-writes").count() == 1,
-        "{body}"
+        response
+            .body
+            .matches("distributor/accepting-writes")
+            .count()
+            == 1,
+        "{}",
+        response.body
     );
 
     let _object_dir = stack.stop().await;
@@ -127,7 +137,7 @@ async fn a_drain_request_takes_the_all_in_one_out_of_rotation() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_stop_closes_the_data_port_and_leaves_the_last_push_in_a_block() {
     let stack = Box::pin(AllInOne::start()).await;
-    check!(stack.push(push_body()).await == reqwest::StatusCode::NO_CONTENT);
+    check!(stack.push(loki_push_body::push_body()).await == reqwest::StatusCode::NO_CONTENT);
     stack.query_until_answered().await;
 
     check!(stack.push(late_push_body()).await == reqwest::StatusCode::NO_CONTENT);
@@ -159,16 +169,12 @@ struct AllInOne {
 
 impl AllInOne {
     async fn start() -> Self {
-        let broker_dir = tempfile::tempdir().expect("broker tempdir");
-        let mut broker_config = BrokerConfig::for_tests(broker_dir.path().to_path_buf());
-        broker_config.authorizer = Arc::new(SimpleAclAuthorizer::new(
-            std::iter::once("ANONYMOUS".to_owned()).collect(),
-        ));
-        let broker = Broker::start(broker_config).await.expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
-        let wal_topic = ServiceConfig::default().wal_topic;
-        create_wal_topic(&bootstrap, &wal_topic).await;
-        grant_tenant_wal_access_for_test(&bootstrap, &wal_topic, TENANT).await;
+        let WalBroker {
+            handle: broker,
+            dir: broker_dir,
+            bootstrap,
+            wal_topic,
+        } = start_wal_broker(TENANT).await;
 
         let object_dir = tempfile::tempdir().expect("object store tempdir");
         let data_root = tempfile::tempdir().expect("data root");
@@ -256,7 +262,7 @@ impl AllInOne {
     }
 
     /// `GET /ready` on the data port, status and body.
-    async fn ready_body(&self) -> (reqwest::StatusCode, String) {
+    async fn ready_body(&self) -> ReadyBody {
         let response = self
             .client
             .get(format!("http://{}/ready", self.addr))
@@ -264,7 +270,10 @@ impl AllInOne {
             .await
             .expect("the readiness probe answers");
         let status = response.status();
-        (status, response.text().await.expect("a readiness body"))
+        ReadyBody {
+            status,
+            body: response.text().await.expect("a readiness body"),
+        }
     }
 
     /// The drain an operator's `preStop` hook sends.
@@ -324,6 +333,11 @@ impl AllInOne {
     }
 }
 
+struct ReadyBody {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
 /// Every log line the object store holds under the index prefix, read back
 /// the way another process would read it.
 ///
@@ -347,22 +361,7 @@ async fn drained_lines(root: &std::path::Path) -> Vec<String> {
 /// The block keys under `prefix`, rebuilt from the layout
 /// [`BlockKey::object_key`] writes.
 fn block_keys(prefix: &std::path::Path) -> Vec<BlockKey> {
-    fn walk(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path.extension().is_some_and(|ext| ext == "parquet") {
-                found.push(path);
-            }
-        }
-    }
-
-    let mut files = Vec::new();
-    walk(prefix, &mut files);
+    let mut files = parquet_files_under(prefix);
     files.sort();
     files
         .iter()
@@ -372,32 +371,20 @@ fn block_keys(prefix: &std::path::Path) -> Vec<BlockKey> {
             let [tenant, partition, offsets, time] = parts.as_slice() else {
                 return None;
             };
-            let (first, last) = offsets.strip_prefix("offsets=")?.split_once('-')?;
-            let (start, end) = time
+            let offset_parts = offsets.strip_prefix("offsets=")?.split_once('-')?;
+            let time_parts = time
                 .strip_prefix("time=")?
                 .strip_suffix(".parquet")?
                 .split_once('-')?;
             Some(BlockKey::new(
                 tenant.strip_prefix("tenant=")?,
                 partition.strip_prefix("partition=")?.parse().ok()?,
-                first.parse().ok()?,
-                last.parse().ok()?,
-                TimeRange::new(start.parse().ok()?, end.parse().ok()?).ok()?,
+                offset_parts.0.parse().ok()?,
+                offset_parts.1.parse().ok()?,
+                TimeRange::new(time_parts.0.parse().ok()?, time_parts.1.parse().ok()?).ok()?,
             ))
         })
         .collect()
-}
-
-fn push_body() -> Value {
-    json!({
-        "streams": [{
-            "stream": {"app": "api", "env": "prod"},
-            "values": [
-                ["10", "api error", {"trace_id": "abc"}],
-                ["20", "api recovered"],
-            ],
-        }],
-    })
 }
 
 /// The push the stop has to save: accepted with nothing waiting behind it.
@@ -408,51 +395,4 @@ fn late_push_body() -> Value {
             "values": [["30", "api stopping"]],
         }],
     })
-}
-
-/// Grants `tenant` every operation on the WAL topic.
-///
-/// The pinned in-process broker runs an authorizer and answers `DescribeAcls`
-/// with the ACLs it holds, so the logs path reads its ACLs as configured. With
-/// no ACL at all it would refuse every tenant, as Kafka's authorizer does. A
-/// broker that answers `SECURITY_DISABLED` instead allows every tenant.
-async fn grant_tenant_wal_access_for_test(bootstrap: &str, wal_topic: &str, tenant: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    let outcomes = admin
-        .create_acls(&[AclEntry {
-            resource_type: ResourceType::Topic,
-            resource_name: wal_topic.to_string(),
-            pattern_type: PatternType::Literal,
-            principal: format!("User:{tenant}"),
-            host: "*".to_string(),
-            operation: AclOperation::All,
-            permission_type: PermissionType::Allow,
-        }])
-        .await
-        .expect("create the tenant's WAL topic ACL");
-    assert!(
-        outcomes.iter().all(|outcome| outcome.error.is_none()),
-        "{outcomes:?}"
-    );
-}
-
-async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
-        .await
-        .expect("admin connect");
-    admin
-        .create_topics(
-            &[CreateTopicSpec {
-                replica_assignments: std::collections::BTreeMap::default(),
-                name: wal_topic.to_string(),
-                partitions: 1,
-                replicas: 1,
-                configs: BTreeMap::default(),
-            }],
-            krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
-        )
-        .await
-        .expect("create the logs WAL topic");
 }

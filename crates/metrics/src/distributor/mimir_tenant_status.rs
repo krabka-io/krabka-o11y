@@ -138,19 +138,21 @@ pub(crate) async fn all_user_stats(
     if let Err(error) = authorize_admin(&principal) {
         return error.into_response();
     }
-    let user_stats = state
-        .series_tracker
-        .lock()
+    let tracker = state.series_tracker.lock();
+    let user_stats = tracker
         .tenants
-        .iter()
-        .map(|(tenant, tracked)| UserIdStats {
-            user_id: tenant.as_str().to_owned(),
-            stats: UserStats {
-                ingestion_rate: 0.0,
-                num_series: u64::try_from(tracked.series.len()).unwrap_or(u64::MAX),
-                api_rate: 0.0,
-                rule_rate: 0.0,
-            },
+        .keys()
+        .map(|tenant| {
+            let tenant_state = tracker.tenants.get(tenant).expect("tenant key exists");
+            UserIdStats {
+                user_id: tenant.as_str().to_owned(),
+                stats: UserStats {
+                    ingestion_rate: 0.0,
+                    num_series: u64::try_from(tenant_state.series.len()).unwrap_or(u64::MAX),
+                    api_rate: 0.0,
+                    rule_rate: 0.0,
+                },
+            }
         })
         .collect::<Vec<_>>();
     Json(user_stats).into_response()
@@ -164,14 +166,12 @@ pub(crate) async fn runtime_config(
     if let Err(error) = authorize_admin(&principal) {
         return error.into_response();
     }
-    let overrides = state
-        .overrides
-        .per_tenant
-        .iter()
-        .map(|(tenant, limits)| (tenant.as_str(), limits))
-        .collect();
+    let mut overrides = BTreeMap::new();
+    for (tenant, limits) in state.overrides.tenant_overrides.entries() {
+        overrides.insert(tenant, limits);
+    }
     let output = RuntimeConfig {
-        defaults: &state.overrides.defaults,
+        defaults: state.overrides.tenant_overrides.defaults(),
         overrides,
     };
     let output = if query.mode.as_deref() == Some("diff") && output.overrides.is_empty() {
@@ -180,15 +180,17 @@ pub(crate) async fn runtime_config(
         match serde_yaml::to_string(&output) {
             Ok(output) => output,
             Err(error) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+                let mut response = error.to_string().into_response();
+                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                return response;
             }
         }
     };
-    (
-        [(CONTENT_TYPE, HeaderValue::from_static("application/yaml"))],
-        output,
-    )
-        .into_response()
+    let mut response = output.into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/yaml"));
+    response
 }
 
 #[cfg(test)]

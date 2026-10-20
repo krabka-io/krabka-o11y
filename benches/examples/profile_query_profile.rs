@@ -7,7 +7,8 @@ use krabka_o11y_benches::{
     profile_samples::{PROFILE_TYPE, profile_samples},
 };
 use krabka_pprof::{
-    EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore, ProfileError, SampleSelector,
+    EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore, MillisRange, ProfileError,
+    ProfileSelection, SampleSelector,
 };
 
 #[inline(never)]
@@ -19,8 +20,8 @@ async fn resolve_profile(
 ) -> Result<FlameGraph, ProfileError> {
     engine
         .select_merge_stacktraces_with_selectors(
-            (TENANT, PROFILE_TYPE, "{service=\"api\"}"),
-            (0, end_ms),
+            ProfileSelection::new(TENANT, PROFILE_TYPE, "{service=\"api\"}"),
+            MillisRange::new(0, end_ms),
             i64::MAX,
             sites,
             selector,

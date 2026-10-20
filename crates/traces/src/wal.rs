@@ -13,28 +13,15 @@ mod tests {
     use prost::Message as _;
 
     use super::*;
-    use crate::span::{AttrValue, KeyValue, SpanKind, StatusCode};
+    use crate::span::{AttrValue, KeyValue, test_span::api_server_span};
 
     fn span(trace_id: [u8; 16]) -> Span {
         Span {
             trace_id,
-            span_id: [2; 8],
-            parent_span_id: None,
-            name: "GET /".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
             duration_ns: 500,
-            status: StatusCode::Ok,
-            status_message: String::new(),
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
             instrumentation_scope: "tracer".into(),
             instrumentation_version: "1.2.3".into(),
+            ..api_server_span()
         }
     }
 
@@ -130,11 +117,14 @@ mod tests {
         assert2::assert!(TRACES_WAL_TOPIC == "__krabka_traces_wal");
     }
 }
-
-mod partition_key;
 mod span_record;
 mod traces_wal_topic;
 
-pub use partition_key::partition_key;
 pub use span_record::SpanRecord;
 pub use traces_wal_topic::TRACES_WAL_TOPIC;
+
+/// The Kafka produce key for traces: `hash(trace_id)`.
+#[must_use]
+pub fn partition_key(trace_id: &[u8; 16]) -> Bytes {
+    Bytes::copy_from_slice(&fnv1_32(trace_id).to_be_bytes())
+}

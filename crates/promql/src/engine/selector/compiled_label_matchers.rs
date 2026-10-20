@@ -1,4 +1,6 @@
-use super::{CompiledLabelMatcher, Labels, MatchOp};
+use std::convert::Infallible;
+
+use super::{CompiledLabelMatcher, LabelValueMatcher, Labels, label_value_matches};
 
 /// A set of [`CompiledLabelMatcher`]s for a hot match loop.
 ///
@@ -13,30 +15,25 @@ impl CompiledLabelMatchers {
     /// Returns `true` when `labels` satisfies every compiled matcher. This method
     /// is the precompiled equivalent of `labels_match`.
     pub(crate) fn matches(&self, labels: &Labels) -> bool {
-        for matcher in &self.matchers {
-            let bytes = labels
-                .get_value(&matcher.name)
-                .map_or(&[][..], crate::PromqlString::as_bytes);
-            let value = labels.get(&matcher.name).unwrap_or("");
-            let is_match = match matcher.op {
-                MatchOp::Eq => bytes == matcher.value.as_bytes(),
-                MatchOp::Neq => bytes != matcher.value.as_bytes(),
-                MatchOp::Re | MatchOp::Nre => {
-                    let regex_matches = matcher
+        self.matchers.iter().all(|matcher| {
+            let is_match = label_value_matches::<Infallible>(
+                labels,
+                LabelValueMatcher {
+                    name: &matcher.name,
+                    op: matcher.op,
+                    expected: matcher.value.as_bytes(),
+                },
+                |label_value| {
+                    Ok(matcher
                         .regex
                         .as_ref()
-                        .is_some_and(|regex| regex.is_match(value));
-                    if matcher.op == MatchOp::Re {
-                        regex_matches
-                    } else {
-                        !regex_matches
-                    }
-                }
-            };
-            if !is_match {
-                return false;
+                        .is_some_and(|regex| regex.is_match(label_value)))
+                },
+            );
+            match is_match {
+                Ok(is_match) => is_match,
+                Err(never) => match never {},
             }
-        }
-        true
+        })
     }
 }

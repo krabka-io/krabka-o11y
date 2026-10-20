@@ -3,49 +3,123 @@ use std::collections::BTreeSet;
 use assert2::assert;
 use krabka_blockstore::{LabelIndex, LabelPredicate, LogMatchOp, labels};
 
+struct MatchCase {
+    name: &'static str,
+    op: LogMatchOp,
+    value: &'static str,
+    expected: Vec<u64>,
+}
+
 #[test]
 fn exact_posting_order_preserves_log_matcher_ledger() {
     let mut index = LabelIndex::default();
     let selected = index.insert_series(
         "tenant",
-        labels([("app", "api"), ("pod", "chosen"), ("zone", "")]),
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("pod", "chosen"),
+            krabka_blockstore::LabelPair::new("zone", ""),
+        ]),
     );
-    let other = index.insert_series("tenant", labels([("app", "api"), ("pod", "other")]));
-    let worker = index.insert_series("tenant", labels([("app", "worker"), ("zone", "東京")]));
-    index.insert_series("other", labels([("app", "api"), ("pod", "chosen")]));
+    let other = index.insert_series(
+        "tenant",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("pod", "other"),
+        ]),
+    );
+    let worker = index.insert_series(
+        "tenant",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("zone", "東京"),
+        ]),
+    );
+    index.insert_series(
+        "other",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("pod", "chosen"),
+        ]),
+    );
     let api = LabelPredicate::new("app", LogMatchOp::Equal, "api").unwrap();
     let pod = LabelPredicate::new("pod", LogMatchOp::Equal, "chosen").unwrap();
-    for (name, op, value, expected) in [
-        ("pod", LogMatchOp::Equal, "chosen", vec![selected]),
-        ("pod", LogMatchOp::Equal, "missing", vec![]),
-        ("app", LogMatchOp::Equal, "worker", vec![]),
-        ("zone", LogMatchOp::Equal, "", vec![selected]),
-        ("zone", LogMatchOp::NotEqual, "", vec![other]),
-        ("pod", LogMatchOp::NotEqual, "other", vec![selected]),
-        ("missing", LogMatchOp::NotEqual, "", vec![selected, other]),
-        (
-            "missing",
-            LogMatchOp::NotEqual,
-            "value",
-            vec![selected, other],
-        ),
-        (
-            "pod",
-            LogMatchOp::RegexEqual,
-            "chosen|other",
-            vec![selected, other],
-        ),
-        ("pod", LogMatchOp::RegexNotEqual, "other", vec![selected]),
-        ("pod", LogMatchOp::RegexEqual, "chos", vec![]),
-        (
-            "missing",
-            LogMatchOp::RegexEqual,
-            ".*",
-            vec![selected, other],
-        ),
+    for case in [
+        MatchCase {
+            name: "pod",
+            op: LogMatchOp::Equal,
+            value: "chosen",
+            expected: vec![selected],
+        },
+        MatchCase {
+            name: "pod",
+            op: LogMatchOp::Equal,
+            value: "missing",
+            expected: vec![],
+        },
+        MatchCase {
+            name: "app",
+            op: LogMatchOp::Equal,
+            value: "worker",
+            expected: vec![],
+        },
+        MatchCase {
+            name: "zone",
+            op: LogMatchOp::Equal,
+            value: "",
+            expected: vec![selected],
+        },
+        MatchCase {
+            name: "zone",
+            op: LogMatchOp::NotEqual,
+            value: "",
+            expected: vec![other],
+        },
+        MatchCase {
+            name: "pod",
+            op: LogMatchOp::NotEqual,
+            value: "other",
+            expected: vec![selected],
+        },
+        MatchCase {
+            name: "missing",
+            op: LogMatchOp::NotEqual,
+            value: "",
+            expected: vec![selected, other],
+        },
+        MatchCase {
+            name: "missing",
+            op: LogMatchOp::NotEqual,
+            value: "value",
+            expected: vec![selected, other],
+        },
+        MatchCase {
+            name: "pod",
+            op: LogMatchOp::RegexEqual,
+            value: "chosen|other",
+            expected: vec![selected, other],
+        },
+        MatchCase {
+            name: "pod",
+            op: LogMatchOp::RegexNotEqual,
+            value: "other",
+            expected: vec![selected],
+        },
+        MatchCase {
+            name: "pod",
+            op: LogMatchOp::RegexEqual,
+            value: "chos",
+            expected: vec![],
+        },
+        MatchCase {
+            name: "missing",
+            op: LogMatchOp::RegexEqual,
+            value: ".*",
+            expected: vec![selected, other],
+        },
     ] {
-        let predicate = LabelPredicate::new(name, op, value).unwrap();
-        let expected = expected.into_iter().collect::<BTreeSet<_>>();
+        let predicate = LabelPredicate::new(case.name, case.op, case.value).unwrap();
+        let expected = case.expected.into_iter().collect::<BTreeSet<_>>();
         for predicates in [
             vec![api.clone(), predicate.clone()],
             vec![predicate, api.clone()],
@@ -82,13 +156,27 @@ fn exact_posting_order_preserves_log_matcher_ledger() {
 #[test]
 fn restrictive_log_postings_preserve_unicode_nul_and_snapshots() {
     let mut index = LabelIndex::default();
-    let original = labels([("app", "api"), ("x", "a\0b"), ("zone", "東京")]);
+    let original = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("x", "a\0b"),
+        krabka_blockstore::LabelPair::new("zone", "東京"),
+    ]);
     let selected = index.insert_series("tenant", original);
-    index.insert_series("tenant", labels([("app", "api"), ("x\0a", "b")]));
+    index.insert_series(
+        "tenant",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("x\0a", "b"),
+        ]),
+    );
     let snapshot = index.clone();
     let added = index.insert_series(
         "tenant",
-        labels([("app", "api"), ("x", "a\0b"), ("zone", "west")]),
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("x", "a\0b"),
+            krabka_blockstore::LabelPair::new("zone", "west"),
+        ]),
     );
     let predicates = [
         LabelPredicate::new("app", LogMatchOp::Equal, "api").unwrap(),

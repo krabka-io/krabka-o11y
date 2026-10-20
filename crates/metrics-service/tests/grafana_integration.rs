@@ -25,35 +25,39 @@
 //! `with_host(.., Host::HostGateway)`. Docker exposes the host to a container
 //! this way on Linux, macOS, and Windows.
 
-use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 
-use bytes::Bytes;
-use diff_corpus::seed_dataset;
-use krabka_metrics::{
-    WalRecord,
-    distributor::{DistributorState, ProduceError, WalSink},
-    wire::pb,
-};
 use krabka_promql::WalHead;
-use prost::Message;
-use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
     GenericImage, ImageExt,
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
-use tokio::sync::oneshot;
 
 // The shared corpus/differ module is path-included exactly as `diff_prometheus.rs`
 // does it, so all metrics differential suites share one corpus definition. This
 // integration only needs `seed_dataset`; the differ/corpus helpers are unused
 // here, so allow dead code on the included module.
+#[path = "support/pinned_grafana_image.rs"]
+mod pinned_grafana_image;
+#[path = "support/seed_remote_write.rs"]
+mod seed_remote_write;
+#[path = "support/upstream_http.rs"]
+mod upstream_http;
+
+use self::{
+    pinned_grafana_image::pinned_grafana_image,
+    seed_remote_write::remote_write_body,
+    upstream_http::{
+        KrabkaServer, RemoteWrite, TestResult, mapped_base_url, post_remote_write,
+        wait_for_http_ok, wait_for_non_empty_result,
+    },
+};
+
 #[allow(dead_code)]
 #[path = "../../metrics/tests/support/diff_corpus.rs"]
 mod diff_corpus;
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The deadline for a container to start, which includes the image pull.
 ///
@@ -108,19 +112,28 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     let krabka = start_krabka_query_server().await?;
     post_remote_write(
         &client,
-        &krabka.base_url,
-        "/api/v1/write",
-        TENANT,
-        &remote_write_body(),
+        RemoteWrite {
+            base: &krabka.base_url,
+            path: "/api/v1/write",
+            tenant: Some(TENANT),
+            body: &remote_write_body(),
+        },
     )
     .await?;
     wait_for_query_ready(&client, &krabka.base_url, TENANT, "up").await?;
 
     // Real Grafana with the provisioned datasource.
-    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &krabka.host_port.to_string());
+    let address_parts = krabka.base_url.rsplit_once(':');
+    let port = address_parts.map_or("", |parts| parts.1);
+    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace("{PORT}", port);
     let grafana = start_grafana(&datasource_yaml).await?;
     let base = mapped_base_url(&grafana, GRAFANA_PORT).await?;
-    wait_for_http_ok(&client, &base, "/api/health").await?;
+    wait_for_http_ok(
+        &client,
+        &format!("{base}/api/health"),
+        Duration::from_mins(1),
+    )
+    .await?;
     // /api/health ("database: ok") can race ahead of datasource provisioning; a
     // query before the datasource UID resolves returns 404. Poll until present.
     wait_for_datasource(&client, &base, DATASOURCE_UID).await?;
@@ -189,7 +202,7 @@ async fn check_instant_selectors(
         fails,
         "selector gauge",
         "up",
-        &[(&[("job", "api")], exact(1.0))],
+        &[expected(&[LabelMatch::new("job", "api")], exact(1.0))],
     )
     .await;
     instant(
@@ -198,7 +211,7 @@ async fn check_instant_selectors(
         fails,
         "selector eq matcher",
         "http_requests_total{method=\"GET\"}",
-        &[(&[("method", "GET")], exact(120.0))],
+        &[expected(&[LabelMatch::new("method", "GET")], exact(120.0))],
     )
     .await;
     instant(
@@ -207,7 +220,7 @@ async fn check_instant_selectors(
         fails,
         "selector regex matcher",
         "http_requests_total{code=~\"5..\"}",
-        &[(&[("method", "POST")], exact(8.0))],
+        &[expected(&[LabelMatch::new("method", "POST")], exact(8.0))],
     )
     .await;
     instant(
@@ -216,7 +229,7 @@ async fn check_instant_selectors(
         fails,
         "selector negative matcher",
         "http_requests_total{method!=\"GET\"}",
-        &[(&[("code", "500")], exact(8.0))],
+        &[expected(&[LabelMatch::new("code", "500")], exact(8.0))],
     )
     .await;
     instant_empty(
@@ -244,7 +257,7 @@ async fn check_instant_aggregations(
         fails,
         "sum",
         "sum(http_requests_total)",
-        &[(&[], exact(128.0))],
+        &[expected(&[], exact(128.0))],
     )
     .await;
     instant(
@@ -254,8 +267,8 @@ async fn check_instant_aggregations(
         "sum by",
         "sum by (method) (http_requests_total)",
         &[
-            (&[("method", "GET")], exact(120.0)),
-            (&[("method", "POST")], exact(8.0)),
+            expected(&[LabelMatch::new("method", "GET")], exact(120.0)),
+            expected(&[LabelMatch::new("method", "POST")], exact(8.0)),
         ],
     )
     .await;
@@ -265,7 +278,7 @@ async fn check_instant_aggregations(
         fails,
         "sum without",
         "sum without (method, code, instance) (http_requests_total)",
-        &[(&[("job", "api")], exact(128.0))],
+        &[expected(&[LabelMatch::new("job", "api")], exact(128.0))],
     )
     .await;
     instant(
@@ -274,7 +287,7 @@ async fn check_instant_aggregations(
         fails,
         "avg",
         "avg(http_requests_total)",
-        &[(&[], exact(64.0))],
+        &[expected(&[], exact(64.0))],
     )
     .await;
     instant(
@@ -283,7 +296,7 @@ async fn check_instant_aggregations(
         fails,
         "min",
         "min(http_requests_total)",
-        &[(&[], exact(8.0))],
+        &[expected(&[], exact(8.0))],
     )
     .await;
     instant(
@@ -292,7 +305,7 @@ async fn check_instant_aggregations(
         fails,
         "max",
         "max(http_requests_total)",
-        &[(&[], exact(120.0))],
+        &[expected(&[], exact(120.0))],
     )
     .await;
     instant(
@@ -301,7 +314,7 @@ async fn check_instant_aggregations(
         fails,
         "count",
         "count(http_requests_total)",
-        &[(&[], exact(2.0))],
+        &[expected(&[], exact(2.0))],
     )
     .await;
     instant(
@@ -310,7 +323,7 @@ async fn check_instant_aggregations(
         fails,
         "group",
         "group(http_requests_total)",
-        &[(&[], exact(1.0))],
+        &[expected(&[], exact(1.0))],
     )
     .await;
     instant(
@@ -319,7 +332,7 @@ async fn check_instant_aggregations(
         fails,
         "topk",
         "topk(1, http_requests_total)",
-        &[(&[("method", "GET")], exact(120.0))],
+        &[expected(&[LabelMatch::new("method", "GET")], exact(120.0))],
     )
     .await;
     instant(
@@ -328,7 +341,7 @@ async fn check_instant_aggregations(
         fails,
         "bottomk",
         "bottomk(1, http_requests_total)",
-        &[(&[("method", "POST")], exact(8.0))],
+        &[expected(&[LabelMatch::new("method", "POST")], exact(8.0))],
     )
     .await;
     instant(
@@ -337,7 +350,7 @@ async fn check_instant_aggregations(
         fails,
         "quantile",
         "quantile(0.5, http_requests_total)",
-        &[(&[], exact(64.0))],
+        &[expected(&[], exact(64.0))],
     )
     .await;
     instant(
@@ -346,7 +359,7 @@ async fn check_instant_aggregations(
         fails,
         "stddev",
         "stddev(http_requests_total)",
-        &[(&[], exact(56.0))],
+        &[expected(&[], exact(56.0))],
     )
     .await;
     instant(
@@ -355,7 +368,7 @@ async fn check_instant_aggregations(
         fails,
         "stdvar",
         "stdvar(http_requests_total)",
-        &[(&[], exact(3136.0))],
+        &[expected(&[], exact(3136.0))],
     )
     .await;
     instant_count(
@@ -386,8 +399,8 @@ async fn check_instant_binary_operators(
         "scalar arithmetic",
         "http_requests_total * 2",
         &[
-            (&[("method", "GET")], exact(240.0)),
-            (&[("method", "POST")], exact(16.0)),
+            expected(&[LabelMatch::new("method", "GET")], exact(240.0)),
+            expected(&[LabelMatch::new("method", "POST")], exact(16.0)),
         ],
     )
     .await;
@@ -397,7 +410,7 @@ async fn check_instant_binary_operators(
         fails,
         "comparison filter",
         "http_requests_total > 100",
-        &[(&[("method", "GET")], exact(120.0))],
+        &[expected(&[LabelMatch::new("method", "GET")], exact(120.0))],
     )
     .await;
     instant(
@@ -407,8 +420,8 @@ async fn check_instant_binary_operators(
         "comparison bool",
         "http_requests_total >= bool 100",
         &[
-            (&[("method", "GET")], exact(1.0)),
-            (&[("method", "POST")], exact(0.0)),
+            expected(&[LabelMatch::new("method", "GET")], exact(1.0)),
+            expected(&[LabelMatch::new("method", "POST")], exact(0.0)),
         ],
     )
     .await;
@@ -428,8 +441,8 @@ async fn check_instant_binary_operators(
         "and set op on label",
         "http_requests_total and on(job) up",
         &[
-            (&[("method", "GET")], exact(120.0)),
-            (&[("method", "POST")], exact(8.0)),
+            expected(&[LabelMatch::new("method", "GET")], exact(120.0)),
+            expected(&[LabelMatch::new("method", "POST")], exact(8.0)),
         ],
     )
     .await;
@@ -439,7 +452,7 @@ async fn check_instant_binary_operators(
         fails,
         "unless set op",
         "http_requests_total unless on(method) http_requests_total{method=\"GET\"}",
-        &[(&[("method", "POST")], exact(8.0))],
+        &[expected(&[LabelMatch::new("method", "POST")], exact(8.0))],
     )
     .await;
     instant(
@@ -449,8 +462,8 @@ async fn check_instant_binary_operators(
         "group_left vector match",
         "http_requests_total / on(job) group_left sum by (job) (http_requests_total)",
         &[
-            (&[("method", "GET")], approx(120.0 / 128.0)),
-            (&[("method", "POST")], approx(8.0 / 128.0)),
+            expected(&[LabelMatch::new("method", "GET")], approx(120.0 / 128.0)),
+            expected(&[LabelMatch::new("method", "POST")], approx(8.0 / 128.0)),
         ],
     )
     .await;
@@ -473,8 +486,8 @@ async fn check_instant_range_functions(
         "rate",
         "rate(http_requests_total[30s])",
         &[
-            (&[("method", "GET")], approx(3.0)),
-            (&[("method", "POST")], approx(0.2)),
+            expected(&[LabelMatch::new("method", "GET")], approx(3.0)),
+            expected(&[LabelMatch::new("method", "POST")], approx(0.2)),
         ],
     )
     .await;
@@ -485,8 +498,8 @@ async fn check_instant_range_functions(
         "increase",
         "increase(http_requests_total[30s])",
         &[
-            (&[("method", "GET")], approx(90.0)),
-            (&[("method", "POST")], approx(6.0)),
+            expected(&[LabelMatch::new("method", "GET")], approx(90.0)),
+            expected(&[LabelMatch::new("method", "POST")], approx(6.0)),
         ],
     )
     .await;
@@ -520,7 +533,7 @@ async fn check_instant_range_functions(
         fails,
         "changes",
         "changes(cpu_temperature_celsius[1m])",
-        &[(&[("instance", "a")], approx(3.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], approx(3.0))],
     )
     .await;
     instant(
@@ -529,7 +542,7 @@ async fn check_instant_range_functions(
         fails,
         "resets",
         "resets(cpu_temperature_celsius[1m])",
-        &[(&[("instance", "a")], approx(1.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], approx(1.0))],
     )
     .await;
 
@@ -551,7 +564,7 @@ async fn check_instant_over_time(
         fails,
         "max_over_time",
         &format!("max_over_time({temps})"),
-        &[(&[("instance", "a")], exact(43.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(43.0))],
     )
     .await;
     instant(
@@ -560,7 +573,7 @@ async fn check_instant_over_time(
         fails,
         "min_over_time",
         &format!("min_over_time({temps})"),
-        &[(&[("instance", "a")], exact(40.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(40.0))],
     )
     .await;
     instant(
@@ -569,7 +582,10 @@ async fn check_instant_over_time(
         fails,
         "avg_over_time",
         &format!("avg_over_time({temps})"),
-        &[(&[("instance", "a")], approx(41.625))],
+        &[expected(
+            &[LabelMatch::new("instance", "a")],
+            approx(41.625),
+        )],
     )
     .await;
     instant(
@@ -578,7 +594,7 @@ async fn check_instant_over_time(
         fails,
         "sum_over_time",
         &format!("sum_over_time({temps})"),
-        &[(&[("instance", "a")], exact(166.5))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(166.5))],
     )
     .await;
     instant(
@@ -587,7 +603,7 @@ async fn check_instant_over_time(
         fails,
         "count_over_time",
         &format!("count_over_time({temps})"),
-        &[(&[("instance", "a")], exact(4.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(4.0))],
     )
     .await;
     instant(
@@ -596,7 +612,7 @@ async fn check_instant_over_time(
         fails,
         "last_over_time",
         &format!("last_over_time({temps})"),
-        &[(&[("instance", "a")], exact(43.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(43.0))],
     )
     .await;
     instant_present(
@@ -613,7 +629,7 @@ async fn check_instant_over_time(
         fails,
         "quantile_over_time",
         &format!("quantile_over_time(0.5, {temps})"),
-        &[(&[("instance", "a")], approx(41.75))],
+        &[expected(&[LabelMatch::new("instance", "a")], approx(41.75))],
     )
     .await;
     instant(
@@ -622,7 +638,7 @@ async fn check_instant_over_time(
         fails,
         "present_over_time",
         &format!("present_over_time({temps})"),
-        &[(&[("instance", "a")], exact(1.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(1.0))],
     )
     .await;
 
@@ -643,7 +659,7 @@ async fn check_instant_histograms(
         fails,
         "histogram_quantile p50",
         "histogram_quantile(0.5, http_request_duration_seconds_bucket)",
-        &[(&[("job", "api")], approx(0.5833))],
+        &[expected(&[LabelMatch::new("job", "api")], approx(0.5833))],
     )
     .await;
     instant_present(
@@ -671,7 +687,13 @@ async fn check_instant_label_manipulation(
         fails,
         "label_replace adds label",
         "label_replace(up, \"datacenter\", \"east\", \"job\", \"api\")",
-        &[(&[("datacenter", "east"), ("job", "api")], exact(1.0))],
+        &[expected(
+            &[
+                LabelMatch::new("datacenter", "east"),
+                LabelMatch::new("job", "api"),
+            ],
+            exact(1.0),
+        )],
     )
     .await;
     instant(
@@ -680,7 +702,7 @@ async fn check_instant_label_manipulation(
         fails,
         "label_join concatenates",
         "label_join(up, \"id\", \"-\", \"job\", \"instance\")",
-        &[(&[("id", "api-a")], exact(1.0))],
+        &[expected(&[LabelMatch::new("id", "api-a")], exact(1.0))],
     )
     .await;
 
@@ -701,7 +723,7 @@ async fn check_instant_scalar_math(
         fails,
         "scalar",
         "scalar(up)",
-        &[(&[], exact(1.0))],
+        &[expected(&[], exact(1.0))],
     )
     .await;
     instant(
@@ -710,7 +732,7 @@ async fn check_instant_scalar_math(
         fails,
         "vector",
         "vector(42)",
-        &[(&[], exact(42.0))],
+        &[expected(&[], exact(42.0))],
     )
     .await;
     instant(
@@ -719,7 +741,7 @@ async fn check_instant_scalar_math(
         fails,
         "abs",
         "abs(cpu_temperature_celsius - 100)",
-        &[(&[("instance", "a")], exact(57.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(57.0))],
     )
     .await;
     instant(
@@ -728,7 +750,7 @@ async fn check_instant_scalar_math(
         fails,
         "ceil",
         "ceil(http_request_duration_seconds_sum + 0.4)",
-        &[(&[("job", "api")], exact(61.0))],
+        &[expected(&[LabelMatch::new("job", "api")], exact(61.0))],
     )
     .await;
     instant(
@@ -737,7 +759,7 @@ async fn check_instant_scalar_math(
         fails,
         "floor",
         "floor(http_request_duration_seconds_sum + 0.9)",
-        &[(&[("job", "api")], exact(60.0))],
+        &[expected(&[LabelMatch::new("job", "api")], exact(60.0))],
     )
     .await;
     instant(
@@ -746,7 +768,7 @@ async fn check_instant_scalar_math(
         fails,
         "round",
         "round(cpu_temperature_celsius)",
-        &[(&[("instance", "a")], exact(43.0))],
+        &[expected(&[LabelMatch::new("instance", "a")], exact(43.0))],
     )
     .await;
     instant(
@@ -756,8 +778,8 @@ async fn check_instant_scalar_math(
         "clamp_max",
         "clamp_max(http_requests_total, 100)",
         &[
-            (&[("method", "GET")], exact(100.0)),
-            (&[("method", "POST")], exact(8.0)),
+            expected(&[LabelMatch::new("method", "GET")], exact(100.0)),
+            expected(&[LabelMatch::new("method", "POST")], exact(8.0)),
         ],
     )
     .await;
@@ -768,8 +790,8 @@ async fn check_instant_scalar_math(
         "clamp_min",
         "clamp_min(http_requests_total, 50)",
         &[
-            (&[("method", "GET")], exact(120.0)),
-            (&[("method", "POST")], exact(50.0)),
+            expected(&[LabelMatch::new("method", "GET")], exact(120.0)),
+            expected(&[LabelMatch::new("method", "POST")], exact(50.0)),
         ],
     )
     .await;
@@ -779,7 +801,7 @@ async fn check_instant_scalar_math(
         fails,
         "sqrt",
         "sqrt(http_request_duration_seconds_count)",
-        &[(&[("job", "api")], approx(9.4868))],
+        &[expected(&[LabelMatch::new("job", "api")], approx(9.4868))],
     )
     .await;
     instant(
@@ -788,7 +810,7 @@ async fn check_instant_scalar_math(
         fails,
         "ln",
         "ln(native_histogram_marker)",
-        &[(&[("job", "api")], exact(0.0))],
+        &[expected(&[LabelMatch::new("job", "api")], exact(0.0))],
     )
     .await;
     instant_present(client, base, fails, "exp", "exp(native_histogram_marker)").await;
@@ -811,7 +833,7 @@ async fn check_instant_time_and_sort(
         fails,
         "timestamp",
         "timestamp(up)",
-        &[(&[("job", "api")], approx(45.0))],
+        &[expected(&[LabelMatch::new("job", "api")], approx(45.0))],
     )
     .await;
     instant(
@@ -829,7 +851,7 @@ async fn check_instant_time_and_sort(
         fails,
         "absent missing-metric",
         "absent(nonexistent_metric)",
-        &[(&[], exact(1.0))],
+        &[expected(&[], exact(1.0))],
     )
     .await;
     instant(
@@ -838,7 +860,7 @@ async fn check_instant_time_and_sort(
         fails,
         "absent_over_time missing",
         "absent_over_time(nonexistent_metric[1m])",
-        &[(&[], exact(1.0))],
+        &[expected(&[], exact(1.0))],
     )
     .await;
 
@@ -867,7 +889,7 @@ async fn check_instant_time_and_sort(
         fails,
         "at modifier",
         "up @ 30.000",
-        &[(&[("job", "api")], exact(1.0))],
+        &[expected(&[LabelMatch::new("job", "api")], exact(1.0))],
     )
     .await;
     instant(
@@ -877,8 +899,8 @@ async fn check_instant_time_and_sort(
         "offset modifier",
         "http_requests_total offset 15s",
         &[
-            (&[("method", "GET")], exact(75.0)),
-            (&[("method", "POST")], exact(5.0)),
+            expected(&[LabelMatch::new("method", "GET")], exact(75.0)),
+            expected(&[LabelMatch::new("method", "POST")], exact(5.0)),
         ],
     )
     .await;
@@ -896,31 +918,56 @@ async fn check_range_query_shapes(
     fails: &mut Vec<String>,
 ) -> TestResult {
     // A representative subset over [0, 45s] step 15s -> >= 2 points per series.
-    for (name, expr, min_series) in [
-        ("range gauge", "up", 1usize),
-        ("range counter rate", "rate(http_requests_total[30s])", 2),
-        (
-            "range aggregation",
-            "sum by (method) (http_requests_total)",
-            2,
-        ),
-        (
-            "range histogram_quantile",
-            "histogram_quantile(0.5, http_request_duration_seconds_bucket)",
-            1,
-        ),
-        ("range scalar math", "cpu_temperature_celsius * 2", 1),
-        (
-            "range subquery",
-            "max_over_time(rate(http_requests_total[30s])[1m:15s])",
-            2,
-        ),
+    for case in [
+        RangeQueryCase {
+            name: "range gauge",
+            expression: "up",
+            min_series: 1,
+        },
+        RangeQueryCase {
+            name: "range counter rate",
+            expression: "rate(http_requests_total[30s])",
+            min_series: 2,
+        },
+        RangeQueryCase {
+            name: "range aggregation",
+            expression: "sum by (method) (http_requests_total)",
+            min_series: 2,
+        },
+        RangeQueryCase {
+            name: "range histogram_quantile",
+            expression: "histogram_quantile(0.5, http_request_duration_seconds_bucket)",
+            min_series: 1,
+        },
+        RangeQueryCase {
+            name: "range scalar math",
+            expression: "cpu_temperature_celsius * 2",
+            min_series: 1,
+        },
+        RangeQueryCase {
+            name: "range subquery",
+            expression: "max_over_time(rate(http_requests_total[30s])[1m:15s])",
+            min_series: 2,
+        },
     ] {
-        let raw = ds_query(client, base, expr, Some((0, EVAL_MS, 15))).await?;
+        let raw = ds_query(
+            client,
+            base,
+            case.expression,
+            Some(QueryRange {
+                start_ms: 0,
+                end_ms: EVAL_MS,
+                step_secs: 15,
+            }),
+        )
+        .await?;
         let series = parse_range_series(&raw);
-        if series.len() < min_series {
+        if series.len() < case.min_series {
             fails.push(format!(
-                "range `{name}` ({expr}): expected >= {min_series} series, got {} ({raw})",
+                "range `{}` ({}): expected >= {} series, got {} ({raw})",
+                case.name,
+                case.expression,
+                case.min_series,
                 series.len()
             ));
             continue;
@@ -928,7 +975,8 @@ async fn check_range_query_shapes(
         let has_multi_point = series.iter().any(|points| points.len() >= 2);
         if !has_multi_point {
             fails.push(format!(
-                "range `{name}` ({expr}): no series carried >= 2 data points"
+                "range `{}` ({}): no series carried >= 2 data points",
+                case.name, case.expression
             ));
         }
         // The render path must surface at least one real value. NaN at some steps
@@ -936,7 +984,8 @@ async fn check_range_query_shapes(
         // so we require some-finite rather than all-finite.
         if !series.iter().flatten().any(|v| v.is_finite()) {
             fails.push(format!(
-                "range `{name}` ({expr}): rendered no finite values"
+                "range `{}` ({}): rendered no finite values",
+                case.name, case.expression
             ));
         }
     }
@@ -1067,7 +1116,7 @@ impl Expect {
 
 /// Run an instant query through Grafana and assert the parsed series.
 ///
-/// The series must match the expected `(label-subset, value)` set exactly, in
+/// The series must match the expected label subsets and values exactly, in
 /// any order.
 async fn instant(
     client: &reqwest::Client,
@@ -1075,7 +1124,7 @@ async fn instant(
     fails: &mut Vec<String>,
     name: &str,
     expr: &str,
-    expected: &[(&[(&str, &str)], Expect)],
+    expected: &[ExpectedInstantSeries<'_>],
 ) {
     let raw = match ds_query(client, base, expr, None).await {
         Ok(raw) => raw,
@@ -1096,7 +1145,9 @@ async fn instant(
         ));
         return;
     }
-    for (want_labels, want_value) in expected {
+    for expected_series in expected {
+        let want_labels = expected_series.labels;
+        let want_value = expected_series.expectation;
         match series_value(&series, want_labels) {
             Some(got) if want_value.matches(got) => {}
             Some(got) => fails.push(format!(
@@ -1149,7 +1200,7 @@ async fn instant_present(
     match ds_query(client, base, expr, None).await {
         Ok(raw) => {
             let series = parse_instant_series(&raw);
-            if series.is_empty() || series.iter().any(|(_, v)| !v.is_finite()) {
+            if series.is_empty() || series.iter().any(|series| !series.value.is_finite()) {
                 fails.push(format!(
                     "instant `{name}` ({expr}): expected >= 1 finite series, got {series:?}"
                 ));
@@ -1184,87 +1235,141 @@ async fn instant_empty(
     }
 }
 
-/// Find the value of the parsed series whose labels include every `(k, v)` in
-/// `want`.
+/// Find the value of the parsed series whose labels include every requested
+/// label.
 ///
 /// This is a label-subset match. It ignores `__name__`.
-fn series_value(series: &[(BTreeMap<String, String>, f64)], want: &[(&str, &str)]) -> Option<f64> {
-    series
-        .iter()
-        .find(|(labels, _)| {
-            want.iter()
-                .all(|(k, v)| labels.get(*k).map(String::as_str) == Some(*v))
-        })
-        .map(|(_, value)| *value)
+struct ExpectedInstantSeries<'a> {
+    labels: &'a [LabelMatch],
+    expectation: Expect,
 }
 
-/// Parse a Grafana `/api/ds/query` instant response into `(labels, value)` per
-/// series.
+#[derive(Debug)]
+struct LabelMatch {
+    name: &'static str,
+    value: &'static str,
+}
+
+impl LabelMatch {
+    fn new(name: &'static str, value: &'static str) -> Self {
+        Self { name, value }
+    }
+}
+
+fn expected(labels: &[LabelMatch], expectation: Expect) -> ExpectedInstantSeries<'_> {
+    ExpectedInstantSeries {
+        labels,
+        expectation,
+    }
+}
+
+#[derive(Debug)]
+struct InstantSeries {
+    labels: BTreeMap<String, String>,
+    value: f64,
+}
+
+struct NumberField<'a> {
+    field: &'a Value,
+    column: &'a Vec<Value>,
+}
+
+#[derive(Clone, Copy)]
+struct QueryRange {
+    start_ms: i64,
+    end_ms: i64,
+    step_secs: i64,
+}
+
+struct RangeQueryCase {
+    name: &'static str,
+    expression: &'static str,
+    min_series: usize,
+}
+
+struct QueryWindow {
+    from_ms: i64,
+    to_ms: i64,
+}
+
+fn series_value(series: &[InstantSeries], want: &[LabelMatch]) -> Option<f64> {
+    series
+        .iter()
+        .find(|series| {
+            want.iter()
+                .all(|label| series.labels.get(label.name).map(String::as_str) == Some(label.value))
+        })
+        .map(|series| series.value)
+}
+
+/// Parse a Grafana `/api/ds/query` instant response into named series records.
 ///
 /// Grafana renders each series as a numeric field that carries the series
 /// labels. The instant value is the last datum of the field, and the field has
 /// only one datum.
-fn parse_instant_series(resp: &Value) -> Vec<(BTreeMap<String, String>, f64)> {
-    let mut out = Vec::new();
-    let Some(frames) = resp["results"]["A"]["frames"].as_array() else {
-        return out;
-    };
-    for frame in frames {
-        let (Some(fields), Some(columns)) = (
-            frame["schema"]["fields"].as_array(),
-            frame["data"]["values"].as_array(),
-        ) else {
-            continue;
-        };
-        for (index, field) in fields.iter().enumerate() {
-            if field["type"].as_str() != Some("number") {
-                continue; // skip the Time field
-            }
-            let labels = field["labels"]
-                .as_object()
-                .map(|map| {
-                    map.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect::<BTreeMap<_, _>>()
-                })
-                .unwrap_or_default();
-            if let Some(value) = columns.get(index).and_then(Value::as_array).and_then(|c| {
-                c.last()
-                    .and_then(Value::as_f64)
-                    .or((!c.is_empty()).then_some(f64::NAN))
-            }) {
-                out.push((labels, value));
-            }
-        }
-    }
-    out
+fn parse_instant_series(resp: &Value) -> Vec<InstantSeries> {
+    number_fields(resp)
+        .into_iter()
+        .filter_map(|number_field| {
+            let labels =
+                number_field.field["labels"]
+                    .as_object()
+                    .map_or_else(Default::default, |map| {
+                        let mut labels = BTreeMap::new();
+                        for entry in map {
+                            if let Some(value) = entry.1.as_str() {
+                                labels.insert(entry.0.clone(), value.to_string());
+                            }
+                        }
+                        labels
+                    });
+            number_field
+                .column
+                .last()
+                .and_then(Value::as_f64)
+                .or((!number_field.column.is_empty()).then_some(f64::NAN))
+                .map(|value| InstantSeries { labels, value })
+        })
+        .collect()
 }
 
 /// Parse a Grafana `/api/ds/query` range response into one value-column per
 /// series.
 fn parse_range_series(resp: &Value) -> Vec<Vec<f64>> {
-    let mut out = Vec::new();
+    number_fields(resp)
+        .into_iter()
+        .map(|number_field| {
+            number_field
+                .column
+                .iter()
+                .map(|v| v.as_f64().unwrap_or(f64::NAN))
+                .collect()
+        })
+        .collect()
+}
+
+/// Every numeric field of a Grafana `/api/ds/query` response, with its value
+/// column. The Time field is skipped.
+fn number_fields(resp: &Value) -> Vec<NumberField<'_>> {
     let Some(frames) = resp["results"]["A"]["frames"].as_array() else {
-        return out;
+        return Vec::new();
     };
+    let mut out = Vec::new();
     for frame in frames {
-        let (Some(fields), Some(columns)) = (
-            frame["schema"]["fields"].as_array(),
-            frame["data"]["values"].as_array(),
-        ) else {
+        let Some(fields) = frame["schema"]["fields"].as_array() else {
             continue;
         };
-        for (index, field) in fields.iter().enumerate() {
+        let Some(columns) = frame["data"]["values"].as_array() else {
+            continue;
+        };
+        for entry in fields.iter().enumerate() {
+            let index = entry.0;
+            let field = entry.1;
             if field["type"].as_str() != Some("number") {
                 continue;
             }
             if let Some(column) = columns.get(index).and_then(Value::as_array) {
-                out.push(
-                    column
-                        .iter()
-                        .map(|v| v.as_f64().unwrap_or(f64::NAN))
-                        .collect(),
-                );
+                out.push(NumberField { field, column });
             }
         }
     }
@@ -1279,25 +1384,31 @@ async fn ds_query(
     client: &reqwest::Client,
     base: &str,
     expr: &str,
-    range: Option<(i64, i64, i64)>,
+    range: Option<QueryRange>,
 ) -> TestResult<Value> {
     let mut target = json!({
         "refId": "A",
         "datasource": { "type": "prometheus", "uid": DATASOURCE_UID },
         "expr": expr,
     });
-    let (from, to) = if let Some((start, end, step)) = range {
+    let window = if let Some(range) = range {
         target["queryType"] = json!("range");
         target["range"] = json!(true);
-        target["intervalMs"] = json!(step * 1000);
+        target["intervalMs"] = json!(range.step_secs * 1000);
         target["maxDataPoints"] = json!(1000);
-        (start, end)
+        QueryWindow {
+            from_ms: range.start_ms,
+            to_ms: range.end_ms,
+        }
     } else {
         target["queryType"] = json!("instant");
         target["instant"] = json!(true);
-        (EVAL_MS, EVAL_MS)
+        QueryWindow {
+            from_ms: EVAL_MS,
+            to_ms: EVAL_MS,
+        }
     };
-    let body = json!({ "from": from.to_string(), "to": to.to_string(), "queries": [target] });
+    let body = json!({ "from": window.from_ms.to_string(), "to": window.to_ms.to_string(), "queries": [target] });
 
     let response = client
         .post(format!("{base}/api/ds/query"))
@@ -1322,15 +1433,12 @@ async fn resource_json(client: &reqwest::Client, base: &str, path: &str) -> Test
 /// Extract a JSON string array: the Prometheus `data` payloads for labels and
 /// values.
 fn string_array(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
+    value.as_array().map_or_else(Default::default, |items| {
+        items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1340,19 +1448,9 @@ fn string_array(value: &Value) -> Vec<String> {
 async fn start_grafana(
     datasource_yaml: &str,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite compared
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+        pinned_grafana_image()
             .with_exposed_port(GRAFANA_PORT.tcp())
             // Grafana writes its go logger to STDOUT (verified: the "HTTP Server
             // Listen" line appears on stdout, not stderr). /api/health is polled for
@@ -1377,141 +1475,12 @@ async fn start_grafana(
     .await??)
 }
 
-async fn mapped_base_url(
-    container: &testcontainers::ContainerAsync<GenericImage>,
-    port: u16,
-) -> TestResult<String> {
-    let mapped = container.get_host_port_ipv4(port.tcp()).await?;
-    Ok(format!("http://127.0.0.1:{mapped}"))
-}
-
-struct KrabkaServer {
-    base_url: String,
-    /// Host-reachable port that the container dials through host.docker.internal.
-    host_port: u16,
-    shutdown: Option<oneshot::Sender<()>>,
-}
-
-impl KrabkaServer {
-    fn shutdown(mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
-
 async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
     let query_router = krabka_metrics_service::prometheus_router_for_store(head.clone());
-    let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
-    let distributor = Arc::new(DistributorState::new(sink));
-    let router = query_router.merge(krabka_metrics::distributor::router(distributor));
-    let (tx, rx) = oneshot::channel();
     // Bind 0.0.0.0 so the Grafana container can reach the server through the
     // Docker host gateway; the OS picks the port.
-    let addr: SocketAddr = "0.0.0.0:0".parse()?;
-    let bound = krabka_metrics_service::serve_prometheus_router(
-        addr,
-        router,
-        &krabka_observability::server_security::ServerSecurity::default(),
-        async move {
-            let _ = rx.await;
-        },
-    )
-    .await?;
-
-    Ok(KrabkaServer {
-        // Local queries dial loopback against the bound port.
-        base_url: format!("http://127.0.0.1:{}", bound.port()),
-        host_port: bound.port(),
-        shutdown: Some(tx),
-    })
-}
-
-struct WalHeadSink {
-    head: WalHead,
-}
-
-#[async_trait::async_trait]
-impl WalSink for WalHeadSink {
-    async fn append(&self, _key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
-        self.head.apply_wal_record(&record);
-        Ok(())
-    }
-}
-
-fn remote_write_body() -> Vec<u8> {
-    let req = pb::v1::WriteRequest {
-        timeseries: seed_dataset()
-            .into_iter()
-            .map(|point| pb::v1::TimeSeries {
-                labels: remote_write_labels(point.metric, point.labels),
-                samples: point
-                    .samples
-                    .iter()
-                    .map(|(timestamp, value)| pb::v1::Sample {
-                        value: *value,
-                        timestamp: *timestamp,
-                    })
-                    .collect(),
-                ..Default::default()
-            })
-            .collect(),
-        ..Default::default()
-    };
-    snap::raw::Encoder::new()
-        .compress_vec(&req.encode_to_vec())
-        .expect("snappy remote_write")
-}
-
-fn remote_write_labels(metric: &str, labels: &[(&str, &str)]) -> Vec<pb::v1::Label> {
-    std::iter::once(pb::v1::Label {
-        name: "__name__".to_string(),
-        value: metric.to_string(),
-    })
-    .chain(labels.iter().map(|(name, value)| pb::v1::Label {
-        name: (*name).to_string(),
-        value: (*value).to_string(),
-    }))
-    .collect()
-}
-
-async fn post_remote_write(
-    client: &reqwest::Client,
-    base: &str,
-    path: &str,
-    tenant: &str,
-    body: &[u8],
-) -> TestResult {
-    let status = client
-        .post(format!("{base}{path}"))
-        .header("Content-Type", "application/x-protobuf")
-        .header("Content-Encoding", "snappy")
-        .header("X-Scope-OrgID", tenant)
-        .body(body.to_vec())
-        .send()
-        .await?
-        .status();
-    if !(status == StatusCode::OK || status == StatusCode::NO_CONTENT) {
-        return Err(format!("remote_write to {base}{path} returned {status}").into());
-    }
-    Ok(())
-}
-
-async fn wait_for_http_ok(client: &reqwest::Client, base: &str, path: &str) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_mins(1);
-    while std::time::Instant::now() < deadline {
-        if client
-            .get(format!("{base}{path}"))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    Err(format!("{base}{path} did not become ready").into())
+    KrabkaServer::start(query_router, head, "0.0.0.0:0".parse()?).await
 }
 
 async fn wait_for_datasource(client: &reqwest::Client, base: &str, uid: &str) -> TestResult {
@@ -1536,13 +1505,13 @@ async fn wait_for_query_ready(
     tenant: &str,
     query: &str,
 ) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    while std::time::Instant::now() < deadline {
-        let url = format!(
-            "{base}/api/v1/query?query={}&time=45.000",
-            url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>()
-        );
-        let json: Value = client
+    let url = format!(
+        "{base}/api/v1/query?query={}&time=45.000",
+        url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>()
+    );
+    let url = &url;
+    let ready = wait_for_non_empty_result(std::time::Duration::from_secs(15), || async move {
+        let response: Value = client
             .get(url)
             .header("X-Scope-OrgID", tenant)
             .send()
@@ -1550,13 +1519,11 @@ async fn wait_for_query_ready(
             .error_for_status()?
             .json()
             .await?;
-        if json["data"]["result"]
-            .as_array()
-            .is_some_and(|result| !result.is_empty())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        Ok(response)
+    })
+    .await?;
+    if ready {
+        return Ok(());
     }
     Err(format!("query `{query}` did not become non-empty on {base}").into())
 }

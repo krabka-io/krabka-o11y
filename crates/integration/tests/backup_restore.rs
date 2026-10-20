@@ -1,6 +1,7 @@
 // The PromQL router's query future holds DataFusion state. Its axum `Send`
 // check needs the same trait recursion depth as the other router suites.
 #![recursion_limit = "512"]
+#![allow(clippy::items_after_statements)]
 //! A consistent backup of a whole deployment, restored into an empty one.
 //!
 //! The suite boots a real broker in-process and drives every signal through
@@ -48,12 +49,13 @@ use axum::{
 use krabka_blockstore::{
     BlockStore, BrokerState as _, DeploymentPart, ERASURE_REQUEST_PREFIX, ErasureRequest,
     LabelMatcher, MatchOp, ProfileIndex, TraceIndex, audit_deployment_backup, backup_deployment,
-    labels, put_erasure_request, restore_deployment_backup,
+    put_erasure_request, restore_deployment_backup,
 };
 use krabka_broker::{BootstrapMode, Broker, BrokerConfig, BrokerHandle};
 use krabka_client_producer::Producer;
+use krabka_integration::{MapEntry, ordered_map};
 use krabka_metrics::{
-    MetricsCompactorConfig, SamplePayload, TsdbBlockFiles, WalExemplar, WalRecord,
+    MetricLabelPair, MetricsCompactorConfig, SamplePayload, TsdbBlockFiles, WalExemplar, WalRecord,
     distributor::{KafkaSink as MetricsKafkaSink, WalSink as _},
     list_compaction_manifests,
     metrics::ServiceMetrics as MetricsServiceMetrics,
@@ -77,7 +79,7 @@ use krabka_observability::{
     wal_consumer_metrics::WalConsumerMetrics,
 };
 use krabka_profiles::{
-    ProfileRecord, WalFunction, WalLocation, WalMapping, WalSample, WalSymbolSet,
+    ProfileRecord, WalSample,
     blockbuilder::{BlockBuilderConfig as ProfilesBlockBuilderConfig, run_with_config},
     cold_store::ColdProfileStore,
     distributor::{KafkaSink as ProfilesKafkaSink, WalSink as _},
@@ -106,6 +108,9 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt as _;
 use tsdb_fixture::{FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, fixture_files};
 
+use self::one_frame_profile::one_frame_symbols;
+
+mod one_frame_profile;
 #[path = "../../metrics/tests/support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -166,42 +171,49 @@ impl Deployment {
     /// `data-root` here, as an all-in-one logs role does, so it is one part.
     fn parts(&self) -> Vec<DeploymentPart> {
         [
-            ("logs", &self.logs),
-            ("logs-data-root", &self.logs_state),
-            ("metrics", &self.metrics),
-            ("profiles", &self.profiles),
-            ("traces", &self.traces),
+            DeploymentStorePart {
+                name: "logs",
+                store: &self.logs,
+            },
+            DeploymentStorePart {
+                name: "logs-data-root",
+                store: &self.logs_state,
+            },
+            DeploymentStorePart {
+                name: "metrics",
+                store: &self.metrics,
+            },
+            DeploymentStorePart {
+                name: "profiles",
+                store: &self.profiles,
+            },
+            DeploymentStorePart {
+                name: "traces",
+                store: &self.traces,
+            },
         ]
         .into_iter()
-        .map(|(name, store)| DeploymentPart {
-            name: name.into(),
-            store: Arc::clone(store),
+        .map(|part| DeploymentPart {
+            name: part.name.into(),
+            store: Arc::clone(part.store),
         })
         .collect()
     }
+}
+
+struct DeploymentStorePart<'a> {
+    name: &'static str,
+    store: &'a Arc<dyn ObjectStore>,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest() {
     let evidence = Evidence::from_env();
     let live = Deployment::empty();
-    let broker = start_broker(live.broker_dir.path(), BootstrapMode::Bootstrap).await;
-    let bootstrap = broker.listen_addr().to_string();
-    provision_topics(
-        &bootstrap,
-        &ALL_TOPICS,
-        &TopicSettings::single_broker(),
-        None,
-    )
-    .await
-    .expect("provision topics");
-    let producer = Arc::new(
-        Producer::builder()
-            .bootstrap(&bootstrap)
-            .build()
-            .await
-            .expect("producer"),
-    );
+    let provisioned = start_provisioned_broker(&live).await;
+    let broker = provisioned.broker;
+    let bootstrap = provisioned.bootstrap;
+    let producer = provisioned.producer;
 
     // --- write every signal and every kind of state, then build blocks ----
     for tenant in TENANTS {
@@ -262,7 +274,8 @@ async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest
     evidence.write("restore-report.json", &restore_report);
 
     let after = query_everything(&restored, &restored_bootstrap).await;
-    for (name, answer) in &before {
+    for name in before.keys() {
+        let answer = &before[name];
         check!(
             after.get(name) == Some(answer),
             "{name} survives the restore"
@@ -303,16 +316,32 @@ async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest
         .capture()
         .await
         .expect("read the resumed broker");
-    for (signal, topic) in [
-        ("logs", LOGS_WAL_TOPIC),
-        ("metrics", METRICS_WAL_TOPIC),
-        ("profiles", PROFILES_WAL_TOPIC),
-        ("traces", TRACES_WAL_TOPIC),
+    struct SignalTopic {
+        signal: &'static str,
+        topic: &'static str,
+    }
+    for topic_case in [
+        SignalTopic {
+            signal: "logs",
+            topic: LOGS_WAL_TOPIC,
+        },
+        SignalTopic {
+            signal: "metrics",
+            topic: METRICS_WAL_TOPIC,
+        },
+        SignalTopic {
+            signal: "profiles",
+            topic: PROFILES_WAL_TOPIC,
+        },
+        SignalTopic {
+            signal: "traces",
+            topic: TRACES_WAL_TOPIC,
+        },
     ] {
         let end = resumed_snapshot
             .wal_offsets
             .iter()
-            .find(|offset| offset.topic == topic)
+            .find(|offset| offset.topic == topic_case.topic)
             .expect("WAL partition")
             .next_offset;
         let cut = backup_report
@@ -320,15 +349,20 @@ async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest
             .broker
             .wal_offsets
             .iter()
-            .find(|offset| offset.topic == topic)
+            .find(|offset| offset.topic == topic_case.topic)
             .expect("WAL partition at the cut")
             .next_offset;
-        check!(cut < end, "{signal}: new records reached the restored WAL");
-        let records = record_offsets(&restored_bootstrap, topic, end).await;
         check!(
-            covers_exactly_once(&coverage[signal], &records, end),
-            "{signal}: every WAL record is in exactly one block of each series: {:?}, records {records:?}",
-            coverage[signal]
+            cut < end,
+            "{}: new records reached the restored WAL",
+            topic_case.signal
+        );
+        let records = record_offsets(&restored_bootstrap, topic_case.topic, end).await;
+        check!(
+            covers_exactly_once(&coverage[topic_case.signal], &records, end),
+            "{}: every WAL record is in exactly one block of each series: {:?}, records {records:?}",
+            topic_case.signal,
+            coverage[topic_case.signal]
         );
     }
     evidence.write("wal-coverage.json", &coverage);
@@ -338,23 +372,10 @@ async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_broker_restored_from_another_time_is_refused_before_any_write() {
     let live = Deployment::empty();
-    let broker = start_broker(live.broker_dir.path(), BootstrapMode::Bootstrap).await;
-    let bootstrap = broker.listen_addr().to_string();
-    provision_topics(
-        &bootstrap,
-        &ALL_TOPICS,
-        &TopicSettings::single_broker(),
-        None,
-    )
-    .await
-    .expect("provision topics");
-    let producer = Arc::new(
-        Producer::builder()
-            .bootstrap(&bootstrap)
-            .build()
-            .await
-            .expect("producer"),
-    );
+    let provisioned = start_provisioned_broker(&live).await;
+    let broker = provisioned.broker;
+    let bootstrap = provisioned.bootstrap;
+    let producer = provisioned.producer;
     produce_generation(&producer, &bootstrap, TENANTS[0], 0).await;
     build_all_blocks(&live, &bootstrap).await;
 
@@ -483,7 +504,8 @@ async fn a_restored_deployment_keeps_a_tsdb_import_and_does_not_import_it_again(
     )
     .await;
     let other_ulid = upload_fixture_block(&uploads, OTHER_ULID).await;
-    check!(same_ulid == (StatusCode::CONFLICT, b"block already exists\n".to_vec()));
+    check!(same_ulid.status == StatusCode::CONFLICT);
+    check!(same_ulid.body == b"block already exists\n");
     check!(other_ulid == json!({"result": "complete", "existingBlock": FIXTURE_ULID}));
     check!(manifest_keys(&restored.metrics).await == manifests);
     check!(imported_sample_count(&restored.metrics).await == samples);
@@ -491,6 +513,39 @@ async fn a_restored_deployment_keeps_a_tsdb_import_and_does_not_import_it_again(
 
 fn cut_broker_state(bootstrap: &str) -> KafkaBrokerState {
     KafkaBrokerState::new(bootstrap, None, ALL_TOPICS.iter().map(|topic| topic.name))
+}
+
+// Starts a bootstrapping broker over `live`, provisions every topic on it,
+// and returns it with its address and a producer bound to it.
+struct ProvisionedBroker {
+    broker: BrokerHandle,
+    bootstrap: String,
+    producer: Arc<Producer>,
+}
+
+async fn start_provisioned_broker(live: &Deployment) -> ProvisionedBroker {
+    let broker = start_broker(live.broker_dir.path(), BootstrapMode::Bootstrap).await;
+    let bootstrap = broker.listen_addr().to_string();
+    provision_topics(
+        &bootstrap,
+        &ALL_TOPICS,
+        &TopicSettings::single_broker(),
+        None,
+    )
+    .await
+    .expect("provision topics");
+    let producer = Arc::new(
+        Producer::builder()
+            .bootstrap(&bootstrap)
+            .build()
+            .await
+            .expect("producer"),
+    );
+    ProvisionedBroker {
+        broker,
+        bootstrap,
+        producer,
+    }
 }
 
 /// Starts a broker on `dir`.
@@ -564,8 +619,8 @@ async fn produce_generation(
     let sample = WalRecord {
         tenant: tenant.into(),
         labels: vec![
-            ("__name__".into(), "backup_probe".into()),
-            ("job".into(), "checkout".into()),
+            MetricLabelPair::new("__name__", "backup_probe".into()),
+            MetricLabelPair::new("job", "checkout".into()),
         ],
         payload: SamplePayload::Float {
             timestamp_ms: ts_ms,
@@ -577,7 +632,7 @@ async fn produce_generation(
     let exemplar = WalRecord {
         payload: SamplePayload::Exemplars,
         exemplars: vec![WalExemplar {
-            labels: vec![("trace_id".into(), hex::encode(TRACE_ID))],
+            labels: vec![MetricLabelPair::new("trace_id", hex::encode(TRACE_ID))],
             value: 1.0,
             timestamp_ms: ts_ms,
         }],
@@ -596,10 +651,16 @@ async fn produce_generation(
         .expect("logs WAL sink")
         .append(WalLogRecord {
             tenant: tenant.into(),
-            labels: labels([("app", "checkout")]),
+            labels: ordered_map([MapEntry {
+                key: "app".to_string(),
+                value: "checkout".to_string(),
+            }]),
             timestamp_ns: ts_ms * 1_000_000,
             line: format!("generation {generation} trace_id={}", hex::encode(TRACE_ID)),
-            structured_metadata: BTreeMap::from([("trace_id".to_string(), hex::encode(TRACE_ID))]),
+            structured_metadata: ordered_map([MapEntry {
+                key: "trace_id".to_string(),
+                value: hex::encode(TRACE_ID),
+            }]),
             position: None,
         })
         .await
@@ -643,9 +704,9 @@ fn profile_record(tenant: &str, ts_ms: i64, span_id: u64) -> ProfileRecord {
     ProfileRecord {
         tenant: tenant.into(),
         labels: vec![
-            ("__profile_type__".into(), PROFILE_TYPE.into()),
-            ("__name__".into(), "process_cpu".into()),
-            ("service_name".into(), "checkout".into()),
+            krabka_blockstore::LabelPair::new("__profile_type__", PROFILE_TYPE),
+            krabka_blockstore::LabelPair::new("__name__", "process_cpu"),
+            krabka_blockstore::LabelPair::new("service_name", "checkout"),
         ],
         profile_type: PROFILE_TYPE.into(),
         samples: vec![WalSample {
@@ -655,31 +716,7 @@ fn profile_record(tenant: &str, ts_ms: i64, span_id: u64) -> ProfileRecord {
             span_id: Some(span_id),
             trace_id: Some(TRACE_ID.to_vec()),
         }],
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), FRAME.into()],
-            functions: vec![WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![WalLocation {
-                address: 0x1000,
-                mapping_id: 0,
-                lines: vec![(0, 10)],
-            }],
-            mappings: vec![WalMapping {
-                memory_start: 0,
-                memory_limit: 0,
-                file_offset: 0,
-                filename: 0,
-                build_id: 0,
-                has_functions: true.into(),
-                has_filenames: false.into(),
-                has_line_numbers: false.into(),
-                has_inline_frames: false.into(),
-            }],
-        },
+        symbols: one_frame_symbols(FRAME),
     }
 }
 
@@ -797,7 +834,7 @@ async fn write_state(live: &Deployment, bootstrap: &str) {
 fn recording_rule_record(tenant: &str) -> WalRecord {
     WalRecord {
         tenant: tenant.into(),
-        labels: vec![("__name__".into(), "backup_probe:sum".into())],
+        labels: vec![MetricLabelPair::new("__name__", "backup_probe:sum".into())],
         payload: SamplePayload::Float {
             timestamp_ms: BASE_MS,
             value: 1.0,
@@ -820,9 +857,15 @@ fn alert_state_record(tenant: &str) -> RulerAlertStateRecord {
     RulerAlertStateRecord {
         tenant: tenant.into(),
         rule_id: ALERT_RULE.into(),
-        labels: BTreeMap::from([
-            ("alertname".to_string(), "BackupProbe".to_string()),
-            ("job".to_string(), "checkout".to_string()),
+        labels: ordered_map([
+            MapEntry {
+                key: "alertname".to_string(),
+                value: "BackupProbe".to_string(),
+            },
+            MapEntry {
+                key: "job".to_string(),
+                value: "checkout".to_string(),
+            },
         ])
         .into(),
         active_since_ms: Some(BASE_MS),
@@ -1018,6 +1061,18 @@ async fn wait_for_drained(bootstrap: &str) {
 // ---------------------------------------------------------------------------
 
 /// Every answer that must survive the restore, keyed by a stable name.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+struct SpanTraceAssociation {
+    trace_id: String,
+    span_id: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+struct SpanSummary {
+    span_id: String,
+    name: String,
+}
+
 async fn query_everything(deployment: &Deployment, bootstrap: &str) -> BTreeMap<String, Value> {
     let mut answers = BTreeMap::new();
     let metrics = metrics_router(&deployment.metrics).await;
@@ -1041,16 +1096,24 @@ async fn query_everything(deployment: &Deployment, bootstrap: &str) -> BTreeMap<
             )
             .await,
         );
-        for (name, query) in [
-            (
-                "compound",
-                "(sum(sum_over_time(backup_probe[1h1ms])) + 2) * 3",
-            ),
-            ("absent", "sum(backup_probe{job=\"absent\"})"),
+        struct MetricQueryCase {
+            name: &'static str,
+            query: &'static str,
+        }
+        for query_case in [
+            MetricQueryCase {
+                name: "compound",
+                query: "(sum(sum_over_time(backup_probe[1h1ms])) + 2) * 3",
+            },
+            MetricQueryCase {
+                name: "absent",
+                query: "sum(backup_probe{job=\"absent\"})",
+            },
         ] {
-            let query = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+            let query = url::form_urlencoded::byte_serialize(query_case.query.as_bytes())
+                .collect::<String>();
             answers.insert(
-                format!("{tenant}/metrics/{name}"),
+                format!("{tenant}/metrics/{}", query_case.name),
                 get_json(
                     &metrics,
                     tenant,
@@ -1103,9 +1166,10 @@ async fn query_everything(deployment: &Deployment, bootstrap: &str) -> BTreeMap<
             .iter()
             .flat_map(|trace| {
                 trace.span_sets.iter().flat_map(move |set| {
-                    set.spans
-                        .iter()
-                        .map(move |span| (hex::encode(trace.trace_id), hex::encode(span.span_id)))
+                    set.spans.iter().map(move |span| SpanTraceAssociation {
+                        trace_id: hex::encode(trace.trace_id),
+                        span_id: hex::encode(span.span_id),
+                    })
                 })
             })
             .collect::<Vec<_>>();
@@ -1176,50 +1240,67 @@ async fn query_everything(deployment: &Deployment, bootstrap: &str) -> BTreeMap<
                 let mut spans = trace
                     .spans
                     .iter()
-                    .map(|span| (hex::encode(span.span_id), span.name.clone()))
+                    .map(|span| SpanSummary {
+                        span_id: hex::encode(span.span_id),
+                        name: span.name.clone(),
+                    })
                     .collect::<Vec<_>>();
                 spans.sort();
                 json!({"root": trace.root_trace_name, "spans": spans})
             });
         answers.insert(format!("{tenant}/traces/trace_by_id"), json!(trace));
-        for (name, selector) in [
-            (
-                "filtered",
-                "{service_name=~\"check.*\",service_name!=\"absent\"}",
-            ),
-            ("absent", "{service_name=\"absent\"}"),
-        ] {
-            let query = url::form_urlencoded::byte_serialize(
-                format!("{PROFILE_TYPE}{selector}").as_bytes(),
-            )
-            .collect::<String>();
-            answers.insert(
-                format!("{tenant}/profiles/{name}"),
-                get_json(
-                    &profiles,
-                    tenant,
-                    &format!("/pyroscope/render?query={query}&from=0&until={}", i64::MAX),
-                )
-                .await,
-            );
-        }
+        answers.extend(profile_answers(&profiles, tenant).await);
+    }
+    answers
+}
+
+// The profiles answers of one tenant, keyed as `query_everything` keys them.
+async fn profile_answers(profiles: &axum::Router, tenant: &str) -> BTreeMap<String, Value> {
+    let mut answers = BTreeMap::new();
+    struct ProfileSelectorCase {
+        name: &'static str,
+        selector: &'static str,
+    }
+    for selector_case in [
+        ProfileSelectorCase {
+            name: "filtered",
+            selector: "{service_name=~\"check.*\",service_name!=\"absent\"}",
+        },
+        ProfileSelectorCase {
+            name: "absent",
+            selector: "{service_name=\"absent\"}",
+        },
+    ] {
+        let query = url::form_urlencoded::byte_serialize(
+            format!("{PROFILE_TYPE}{}", selector_case.selector).as_bytes(),
+        )
+        .collect::<String>();
         answers.insert(
-            format!("{tenant}/profiles/render"),
+            format!("{tenant}/profiles/{}", selector_case.name),
             get_json(
-                &profiles,
+                profiles,
                 tenant,
-                &format!(
-                    "/pyroscope/render?query={}&from=0&until={}",
-                    url::form_urlencoded::byte_serialize(
-                        format!("{PROFILE_TYPE}{{service_name=\"checkout\"}}").as_bytes()
-                    )
-                    .collect::<String>(),
-                    i64::MAX
-                ),
+                &format!("/pyroscope/render?query={query}&from=0&until={}", i64::MAX),
             )
             .await,
         );
     }
+    answers.insert(
+        format!("{tenant}/profiles/render"),
+        get_json(
+            profiles,
+            tenant,
+            &format!(
+                "/pyroscope/render?query={}&from=0&until={}",
+                url::form_urlencoded::byte_serialize(
+                    format!("{PROFILE_TYPE}{{service_name=\"checkout\"}}").as_bytes()
+                )
+                .collect::<String>(),
+                i64::MAX
+            ),
+        )
+        .await,
+    );
     answers
 }
 
@@ -1333,10 +1414,10 @@ fn check_expected_answers(answers: &BTreeMap<String, Value>, generations: usize)
             answers[&format!("{tenant}/traces/compound")]
                 == json!(
                     (1..=generations)
-                        .map(|span| (
-                            trace_id.clone(),
-                            hex::encode(u64::try_from(span).unwrap().to_be_bytes())
-                        ))
+                        .map(|span| SpanTraceAssociation {
+                            trace_id: trace_id.clone(),
+                            span_id: hex::encode(u64::try_from(span).unwrap().to_be_bytes()),
+                        })
                         .collect::<Vec<_>>()
                 ),
             "{tenant}: exact selected trace/span IDs"
@@ -1470,10 +1551,13 @@ async fn replayed_ruler_state(bootstrap: &str) -> BTreeMap<String, Value> {
             .or_default()
             .push(serde_json::to_value(record).expect("json"));
     }
-    by_tenant
-        .into_iter()
-        .map(|(tenant, records)| (tenant, Value::Array(records)))
-        .collect()
+    let tenants: Vec<String> = by_tenant.keys().cloned().collect();
+    let mut result = BTreeMap::new();
+    for tenant in tenants {
+        let records = by_tenant.remove(&tenant).expect("tenant records");
+        result.insert(tenant, Value::Array(records));
+    }
+    result
 }
 
 fn unique_suffix() -> u128 {
@@ -1564,12 +1648,26 @@ fn upload_uri(ulid: &str, step: &str) -> String {
 }
 
 /// The files of the checked-in Prometheus block, by upload path.
-fn fixture_upload_files() -> [(&'static str, Vec<u8>); 3] {
+struct UploadFile {
+    path: &'static str,
+    bytes: Vec<u8>,
+}
+
+fn fixture_upload_files() -> [UploadFile; 3] {
     let files = fixture_files();
     [
-        ("index", files.index),
-        ("chunks/000001", files.chunks),
-        ("tombstones", files.tombstones),
+        UploadFile {
+            path: "index",
+            bytes: files.index,
+        },
+        UploadFile {
+            path: "chunks/000001",
+            bytes: files.chunks,
+        },
+        UploadFile {
+            path: "tombstones",
+            bytes: files.tombstones,
+        },
     ]
 }
 
@@ -1580,7 +1678,7 @@ fn fixture_upload_meta(ulid: &str) -> Vec<u8> {
         .chain(
             fixture_upload_files()
                 .iter()
-                .map(|(path, bytes)| json!({"rel_path": path, "size_bytes": bytes.len()})),
+                .map(|file| json!({"rel_path": file.path, "size_bytes": file.bytes.len()})),
         )
         .collect::<Vec<_>>();
     serde_json::to_vec(&json!({
@@ -1593,12 +1691,7 @@ fn fixture_upload_meta(ulid: &str) -> Vec<u8> {
     .expect("encode meta.json")
 }
 
-async fn send(
-    router: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: Vec<u8>,
-) -> (StatusCode, Vec<u8>) {
+async fn send(router: &axum::Router, method: &str, uri: &str, body: Vec<u8>) -> SentResponse {
     let response = router
         .clone()
         .oneshot(
@@ -1616,7 +1709,13 @@ async fn send(
         .await
         .expect("body")
         .to_vec();
-    (status, body)
+    SentResponse { status, body }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SentResponse {
+    status: StatusCode,
+    body: Vec<u8>,
 }
 
 /// Uploads the checked-in block under `ulid` with the four requests of
@@ -1629,21 +1728,29 @@ async fn upload_fixture_block(router: &axum::Router, ulid: &str) -> Value {
         fixture_upload_meta(ulid),
     )
     .await;
-    assert!(started.0 == StatusCode::OK, "start: {started:?}");
-    for (path, bytes) in fixture_upload_files() {
+    assert!(started.status == StatusCode::OK, "start: {started:?}");
+    for file in fixture_upload_files() {
         let uri = format!(
             "{}?path={}",
             upload_uri(ulid, "files"),
-            path.replace('/', "%2F")
+            file.path.replace('/', "%2F")
         );
-        let uploaded = send(router, "POST", &uri, bytes).await;
-        assert!(uploaded.0 == StatusCode::OK, "file {path}: {uploaded:?}");
+        let uploaded = send(router, "POST", &uri, file.bytes).await;
+        assert!(
+            uploaded.status == StatusCode::OK,
+            "file {}: {uploaded:?}",
+            file.path
+        );
     }
     let finished = send(router, "POST", &upload_uri(ulid, "finish"), Vec::new()).await;
-    assert!(finished.0 == StatusCode::OK, "finish: {finished:?}");
-    let (status, body) = send(router, "GET", &upload_uri(ulid, "check"), Vec::new()).await;
-    assert!(status == StatusCode::OK, "check: {status}");
-    serde_json::from_slice(&body).expect("check answer")
+    assert!(finished.status == StatusCode::OK, "finish: {finished:?}");
+    let checked = send(router, "GET", &upload_uri(ulid, "check"), Vec::new()).await;
+    assert!(
+        checked.status == StatusCode::OK,
+        "check: {}",
+        checked.status
+    );
+    serde_json::from_slice(&checked.body).expect("check answer")
 }
 
 /// The objects that the upload and the import of the checked-in block leave
@@ -1823,8 +1930,12 @@ async fn record_offsets(bootstrap: &str, topic: &str, end: i64) -> std::collecti
         .build()
         .await
         .expect("record reader");
+    let assignment = TopicPartition {
+        topic: topic.to_string(),
+        partition: 0,
+    };
     consumer
-        .assign(&[(topic.to_string(), 0)])
+        .assign(&[(assignment.topic, assignment.partition)])
         .await
         .expect("assign");
     let deadline = Instant::now() + BROKER_DEADLINE;
@@ -1838,16 +1949,20 @@ async fn record_offsets(bootstrap: &str, topic: &str, end: i64) -> std::collecti
     offsets
 }
 
+struct TopicPartition {
+    topic: String,
+    partition: i32,
+}
+
 /// The offsets in a `{tenant}/{partition}/{first}-{last}-...parquet` key.
 fn block_key_offsets(key: &str) -> std::ops::RangeInclusive<i64> {
     let name = key.rsplit('/').next().expect("file name");
     let mut fields = name.split('-');
     let first = fields.next().and_then(|field| field.parse().ok());
     let last = fields.next().and_then(|field| field.parse().ok());
-    match (first, last) {
-        (Some(first), Some(last)) => first..=last,
-        _ => panic!("block key `{key}` names no offset range"),
-    }
+    first
+        .and_then(|first| last.map(|last| first..=last))
+        .unwrap_or_else(|| panic!("block key `{key}` names no offset range"))
 }
 
 fn offset_range_in(
@@ -1857,19 +1972,18 @@ fn offset_range_in(
 ) -> Option<std::ops::RangeInclusive<i64>> {
     let rest = path.split(marker).nth(1)?;
     let range = rest.split('/').next()?;
-    let (first, last) = range.split_once(separator)?;
-    Some(first.parse().ok()?..=last.parse().ok()?)
+    let separator_index = range.find(separator)?;
+    let first = range[..separator_index].parse().ok()?;
+    let last = range[separator_index + separator.len_utf8()..]
+        .parse()
+        .ok()?;
+    Some(first..=last)
 }
 
 async fn list_paths(store: &Arc<dyn ObjectStore>) -> Vec<String> {
-    let mut paths = futures::TryStreamExt::try_collect::<Vec<_>>(store.list(None))
+    krabka_blockstore::sorted_object_paths(store.as_ref())
         .await
         .expect("list")
-        .into_iter()
-        .map(|meta| meta.location.to_string())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
 }
 
 // ---------------------------------------------------------------------------
@@ -1915,7 +2029,9 @@ impl Evidence {
             return;
         };
         let mut manifest = String::new();
-        for (name, sha256) in self.files.lock().expect("evidence").iter() {
+        let files = self.files.lock().expect("evidence");
+        for name in files.keys() {
+            let sha256 = &files[name];
             writeln!(manifest, "{sha256}  {name}").expect("write to a string");
         }
         std::fs::write(dir.join("SHA256SUMS"), manifest).expect("write evidence manifest");

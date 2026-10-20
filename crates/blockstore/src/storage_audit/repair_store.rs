@@ -4,6 +4,11 @@ use super::{
     UNIX_EPOCH, audit_inventory, instrument, is_older_than_grace,
 };
 
+struct RepairStatus {
+    outcome: RepairOutcome,
+    detail: Option<String>,
+}
+
 /// Deletes the orphans that an audit of one tenant finds, and nothing else.
 ///
 /// The repair first validates the scope, then audits the tenant. It acts
@@ -40,19 +45,20 @@ pub async fn repair_store(
 ) -> Result<RepairReport, StorageAuditError> {
     options.validate()?;
     let audit_options = options.audit_options();
-    let (audit, inventory) = audit_inventory(store, &audit_options).await?;
-    let planned = in_scope(&audit.findings, options);
+    let audited = audit_inventory(store, &audit_options).await?;
+    let planned = in_scope(&audited.report.findings, options);
     let started = options
         .now
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
     let mut actions = Vec::with_capacity(planned.len());
-    for (path, finding) in &planned {
+    for path in planned.keys() {
+        let finding = &planned[path];
         let action = if options.apply {
             apply_one(
                 store,
                 finding,
-                inventory.meta(path),
+                audited.inventory.meta(path),
                 options,
                 started,
                 audit_log,
@@ -81,7 +87,7 @@ pub async fn repair_store(
         options.tenant.clone(),
         options.signal,
         options.kinds.iter().copied().collect(),
-        audit.findings.len(),
+        audited.report.findings.len(),
         actions,
     ))
 }
@@ -98,8 +104,10 @@ fn in_scope(
                 && options.kinds.contains(&finding.kind)
                 && finding.tenant.as_deref() == Some(options.tenant.as_str())
         })
-        .map(|finding| (finding.path.clone(), finding.clone()))
-        .collect()
+        .fold(BTreeMap::new(), |mut planned, finding| {
+            planned.insert(finding.path.clone(), finding.clone());
+            planned
+        })
 }
 
 async fn apply_one(
@@ -110,8 +118,11 @@ async fn apply_one(
     started: u64,
     audit_log: &mut dyn RepairLogWriter,
 ) -> Result<RepairAction, StorageAuditError> {
-    let (outcome, detail) = match listed {
-        None => (RepairOutcome::AlreadyAbsent, None),
+    let status = match listed {
+        None => RepairStatus {
+            outcome: RepairOutcome::AlreadyAbsent,
+            detail: None,
+        },
         Some(listed) => {
             if let Err(skipped) = recheck(store, listed, options).await {
                 skipped
@@ -131,8 +142,8 @@ async fn apply_one(
     Ok(RepairAction {
         kind: finding.kind,
         path: finding.path.clone(),
-        outcome,
-        detail,
+        outcome: status.outcome,
+        detail: status.detail,
     })
 }
 
@@ -143,37 +154,51 @@ async fn recheck(
     store: &Arc<dyn ObjectStore>,
     listed: &ObjectMeta,
     options: &RepairOptions,
-) -> Result<(), (RepairOutcome, Option<String>)> {
+) -> Result<(), RepairStatus> {
     let current = match store.head(&listed.location).await {
         Ok(current) => current,
         Err(object_store::Error::NotFound { .. }) => {
-            return Err((RepairOutcome::AlreadyAbsent, None));
+            return Err(RepairStatus {
+                outcome: RepairOutcome::AlreadyAbsent,
+                detail: None,
+            });
         }
-        Err(error) => return Err((RepairOutcome::Failed, Some(error.to_string()))),
+        Err(error) => {
+            return Err(RepairStatus {
+                outcome: RepairOutcome::Failed,
+                detail: Some(error.to_string()),
+            });
+        }
     };
     if current.e_tag != listed.e_tag || current.last_modified != listed.last_modified {
-        return Err((
-            RepairOutcome::SkippedChanged,
-            Some("the object changed after the audit".to_string()),
-        ));
+        return Err(RepairStatus {
+            outcome: RepairOutcome::SkippedChanged,
+            detail: Some("the object changed after the audit".to_string()),
+        });
     }
     if !is_older_than_grace(&current, options.grace, options.now) {
-        return Err((
-            RepairOutcome::SkippedChanged,
-            Some("the object is inside the grace window".to_string()),
-        ));
+        return Err(RepairStatus {
+            outcome: RepairOutcome::SkippedChanged,
+            detail: Some("the object is inside the grace window".to_string()),
+        });
     }
     Ok(())
 }
 
-async fn delete(
-    store: &Arc<dyn ObjectStore>,
-    listed: &ObjectMeta,
-) -> (RepairOutcome, Option<String>) {
+async fn delete(store: &Arc<dyn ObjectStore>, listed: &ObjectMeta) -> RepairStatus {
     match store.delete(&listed.location).await {
-        Ok(()) => (RepairOutcome::Deleted, None),
-        Err(object_store::Error::NotFound { .. }) => (RepairOutcome::AlreadyAbsent, None),
-        Err(error) => (RepairOutcome::Failed, Some(error.to_string())),
+        Ok(()) => RepairStatus {
+            outcome: RepairOutcome::Deleted,
+            detail: None,
+        },
+        Err(object_store::Error::NotFound { .. }) => RepairStatus {
+            outcome: RepairOutcome::AlreadyAbsent,
+            detail: None,
+        },
+        Err(error) => RepairStatus {
+            outcome: RepairOutcome::Failed,
+            detail: Some(error.to_string()),
+        },
     }
 }
 

@@ -1,25 +1,46 @@
 use super::*;
 
-/// Compares two sorted instant-sample vectors bit-exactly for the parity tests.
+/// Compares sorted instant samples for parity checks.
 ///
-/// A bit-exact float comparison makes a genuine NaN equal a genuine NaN.
-/// `PartialEq` on `SampleValue::Float` uses IEEE `==`, and `NaN != NaN` under
-/// that rule, so a plain `assert_eq!` fails when a path correctly keeps a
-/// genuine NaN value. The tests do not expect stale-NaN markers to survive
-/// selection on either path, so the markers never reach this comparison.
+/// When `nan_equal` is false, float values must be bit-exact. When true, any
+/// two NaN values compare equal, matching Prometheus semantics.
 pub(crate) fn instant_samples_match(
     left: &[crate::InstantSample],
     right: &[crate::InstantSample],
 ) -> bool {
+    samples_match(left, right, false)
+}
+
+pub(crate) fn nan_equal_samples(
+    left: &[crate::InstantSample],
+    right: &[crate::InstantSample],
+) -> bool {
+    samples_match(left, right, true)
+}
+
+fn samples_match(
+    left: &[crate::InstantSample],
+    right: &[crate::InstantSample],
+    nan_equal: bool,
+) -> bool {
     if left.len() != right.len() {
         return false;
     }
-    left.iter().zip(right.iter()).all(|(l, r)| {
-        l.labels == r.labels
-            && l.ts_ms == r.ts_ms
-            && match (&l.value, &r.value) {
-                (SampleValue::Float(a), SampleValue::Float(b)) => a.to_bits() == b.to_bits(),
-                (other_l, other_r) => other_l == other_r,
+    for (left_sample, right_sample) in left.iter().zip(right) {
+        if left_sample.labels != right_sample.labels || left_sample.ts_ms != right_sample.ts_ms {
+            return false;
+        }
+        match (&left_sample.value, &right_sample.value) {
+            (SampleValue::Float(left), SampleValue::Float(right)) => {
+                if left.to_bits() != right.to_bits()
+                    && !(nan_equal && left.is_nan() && right.is_nan())
+                {
+                    return false;
+                }
             }
-    })
+            (SampleValue::Histogram(left), SampleValue::Histogram(right)) if left == right => {}
+            _ => return false,
+        }
+    }
+    true
 }

@@ -1,10 +1,25 @@
 use assert2::{assert, check};
 
 use super::{WalAssignmentChange, WalAssignmentWatch};
-use crate::wal_consumer_metrics::WalConsumerMetrics;
+use crate::wal_consumer_metrics::{WalConsumerMetrics, WalPartitionAssignment};
 
-fn partition(partition: i32) -> (String, i32) {
-    ("wal".to_owned(), partition)
+fn partition(partition: i32) -> WalPartitionAssignment {
+    WalPartitionAssignment {
+        topic: "wal".to_owned(),
+        partition,
+    }
+}
+
+struct AssignmentFixture {
+    metrics: WalConsumerMetrics,
+    watch: WalAssignmentWatch,
+}
+
+fn watch_after_assignment(partitions: &[WalPartitionAssignment]) -> AssignmentFixture {
+    let metrics = WalConsumerMetrics::unregistered();
+    let mut watch = WalAssignmentWatch::new(metrics.clone());
+    watch.observe(partitions);
+    AssignmentFixture { metrics, watch }
 }
 
 #[test]
@@ -30,25 +45,21 @@ fn the_first_assignment_is_all_gain_and_no_revocation() {
 
 #[test]
 fn an_unchanged_assignment_reports_nothing_and_moves_no_counter() {
-    let metrics = WalConsumerMetrics::unregistered();
-    let mut watch = WalAssignmentWatch::new(metrics.clone());
-    watch.observe(&[partition(0), partition(1)]);
+    let mut assignment = watch_after_assignment(&[partition(0), partition(1)]);
 
-    let change = watch.observe(&[partition(1), partition(0)]);
+    let change = assignment.watch.observe(&[partition(1), partition(0)]);
 
     check!(change.is_empty());
-    check!(metrics.partition_revocations("wal", 0) == 0);
-    check!(metrics.partition_revocations("wal", 1) == 0);
-    check!(metrics.partition_owned("wal", 0) == 1);
+    check!(assignment.metrics.partition_revocations("wal", 0) == 0);
+    check!(assignment.metrics.partition_revocations("wal", 1) == 0);
+    check!(assignment.metrics.partition_owned("wal", 0) == 1);
 }
 
 #[test]
 fn a_partition_that_moves_to_another_member_is_reported_as_revoked() {
-    let metrics = WalConsumerMetrics::unregistered();
-    let mut watch = WalAssignmentWatch::new(metrics.clone());
-    watch.observe(&[partition(0), partition(1)]);
+    let mut assignment = watch_after_assignment(&[partition(0), partition(1)]);
 
-    let change = watch.observe(&[partition(0)]);
+    let change = assignment.watch.observe(&[partition(0)]);
 
     assert!(
         change
@@ -60,10 +71,10 @@ fn a_partition_that_moves_to_another_member_is_reported_as_revoked() {
     check!(change.strands_buffered_records());
     // The partition this member kept is untouched by the revocation of the
     // other one: a rebalance that moves one partition must not report the rest.
-    check!(metrics.partition_owned("wal", 0) == 1);
-    check!(metrics.partition_revocations("wal", 0) == 0);
-    check!(metrics.partition_owned("wal", 1) == 0);
-    check!(metrics.partition_revocations("wal", 1) == 1);
+    check!(assignment.metrics.partition_owned("wal", 0) == 1);
+    check!(assignment.metrics.partition_revocations("wal", 0) == 0);
+    check!(assignment.metrics.partition_owned("wal", 1) == 0);
+    check!(assignment.metrics.partition_revocations("wal", 1) == 1);
 }
 
 #[test]
@@ -123,14 +134,29 @@ fn each_revocation_of_the_same_partition_counts_again() {
 fn the_watch_separates_partitions_of_different_topics() {
     let metrics = WalConsumerMetrics::unregistered();
     let mut watch = WalAssignmentWatch::new(metrics.clone());
-    watch.observe(&[("wal".to_owned(), 0), ("state".to_owned(), 0)]);
+    watch.observe(&[
+        WalPartitionAssignment {
+            topic: "wal".to_owned(),
+            partition: 0,
+        },
+        WalPartitionAssignment {
+            topic: "state".to_owned(),
+            partition: 0,
+        },
+    ]);
 
-    let change = watch.observe(&[("state".to_owned(), 0)]);
+    let change = watch.observe(&[WalPartitionAssignment {
+        topic: "state".to_owned(),
+        partition: 0,
+    }]);
 
     assert!(
         change
             == WalAssignmentChange {
-                revoked: vec![("wal".to_owned(), 0)],
+                revoked: vec![WalPartitionAssignment {
+                    topic: "wal".to_owned(),
+                    partition: 0
+                }],
                 gained: Vec::new(),
             }
     );

@@ -5,9 +5,11 @@ pub(crate) fn split_top_level_commas(input: &str) -> Result<Vec<&str>, ProfileEr
     let mut start = 0;
     let mut in_quote = false;
     let mut escaped = false;
-    for (idx, ch) in input.char_indices() {
+    let mut idx = 0;
+    for ch in input.chars() {
         if escaped {
             escaped = false;
+            idx += ch.len_utf8();
             continue;
         }
         match ch {
@@ -27,6 +29,7 @@ pub(crate) fn split_top_level_commas(input: &str) -> Result<Vec<&str>, ProfileEr
             }
             _ => {}
         }
+        idx += ch.len_utf8();
     }
     if in_quote {
         return Err(ProfileError::Plan(

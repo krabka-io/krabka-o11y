@@ -248,7 +248,7 @@ mod tests {
         }
     }
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
+    fn labels(pairs: &[(&'static str, &'static str)]) -> Labels {
         let mut labels = Labels::new();
         for (name, value) in pairs {
             labels.insert(*name, *value);
@@ -461,15 +461,23 @@ mod tests {
 }
 
 mod default_max_rate_buckets;
-mod extent_between;
 mod ingest_enforcer;
 mod query_enforcer;
 mod rate_bucket;
-mod secs_ceil;
 
 pub use default_max_rate_buckets::DEFAULT_MAX_RATE_BUCKETS;
-use extent_between::extent_between;
 pub use ingest_enforcer::IngestEnforcer;
 pub use query_enforcer::QueryEnforcer;
 use rate_bucket::RateBucket;
-use secs_ceil::secs_ceil;
+
+/// The extent between two epoch-millisecond instants, clamped at zero so a
+/// reversed range reads as "no span" and not as a negative one.
+pub(crate) fn extent_between(start_ms: i64, end_ms: i64) -> Time {
+    Time::from_millis(end_ms.saturating_sub(start_ms).max(0))
+}
+
+/// An extent in whole seconds, rounded up. This is the unit the limit errors
+/// report.
+pub(crate) fn secs_ceil(extent: Time) -> u64 {
+    extent.secs_f64().ceil().to_u64().unwrap_or(u64::MAX)
+}

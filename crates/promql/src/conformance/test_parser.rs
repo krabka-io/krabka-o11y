@@ -18,6 +18,24 @@ const DIVERGENCE_DIRECTIVE: &str = "# krabka:divergence ";
 const EXPERIMENTAL_DIVERGENCE_DIRECTIVE: &str =
     "# krabka:divergence-without-experimental-functions ";
 
+struct PendingStartOffsets {
+    metric: String,
+    offsets: Vec<Option<i64>>,
+}
+
+struct EvalFailurePrefix<'a> {
+    is_failure: bool,
+    rest: &'a str,
+}
+
+fn parse_sample_values(value: &str, line: Line<'_>) -> Result<Vec<SampleSpec>> {
+    split_sample_tokens(value, line)?
+        .into_iter()
+        .map(|token| parse_sample_token(token, line))
+        .collect::<Result<Vec<_>>>()
+        .map(|values| values.into_iter().flatten().collect())
+}
+
 pub(crate) struct TestParser<'a> {
     pub(crate) lines: Vec<Line<'a>>,
     pub(crate) index: usize,
@@ -28,7 +46,9 @@ impl<'a> TestParser<'a> {
         let lines = src
             .lines()
             .enumerate()
-            .filter_map(|(index, raw)| {
+            .filter_map(|entry| {
+                let index = entry.0;
+                let raw = entry.1;
                 let trimmed = raw.trim();
                 (!trimmed.is_empty()
                     && (!trimmed.starts_with('#') || trimmed.starts_with(KRABKA_DIRECTIVE)))
@@ -124,45 +144,42 @@ impl<'a> TestParser<'a> {
         };
         let step = Time::from_millis(parse_duration_ms(step.trim(), header)?);
         let mut series = Vec::new();
-        let mut pending_start = None;
+        let mut pending_start: Option<PendingStartOffsets> = None;
 
         while let Some(line) = self.peek() {
             if !is_block_line(line) {
                 break;
             }
             let line = self.next().expect("peeked block line");
-            let (metric, values) = split_metric_and_tail(line.trimmed, line)?;
+            let parts = split_metric_and_tail(line.trimmed, line)?;
+            let metric = parts.head;
+            let values = parts.tail;
             if let Some(metric) = metric.strip_suffix("@st") {
                 if pending_start.is_some() {
                     return Err(parse_error(line, "@st line has no following sample line"));
                 }
                 let offsets = split_sample_tokens(values, line)?
                     .into_iter()
-                    .map(|token| {
-                        super::parse_start_offset_token::parse_start_offset_token(token, line)
-                    })
+                    .map(|token| super::parse_start_offset_token(token, line))
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .flatten()
                     .collect::<Vec<_>>();
-                pending_start = Some((metric.to_string(), offsets));
+                pending_start = Some(PendingStartOffsets {
+                    metric: metric.to_string(),
+                    offsets,
+                });
                 continue;
             }
-            let values = split_sample_tokens(values, line)?
-                .into_iter()
-                .map(|token| parse_sample_token(token, line))
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
-            let start_offsets_ms = if let Some((start_metric, offsets)) = pending_start.take() {
-                if start_metric != metric || offsets.len() != values.len() {
+            let values = parse_sample_values(values, line)?;
+            let start_offsets_ms = if let Some(start) = pending_start.take() {
+                if start.metric != metric || start.offsets.len() != values.len() {
                     return Err(parse_error(
                         line,
                         "@st metric or slot count does not match sample line",
                     ));
                 }
-                offsets
+                start.offsets
             } else {
                 Vec::new()
             };
@@ -185,17 +202,15 @@ impl<'a> TestParser<'a> {
 
     pub(crate) fn parse_eval_instant(&mut self, divergence: Option<String>) -> Result<Statement> {
         let header = self.next().expect("peeked header");
-        let (fail, rest) = if let Some(rest) = header.trimmed.strip_prefix("eval_fail instant at ")
-        {
-            (true, rest)
-        } else {
-            let rest = header
-                .trimmed
-                .strip_prefix("eval instant at ")
-                .ok_or_else(|| parse_error(header, "expected instant eval statement"))?;
-            (false, rest)
-        };
-        let (at, expr) = split_once_whitespace(rest.trim(), header)?;
+        let prefix = eval_failure_prefix(
+            header,
+            "eval_fail instant at ",
+            "eval instant at ",
+            "expected instant eval statement",
+        )?;
+        let parts = split_once_whitespace(prefix.rest.trim(), header)?;
+        let at = parts.head;
+        let expr = parts.tail;
         let ExpectBlock {
             lines: expect,
             annotations,
@@ -220,32 +235,34 @@ impl<'a> TestParser<'a> {
             annotations,
             ordered,
             range_expect: range,
-            fail_message: failure_message(fail, expect_fail_message),
+            fail_message: failure_message(prefix.is_failure, expect_fail_message),
             divergence,
         })
     }
 
     pub(crate) fn parse_eval_range(&mut self, divergence: Option<String>) -> Result<Statement> {
         let header = self.next().expect("peeked header");
-        let (fail, rest) = if let Some(rest) = header.trimmed.strip_prefix("eval_fail range from ")
-        {
-            (true, rest)
-        } else {
-            let rest = header
-                .trimmed
-                .strip_prefix("eval range from ")
-                .ok_or_else(|| parse_error(header, "expected range eval statement"))?;
-            (false, rest)
-        };
-        let (start, rest) = split_once_whitespace(rest.trim(), header)?;
+        let prefix = eval_failure_prefix(
+            header,
+            "eval_fail range from ",
+            "eval range from ",
+            "expected range eval statement",
+        )?;
+        let parts = split_once_whitespace(prefix.rest.trim(), header)?;
+        let start = parts.head;
+        let rest = parts.tail;
         let rest = rest
             .strip_prefix("to ")
             .ok_or_else(|| parse_error(header, "expected `to` in range eval"))?;
-        let (end, rest) = split_once_whitespace(rest.trim(), header)?;
+        let parts = split_once_whitespace(rest.trim(), header)?;
+        let end = parts.head;
+        let rest = parts.tail;
         let rest = rest
             .strip_prefix("step ")
             .ok_or_else(|| parse_error(header, "expected `step` in range eval"))?;
-        let (step, expr) = split_once_whitespace(rest.trim(), header)?;
+        let parts = split_once_whitespace(rest.trim(), header)?;
+        let step = parts.head;
+        let expr = parts.tail;
         let ExpectBlock {
             lines: expect,
             annotations,
@@ -273,7 +290,7 @@ impl<'a> TestParser<'a> {
             expr: expr.to_string(),
             expect,
             annotations,
-            fail_message: failure_message(fail, expect_fail_message),
+            fail_message: failure_message(prefix.is_failure, expect_fail_message),
             divergence,
         })
     }
@@ -342,14 +359,10 @@ impl<'a> TestParser<'a> {
                     continue;
                 }
             }
-            let (metric, value) = split_metric_and_tail(line.trimmed, line)?;
-            let values = split_sample_tokens(value, line)?
-                .into_iter()
-                .map(|token| parse_sample_token(token, line))
-                .collect::<Result<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
+            let parts = split_metric_and_tail(line.trimmed, line)?;
+            let metric = parts.head;
+            let value = parts.tail;
+            let values = parse_sample_values(value, line)?;
             if values.is_empty() {
                 return Err(parse_error(line, "expected at least one expected value"));
             }
@@ -377,4 +390,25 @@ impl<'a> TestParser<'a> {
         self.index += 1;
         Some(line)
     }
+}
+
+fn eval_failure_prefix<'a>(
+    line: Line<'a>,
+    failure_prefix: &str,
+    success_prefix: &str,
+    error_message: &str,
+) -> Result<EvalFailurePrefix<'a>> {
+    if let Some(rest) = line.trimmed.strip_prefix(failure_prefix) {
+        return Ok(EvalFailurePrefix {
+            is_failure: true,
+            rest,
+        });
+    }
+    line.trimmed
+        .strip_prefix(success_prefix)
+        .map(|rest| EvalFailurePrefix {
+            is_failure: false,
+            rest,
+        })
+        .ok_or_else(|| parse_error(line, error_message))
 }

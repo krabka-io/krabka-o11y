@@ -32,7 +32,7 @@ pub(crate) async fn build_distributor_state(
     overrides: OverridesProvider,
     wal_security: Option<ClientSecurity>,
 ) -> Result<Option<Arc<DistributorState>>, Box<dyn std::error::Error>> {
-    let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
+    let client_policy = client_resource_policy(cli);
     // Nowhere to put a push until the WAL producer has a broker.
     let wal_broker = readiness.gate("wal-broker");
     let producer = tokio::select! {
@@ -41,8 +41,8 @@ pub(crate) async fn build_distributor_state(
         built = Producer::builder()
             .bootstrap(&cli.bootstrap)
             .maybe_security(wal_security)
-            .dispatch_queue_capacity(client_dispatch_queue_capacity.get())
-            .frame_max(client_frame_max.size())
+            .dispatch_queue_capacity(client_policy.client_dispatch_queue_capacity.get())
+            .frame_max(client_policy.client_frame_max.size())
             .build() => built?,
     };
     wal_broker.mark_ready();
@@ -57,6 +57,7 @@ pub(crate) async fn build_distributor_state(
         tenant_policy: TenantPolicy::anonymous(),
         active_series: Mutex::default(),
         cumulative_profiles: tokio::sync::Mutex::default(),
+        tenant_ingest_locks: Mutex::default(),
         ingestion_buckets: Mutex::default(),
         relabel: Vec::<RelabelConfig>::new(),
         max_decompressed: cli.distributor_request_max,

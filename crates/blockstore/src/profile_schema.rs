@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn profile_type_is_dictionary_encoded() {
         let schema = profile_samples_schema();
-        let (_, field) = schema.column_with_name(PCOL_PROFILE_TYPE).unwrap();
+        let field = schema.column_with_name(PCOL_PROFILE_TYPE).unwrap().1;
         match field.data_type() {
             DataType::Dictionary(key, value) => {
                 assert2::assert!(key.as_ref() == &DataType::Int32);
@@ -104,45 +104,92 @@ mod tests {
 
     #[test]
     fn decl_requires_fp_type_ts_and_sorts_by_them() {
+        let decl = profile_samples_decl();
         assert2::assert!(
-            profile_samples_decl()
-                == BlockSchema {
-                    required: vec![
-                        RequiredColumn::new(COL_FINGERPRINT, DataType::UInt64, false),
-                        RequiredColumn::new(PCOL_PROFILE_TYPE, profile_type_dict(), false),
-                        RequiredColumn::new(COL_TIMESTAMP, DataType::Int64, false),
-                    ],
-                    sort_key: vec![
-                        COL_FINGERPRINT.to_string(),
-                        PCOL_PROFILE_TYPE.to_string(),
-                        COL_TIMESTAMP.to_string(),
-                    ],
-                    bloom_columns: vec![],
-                }
+            decl.required
+                == vec![
+                    RequiredColumn::new(COL_FINGERPRINT, DataType::UInt64, false),
+                    RequiredColumn::new(PCOL_PROFILE_TYPE, profile_type_dict(), false),
+                    RequiredColumn::new(COL_TIMESTAMP, DataType::Int64, false),
+                ]
         );
+        let required_names: Vec<String> = decl
+            .required
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        assert2::assert!(
+            decl.sort_key == required_names,
+            "sorted by the required columns, in order"
+        );
+        assert2::assert!(decl.bloom_columns.is_empty());
     }
 }
 
-mod pcol_profile_type;
-mod pcol_span_id;
-mod pcol_stacktrace_id;
-mod pcol_stacktrace_partition;
-mod pcol_total_value;
-mod pcol_trace_id;
-mod pcol_value;
-mod pcol_wal_sample_ids;
-mod profile_samples_decl;
-mod profile_samples_schema;
-mod profile_type_dict;
+/// The 5-part `name:sample_type:sample_unit:period_type:period_unit` string.
+pub const PCOL_PROFILE_TYPE: &str = "profile_type";
 
-pub use pcol_profile_type::PCOL_PROFILE_TYPE;
-pub use pcol_span_id::PCOL_SPAN_ID;
-pub use pcol_stacktrace_id::PCOL_STACKTRACE_ID;
-pub use pcol_stacktrace_partition::PCOL_STACKTRACE_PARTITION;
-pub use pcol_total_value::PCOL_TOTAL_VALUE;
-pub use pcol_trace_id::PCOL_TRACE_ID;
-pub use pcol_value::PCOL_VALUE;
-pub use pcol_wal_sample_ids::PCOL_WAL_SAMPLE_IDS;
-pub use profile_samples_decl::profile_samples_decl;
-pub use profile_samples_schema::profile_samples_schema;
-use profile_type_dict::profile_type_dict;
+/// Optional span association.
+pub const PCOL_SPAN_ID: &str = "span_id";
+
+/// Leaf-node index into the symbol-DB partition's parent-pointer tree.
+pub const PCOL_STACKTRACE_ID: &str = "stacktrace_id";
+
+/// Which symbol-DB partition resolves this stacktrace id.
+pub const PCOL_STACKTRACE_PARTITION: &str = "stacktrace_partition";
+
+/// Precomputed per-profile total.
+pub const PCOL_TOTAL_VALUE: &str = "total_value";
+
+/// Optional trace association.
+pub const PCOL_TRACE_ID: &str = "trace_id";
+
+/// The sample value for this profile type.
+pub const PCOL_VALUE: &str = "value";
+
+/// WAL sample identities retained through compaction and downsampling.
+pub const PCOL_WAL_SAMPLE_IDS: &str = "wal_sample_ids";
+
+pub(crate) fn profile_type_dict() -> DataType {
+    DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
+}
+
+#[must_use]
+pub fn profile_samples_decl() -> BlockSchema {
+    BlockSchema {
+        required: vec![
+            RequiredColumn::new(COL_FINGERPRINT, DataType::UInt64, false),
+            RequiredColumn::new(PCOL_PROFILE_TYPE, profile_type_dict(), false),
+            RequiredColumn::new(COL_TIMESTAMP, DataType::Int64, false),
+        ],
+        sort_key: vec![
+            COL_FINGERPRINT.to_string(),
+            PCOL_PROFILE_TYPE.to_string(),
+            COL_TIMESTAMP.to_string(),
+        ],
+        // None. Every column a Pyroscope query looks up by equality -- the
+        // series and the profile type -- is in the sort key, and
+        // `ProfileIndex` prunes by both before a block is read.
+        bloom_columns: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn profile_samples_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new(COL_FINGERPRINT, DataType::UInt64, false),
+        Field::new(COL_TIMESTAMP, DataType::Int64, false),
+        Field::new(PCOL_PROFILE_TYPE, profile_type_dict(), false),
+        Field::new(PCOL_STACKTRACE_ID, DataType::UInt64, false),
+        Field::new(PCOL_VALUE, DataType::Int64, false),
+        Field::new(PCOL_STACKTRACE_PARTITION, DataType::UInt64, false),
+        Field::new(PCOL_TOTAL_VALUE, DataType::Int64, false),
+        Field::new(PCOL_SPAN_ID, DataType::UInt64, true),
+        Field::new(PCOL_TRACE_ID, DataType::Binary, true),
+        Field::new(
+            PCOL_WAL_SAMPLE_IDS,
+            DataType::List(Arc::new(Field::new("item", DataType::Binary, true))),
+            false,
+        ),
+    ]))
+}

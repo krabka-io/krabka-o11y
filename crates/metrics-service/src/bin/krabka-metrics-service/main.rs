@@ -14,15 +14,12 @@ use clap::{Parser, ValueEnum};
 use krabka_blockstore::TenantId;
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_coordination::{BrokerTransport, LeaseConfig, MemberId, Role};
-use krabka_client_core::{
-    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
-    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-};
+use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_metrics::{Limits, OverridesProvider, WAL_TOPIC};
 use krabka_metrics_service::{
-    MimirTenantAdminState, RULER_STATE_TOPIC, RulerAlertmanagerSink, WalHeadConsumerCommit,
-    WalHeadConsumerPoll, install_bundled_rule_groups, mimir_tenant_admin_router,
-    poll_ruler_state_consumer_once, run_fenced_ruler_evaluation_loop,
+    MimirTenantAdminState, RULER_STATE_TOPIC, RulerAlertmanagerSink, RulerTopics,
+    WalHeadConsumerCommit, WalHeadConsumerPoll, install_bundled_rule_groups,
+    mimir_tenant_admin_router, poll_ruler_state_consumer_once, run_fenced_ruler_evaluation_loop,
     run_ruler_state_consumer_loop, run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
 use krabka_observability::{
@@ -41,6 +38,18 @@ use krabka_promql::{
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
+
+#[macro_export]
+macro_rules! server_or_critical_task_exit {
+    ($server:expr, $tasks:expr) => {
+        tokio::select! {
+            result = $server => result.map_err(Into::into),
+            name = $tasks.first_unexpected_exit() => Err(
+                Box::<dyn std::error::Error>::from(krabka_observability::CriticalTaskError(name)),
+            ),
+        }
+    };
+}
 
 #[cfg(test)]
 mod tests {
@@ -251,9 +260,9 @@ mod tests {
         assert2::assert!(
             cli.ruler_external_label
                 == [
-                    ("cluster".to_string(), "prod".to_string()),
-                    ("location".to_string(), "Paris, France".to_string()),
-                    ("route".to_string(), "blue;green".to_string()),
+                    parse_external_label("cluster=prod").unwrap(),
+                    parse_external_label("location=Paris, France").unwrap(),
+                    parse_external_label("route=blue;green").unwrap(),
                 ]
         );
         assert2::assert!(
@@ -291,9 +300,9 @@ mod tests {
                 assert2::assert!(
                     cli.ruler_external_label_env.unwrap().0
                         == [
-                            ("cluster".to_string(), "prod".to_string()),
-                            ("location".to_string(), "Paris, France".to_string()),
-                            ("route".to_string(), "blue;green".to_string()),
+                            parse_external_label("cluster=prod").unwrap(),
+                            parse_external_label("location=Paris, France").unwrap(),
+                            parse_external_label("route=blue;green").unwrap(),
                         ]
                 );
             },
@@ -629,21 +638,21 @@ mod tests {
         let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
         let _guard = lock.lock().expect("environment lock");
 
-        temp_env::with_vars(
-            [
-                ("KRABKA_METRICS_SERVICE_TARGET", Some("querier")),
-                ("KRABKA_METRICS_WAL_POLL_TIMEOUT", Some("250ms")),
-                ("KRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION", Some("10m")),
-            ],
-            || {
-                let cli =
-                    Cli::try_parse_from(["krabka-metrics-service"]).expect("parse environment");
-                assert2::assert!(matches!(cli.target, Target::Querier));
-                assert2::assert!(
-                    (cli.wal_poll_timeout, cli.wal_head_retention) == (millis(250), minutes(10))
+        temp_env::with_var("KRABKA_METRICS_SERVICE_TARGET", Some("querier"), || {
+            temp_env::with_var("KRABKA_METRICS_WAL_POLL_TIMEOUT", Some("250ms"), || {
+                temp_env::with_var(
+                    "KRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION",
+                    Some("10m"),
+                    || {
+                        let cli = Cli::try_parse_from(["krabka-metrics-service"])
+                            .expect("parse environment");
+                        assert2::assert!(matches!(cli.target, Target::Querier));
+                        assert2::assert!(cli.wal_poll_timeout == millis(250));
+                        assert2::assert!(cli.wal_head_retention == minutes(10));
+                    },
                 );
-            },
-        );
+            });
+        });
     }
 
     #[test]
@@ -699,24 +708,15 @@ mod tests {
         ])
         .unwrap();
         check!(
-            configured.server_security.server_tls_cert_path
-                == Some(PathBuf::from("/etc/krabka/tls.crt"))
-        );
-        check!(
-            configured.server_security.server_tls_key_path
-                == Some(PathBuf::from("/etc/krabka/tls.key"))
-        );
-        check!(
-            configured.server_security.auth_credentials_config
-                == Some(PathBuf::from("/etc/krabka/credentials.yaml"))
-        );
-        check!(
-            configured.server_security.internal_client_token_path
-                == Some(PathBuf::from("/etc/krabka/internal-token"))
-        );
-        check!(
-            configured.server_security.internal_client_tls_ca_path
-                == Some(PathBuf::from("/etc/krabka/ca.pem"))
+            configured.server_security
+                == krabka_observability::server_security::ServerSecurityArgs {
+                    server_tls_cert_path: Some(PathBuf::from("/etc/krabka/tls.crt")),
+                    server_tls_key_path: Some(PathBuf::from("/etc/krabka/tls.key")),
+                    auth_credentials_config: Some(PathBuf::from("/etc/krabka/credentials.yaml")),
+                    internal_client_token_path: Some(PathBuf::from("/etc/krabka/internal-token")),
+                    internal_client_tls_ca_path: Some(PathBuf::from("/etc/krabka/ca.pem")),
+                    ..defaults.server_security.clone()
+                }
         );
         check!(configured.audit.topic.as_deref() == Some("krabka-audit"));
         check!(configured.audit.bootstrap.as_deref() == Some("audit-broker:9092"));
@@ -770,7 +770,8 @@ mod tests {
     #[tokio::test]
     async fn wal_head_consumer_startup_runs_in_background() {
         let shutdown = Shutdown::new();
-        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let channel = tokio::sync::oneshot::channel::<()>();
+        let rx = channel.1;
         let readiness = RoleReadiness::new();
 
         let task = spawn_wal_head_consumer_task(
@@ -796,7 +797,12 @@ mod tests {
     }
 
     /// `GET /ready` against a router, as a probe would ask it.
-    async fn probe_ready(router: &axum::Router) -> (axum::http::StatusCode, String) {
+    struct ProbeResult {
+        status: axum::http::StatusCode,
+        body: String,
+    }
+
+    async fn probe_ready(router: &axum::Router) -> ProbeResult {
         use tower::ServiceExt as _;
 
         let response = router
@@ -813,7 +819,10 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("readiness probe body");
-        (status, String::from_utf8_lossy(&body).into_owned())
+        ProbeResult {
+            status,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        }
     }
 
     /// The querier binds its listener before its WAL head consumer has reached
@@ -834,7 +843,9 @@ mod tests {
         let router = krabka_promql::metrics::metrics_router(metrics.registry.clone())
             .merge(readiness_router(readiness.clone()));
         let shutdown = Shutdown::new();
-        let (connect_tx, connect_rx) = tokio::sync::oneshot::channel::<()>();
+        let connect_channel = tokio::sync::oneshot::channel::<()>();
+        let connect_tx = connect_channel.0;
+        let connect_rx = connect_channel.1;
 
         let task = spawn_wal_head_consumer_task(
             || async move {
@@ -852,13 +863,11 @@ mod tests {
             },
         );
 
-        assert2::assert!(
-            probe_ready(&router).await
-                == (
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    "not ready: wal-head\n".to_string()
-                )
-        );
+        assert2::assert!({
+            let probe = probe_ready(&router).await;
+            probe.status == axum::http::StatusCode::SERVICE_UNAVAILABLE
+                && probe.body == "not ready: wal-head\n"
+        });
 
         connect_tx.send(()).expect("release the consumer connect");
         // Progress poll, not a run-duration budget: wait for the connect the
@@ -870,9 +879,10 @@ mod tests {
             tokio::time::sleep(millis(1).to_std()).await;
         }
 
-        assert2::assert!(
-            probe_ready(&router).await == (axum::http::StatusCode::OK, "ready\n".to_string())
-        );
+        assert2::assert!({
+            let probe = probe_ready(&router).await;
+            probe.status == axum::http::StatusCode::OK && probe.body == "ready\n"
+        });
 
         task.abort();
     }
@@ -955,20 +965,21 @@ mod the_shared_querier_starts_and_drains;
 mod alloc;
 mod cli;
 mod load_runtime_overrides;
-mod parse_client_dispatch_queue_capacity;
-mod parse_client_frame_max;
 mod parse_external_label;
-mod parse_positive_usize;
 mod parse_remote_read_max_body;
 mod query_engine_opts;
 mod require_role_topics;
+mod role_launch;
+mod role_object_store;
 mod run_all;
-mod run_querier;
-mod run_query_frontend;
-mod run_ruler;
+mod run_roles;
+mod serving_api_state;
+mod serving_wal_head;
 mod shutdown;
+mod spawn_role_wal_head_consumer;
 mod spawn_shutdown_signal_listener;
 mod spawn_wal_head_consumer_task;
+mod start_role_audit;
 mod target;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
@@ -976,20 +987,24 @@ mod target;
 // reads -- which is a warning, not a link to the allocator.
 
 use cli::Cli;
+use krabka_observability::cli_value_parsers::{
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_positive_usize,
+};
 use load_runtime_overrides::load_runtime_overrides;
-use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
-use parse_client_frame_max::parse_client_frame_max;
 use parse_external_label::{ExternalLabels, parse_external_label, parse_external_labels_env};
-use parse_positive_usize::parse_positive_usize;
 use parse_remote_read_max_body::parse_remote_read_max_body;
 use query_engine_opts::query_engine_opts;
 use require_role_topics::require_role_topics;
-use run_querier::run_querier;
-use run_query_frontend::run_query_frontend;
-use run_ruler::run_ruler;
+use role_launch::RoleLaunch;
+use role_object_store::{RoleObjectStore, ServingMetricStore};
+use run_roles::{run_querier, run_query_frontend, run_ruler};
+use serving_api_state::serving_api_state;
+use serving_wal_head::{ServingWalHead, ServingWalHeadStatus};
 use shutdown::Shutdown;
+use spawn_role_wal_head_consumer::{WalHeadFeed, spawn_role_wal_head_consumer};
 use spawn_shutdown_signal_listener::spawn_shutdown_signal_listener;
 use spawn_wal_head_consumer_task::{WalHeadConsumerRecovery, spawn_wal_head_consumer_task};
+use start_role_audit::{RoleAudit, start_role_audit};
 use target::Target;
 
 #[tokio::main]
@@ -1048,20 +1063,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!(role = %cli.target.kind(), "krabka-metrics-service starting");
             // With no `--audit-topic` this spawns nothing and reaches no
             // broker.
-            let audit_stop = CancellationToken::new();
-            let (audit, audit_writer) = AuditService::start(
-                &cli.audit,
-                krabka_product("krabka-metrics-service", env!("CARGO_PKG_VERSION")),
-                cli.wal_bootstrap.as_deref(),
-                wal_security.as_ref(),
-                audit_stop.clone(),
-            )
-            .await?
-            .into_parts();
-            let mut audit_tasks = SupervisedTasks::new(audit_stop);
-            if let Some(writer) = audit_writer {
-                audit_tasks.adopt("audit writer", writer);
-            }
+            let RoleAudit {
+                handle: audit,
+                tasks: mut audit_tasks,
+            } = start_role_audit(&cli, wal_security.as_ref()).await?;
             let server_security = server_security.with_security_events(Arc::new(audit.clone()));
             // Boxed, so the start-up future stays small: the role's own future
             // holds its whole serving state.
@@ -1072,12 +1077,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let shutdown = Shutdown::new();
                         spawn_shutdown_signal_listener(shutdown.clone());
                         run_querier(
-                            cli,
-                            metrics,
-                            readiness,
+                            RoleLaunch {
+                                cli,
+                                metrics,
+                                readiness,
+                                wal_security,
+                                audit,
+                            },
                             server_security.clone(),
-                            wal_security,
-                            audit,
                             shutdown,
                         )
                         .await
@@ -1085,23 +1092,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Target::QueryFrontend => {
                         run_query_frontend(
-                            cli,
-                            metrics,
-                            readiness,
+                            RoleLaunch {
+                                cli,
+                                metrics,
+                                readiness,
+                                wal_security,
+                                audit,
+                            },
                             &server_security,
-                            wal_security,
-                            audit,
                         )
                         .await
                     }
                     Target::Ruler => {
                         Box::pin(run_ruler(
-                            cli,
-                            metrics,
-                            readiness,
+                            RoleLaunch {
+                                cli,
+                                metrics,
+                                readiness,
+                                wal_security,
+                                audit,
+                            },
                             &server_security,
-                            wal_security,
-                            audit,
                         ))
                         .await
                     }

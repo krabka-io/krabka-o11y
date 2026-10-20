@@ -1,12 +1,108 @@
 //! OTLP `TracesData` to internal spans.
 
+#![cfg_attr(test, allow(clippy::items_after_test_module))]
+
 use opentelemetry_proto::tonic::{
     common::v1::{AnyValue, KeyValue as OtlpKv},
     trace::v1::{Status, TracesData, span::SpanKind as OtlpKind},
 };
 
 use super::WireError;
-use crate::span::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode};
+use crate::span::{
+    AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode, WireSpanStatus,
+};
+
+/// Decode OTLP `TracesData` into internal spans.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
+    let mut out = Vec::new();
+    for resource_spans in &data.resource_spans {
+        let resource_attrs = resource_spans
+            .resource
+            .as_ref()
+            .map_or_else(Default::default, |resource| kvs(&resource.attributes));
+
+        for scope_spans in &resource_spans.scope_spans {
+            let scope_name = scope_spans
+                .scope
+                .as_ref()
+                .map_or_else(Default::default, |scope| scope.name.clone());
+            let scope_version = scope_spans
+                .scope
+                .as_ref()
+                .map_or_else(Default::default, |scope| scope.version.clone());
+            let instrumentation_attrs = scope_spans.scope.as_ref().map_or_else(Vec::new, |scope| {
+                kvs(&scope.attributes)
+                    .into_iter()
+                    .map(|mut attribute| {
+                        attribute.key = format!(
+                            "{}{}",
+                            krabka_traceql::INSTRUMENTATION_ATTR_PREFIX,
+                            attribute.key
+                        );
+                        attribute
+                    })
+                    .collect::<Vec<_>>()
+            });
+
+            for span in &scope_spans.spans {
+                let parent_span_id = if span.parent_span_id.is_empty() {
+                    None
+                } else {
+                    Some(fixed8(&span.parent_span_id, "parent_span_id")?)
+                };
+                let status = status_of(span.status.as_ref());
+                let events = span
+                    .events
+                    .iter()
+                    .map(|event| EventRecord {
+                        time_unix_nano: i64::try_from(event.time_unix_nano).unwrap_or(i64::MAX),
+                        name: event.name.clone(),
+                        attrs: kvs(&event.attributes),
+                    })
+                    .collect();
+                let links = span
+                    .links
+                    .iter()
+                    .map(|link| {
+                        Ok(LinkRecord {
+                            trace_id: fixed16(&link.trace_id, "link.trace_id")?,
+                            span_id: fixed8(&link.span_id, "link.span_id")?,
+                            attrs: kvs(&link.attributes),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, WireError>>()?;
+
+                let mut span_attrs = kvs(&span.attributes);
+                span_attrs.extend(instrumentation_attrs.clone());
+                out.push(Span {
+                    trace_id: fixed16(&span.trace_id, "trace_id")?,
+                    span_id: fixed8(&span.span_id, "span_id")?,
+                    parent_span_id,
+                    name: span.name.clone(),
+                    kind: kind_of(span.kind),
+                    start_ns: i64::try_from(span.start_time_unix_nano).unwrap_or(i64::MAX),
+                    duration_ns: i64::try_from(
+                        span.end_time_unix_nano
+                            .saturating_sub(span.start_time_unix_nano),
+                    )
+                    .unwrap_or(i64::MAX),
+                    status: status.code,
+                    status_message: status.message,
+                    resource_attrs: resource_attrs.clone(),
+                    span_attrs,
+                    events,
+                    links,
+                    instrumentation_scope: scope_name.clone(),
+                    instrumentation_version: scope_version.clone(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
 
 #[cfg(test)]
 mod tests {
@@ -48,6 +144,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::span::test_span::{api_server_span, string_attr};
 
     fn kv(key: &str, value: &str) -> OtlpKv {
         OtlpKv {
@@ -97,27 +194,9 @@ mod tests {
         assert2::assert!(
             spans
                 == vec![Span {
-                    trace_id: [1; 16],
-                    span_id: [2; 8],
-                    parent_span_id: None,
-                    name: "GET /".into(),
-                    kind: SpanKind::Server,
-                    start_ns: 1_000,
                     duration_ns: 500,
-                    status: StatusCode::Ok,
-                    status_message: String::new(),
-                    resource_attrs: vec![KeyValue {
-                        key: "service.name".into(),
-                        value: AttrValue::Str("api".into()),
-                    }],
-                    span_attrs: vec![KeyValue {
-                        key: "http.method".into(),
-                        value: AttrValue::Str("GET".into()),
-                    }],
-                    events: Vec::new(),
-                    links: Vec::new(),
-                    instrumentation_scope: String::new(),
-                    instrumentation_version: String::new(),
+                    span_attrs: vec![string_attr("http.method", "GET")],
+                    ..api_server_span()
                 }]
         );
     }
@@ -177,7 +256,9 @@ mod tests {
                 0xff, 0x00,
             ])])]),
         ];
-        for (index, value) in values.iter().enumerate() {
+        for entry in values.iter().enumerate() {
+            let index = entry.0;
+            let value = entry.1;
             data.resource_spans[0].scope_spans[0].spans[0]
                 .attributes
                 .push(OtlpKv {
@@ -187,7 +268,9 @@ mod tests {
                 });
         }
         let spans = decode_otlp(&data).unwrap();
-        for (index, expected) in values.iter().enumerate() {
+        for entry in values.iter().enumerate() {
+            let index = entry.0;
+            let expected = entry.1;
             let actual = &spans[0]
                 .span_attrs
                 .iter()
@@ -264,25 +347,65 @@ mod tests {
         assert2::assert!(decode_otlp(&data).is_err());
     }
 }
+pub(crate) fn any_to_attr(value: &AnyValue) -> AttrValue {
+    AttrValue::from(value)
+}
 
-mod any_to_attr;
 #[cfg(test)]
-mod any_to_text;
-mod decode_otlp;
-mod fixed16;
-mod fixed8;
-mod kind_of;
-mod kv_to_attrs;
-mod kvs;
-mod status_of;
+pub(crate) fn any_to_text(value: &AnyValue) -> Option<String> {
+    match any_to_attr(value) {
+        AttrValue::Str(value) => Some(value),
+        AttrValue::Int(value) => Some(value.to_string()),
+        AttrValue::Double(value) => Some(value.to_string()),
+        AttrValue::Bool(value) => Some(value.to_string()),
+        AttrValue::Bytes(value) => Some(hex::encode(value)),
+        AttrValue::Array(_) | AttrValue::Unsupported(_) => None,
+    }
+}
 
-use any_to_attr::any_to_attr;
-#[cfg(test)]
-use any_to_text::any_to_text;
-pub use decode_otlp::decode_otlp;
-use fixed8::fixed8;
-use fixed16::fixed16;
-use kind_of::kind_of;
-use kv_to_attrs::kv_to_attrs;
-use kvs::kvs;
-use status_of::status_of;
+pub(crate) fn fixed16(bytes: &[u8], field: &str) -> Result<[u8; 16], WireError> {
+    bytes
+        .try_into()
+        .map_err(|_| WireError::Invalid(format!("{field} must be 16 bytes, got {}", bytes.len())))
+}
+
+pub(crate) fn fixed8(bytes: &[u8], field: &str) -> Result<[u8; 8], WireError> {
+    bytes
+        .try_into()
+        .map_err(|_| WireError::Invalid(format!("{field} must be 8 bytes, got {}", bytes.len())))
+}
+
+pub(crate) fn kind_of(kind: i32) -> SpanKind {
+    if kind == OtlpKind::Unspecified as i32 {
+        SpanKind::Unspecified
+    } else {
+        SpanKind::from_i32(kind)
+    }
+}
+
+pub(crate) fn kv_to_attrs(attr: &OtlpKv) -> Vec<KeyValue> {
+    let Some(value) = attr.value.as_ref() else {
+        return Vec::new();
+    };
+    vec![KeyValue {
+        key: attr.key.clone(),
+        value: any_to_attr(value),
+    }]
+}
+
+pub(crate) fn kvs(attrs: &[OtlpKv]) -> Vec<KeyValue> {
+    attrs.iter().flat_map(kv_to_attrs).collect()
+}
+
+pub(crate) fn status_of(status: Option<&Status>) -> WireSpanStatus {
+    match status {
+        Some(status) => WireSpanStatus {
+            code: StatusCode::from_i32(status.code),
+            message: status.message.clone(),
+        },
+        None => WireSpanStatus {
+            code: StatusCode::Unset,
+            message: String::new(),
+        },
+    }
+}

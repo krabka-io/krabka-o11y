@@ -7,70 +7,20 @@
 //! HTTP 429, then pushes the SAME load to `org-b` and asserts that it still
 //! succeeds. That proves the token bucket is per-tenant and not global.
 
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use assert2::assert;
+use krabka_metrics::OverridesProvider;
 
-use async_trait::async_trait;
-use bytes::Bytes;
-use krabka_metrics::{
-    OverridesProvider, WalRecord,
-    distributor::{DistributorState, ProduceError, WalSink, serve},
-    wire::pb,
-};
-use krabka_observability::server_security::ServerSecurity;
-use prost::Message;
+#[path = "support/overrides_distributor.rs"]
+mod overrides_distributor;
+#[path = "support/recording_sink.rs"]
+mod recording_sink;
+#[path = "support/up_remote_write.rs"]
+mod up_remote_write;
+
+use self::{overrides_distributor::OverridesDistributor, up_remote_write::remote_write_v1_body};
 
 const ORG_A: &str = "org-a";
 const ORG_B: &str = "org-b";
-
-/// In-memory WAL sink. It records every appended `WalRecord` and never touches
-/// a broker.
-#[derive(Default)]
-struct RecordingSink {
-    records: Mutex<Vec<WalRecord>>,
-}
-
-#[async_trait]
-impl WalSink for RecordingSink {
-    async fn append(&self, _key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
-        self.records
-            .lock()
-            .expect("recording sink poisoned")
-            .push(record);
-        Ok(())
-    }
-}
-
-impl RecordingSink {
-    fn len(&self) -> usize {
-        self.records.lock().expect("recording sink poisoned").len()
-    }
-}
-
-/// Minimal `remote_write` v1 body. It holds a single `up` series with one
-/// sample, snappy compressed, because the distributor requires
-/// `Content-Encoding: snappy`.
-fn remote_write_v1_body() -> Vec<u8> {
-    let req = pb::v1::WriteRequest {
-        timeseries: vec![pb::v1::TimeSeries {
-            labels: vec![pb::v1::Label {
-                name: "__name__".into(),
-                value: "up".into(),
-            }],
-            samples: vec![pb::v1::Sample {
-                value: 1.0,
-                timestamp: 100,
-            }],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-    snap::raw::Encoder::new()
-        .compress_vec(&req.encode_to_vec())
-        .expect("snappy compress")
-}
 
 /// Per-tenant overrides. A rate limit holds org-a to a single sample of burst,
 /// and org-b is unlimited in practice. An unlisted tenant falls back to the
@@ -88,36 +38,9 @@ overrides:
     OverridesProvider::from_yaml(yaml).expect("parse tenant overrides")
 }
 
-async fn boot_distributor() -> (SocketAddr, Arc<RecordingSink>) {
-    let sink = Arc::new(RecordingSink::default());
-    let state = Arc::new(DistributorState::new(sink.clone()).with_overrides(tenant_overrides()));
-    let addr = serve(
-        "127.0.0.1:0".parse().expect("socket addr"),
-        state,
-        &ServerSecurity::default(),
-        std::future::pending(),
-    )
-    .await
-    .expect("serve distributor");
-    (addr, sink)
-}
-
-async fn push(client: &reqwest::Client, addr: SocketAddr, tenant: &str) -> reqwest::StatusCode {
-    client
-        .post(format!("http://{addr}/api/v1/push"))
-        .header("Content-Type", "application/x-protobuf")
-        .header("Content-Encoding", "snappy")
-        .header("X-Scope-OrgID", tenant)
-        .body(remote_write_v1_body())
-        .send()
-        .await
-        .expect("send push")
-        .status()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn per_tenant_quota_is_isolated() {
-    let (addr, sink) = boot_distributor().await;
+    let distributor = OverridesDistributor::boot(tenant_overrides()).await;
     let client = reqwest::Client::new();
 
     // Drive org-a until its tight bucket rejects with 429. Bounded loop so a
@@ -125,7 +48,9 @@ async fn per_tenant_quota_is_isolated() {
     let mut org_a_throttled = false;
     let mut org_a_successes = 0usize;
     for _ in 0..50 {
-        let status = push(&client, addr, ORG_A).await;
+        let status = distributor
+            .push(&client, ORG_A, remote_write_v1_body())
+            .await;
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             org_a_throttled = true;
             break;
@@ -145,9 +70,11 @@ async fn per_tenant_quota_is_isolated() {
     // Same load under org-b's own tenant header must still be accepted: the
     // token bucket is per-tenant, so org-a draining its bucket cannot starve
     // org-b. A global bucket would already be empty here and return 429.
-    let appends_before_b = sink.len();
+    let appends_before_b = distributor.sink.len();
     for index in 0..10 {
-        let status = push(&client, addr, ORG_B).await;
+        let status = distributor
+            .push(&client, ORG_B, remote_write_v1_body())
+            .await;
         assert!(
             status.is_success(),
             "org-b push #{index} should succeed under its own generous quota, got {status} \
@@ -157,19 +84,24 @@ async fn per_tenant_quota_is_isolated() {
 
     // org-b's accepted pushes must have reached the WAL sink.
     assert!(
-        sink.len() >= appends_before_b + 10,
+        distributor.sink.len() >= appends_before_b + 10,
         "expected org-b's 10 pushes to append to the WAL sink"
     );
 
     // Sanity: org-a really is still throttled (its bucket stays drained) while
     // org-b keeps succeeding — confirms the two buckets are independent.
-    assert_eq!(
-        push(&client, addr, ORG_A).await,
-        reqwest::StatusCode::TOO_MANY_REQUESTS,
+    assert!(
+        distributor
+            .push(&client, ORG_A, remote_write_v1_body())
+            .await
+            == reqwest::StatusCode::TOO_MANY_REQUESTS,
         "org-a should remain throttled"
     );
     assert!(
-        push(&client, addr, ORG_B).await.is_success(),
+        distributor
+            .push(&client, ORG_B, remote_write_v1_body())
+            .await
+            .is_success(),
         "org-b should remain unaffected by org-a's throttling"
     );
 }

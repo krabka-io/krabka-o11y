@@ -1,7 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use super::{PromqlError, QueryResult, Result, labels_key};
-use crate::{PromqlLabels as Labels, RangeSeries, SampleValue};
+use crate::{PromqlLabels as Labels, RangeSeries, RangeSeriesSample, SampleValue};
 
 pub(crate) fn finalize_metric_names(result: &mut QueryResult) -> Result<()> {
     match result {
@@ -47,13 +50,11 @@ fn merge_finalized_series(series: &mut Vec<RangeSeries>) -> Result<()> {
         }
     }
     for series in &mut merged {
-        series.samples.sort_by_key(|(timestamp, value)| {
-            (*timestamp, matches!(value, SampleValue::Histogram(_)))
-        });
+        series.samples.sort_by(compare_range_samples);
         if series.samples.windows(2).any(|pair| {
-            pair[0].0 == pair[1].0
-                && matches!(&pair[0].1, SampleValue::Histogram(_))
-                    == matches!(&pair[1].1, SampleValue::Histogram(_))
+            pair[0].timestamp_ms == pair[1].timestamp_ms
+                && matches!(&pair[0].value, SampleValue::Histogram(_))
+                    == matches!(&pair[1].value, SampleValue::Histogram(_))
         }) {
             return Err(PromqlError::Exec(format!(
                 "vector cannot contain metrics with the same labelset: {}",
@@ -65,12 +66,19 @@ fn merge_finalized_series(series: &mut Vec<RangeSeries>) -> Result<()> {
     Ok(())
 }
 
+fn compare_range_samples(left: &RangeSeriesSample, right: &RangeSeriesSample) -> Ordering {
+    left.timestamp_ms.cmp(&right.timestamp_ms).then(
+        matches!(&left.value, SampleValue::Histogram(_))
+            .cmp(&matches!(&right.value, SampleValue::Histogram(_))),
+    )
+}
+
 fn finalize_name(labels: &mut Labels, drop_name: &mut bool) {
     if *drop_name {
         *labels = labels
             .iter()
-            .filter(|(name, _)| name.as_str() != "__name__")
-            .map(|(name, value)| (name.clone(), value.clone()))
+            .filter(|pair| pair.name.as_str() != "__name__")
+            .map(|pair| krabka_metrics::MetricLabelPair::new(pair.name.clone(), pair.value.clone()))
             .collect();
         *drop_name = false;
     }
@@ -85,11 +93,13 @@ mod tests {
     fn series(name: &str, value: SampleValue) -> RangeSeries {
         let mut labels = Labels::new();
         labels.insert("__name__", name);
+        let mut start_timestamps_ms = BTreeMap::new();
+        start_timestamps_ms.insert(10, 1);
         RangeSeries {
             labels,
             drop_name: true,
-            start_timestamps_ms: BTreeMap::from([(10, 1)]),
-            samples: vec![(10, value)],
+            start_timestamps_ms,
+            samples: vec![RangeSeriesSample::new(10, value)],
         }
     }
 
@@ -125,7 +135,11 @@ mod tests {
         assert2::assert!(!merged[0].drop_name);
         assert2::assert!(merged[0].start_timestamps_ms == BTreeMap::from([(10, 1)]));
         assert2::assert!(
-            merged[0].samples == vec![(10, SampleValue::Float(2.0)), (10, histogram.clone())]
+            merged[0].samples
+                == vec![
+                    RangeSeriesSample::new(10, SampleValue::Float(2.0)),
+                    RangeSeriesSample::new(10, histogram.clone()),
+                ]
         );
         for value in [SampleValue::Float(2.0), histogram] {
             let mut result =

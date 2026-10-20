@@ -68,10 +68,13 @@ impl KafkaBrokerState {
             }
         }
         let mut wal_offsets = Vec::with_capacity(specs.len());
-        for ((topic, partition), listed) in admin
+        for entry in admin
             .list_offsets(&specs, IsolationLevel::ReadUncommitted)
             .await
         {
+            let topic = entry.0.0;
+            let partition = entry.0.1;
+            let listed = entry.1;
             let listed = listed.map_err(|error| {
                 format!("list the end offset of {topic}:{partition}: {}", error.name)
             })?;
@@ -94,7 +97,10 @@ impl KafkaBrokerState {
                 .list_consumer_group_offsets(&group.group_id)
                 .await
                 .map_err(|error| format!("read offsets of group `{}`: {error}", group.group_id))?;
-            for ((topic, partition), next_offset) in committed {
+            for entry in committed {
+                let topic = entry.0.0;
+                let partition = entry.0.1;
+                let next_offset = entry.1;
                 // A negative offset is Kafka's "no committed offset".
                 if next_offset >= 0 && self.topics.binary_search(&topic).is_ok() {
                     group_offsets.push(GroupOffset {

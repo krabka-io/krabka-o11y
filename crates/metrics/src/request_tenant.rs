@@ -37,6 +37,12 @@ mod tests {
         tenant_from_metadata,
     };
 
+    struct ErrorResponseCase {
+        error: RequestTenantError,
+        status: StatusCode,
+        body: &'static str,
+    }
+
     fn unsupported(tenant: &str, character: char) -> RequestTenantError {
         RequestTenantError::Resolve(TenantResolveError::Invalid(
             TenantIdError::UnsupportedCharacter {
@@ -55,11 +61,23 @@ mod tests {
     }
 
     // A row of the oracle table: its name, the header value, and the answer.
-    type Case<'a> = (
-        &'a str,
-        Option<&'a [u8]>,
-        Result<TenantId, RequestTenantError>,
-    );
+    struct Case<'a> {
+        name: &'a str,
+        value: Option<&'a [u8]>,
+        expected: Result<TenantId, RequestTenantError>,
+    }
+
+    fn case<'a>(
+        name: &'a str,
+        value: Option<&'a [u8]>,
+        expected: Result<TenantId, RequestTenantError>,
+    ) -> Case<'a> {
+        Case {
+            name,
+            value,
+            expected,
+        }
+    }
 
     const MISSING: RequestTenantError = RequestTenantError::Resolve(TenantResolveError::Missing);
 
@@ -73,62 +91,66 @@ mod tests {
         let too_long_and_bad = format!("{too_long}/");
         let too_many = |actual| Err(RequestTenantError::TooManyTenants { actual });
         let cases: [Case<'_>; 22] = [
-            ("named", Some(b"tenant-a"), Ok(tenant("tenant-a"))),
-            ("absent", None, Err(MISSING)),
-            ("empty", Some(b""), Err(MISSING)),
-            ("separator", Some(b"a/b"), Err(unsupported("a/b", '/'))),
-            ("space", Some(b"a b"), Err(unsupported("a b", ' '))),
-            (
+            case("named", Some(b"tenant-a"), Ok(tenant("tenant-a"))),
+            case("absent", None, Err(MISSING)),
+            case("empty", Some(b""), Err(MISSING)),
+            case("separator", Some(b"a/b"), Err(unsupported("a/b", '/'))),
+            case("space", Some(b"a b"), Err(unsupported("a b", ' '))),
+            case(
                 "too long",
                 Some(too_long.as_bytes()),
                 Err(invalid(TenantIdError::TooLong)),
             ),
-            (
+            case(
                 "too long and unsupported",
                 Some(too_long_and_bad.as_bytes()),
                 Err(unsupported(&too_long_and_bad, '/')),
             ),
-            (
+            case(
                 "dot dot",
                 Some(b".."),
                 Err(invalid(TenantIdError::RelativePathSegment)),
             ),
-            ("two tenants", Some(b"a|b"), too_many(2)),
-            ("three tenants", Some(b"a|b|c"), too_many(3)),
-            ("one tenant twice", Some(b"a|a"), Ok(tenant("a"))),
-            ("a repeat among two", Some(b"a|a|b"), too_many(2)),
-            ("repeats out of order", Some(b"b|a|b"), too_many(2)),
-            ("a trailing empty part", Some(b"a|"), too_many(2)),
-            ("a leading empty part", Some(b"|a"), too_many(2)),
-            ("a repeat and an empty part", Some(b"a|a|"), too_many(2)),
-            (
+            case("two tenants", Some(b"a|b"), too_many(2)),
+            case("three tenants", Some(b"a|b|c"), too_many(3)),
+            case("one tenant twice", Some(b"a|a"), Ok(tenant("a"))),
+            case("a repeat among two", Some(b"a|a|b"), too_many(2)),
+            case("repeats out of order", Some(b"b|a|b"), too_many(2)),
+            case("a trailing empty part", Some(b"a|"), too_many(2)),
+            case("a leading empty part", Some(b"|a"), too_many(2)),
+            case("a repeat and an empty part", Some(b"a|a|"), too_many(2)),
+            case(
                 "an invalid second part",
                 Some(b"a|b/c"),
                 Err(unsupported("b/c", '/')),
             ),
-            (
+            case(
                 "an invalid first part",
                 Some(b"a/b|c"),
                 Err(unsupported("a/b", '/')),
             ),
-            (
+            case(
                 "a dot part",
                 Some(b".|a"),
                 Err(invalid(TenantIdError::RelativePathSegment)),
             ),
-            (
+            case(
                 "a dot dot part",
                 Some(b"a|.."),
                 Err(invalid(TenantIdError::RelativePathSegment)),
             ),
             // Mimir answers these two with a 500 on a query and accepts a push
             // under an empty tenant. Krabka cannot hold an empty tenant.
-            ("only a separator", Some(b"|"), Err(MISSING)),
-            ("only separators", Some(b"||"), Err(MISSING)),
+            case("only a separator", Some(b"|"), Err(MISSING)),
+            case("only separators", Some(b"||"), Err(MISSING)),
         ];
 
-        for (name, value, expected) in cases {
-            check!(resolve_request_tenant(value) == expected, "{name}");
+        for test_case in cases {
+            check!(
+                resolve_request_tenant(test_case.value) == test_case.expected,
+                "{}",
+                test_case.name
+            );
         }
     }
 
@@ -138,30 +160,39 @@ mod tests {
     #[tokio::test]
     async fn an_error_response_is_mimirs_status_and_plain_text_body() {
         let cases = [
-            (MISSING, StatusCode::UNAUTHORIZED, "no org id\n"),
-            (
-                unsupported("a/b", '/'),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID 'a/b' contains unsupported character '/'\n",
-            ),
-            (
-                invalid(TenantIdError::TooLong),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID is too long: max 150 characters\n",
-            ),
-            (
-                invalid(TenantIdError::RelativePathSegment),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID is '.' or '..'\n",
-            ),
-            (
-                RequestTenantError::TooManyTenants { actual: 3 },
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "too many tenant IDs present in the request. max: 1 actual: 3\n",
-            ),
+            ErrorResponseCase {
+                error: MISSING,
+                status: StatusCode::UNAUTHORIZED,
+                body: "no org id\n",
+            },
+            ErrorResponseCase {
+                error: unsupported("a/b", '/'),
+                status: StatusCode::UNAUTHORIZED,
+                body: "tenant ID 'a/b' contains unsupported character '/'\n",
+            },
+            ErrorResponseCase {
+                error: invalid(TenantIdError::TooLong),
+                status: StatusCode::UNAUTHORIZED,
+                body: "tenant ID is too long: max 150 characters\n",
+            },
+            ErrorResponseCase {
+                error: invalid(TenantIdError::RelativePathSegment),
+                status: StatusCode::UNAUTHORIZED,
+                body: "tenant ID is '.' or '..'\n",
+            },
+            ErrorResponseCase {
+                error: RequestTenantError::TooManyTenants { actual: 3 },
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                body: "too many tenant IDs present in the request. max: 1 actual: 3\n",
+            },
         ];
 
-        for (error, status, body) in cases {
+        for ErrorResponseCase {
+            error,
+            status,
+            body,
+        } in cases
+        {
             let response = error.into_response();
             check!(response.status() == status, "{body}");
             check!(
@@ -224,21 +255,135 @@ mod tests {
         assert!(tenant_from_metadata(&metadata) == Ok(tenant("tenant-a")));
     }
 }
-
-mod authorized_tenant_from_headers;
-mod max_request_tenants;
-mod request_tenant_error;
 mod resolve_request_tenant;
-mod tenant_access_error;
-mod tenant_from_headers;
-mod tenant_from_metadata;
-mod tenant_separator;
-
-pub use authorized_tenant_from_headers::authorized_tenant_from_headers;
-pub use max_request_tenants::MAX_REQUEST_TENANTS;
-pub use request_tenant_error::RequestTenantError;
 pub use resolve_request_tenant::resolve_request_tenant;
-pub use tenant_access_error::TenantAccessError;
-pub use tenant_from_headers::tenant_from_headers;
-pub use tenant_from_metadata::tenant_from_metadata;
-use tenant_separator::TENANT_SEPARATOR;
+
+/// The byte that separates tenant ids in one `X-Scope-OrgID` value.
+pub(super) const TENANT_SEPARATOR: u8 = b'|';
+
+/// Resolves the tenant of a gRPC request from its `x-scope-orgid` metadata.
+///
+/// # Errors
+///
+/// Returns the errors of [`resolve_request_tenant`].
+pub fn tenant_from_metadata(metadata: &MetadataMap) -> Result<TenantId, RequestTenantError> {
+    resolve_request_tenant(metadata.get(TENANT_HEADER).map(MetadataValue::as_bytes))
+}
+
+/// Resolves the tenant of an HTTP request, and checks that `principal` may use it.
+///
+/// The authentication layer puts `principal` into the request. A server with
+/// no credentials file gives `Principal::Unauthenticated`, which may use every
+/// tenant, as Grafana Mimir allows by default.
+///
+/// # Errors
+///
+/// Returns [`TenantAccessError::Unresolved`] with the errors of
+/// [`tenant_from_headers`]. Returns [`TenantAccessError::Denied`] when the
+/// principal's grant does not include the tenant. `authorize_tenant` also
+/// reports that denial to the server's security events.
+pub fn authorized_tenant_from_headers(
+    headers: &HeaderMap,
+    principal: &Principal,
+) -> Result<TenantId, TenantAccessError> {
+    let tenant = tenant_from_headers(headers)?;
+    authorize_tenant(principal, &tenant)?;
+    Ok(tenant)
+}
+
+/// Resolves the tenant of an HTTP request from its `X-Scope-OrgID` header.
+///
+/// When the request repeats the header, the first value names the tenant, as
+/// Go's `Header.Get` reads it in Mimir.
+///
+/// # Errors
+///
+/// Returns the errors of [`resolve_request_tenant`].
+pub fn tenant_from_headers(headers: &HeaderMap) -> Result<TenantId, RequestTenantError> {
+    resolve_request_tenant(headers.get(TENANT_HEADER).map(HeaderValue::as_bytes))
+}
+
+/// Most distinct tenants one metrics request can name.
+///
+/// Grafana Mimir reads a `|` in `X-Scope-OrgID` as a list of tenants for a
+/// federated query. With tenant federation off, which is its default, it
+/// accepts one tenant and reports this number in its rejection.
+pub const MAX_REQUEST_TENANTS: usize = 1;
+
+/// Why a metrics request does not resolve to one tenant.
+///
+/// Each message is the text the pinned Grafana Mimir 2.16.1 image sends. A
+/// Grafana datasource shows that text to its user, so Krabka uses the same
+/// words.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum RequestTenantError {
+    /// The request names no tenant, or a tenant that is not a valid tenant id.
+    #[error(transparent)]
+    Resolve(#[from] TenantResolveError),
+
+    /// The request names more than [`MAX_REQUEST_TENANTS`] distinct tenants.
+    #[error(
+        "too many tenant IDs present in the request. max: {MAX_REQUEST_TENANTS} actual: {actual}"
+    )]
+    TooManyTenants {
+        /// The number of distinct tenants the request names.
+        actual: usize,
+    },
+}
+
+impl RequestTenantError {
+    /// The HTTP status Mimir answers this error with.
+    ///
+    /// A missing or invalid tenant is `401 Unauthorized`. Too many tenants is
+    /// `422 Unprocessable Entity`.
+    #[must_use]
+    pub const fn http_status(&self) -> StatusCode {
+        match self {
+            Self::Resolve(_) => StatusCode::UNAUTHORIZED,
+            Self::TooManyTenants { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        }
+    }
+}
+
+impl IntoResponse for RequestTenantError {
+    // Mimir rejects the tenant before any API handler runs, through Go's
+    // `http.Error`. That writes plain text with a trailing line break, so the
+    // body is never the JSON error envelope of the Prometheus API.
+    fn into_response(self) -> Response {
+        let mut response = format!("{self}\n").into_response();
+        *response.status_mut() = self.http_status();
+        response.headers_mut().insert(
+            X_CONTENT_TYPE_OPTIONS,
+            "nosniff".parse().expect("static header"),
+        );
+        response
+    }
+}
+
+/// Why a metrics request may not use the tenant it names.
+///
+/// [`authorized_tenant_from_headers`]
+/// returns it. Each variant keeps the response of its source error, so an
+/// unusable tenant is still Mimir's plain-text rejection, and a refused
+/// principal is a 403.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum TenantAccessError {
+    /// The request names no usable tenant.
+    #[error(transparent)]
+    Unresolved(#[from] RequestTenantError),
+
+    /// The request's principal is not granted the tenant.
+    #[error(transparent)]
+    Denied(#[from] TenantDenied),
+}
+
+impl IntoResponse for TenantAccessError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Unresolved(error) => error.into_response(),
+            Self::Denied(error) => error.into_response(),
+        }
+    }
+}

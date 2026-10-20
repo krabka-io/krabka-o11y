@@ -23,57 +23,39 @@ use crate::{
     wal::SpanRecord,
 };
 
+fn traceql_attributes(attrs: &[KeyValue]) -> Vec<krabka_traceql::Attribute> {
+    attrs
+        .iter()
+        .filter_map(|attr| {
+            traceql_attr(attr).map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     mod span_batch_packing;
 
     use assert2::check;
-    use krabka_traceql::TagScope;
+    use krabka_traceql::{TagCatalog as _, TagScope};
 
     use super::{LiveSource as _, LiveStore};
     use crate::{
-        span::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode},
+        span::{
+            AttrValue, KeyValue, Span,
+            test_span::{server_span_with_event_and_link, string_attr},
+        },
         wal::SpanRecord,
     };
 
     fn span_with_everything() -> Span {
-        Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            parent_span_id: None,
-            name: "GET /users".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
-            duration_ns: 500,
-            status: StatusCode::Ok,
-            status_message: String::new(),
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: vec![KeyValue {
-                key: "http.method".into(),
-                value: AttrValue::Str("GET".into()),
-            }],
-            events: vec![EventRecord {
-                time_unix_nano: 1_100,
-                name: "exception".into(),
-                attrs: vec![KeyValue {
-                    key: "exception.type".into(),
-                    value: AttrValue::Str("timeout".into()),
-                }],
-            }],
-            links: vec![LinkRecord {
-                trace_id: [9; 16],
-                span_id: [8; 8],
-                attrs: vec![KeyValue {
-                    key: "link.kind".into(),
-                    value: AttrValue::Str("retry".into()),
-                }],
-            }],
-            instrumentation_scope: "otel-rust".into(),
-            instrumentation_version: "1.2.3".into(),
-        }
+        server_span_with_event_and_link(
+            "GET /users",
+            500,
+            vec![string_attr("http.method", "GET")],
+            1_100,
+            vec![string_attr("exception.type", "timeout")],
+        )
     }
 
     fn store_with_one_span() -> LiveStore {
@@ -85,12 +67,9 @@ mod tests {
         store
     }
 
-    fn tags_for(store: &LiveStore, scope: Option<TagScope>) -> Vec<(TagScope, Vec<String>)> {
+    fn tags_for(store: &LiveStore, scope: Option<TagScope>) -> Vec<krabka_traceql::ScopedTag> {
         futures::executor::block_on(store.tag_names("t", scope, 0, 10_000))
             .expect("tag names are readable")
-            .into_iter()
-            .map(|scoped| (scoped.scope, scoped.tags))
-            .collect()
     }
 
     /// `tag_values` reads one tag's values across the live spans. Three of its
@@ -122,10 +101,9 @@ mod tests {
             futures::executor::block_on(store.tag_values("t", tag, 0, 10_000))
                 .expect("tag values are readable")
                 .into_iter()
-                .map(|value| (value.type_, value.value))
                 .collect::<Vec<_>>()
         };
-        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+        let pair = |type_: &str, value: &str| krabka_traceql::TypedValue::new(type_, value);
 
         // Each attribute reads its own value, not its neighbour's.
         check!(values("service.name") == vec![pair("string", "api")]);
@@ -176,7 +154,7 @@ mod tests {
             super::collect_span_intrinsic_value(&span, tag, &mut values);
             values.into_iter().collect::<Vec<_>>()
         };
-        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+        let pair = |type_: &str, value: &str| krabka_traceql::TypedValue::new(type_, value);
 
         // A duration carries its own type name rather than "int".
         check!(collect("span:duration") == vec![pair("duration", "500")]);
@@ -214,15 +192,15 @@ mod tests {
 
         // Unfiltered: every scope the span populates, and nothing else.
         let all = tags_for(&store, None);
-        let scopes: Vec<TagScope> = all.iter().map(|(scope, _)| *scope).collect();
+        let scopes: Vec<TagScope> = all.iter().map(|scoped| scoped.scope).collect();
         check!(
             scopes
                 == vec![
                     TagScope::Resource,
                     TagScope::Span,
+                    TagScope::Intrinsic,
                     TagScope::Event,
                     TagScope::Link,
-                    TagScope::Intrinsic,
                     TagScope::Instrumentation,
                 ],
             "got {scopes:?}"
@@ -238,25 +216,29 @@ mod tests {
         ] {
             let one = tags_for(&store, Some(scope));
             check!(one.len() == 1, "{scope:?} returned {} groups", one.len());
-            check!(one[0].0 == scope, "{scope:?} returned {:?}", one[0].0);
+            check!(
+                one[0].scope == scope,
+                "{scope:?} returned {:?}",
+                one[0].scope
+            );
         }
 
         // The attribute keys reach the scope they were recorded under, and not
         // the neighbouring one.
         let resource = tags_for(&store, Some(TagScope::Resource));
-        check!(resource[0].1 == vec!["service.name".to_string()]);
+        check!(resource[0].tags == vec!["service.name".to_string()]);
         let span_tags = tags_for(&store, Some(TagScope::Span));
-        check!(span_tags[0].1 == vec!["http.method".to_string()]);
+        check!(span_tags[0].tags == vec!["http.method".to_string()]);
 
         // Event and link scopes carry their fixed intrinsics as well as the
         // attributes found on the records themselves.
         let event = tags_for(&store, Some(TagScope::Event));
-        check!(event[0].1.contains(&"event:name".to_string()));
-        check!(event[0].1.contains(&"event:timeSinceStart".to_string()));
-        check!(event[0].1.contains(&"exception.type".to_string()));
+        check!(event[0].tags.contains(&"event:name".to_string()));
+        check!(event[0].tags.contains(&"event:timeSinceStart".to_string()));
+        check!(event[0].tags.contains(&"exception.type".to_string()));
         let link = tags_for(&store, Some(TagScope::Link));
-        check!(link[0].1.contains(&"link:traceID".to_string()));
-        check!(link[0].1.contains(&"link.kind".to_string()));
+        check!(link[0].tags.contains(&"link:traceID".to_string()));
+        check!(link[0].tags.contains(&"link.kind".to_string()));
 
         // A tenant with nothing in it has no scopes at all, rather than a set
         // of empty ones.
@@ -276,51 +258,100 @@ mod tests {
         );
     }
 }
-
-mod attr_string;
-mod bytes_to_hex;
-mod collect_event_values;
-mod collect_link_values;
-mod collect_span_intrinsic_value;
-mod collect_trace_intrinsic_values;
-mod event_ref;
-mod event_tags;
-mod in_time_range;
-mod ingest_wal_payloads;
-mod intrinsic_tags;
-mod link_ref;
-mod link_tags;
 mod live_store;
-mod non_negative_u64;
-mod order_spans;
-mod root_span;
 mod run;
-mod scoped_attribute_tag;
-mod span_ref;
-mod trace_spans;
-mod traceql_attr;
-mod typed_value_parts;
-
-use attr_string::attr_string;
-use bytes_to_hex::bytes_to_hex;
-use collect_event_values::collect_event_values;
-use collect_link_values::collect_link_values;
-use collect_span_intrinsic_value::collect_span_intrinsic_value;
-use collect_trace_intrinsic_values::collect_trace_intrinsic_values;
-use event_ref::event_ref;
-use event_tags::EVENT_TAGS;
-use in_time_range::in_time_range;
-pub use ingest_wal_payloads::ingest_wal_payloads;
-use intrinsic_tags::INTRINSIC_TAGS;
-use link_ref::link_ref;
-use link_tags::LINK_TAGS;
+mod values;
+use krabka_traceql::bytes_to_hex;
 pub use live_store::LiveStore;
-use non_negative_u64::non_negative_u64;
-use order_spans::order_spans;
-use root_span::root_span;
 pub use run::run;
-use scoped_attribute_tag::scoped_attribute_tag;
-use span_ref::span_ref;
-use trace_spans::trace_spans;
-use traceql_attr::traceql_attr;
-use typed_value_parts::typed_value_parts;
+use values::{
+    INTRINSIC_TAGS, collect_event_values, collect_link_values, collect_span_intrinsic_value,
+    collect_trace_intrinsic_values, order_spans, span_ref,
+};
+
+use crate::span::typed_value_parts::typed_value_parts;
+
+pub(crate) const EVENT_TAGS: &[&str] = &["event:name", "event:timeSinceStart"];
+
+pub(crate) const LINK_TAGS: &[&str] = &["link:traceID", "link:spanID"];
+
+pub(crate) fn attr_string(attrs: &[KeyValue], key: &str) -> Option<String> {
+    attrs.iter().find_map(|attr| {
+        (attr.key == key).then(|| match &attr.value {
+            AttrValue::Str(value) => Some(value.clone()),
+            _ => None,
+        })?
+    })
+}
+
+pub(crate) fn in_time_range(span: &Span, start_ns: UnixNano, end_ns: UnixNano) -> bool {
+    start_ns.0 <= span.start_ns && span.start_ns <= end_ns.0
+}
+
+pub(crate) fn link_ref(link: &LinkRecord) -> krabka_traceql::LinkRef {
+    krabka_traceql::LinkRef {
+        trace_id: link.trace_id,
+        span_id: link.span_id,
+        attributes: traceql_attributes(&link.attrs),
+    }
+}
+
+pub(crate) fn non_negative_u64(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or(0)
+}
+
+pub(crate) fn root_span<'a>(spans: &'a [&'a Span]) -> Option<&'a Span> {
+    spans
+        .iter()
+        .copied()
+        .find(|span| span.is_root())
+        .or_else(|| spans.iter().copied().min_by_key(|span| span.start_ns))
+}
+
+pub(crate) fn traceql_attr(attr: &KeyValue) -> Option<krabka_traceql::AttrValue> {
+    attr.value.traceql_value()
+}
+
+/// Decode WAL payloads and ingest them into the live store.
+///
+/// # Errors
+/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+pub fn ingest_wal_payloads<'a, I>(store: &mut LiveStore, payloads: I) -> Result<usize, TracesError>
+where
+    I: IntoIterator<Item = &'a [u8]>,
+{
+    let mut count = 0;
+    for payload in payloads {
+        store.ingest(SpanRecord::decode(payload)?);
+        count += 1;
+    }
+    Ok(count)
+}
+
+pub(crate) fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> krabka_traceql::TraceSpans {
+    let root = spans
+        .iter()
+        .find(|span| span.is_root())
+        .or_else(|| spans.iter().min_by_key(|span| span.start_ns));
+    krabka_traceql::TraceSpans {
+        trace_id: *trace_id,
+        root_service_name: root
+            .and_then(|span| attr_string(&span.resource_attrs, "service.name"))
+            .unwrap_or_default(),
+        root_trace_name: root.map_or_else(Default::default, |span| span.name.clone()),
+        resource_attributes: root.map_or_else(Default::default, |span| {
+            span.resource_attrs
+                .iter()
+                .filter_map(|attr| {
+                    traceql_attr(attr)
+                        .map(|value| krabka_traceql::Attribute::new(attr.key.clone(), value))
+                })
+                .collect()
+        }),
+        spans: spans
+            .iter()
+            .zip(nested_set::assign_nested_set(spans))
+            .map(|entry| span_ref(entry.0, entry.1))
+            .collect(),
+    }
+}

@@ -175,6 +175,15 @@ def prometheus(text):
     return samples
 
 
+def broker_round_trip(request):
+    """Send one size-prefixed Kafka request to the local broker; return the response body."""
+    with socket.create_connection(("127.0.0.1", 9092), timeout=30) as connection:
+        connection.sendall(struct.pack(">i", len(request)) + request)
+        with connection.makefile("rb") as response:
+            size = struct.unpack(">i", response.read(4))[0]
+            return response.read(size)
+
+
 def set_noisy_byte_quota():
     """Set the quota read by logs' broker-backed tenant admission control.
 
@@ -188,11 +197,7 @@ def set_noisy_byte_quota():
     request = struct.pack(">hhi", 49, 0, SEED) + string("operating-envelope")
     request += struct.pack(">ii", 1, 1) + string("user") + string("noisy")
     request += struct.pack(">i", 1) + string("producer_byte_rate") + struct.pack(">d??", 65536, False, False)
-    with socket.create_connection(("127.0.0.1", 9092), timeout=30) as connection:
-        connection.sendall(struct.pack(">i", len(request)) + request)
-        with connection.makefile("rb") as response:
-            size = struct.unpack(">i", response.read(4))[0]
-            body = response.read(size)
+    body = broker_round_trip(request)
     if len(body) < 14 or struct.unpack(">i", body[:4])[0] != SEED or (
         struct.unpack(">i", body[8:12])[0] != 1 or struct.unpack(">h", body[12:14])[0] != 0):
         raise RuntimeError(f"broker refused noisy tenant quota: {body.hex()}")
@@ -211,11 +216,7 @@ def broker_end_offset(signal):
     client = b"operating-envelope"
     request = struct.pack(">hhih", 2, 1, SEED, len(client)) + client
     request += struct.pack(">iih", -1, 1, len(topic)) + topic + struct.pack(">iiq", 1, 0, -1)
-    with socket.create_connection(("127.0.0.1", 9092), timeout=30) as connection:
-        connection.sendall(struct.pack(">i", len(request)) + request)
-        with connection.makefile("rb") as response:
-            size = struct.unpack(">i", response.read(4))[0]
-            body = response.read(size)
+    body = broker_round_trip(request)
     expected = struct.pack(">iih", SEED, 1, len(topic)) + topic + struct.pack(">iih", 1, 0, 0)
     if len(body) != len(expected) + 16 or not body.startswith(expected):
         raise RuntimeError(f"broker refused WAL end-offset lookup: {body.hex()}")

@@ -33,7 +33,7 @@ use arrow::{
     datatypes::DataType,
 };
 use datafusion::{
-    common::{DataFusionError, Result as DfResult, ScalarValue},
+    common::{DataFusionError, Result as DfResult},
     logical_expr::{
         ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
     },
@@ -45,6 +45,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::{array::Float64Array, datatypes::Field};
+    use datafusion::common::ScalarValue;
 
     use super::*;
 
@@ -65,13 +66,7 @@ mod tests {
         call_args.push(ColumnarValue::Array(value_col));
         arg_fields.push(Arc::new(Field::new("value", DataType::Float64, true)));
 
-        let args = ScalarFunctionArgs {
-            args: call_args,
-            arg_fields,
-            number_rows: rows,
-            return_field: Arc::new(Field::new("out", DataType::Float64, true)),
-            config_options: Arc::new(datafusion::config::ConfigOptions::default()),
-        };
+        let args = scalar_math_args(call_args, arg_fields, rows);
         let out = udf.invoke_with_args(args).unwrap();
         let array = out.into_array(rows).unwrap();
         let floats = array.as_any().downcast_ref::<Float64Array>().unwrap();
@@ -84,89 +79,129 @@ mod tests {
         rows: usize,
     ) -> DfResult<ColumnarValue> {
         let udf = ScalarMathUdf::new(op);
-        let arg_fields = call_args
-            .iter()
-            .enumerate()
-            .map(|(index, _)| Arc::new(Field::new(format!("arg_{index}"), DataType::Float64, true)))
+        let arg_fields = (0..call_args.len())
+            .map(|index| Arc::new(Field::new(format!("arg_{index}"), DataType::Float64, true)))
             .collect();
-        udf.invoke_with_args(ScalarFunctionArgs {
-            args: call_args,
+        udf.invoke_with_args(scalar_math_args(call_args, arg_fields, rows))
+    }
+
+    fn scalar_math_args(
+        args: Vec<ColumnarValue>,
+        arg_fields: Vec<Arc<Field>>,
+        rows: usize,
+    ) -> ScalarFunctionArgs {
+        ScalarFunctionArgs {
+            args,
             arg_fields,
             number_rows: rows,
             return_field: Arc::new(Field::new("out", DataType::Float64, true)),
             config_options: Arc::new(datafusion::config::ConfigOptions::default()),
-        })
+        }
     }
 
     fn bits_eq(left: f64, right: f64) -> bool {
         left.to_bits() == right.to_bits() || (left.is_nan() && right.is_nan())
     }
 
-    #[test]
-    fn unary_matches_rust_f64() {
-        // `bits_eq` treats any-NaN == any-NaN, so NaN expectations
-        // (sqrt/ln of a negative, preserved rather than dropped) sit in the
-        // same table as the exact cases; ln(0) -> -inf.
-        for (op, input, want) in [
-            (ScalarMathOp::Abs, -3.0, 3.0),
-            (ScalarMathOp::Sqrt, 4.0, 2.0),
-            (ScalarMathOp::Sqrt, -1.0, f64::NAN),
-            (ScalarMathOp::Ln, 0.0, f64::NEG_INFINITY),
-            (ScalarMathOp::Ln, -1.0, f64::NAN),
-            (ScalarMathOp::Log2, 8.0, 3.0),
-        ] {
-            let got = run(op, &[], &[input])[0];
-            assert2::assert!(bits_eq(got, want));
-        }
+    #[yare::parameterized(
+        abs = { ScalarMathOp::Abs, -3.0, 3.0 },
+        sqrt = { ScalarMathOp::Sqrt, 4.0, 2.0 },
+        sqrt_negative = { ScalarMathOp::Sqrt, -1.0, f64::NAN },
+        ln_zero = { ScalarMathOp::Ln, 0.0, f64::NEG_INFINITY },
+        ln_negative = { ScalarMathOp::Ln, -1.0, f64::NAN },
+        log2 = { ScalarMathOp::Log2, 8.0, 3.0 },
+    )]
+    fn unary_matches_rust_f64(op: ScalarMathOp, input: f64, want: f64) {
+        let got = run(op, &[], &[input])[0];
+        assert2::assert!(bits_eq(got, want));
     }
 
-    #[test]
-    fn sgn_handles_nan_and_signed_zero() {
-        // -0.0 is neither > 0 nor < 0, so sgn(-0.0) = 0.0 (positive zero,
-        // pinned by the bit comparison); sgn(NaN) stays NaN.
-        for (input, want) in [
-            (5.0, 1.0),
-            (-5.0, -1.0),
-            (0.0, 0.0),
-            (-0.0, 0.0),
-            (f64::NAN, f64::NAN),
-        ] {
-            let got = run(ScalarMathOp::Sgn, &[], &[input])[0];
-            assert2::assert!(bits_eq(got, want));
-        }
+    #[yare::parameterized(
+        positive = { 5.0, 1.0 },
+        negative = { -5.0, -1.0 },
+        zero = { 0.0, 0.0 },
+        negative_zero = { -0.0, 0.0 },
+        nan = { f64::NAN, f64::NAN },
+    )]
+    fn sgn_handles_nan_and_signed_zero(input: f64, want: f64) {
+        let got = run(ScalarMathOp::Sgn, &[], &[input])[0];
+        assert2::assert!(bits_eq(got, want));
     }
 
-    #[test]
-    fn round_matches_interpreter_half_up() {
-        // .5 rounds up (toward +inf), matching `round_to_nearest`.
-        for (to_nearest, value, want) in [
-            (1.0, 2.5, 3.0),
-            (1.0, -2.5, -2.0),
-            (5.0, 12.0, 10.0),
-            (5.0, 13.0, 15.0),
-        ] {
-            let got = run(ScalarMathOp::Round, &[to_nearest], &[value])[0];
-            assert2::assert!(bits_eq(got, want));
-        }
+    #[yare::parameterized(
+        positive_half = { 1.0, 2.5, 3.0 },
+        negative_half = { 1.0, -2.5, -2.0 },
+        nearest_ten_low = { 5.0, 12.0, 10.0 },
+        nearest_ten_high = { 5.0, 13.0, 15.0 },
+    )]
+    fn round_matches_interpreter_half_up(to_nearest: f64, value: f64, want: f64) {
+        let got = run(ScalarMathOp::Round, &[to_nearest], &[value])[0];
+        assert2::assert!(bits_eq(got, want));
     }
 
     #[test]
     fn clamp_family_bounds_values() {
         // Signed zeros pass through unclamped (pinned by the bit comparison);
         // a NaN bound yields NaN.
-        let cases: &[(ScalarMathOp, &[f64], f64, f64)] = &[
-            (ScalarMathOp::ClampMin, &[0.0], -3.0, 0.0),
-            (ScalarMathOp::ClampMin, &[0.0], 3.0, 3.0),
-            (ScalarMathOp::ClampMax, &[10.0], 42.0, 10.0),
-            (ScalarMathOp::Clamp, &[0.0, 100.0], 150.0, 100.0),
-            (ScalarMathOp::Clamp, &[0.0, 100.0], -5.0, 0.0),
-            (ScalarMathOp::ClampMin, &[0.0], -0.0, -0.0),
-            (ScalarMathOp::ClampMax, &[-0.0], 0.0, 0.0),
-            (ScalarMathOp::ClampMin, &[f64::NAN], 3.0, f64::NAN),
+        struct ClampCase {
+            op: ScalarMathOp,
+            bounds: &'static [f64],
+            value: f64,
+            expected: f64,
+        }
+        let cases = [
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[0.0],
+                value: -3.0,
+                expected: 0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[0.0],
+                value: 3.0,
+                expected: 3.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMax,
+                bounds: &[10.0],
+                value: 42.0,
+                expected: 10.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::Clamp,
+                bounds: &[0.0, 100.0],
+                value: 150.0,
+                expected: 100.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::Clamp,
+                bounds: &[0.0, 100.0],
+                value: -5.0,
+                expected: 0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[0.0],
+                value: -0.0,
+                expected: -0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMax,
+                bounds: &[-0.0],
+                value: 0.0,
+                expected: 0.0,
+            },
+            ClampCase {
+                op: ScalarMathOp::ClampMin,
+                bounds: &[f64::NAN],
+                value: 3.0,
+                expected: f64::NAN,
+            },
         ];
-        for &(op, bounds, value, want) in cases {
-            let got = run(op, bounds, &[value])[0];
-            assert2::assert!(bits_eq(got, want));
+        for case in cases {
+            let got = run(case.op, case.bounds, &[case.value])[0];
+            assert2::assert!(bits_eq(got, case.expected));
         }
     }
 
@@ -205,21 +240,63 @@ mod tests {
         }
     }
 }
-
-mod clamp_float;
-mod register_scalar_math_udfs;
-mod round_to_nearest;
-mod scalar_f64;
 mod scalar_math_op;
 mod scalar_math_udf;
 mod scalar_math_udfs;
-
-use clamp_float::clamp_float;
-pub use register_scalar_math_udfs::register_scalar_math_udfs;
-use round_to_nearest::round_to_nearest;
-use scalar_f64::scalar_f64;
 pub use scalar_math_op::ScalarMathOp;
 #[cfg(test)]
 use scalar_math_udf::ScalarMathUdf;
 pub use scalar_math_udf::scalar_math_udf;
 pub use scalar_math_udfs::scalar_math_udfs;
+
+use super::udf_args::scalar_f64;
+
+/// Registers every scalar-math UDF on `ctx` so a planner can lower onto them.
+pub fn register_scalar_math_udfs(ctx: &SessionContext) {
+    for udf in scalar_math_udfs() {
+        ctx.register_udf(udf);
+    }
+}
+
+/// Rounds `value` to the nearest multiple of `to_nearest`, ties going up.
+///
+/// Prometheus INVERTS the step and multiplies, rather than dividing by it:
+/// `math.Floor(f*toNearestInverse+0.5) / toNearestInverse`. The two spellings
+/// disagree in the last bits for a step such as `0.1`, whose inverse is exact
+/// while the step itself is not, so the inversion is part of the answer.
+pub(crate) fn round_to_nearest(value: f64, to_nearest: f64) -> f64 {
+    let inverse = 1.0 / to_nearest;
+    (value * inverse + 0.5).floor() / inverse
+}
+
+/// Port of the interpreter's `clamp_float`.
+pub(crate) fn clamp_float(value: f64, min: Option<f64>, max: Option<f64>) -> f64 {
+    if min.is_some_and(f64::is_nan) || max.is_some_and(f64::is_nan) {
+        return f64::NAN;
+    }
+    if let Some(min) = min
+        && value < min
+    {
+        return min;
+    }
+    if let Some(max) = max
+        && value > max
+    {
+        return max;
+    }
+    value
+}
+
+/// Returns the sign of `value` as the `PromQL` `sgn` function does: `1`, `-1` or `0`, and
+/// NaN for NaN.
+pub(crate) fn prometheus_sgn(value: f64) -> f64 {
+    if value.is_nan() {
+        f64::NAN
+    } else if value > 0.0 {
+        1.0
+    } else if value < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}

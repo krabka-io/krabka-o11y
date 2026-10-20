@@ -3,24 +3,33 @@ use super::{
     template_parse_error,
 };
 
+pub(crate) struct ParsedTemplateRangeExpression {
+    pub(crate) binding: TemplateRangeBinding,
+    pub(crate) expression: TemplateExpression,
+}
+
+struct RangeAssignment<'a> {
+    variables: &'a str,
+    expression: &'a str,
+    is_declaration: bool,
+}
+
 pub(crate) fn parse_template_range_expression(
     range_expression: &str,
-) -> Result<(TemplateRangeBinding, TemplateExpression), ParseError> {
-    let binding = |(variables, _): &(&str, &str)| {
-        variables.split(',').all(|variable| {
-            parse_template_variable_name(variable.trim(), "expected template range variable")
-                .is_ok()
-        })
+) -> Result<ParsedTemplateRangeExpression, ParseError> {
+    let assignment = range_assignment(range_expression, ":=", true)
+        .or_else(|| range_assignment(range_expression, "=", false));
+    let Some(assignment) = assignment else {
+        return Ok(ParsedTemplateRangeExpression {
+            binding: TemplateRangeBinding::Dot,
+            expression: TemplateExpression::parse(range_expression.trim())?,
+        });
     };
-    let declaration = range_expression.split_once(":=").filter(binding);
-    let assignment = range_expression.split_once('=').filter(binding);
-    let Some((variables, expression)) = declaration.or(assignment) else {
-        return Ok((
-            TemplateRangeBinding::Dot,
-            TemplateExpression::parse(range_expression.trim())?,
-        ));
-    };
-    let variables = variables.split(',').map(str::trim).collect::<Vec<_>>();
+    let variables = assignment
+        .variables
+        .split(',')
+        .map(str::trim)
+        .collect::<Vec<_>>();
     let binding = match variables.as_slice() {
         [variable] => TemplateRangeBinding::Value(parse_template_variable_name(
             variable,
@@ -32,7 +41,7 @@ pub(crate) fn parse_template_range_expression(
         },
         _ => return Err(template_parse_error("expected template range variable")),
     };
-    let binding = if declaration.is_some() {
+    let binding = if assignment.is_declaration {
         binding
     } else {
         match binding {
@@ -43,5 +52,27 @@ pub(crate) fn parse_template_range_expression(
             binding => binding,
         }
     };
-    Ok((binding, TemplateExpression::parse(expression.trim())?))
+    Ok(ParsedTemplateRangeExpression {
+        binding,
+        expression: TemplateExpression::parse(assignment.expression.trim())?,
+    })
+}
+
+fn range_assignment<'a>(
+    input: &'a str,
+    delimiter: &str,
+    is_declaration: bool,
+) -> Option<RangeAssignment<'a>> {
+    let delimiter_index = input.find(delimiter)?;
+    let variables = &input[..delimiter_index];
+    if !variables.split(',').all(|variable| {
+        parse_template_variable_name(variable.trim(), "expected template range variable").is_ok()
+    }) {
+        return None;
+    }
+    Some(RangeAssignment {
+        variables,
+        expression: &input[delimiter_index + delimiter.len()..],
+        is_declaration,
+    })
 }

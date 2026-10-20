@@ -2,26 +2,50 @@ use std::ops::Range;
 
 use super::{super::TemplateRuntimeValue, Spec, printable::printable, scalar};
 
+struct FormatMapEntry<'a> {
+    key: &'a str,
+    value: TemplateRuntimeValue,
+}
+
+struct Utf8Prefix<'a> {
+    text: &'a str,
+    has_invalid_tail: bool,
+}
+
+pub(in crate::template) struct Rune {
+    pub character: char,
+    pub range: Range<usize>,
+}
+
 /// Go utf8.DecodeRune consumes one byte for each malformed sequence.
-pub(in crate::template) fn runes(bytes: &[u8]) -> Vec<(char, Range<usize>)> {
+pub(in crate::template) fn runes(bytes: &[u8]) -> Vec<Rune> {
     let mut result = Vec::new();
     let mut position = 0;
     while position < bytes.len() {
-        let (valid, invalid) = match std::str::from_utf8(&bytes[position..]) {
-            Ok(value) => (value, false),
-            Err(error) => (
-                std::str::from_utf8(&bytes[position..position + error.valid_up_to()])
+        let prefix = match std::str::from_utf8(&bytes[position..]) {
+            Ok(value) => Utf8Prefix {
+                text: value,
+                has_invalid_tail: false,
+            },
+            Err(error) => Utf8Prefix {
+                text: std::str::from_utf8(&bytes[position..position + error.valid_up_to()])
                     .expect("validated UTF-8 prefix"),
-                true,
-            ),
+                has_invalid_tail: true,
+            },
         };
-        for ch in valid.chars() {
+        for ch in prefix.text.chars() {
             let end = position + ch.len_utf8();
-            result.push((ch, position..end));
+            result.push(Rune {
+                character: ch,
+                range: position..end,
+            });
             position = end;
         }
-        if invalid {
-            result.push((char::REPLACEMENT_CHARACTER, position..position + 1));
+        if prefix.has_invalid_tail {
+            result.push(Rune {
+                character: char::REPLACEMENT_CHARACTER,
+                range: position..position + 1,
+            });
             position += 1;
         }
     }
@@ -95,17 +119,19 @@ pub(super) fn render(
             string(value.as_bytes(), verb, spec)
         }
         V::ByteLabels(values) => map(
-            values
-                .iter()
-                .map(|(key, value)| (key.as_str(), V::Bytes(value.clone()))),
+            values.iter().map(|entry| FormatMapEntry {
+                key: entry.0.as_str(),
+                value: V::Bytes(entry.1.clone()),
+            }),
             "map[string]string",
             verb,
             spec,
         ),
         V::Object(values) => map(
-            values
-                .iter()
-                .map(|(key, value)| (key.as_str(), value.clone())),
+            values.iter().map(|entry| FormatMapEntry {
+                key: entry.0.as_str(),
+                value: entry.1.clone(),
+            }),
             "map[string]interface {}",
             verb,
             spec,
@@ -139,7 +165,7 @@ pub(super) fn render(
 }
 
 fn map<'a>(
-    values: impl Iterator<Item = (&'a str, TemplateRuntimeValue)>,
+    values: impl Iterator<Item = FormatMapEntry<'a>>,
     name: &str,
     verb: char,
     spec: Spec,
@@ -150,13 +176,13 @@ fn map<'a>(
     } else {
         b"map[".to_vec()
     };
-    for (index, (key, value)) in values.enumerate() {
+    for (index, entry) in values.enumerate() {
         if index > 0 {
             output.extend_from_slice(if sharp { b", " } else { b" " });
         }
-        output.extend_from_slice(&string(key.as_bytes(), verb, spec));
+        output.extend_from_slice(&string(entry.key.as_bytes(), verb, spec));
         output.push(b':');
-        output.extend_from_slice(&render(&value, verb, spec, true));
+        output.extend_from_slice(&render(&entry.value, verb, spec, true));
     }
     output.push(if sharp { b'}' } else { b']' });
     output
@@ -166,7 +192,7 @@ pub(super) fn string(value: &[u8], verb: char, spec: Spec) -> Vec<u8> {
     let units = runes(value);
     let length = spec
         .precision
-        .and_then(|precision| units.get(precision).map(|unit| unit.1.start))
+        .and_then(|precision| units.get(precision).map(|unit| unit.range.start))
         .unwrap_or(value.len());
     let truncated = &value[..length];
     let output = match verb {
@@ -185,8 +211,9 @@ pub(super) fn string(value: &[u8], verb: char, spec: Spec) -> Vec<u8> {
                 [b"`".as_slice(), truncated, b"`"].concat()
             } else {
                 let mut output = vec![b'"'];
-                for (ch, range) in runes(truncated) {
-                    let bytes = &truncated[range];
+                for rune in runes(truncated) {
+                    let ch = rune.character;
+                    let bytes = &truncated[rune.range];
                     if ch == char::REPLACEMENT_CHARACTER && bytes.len() == 1 && bytes[0] >= 128 {
                         output.extend_from_slice(format!("\\x{:02x}", bytes[0]).as_bytes());
                         continue;
@@ -218,10 +245,8 @@ pub(super) fn string(value: &[u8], verb: char, spec: Spec) -> Vec<u8> {
         }
         'x' | 'X' => {
             let mut output = Vec::new();
-            for (index, byte) in value[..spec.precision.unwrap_or(value.len()).min(value.len())]
-                .iter()
-                .enumerate()
-            {
+            let bytes = &value[..spec.precision.unwrap_or(value.len()).min(value.len())];
+            for (index, byte) in bytes.iter().enumerate() {
                 if index > 0 && spec.flags[Spec::SPACE] {
                     output.push(b' ');
                 }

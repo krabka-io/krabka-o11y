@@ -37,25 +37,7 @@ mod tests {
     #[test]
     fn decode_push_gunzips_and_parses_pprof() {
         let pprof_bytes = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
-        let req = pb::push::v1::PushRequest {
-            series: vec![pb::push::v1::RawProfileSeries {
-                labels: vec![
-                    pb::types::v1::LabelPair {
-                        name: "__name__".into(),
-                        value: "process_cpu".into(),
-                    },
-                    pb::types::v1::LabelPair {
-                        name: "service_name".into(),
-                        value: "api".into(),
-                    },
-                ],
-                samples: vec![pb::push::v1::RawSample {
-                    raw_profile: gzip(&pprof_bytes),
-                    id: "s1".into(),
-                }],
-                annotations: Vec::new(),
-            }],
-        };
+        let req = crate::wire::test_fixtures::push_request_cpu(gzip(&pprof_bytes), "s1");
 
         let out = decode_push(&req, mebibytes(1)).unwrap();
 
@@ -76,7 +58,14 @@ mod tests {
                 memory_start: 10,
                 memory_limit: 20,
                 file_offset: 3,
-                symbolization: proto::MappingSymbolization::from_parts((true, false, false, false)),
+                symbolization: proto::MappingSymbolization::from_parts(
+                    proto::MappingSymbolizationParts {
+                        functions: true,
+                        filenames: false,
+                        line_numbers: false,
+                        inline_frames: false,
+                    },
+                ),
                 ..Default::default()
             },
             proto::Mapping {
@@ -130,25 +119,7 @@ mod tests {
     #[test]
     fn decode_push_promotes_sample_id_to_profile_id_label() {
         let pprof_bytes = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
-        let req = pb::push::v1::PushRequest {
-            series: vec![pb::push::v1::RawProfileSeries {
-                labels: vec![
-                    pb::types::v1::LabelPair {
-                        name: "__name__".into(),
-                        value: "process_cpu".into(),
-                    },
-                    pb::types::v1::LabelPair {
-                        name: "service_name".into(),
-                        value: "api".into(),
-                    },
-                ],
-                samples: vec![pb::push::v1::RawSample {
-                    raw_profile: gzip(&pprof_bytes),
-                    id: "profile-a".into(),
-                }],
-                annotations: Vec::new(),
-            }],
-        };
+        let req = crate::wire::test_fixtures::push_request_cpu(gzip(&pprof_bytes), "profile-a");
 
         let out = decode_push(&req, mebibytes(1)).unwrap();
 
@@ -158,7 +129,33 @@ mod tests {
 }
 
 mod decode_push;
-mod gunzip;
 
 pub use decode_push::decode_push;
-pub use gunzip::gunzip;
+
+/// Gunzip a gzipped body with an output-size cap.
+///
+/// # Errors
+/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+pub fn gunzip(body: &[u8], max_output: ByteSize) -> Result<Vec<u8>, ProfilesError> {
+    // The read loop compares against buffer lengths, so the cap crosses into
+    // its exact byte count here.
+    let max_output = max_output.bytes_usize();
+    let mut decoder = flate2::read::GzDecoder::new(body);
+    let mut out = Vec::new();
+    let mut buf = [0_u8; 8192];
+
+    loop {
+        let n = decoder
+            .read(&mut buf)
+            .map_err(|e| ProfilesError::Gunzip(e.to_string()))?;
+        if n == 0 {
+            break;
+        }
+        if out.len() + n > max_output {
+            return Err(ProfilesError::TooLarge { limit: max_output });
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+
+    Ok(out)
+}

@@ -35,7 +35,10 @@ pub(super) enum Token {
     Weekday(bool),
     Day(u8),
     YearDay(bool),
-    Hour(bool, bool),
+    Hour {
+        twelve_hour: bool,
+        zero_pad: bool,
+    },
     Minute(bool),
     Second(bool),
     AmPm(bool),
@@ -53,68 +56,177 @@ pub(super) enum Token {
     },
 }
 
+pub(super) struct TokenMatch {
+    pub token: Token,
+    pub length: usize,
+}
+
+struct TokenPattern {
+    pattern: &'static str,
+    token: Token,
+}
+
+struct OffsetPattern {
+    pattern: &'static str,
+    colon: bool,
+    seconds: bool,
+    short: bool,
+}
+
 /// Go1.26.5 time.nextStdChunk tokens, including lowercase-word and mixed
 /// fractional-digit guards. The caller emits one literal character otherwise.
-pub(super) fn token(rest: &str) -> Option<(Token, usize)> {
-    for (pattern, token) in [
-        ("January", Token::MonthName(true)),
-        ("Monday", Token::Weekday(true)),
-        ("MST", Token::Zone),
-        ("2006", Token::Year),
-        ("002", Token::YearDay(false)),
-        ("__2", Token::YearDay(true)),
-        ("01", Token::Month(true)),
-        ("02", Token::Day(2)),
-        ("03", Token::Hour(true, true)),
-        ("04", Token::Minute(true)),
-        ("05", Token::Second(true)),
-        ("06", Token::Year2),
-        ("15", Token::Hour(false, true)),
-        ("PM", Token::AmPm(true)),
-        ("pm", Token::AmPm(false)),
+#[allow(clippy::too_many_lines)]
+pub(super) fn token(rest: &str) -> Option<TokenMatch> {
+    for entry in [
+        TokenPattern {
+            pattern: "January",
+            token: Token::MonthName(true),
+        },
+        TokenPattern {
+            pattern: "Monday",
+            token: Token::Weekday(true),
+        },
+        TokenPattern {
+            pattern: "MST",
+            token: Token::Zone,
+        },
+        TokenPattern {
+            pattern: "2006",
+            token: Token::Year,
+        },
+        TokenPattern {
+            pattern: "002",
+            token: Token::YearDay(false),
+        },
+        TokenPattern {
+            pattern: "__2",
+            token: Token::YearDay(true),
+        },
+        TokenPattern {
+            pattern: "01",
+            token: Token::Month(true),
+        },
+        TokenPattern {
+            pattern: "02",
+            token: Token::Day(2),
+        },
+        TokenPattern {
+            pattern: "03",
+            token: Token::Hour {
+                twelve_hour: true,
+                zero_pad: true,
+            },
+        },
+        TokenPattern {
+            pattern: "04",
+            token: Token::Minute(true),
+        },
+        TokenPattern {
+            pattern: "05",
+            token: Token::Second(true),
+        },
+        TokenPattern {
+            pattern: "06",
+            token: Token::Year2,
+        },
+        TokenPattern {
+            pattern: "15",
+            token: Token::Hour {
+                twelve_hour: false,
+                zero_pad: true,
+            },
+        },
+        TokenPattern {
+            pattern: "PM",
+            token: Token::AmPm(true),
+        },
+        TokenPattern {
+            pattern: "pm",
+            token: Token::AmPm(false),
+        },
     ] {
-        if rest.starts_with(pattern) {
-            return Some((token, pattern.len()));
+        if rest.starts_with(entry.pattern) {
+            return Some(TokenMatch {
+                token: entry.token,
+                length: entry.pattern.len(),
+            });
         }
     }
-    for (pattern, token) in [
-        ("Jan", Token::MonthName(false)),
-        ("Mon", Token::Weekday(false)),
+    for entry in [
+        TokenPattern {
+            pattern: "Jan",
+            token: Token::MonthName(false),
+        },
+        TokenPattern {
+            pattern: "Mon",
+            token: Token::Weekday(false),
+        },
     ] {
-        if rest.starts_with(pattern)
+        if rest.starts_with(entry.pattern)
             && !rest
                 .as_bytes()
-                .get(pattern.len())
+                .get(entry.pattern.len())
                 .is_some_and(u8::is_ascii_lowercase)
         {
-            return Some((token, pattern.len()));
+            return Some(TokenMatch {
+                token: entry.token,
+                length: entry.pattern.len(),
+            });
         }
     }
     if rest.starts_with("_2") && !rest.starts_with("_2006") {
-        return Some((Token::Day(1), 2));
+        return Some(TokenMatch {
+            token: Token::Day(1),
+            length: 2,
+        });
     }
     if let Some(prefix) = rest
         .as_bytes()
         .first()
         .filter(|byte| matches!(byte, b'-' | b'Z'))
     {
-        for (pattern, colon, seconds, short) in [
-            ("07:00:00", true, true, false),
-            ("070000", false, true, false),
-            ("07:00", true, false, false),
-            ("0700", false, false, false),
-            ("07", false, false, true),
+        for pattern in [
+            OffsetPattern {
+                pattern: "07:00:00",
+                colon: true,
+                seconds: true,
+                short: false,
+            },
+            OffsetPattern {
+                pattern: "070000",
+                colon: false,
+                seconds: true,
+                short: false,
+            },
+            OffsetPattern {
+                pattern: "07:00",
+                colon: true,
+                seconds: false,
+                short: false,
+            },
+            OffsetPattern {
+                pattern: "0700",
+                colon: false,
+                seconds: false,
+                short: false,
+            },
+            OffsetPattern {
+                pattern: "07",
+                colon: false,
+                seconds: false,
+                short: true,
+            },
         ] {
-            if rest[1..].starts_with(pattern) {
-                return Some((
-                    Token::Offset {
+            if rest[1..].starts_with(pattern.pattern) {
+                return Some(TokenMatch {
+                    token: Token::Offset {
                         z: *prefix == b'Z',
-                        colon,
-                        seconds,
-                        short,
+                        colon: pattern.colon,
+                        seconds: pattern.seconds,
+                        short: pattern.short,
                     },
-                    pattern.len() + 1,
-                ));
+                    length: pattern.pattern.len() + 1,
+                });
             }
         }
     }
@@ -133,40 +245,65 @@ pub(super) fn token(rest: &str) -> Option<(Token, usize)> {
             .get(count + 1)
             .is_some_and(u8::is_ascii_digit)
         {
-            return Some((
-                Token::Fraction {
+            return Some(TokenMatch {
+                token: Token::Fraction {
                     digits: count,
                     trim: digit == b'9',
                     separator: char::from(rest.as_bytes()[0]),
                 },
-                count + 1,
-            ));
+                length: count + 1,
+            });
         }
     }
     match rest.as_bytes().first()? {
-        b'1' => Some((Token::Month(false), 1)),
-        b'2' => Some((Token::Day(0), 1)),
-        b'3' => Some((Token::Hour(true, false), 1)),
-        b'4' => Some((Token::Minute(false), 1)),
-        b'5' => Some((Token::Second(false), 1)),
+        b'1' => Some(TokenMatch {
+            token: Token::Month(false),
+            length: 1,
+        }),
+        b'2' => Some(TokenMatch {
+            token: Token::Day(0),
+            length: 1,
+        }),
+        b'3' => Some(TokenMatch {
+            token: Token::Hour {
+                twelve_hour: true,
+                zero_pad: false,
+            },
+            length: 1,
+        }),
+        b'4' => Some(TokenMatch {
+            token: Token::Minute(false),
+            length: 1,
+        }),
+        b'5' => Some(TokenMatch {
+            token: Token::Second(false),
+            length: 1,
+        }),
         _ => None,
     }
 }
 
 pub(super) fn format(time: &TemplateTime, mut rest: &str) -> String {
     let fields = time.parts();
-    let (zone, offset) = time.zone();
+    let zone = time.zone();
     let mut output = String::new();
     while !rest.is_empty() {
-        let Some((token, length)) = token(rest) else {
+        let Some(token_match) = token(rest) else {
             let ch = rest.chars().next().expect("nonempty layout");
             output.push(ch);
             rest = &rest[ch.len_utf8()..];
             continue;
         };
-        rest = &rest[length..];
-        write_token(&mut output, token, &fields, time.nanos, &zone, offset)
-            .expect("writing to a String cannot fail");
+        rest = &rest[token_match.length..];
+        write_token(
+            &mut output,
+            token_match.token,
+            &fields,
+            time.nanos,
+            &zone.name,
+            zone.offset,
+        )
+        .expect("writing to a String cannot fail");
     }
     output
 }
@@ -198,23 +335,29 @@ fn write_token(
         }
         Token::Day(width) => write_number(output, fields.day, usize::from(width), width == 1),
         Token::YearDay(space) => write_number(output, fields.yearday, 3, space),
-        Token::Hour(twelve, zero) => {
-            let hour = if twelve {
+        Token::Hour {
+            twelve_hour,
+            zero_pad,
+        } => {
+            let hour = if twelve_hour {
                 let h = fields.hour % 12;
                 if h == 0 { 12 } else { h }
             } else {
                 fields.hour
             };
-            write_number(output, hour, if zero { 2 } else { 0 }, false)
+            write_number(output, hour, if zero_pad { 2 } else { 0 }, false)
         }
         Token::Minute(zero) => write_number(output, fields.minute, if zero { 2 } else { 0 }, false),
         Token::Second(zero) => write_number(output, fields.second, if zero { 2 } else { 0 }, false),
-        Token::AmPm(upper) => output.write_str(match (upper, fields.hour >= 12) {
-            (true, true) => "PM",
-            (true, false) => "AM",
-            (false, true) => "pm",
-            (false, false) => "am",
-        }),
+        Token::AmPm(upper) => {
+            let is_pm = fields.hour >= 12;
+            output.write_str(match upper {
+                true if is_pm => "PM",
+                true => "AM",
+                false if is_pm => "pm",
+                false => "am",
+            })
+        }
         Token::Zone if !zone.is_empty() => output.write_str(zone),
         Token::Zone => output.write_str(&offset_format(offset, false, false, false)),
         Token::Offset { z: true, .. } if offset == 0 => output.write_char('Z'),

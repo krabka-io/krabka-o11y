@@ -3,6 +3,14 @@ use super::{
     SeriesFingerprint, SummaryColumns, UInt64Array,
 };
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct BlockSummaryResult {
+    pub min_ts: i64,
+    pub max_ts: i64,
+    pub row_count: usize,
+    pub fingerprints: Vec<SeriesFingerprint>,
+}
+
 /// The [`BlockMeta`](crate::BlockMeta) summary of the batches seen so far.
 ///
 /// A block's time bounds, row count and fingerprint set are folds over its
@@ -84,15 +92,15 @@ impl BlockSummary {
     /// Returns [`BlockStoreError::InvalidBlock`] when no row was ever pushed:
     /// a block with no rows has no time bounds to prune by and nothing to
     /// read, and writing one would leave an index entry no query can use.
-    pub(crate) fn finish(self) -> Result<(i64, i64, usize, Vec<SeriesFingerprint>)> {
+    pub(crate) fn finish(self) -> Result<BlockSummaryResult> {
         if self.row_count == 0 {
             return Err(BlockStoreError::InvalidBlock("empty block".into()));
         }
-        Ok((
-            self.min_ts,
-            self.max_ts,
-            self.row_count,
-            self.fingerprints.into_iter().collect(),
-        ))
+        Ok(BlockSummaryResult {
+            min_ts: self.min_ts,
+            max_ts: self.max_ts,
+            row_count: self.row_count,
+            fingerprints: self.fingerprints.into_iter().collect(),
+        })
     }
 }

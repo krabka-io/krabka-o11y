@@ -3,6 +3,11 @@ use super::{
     col, lit,
 };
 
+struct ScanPredicateParts {
+    time: Option<Expr>,
+    series: Option<Expr>,
+}
+
 /// Builds the scan predicate for one [`ScanTableRequest`](super::ScanTableRequest).
 ///
 /// The predicate bounds the time column to `[min_ts, max_ts]` and the
@@ -21,11 +26,14 @@ pub(crate) fn scan_filter(
     let time = (min_ts != i64::MIN || max_ts != i64::MAX)
         .then(|| col(COL_TIMESTAMP).between(lit(min_ts), lit(max_ts)));
     let series = fingerprint_filter(fingerprints);
-    match (time, series) {
-        (Some(time), Some(series)) => Some(time.and(series)),
-        (Some(only), None) | (None, Some(only)) => Some(only),
-        (None, None) => None,
+    let parts = ScanPredicateParts { time, series };
+    if let Some(time) = parts.time {
+        return Some(match parts.series {
+            Some(series) => time.and(series),
+            None => time,
+        });
     }
+    parts.series
 }
 
 /// Bounds the fingerprint column to `fingerprints`.

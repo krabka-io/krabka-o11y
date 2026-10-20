@@ -1,33 +1,33 @@
 use super::BucketSpan;
+use crate::engine::for_each_spanned_histogram_count;
+
+pub(crate) struct CompactedHistogramSpans {
+    pub spans: Vec<BucketSpan>,
+    pub counts: Vec<f64>,
+}
+
+struct BucketCount {
+    index: i32,
+    count: f64,
+}
 
 pub(crate) fn compact_histogram_spans(
     spans: &[BucketSpan],
     counts: &[f64],
-) -> (Vec<BucketSpan>, Vec<f64>) {
-    let mut index = 0;
-    let mut count_index = 0;
+) -> CompactedHistogramSpans {
     let mut buckets = Vec::new();
-    for (span_index, span) in spans.iter().enumerate() {
-        if span_index == 0 {
-            index = span.offset;
-        } else {
-            index += span.offset;
-        }
-        for _ in 0..span.length {
-            let Some(count) = counts.get(count_index).copied() else {
-                break;
-            };
-            buckets.push((index, count));
-            index += 1;
-            count_index += 1;
-        }
-    }
-    let Some(first_non_zero) = buckets.iter().position(|(_, count)| *count != 0.0) else {
-        return (Vec::new(), Vec::new());
+    for_each_spanned_histogram_count(spans, counts, |index, count| {
+        buckets.push(BucketCount { index, count });
+    });
+    let Some(first_non_zero) = buckets.iter().position(|bucket| bucket.count != 0.0) else {
+        return CompactedHistogramSpans {
+            spans: Vec::new(),
+            counts: Vec::new(),
+        };
     };
     let last_non_zero = buckets
         .iter()
-        .rposition(|(_, count)| *count != 0.0)
+        .rposition(|bucket| bucket.count != 0.0)
         .expect("first non-zero bucket exists");
     let buckets = &buckets[first_non_zero..=last_non_zero];
 
@@ -36,7 +36,8 @@ pub(crate) fn compact_histogram_spans(
     let mut span_start = None;
     let mut previous_index = 0;
     let mut previous_span_end = 0;
-    for &(index, count) in buckets {
+    for bucket in buckets {
+        let index = bucket.index;
         if span_start.is_none() {
             span_start = Some(index);
         } else if index != previous_index + 1 {
@@ -48,7 +49,7 @@ pub(crate) fn compact_histogram_spans(
             previous_span_end = previous_index + 1;
             span_start = Some(index);
         }
-        compacted_counts.push(count);
+        compacted_counts.push(bucket.count);
         previous_index = index;
     }
     if let Some(start) = span_start {
@@ -57,5 +58,8 @@ pub(crate) fn compact_histogram_spans(
             length: u32::try_from(previous_index - start + 1).unwrap_or(u32::MAX),
         });
     }
-    (compacted_spans, compacted_counts)
+    CompactedHistogramSpans {
+        spans: compacted_spans,
+        counts: compacted_counts,
+    }
 }

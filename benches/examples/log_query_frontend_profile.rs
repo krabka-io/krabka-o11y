@@ -2,13 +2,15 @@
 
 use std::{hint::black_box, time::Instant};
 
-use krabka_o11y_benches::log_frontend::LogFrontendFixture;
+use krabka_o11y_benches::{log_frontend::LogFrontendFixture, profile_run_args::ProfileRunArgs};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let streams = args.next().expect("stream count").parse::<usize>()?;
-    let iterations = args.next().expect("iteration count").parse::<usize>()?;
-    let name = args.next().expect("request case");
+    let ProfileRunArgs {
+        streams,
+        iterations,
+        case: name,
+    } = ProfileRunArgs::take_from(&mut args)?;
     let runtime = tokio::runtime::Runtime::new()?;
     let shards = args.next().is_some_and(|source| source == "shards");
     let fixture = runtime.block_on(async {

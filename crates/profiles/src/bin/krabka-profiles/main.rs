@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
 use std::{
     net::SocketAddr,
     path::Path,
@@ -10,11 +12,7 @@ use krabka_blockstore::{
     BlockLevel, BlockTimestampUnit, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB,
     DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, ProfileIndex,
 };
-use krabka_client_consumer::ConsumerFetchMaxBytes;
-use krabka_client_core::{
-    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
-    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-};
+use krabka_client_core::{ClientSecurity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY};
 use krabka_client_producer::Producer;
 use krabka_observability::{
     ConfigFileArgs, ReadinessGate, argv_with_config_file,
@@ -38,13 +36,9 @@ use krabka_profiles::{
     query_frontend::FrontendConfig,
 };
 use krabka_telemetry::OtlpConfig;
-use krabka_units::{
-    ByteSize, Time,
-    convert::{ByteSizeExt as _, TimeExt as _},
-    parse,
-};
+use krabka_units::{ByteSize, Time, convert::TimeExt as _, parse};
 #[cfg(test)]
-use krabka_units::{mebibytes, secs};
+use krabka_units::{convert::ByteSizeExt as _, mebibytes, secs};
 use object_store::ObjectStore;
 use tokio_util::sync::CancellationToken;
 
@@ -54,7 +48,6 @@ mod tests {
 
     use assert2::{assert, check};
     use clap::{CommandFactory, Parser};
-    use krabka_broker::{Broker, BrokerConfig};
     use krabka_observability::{
         server_security::ClientAuth,
         topic_contract::{PROFILES_TOPICS, TopicSettings, provision_topics},
@@ -62,7 +55,7 @@ mod tests {
     };
     use krabka_units::{bytes, per_sec};
 
-    use super::*;
+    use super::{in_process_broker::InProcessBroker, *};
 
     /// A service that binds loopback inside a container is unreachable from
     /// outside the pod, and the symptom is a health check that fails with
@@ -182,12 +175,38 @@ mod tests {
     }
 
     static ENV_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-    const DEBUGINFOD_ENV: [(&str, Option<&str>); 4] = [
-        ("KRABKA_PROFILES_DEBUGINFOD_URLS", None),
-        ("KRABKA_PROFILES_DEBUGINFOD_MAX_ARTIFACT_SIZE", None),
-        ("KRABKA_PROFILES_DEBUGINFOD_CONNECT_TIMEOUT", None),
-        ("KRABKA_PROFILES_DEBUGINFOD_REQUEST_TIMEOUT", None),
-    ];
+    #[derive(Clone, Copy)]
+    struct DebuginfodEnvironment {
+        urls: Option<&'static str>,
+        max_artifact_size: Option<&'static str>,
+        connect_timeout: Option<&'static str>,
+        request_timeout: Option<&'static str>,
+    }
+
+    fn with_debuginfod_environment<R>(
+        environment: DebuginfodEnvironment,
+        body: impl FnOnce() -> R,
+    ) -> R {
+        temp_env::with_var("KRABKA_PROFILES_DEBUGINFOD_URLS", environment.urls, || {
+            temp_env::with_var(
+                "KRABKA_PROFILES_DEBUGINFOD_MAX_ARTIFACT_SIZE",
+                environment.max_artifact_size,
+                || {
+                    temp_env::with_var(
+                        "KRABKA_PROFILES_DEBUGINFOD_CONNECT_TIMEOUT",
+                        environment.connect_timeout,
+                        || {
+                            temp_env::with_var(
+                                "KRABKA_PROFILES_DEBUGINFOD_REQUEST_TIMEOUT",
+                                environment.request_timeout,
+                                body,
+                            )
+                        },
+                    )
+                },
+            )
+        })
+    }
 
     #[test]
     fn debuginfod_config_preserves_defaults_and_accepts_cli_units() {
@@ -195,27 +214,36 @@ mod tests {
             .get_or_init(|| StdMutex::new(()))
             .lock()
             .expect("environment lock");
-        temp_env::with_vars(DEBUGINFOD_ENV, || {
-            let defaults = Cli::try_parse_from(["krabka-profiles", "--target", "querier"]).unwrap();
-            assert!(debuginfod_config(&defaults).unwrap() == DebuginfodConfig::default());
+        with_debuginfod_environment(
+            DebuginfodEnvironment {
+                urls: None,
+                max_artifact_size: None,
+                connect_timeout: None,
+                request_timeout: None,
+            },
+            || {
+                let defaults =
+                    Cli::try_parse_from(["krabka-profiles", "--target", "querier"]).unwrap();
+                assert!(debuginfod_config(&defaults).unwrap() == DebuginfodConfig::default());
 
-            let custom = Cli::try_parse_from([
-                "krabka-profiles",
-                "--target",
-                "querier",
-                "--debuginfod-max-artifact-size",
-                "64MiB",
-                "--debuginfod-connect-timeout",
-                "250ms",
-                "--debuginfod-request-timeout",
-                "3s",
-            ])
-            .unwrap();
-            let config = debuginfod_config(&custom).unwrap();
-            assert!(config.max_artifact_size() == mebibytes(64));
-            assert!(config.connect_timeout() == krabka_units::millis(250));
-            assert!(config.request_timeout() == secs(3));
-        });
+                let custom = Cli::try_parse_from([
+                    "krabka-profiles",
+                    "--target",
+                    "querier",
+                    "--debuginfod-max-artifact-size",
+                    "64MiB",
+                    "--debuginfod-connect-timeout",
+                    "250ms",
+                    "--debuginfod-request-timeout",
+                    "3s",
+                ])
+                .unwrap();
+                let config = debuginfod_config(&custom).unwrap();
+                assert!(config.max_artifact_size() == mebibytes(64));
+                assert!(config.connect_timeout() == krabka_units::millis(250));
+                assert!(config.request_timeout() == secs(3));
+            },
+        );
     }
 
     #[test]
@@ -224,19 +252,13 @@ mod tests {
             .get_or_init(|| StdMutex::new(()))
             .lock()
             .expect("environment lock");
-        temp_env::with_vars(
-            [
-                (
-                    "KRABKA_PROFILES_DEBUGINFOD_URLS",
-                    Some("http://one.example,http://two.example"),
-                ),
-                (
-                    "KRABKA_PROFILES_DEBUGINFOD_MAX_ARTIFACT_SIZE",
-                    Some("32MiB"),
-                ),
-                ("KRABKA_PROFILES_DEBUGINFOD_CONNECT_TIMEOUT", Some("500ms")),
-                ("KRABKA_PROFILES_DEBUGINFOD_REQUEST_TIMEOUT", Some("4s")),
-            ],
+        with_debuginfod_environment(
+            DebuginfodEnvironment {
+                urls: Some("http://one.example,http://two.example"),
+                max_artifact_size: Some("32MiB"),
+                connect_timeout: Some("500ms"),
+                request_timeout: Some("4s"),
+            },
             || {
                 let cli =
                     Cli::try_parse_from(["krabka-profiles", "--target", "symbolizer"]).unwrap();
@@ -342,22 +364,74 @@ mod tests {
 
     #[test]
     fn runtime_policy_rejects_zero_and_invalid_counts() {
-        for (flag, invalid) in [
-            ("--distributor-request-max", "0B"),
-            ("--distributor-max-tracked-tenants", "0"),
-            ("--legacy-max-nodes", "0"),
-            ("--legacy-max-path-bytes", "0B"),
-            ("--legacy-max-trie-depth", "0"),
-            ("--index-refresh-interval", "0s"),
-            ("--hot-store-max-age", "0s"),
-            ("--hot-store-max-records", "0"),
-            ("--heatmap-value-buckets", "0"),
-            ("--heatmap-time-buckets-max", "0"),
-            ("--query-frontend-shard-width", "0"),
-            ("--block-builder-flush-records", "0"),
-            ("--block-builder-flush-max-age", "0"),
-            ("--compactor-max-blocks-per-job", "1"),
-            ("--compactor-downsample-resolution", "0"),
+        struct InvalidOption {
+            flag: &'static str,
+            value: &'static str,
+        }
+        for InvalidOption {
+            flag,
+            value: invalid,
+        } in [
+            InvalidOption {
+                flag: "--distributor-request-max",
+                value: "0B",
+            },
+            InvalidOption {
+                flag: "--distributor-max-tracked-tenants",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--legacy-max-nodes",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--legacy-max-path-bytes",
+                value: "0B",
+            },
+            InvalidOption {
+                flag: "--legacy-max-trie-depth",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--index-refresh-interval",
+                value: "0s",
+            },
+            InvalidOption {
+                flag: "--hot-store-max-age",
+                value: "0s",
+            },
+            InvalidOption {
+                flag: "--hot-store-max-records",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--heatmap-value-buckets",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--heatmap-time-buckets-max",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--query-frontend-shard-width",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--block-builder-flush-records",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--block-builder-flush-max-age",
+                value: "0",
+            },
+            InvalidOption {
+                flag: "--compactor-max-blocks-per-job",
+                value: "1",
+            },
+            InvalidOption {
+                flag: "--compactor-downsample-resolution",
+                value: "0",
+            },
         ] {
             assert!(
                 Cli::try_parse_from(["krabka-profiles", "--target", "querier", flag, invalid])
@@ -489,42 +563,15 @@ mod tests {
     #[test]
     fn index_snapshot_policy_defaults_and_rejects_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-profiles", "--target", "block-builder"]).unwrap();
-        assert_eq!(
-            cli.index_snapshot_max,
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
-        );
-        assert_eq!(
-            cli.index_snapshot_retain.into_value(),
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+        assert!(cli.index_snapshot_max == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX);
+        assert!(
+            cli.index_snapshot_retain.into_value()
+                == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
 
-        for flag in ["--index-snapshot-max", "--index-snapshot-retain"] {
-            for invalid in ["0", "not-a-number", "-1", "18446744073709551616"] {
-                assert!(
-                    Cli::try_parse_from([
-                        "krabka-profiles",
-                        "--target",
-                        "block-builder",
-                        flag,
-                        invalid,
-                    ])
-                    .is_err(),
-                    "{flag} should reject {invalid:?}"
-                );
-            }
-        }
-        for invalid in ["1.5B", "18446744073709551616B"] {
-            assert!(
-                Cli::try_parse_from([
-                    "krabka-profiles",
-                    "--target",
-                    "block-builder",
-                    "--index-snapshot-max",
-                    invalid,
-                ])
-                .is_err()
-            );
-        }
+        index_snapshot_flags::assert_rejects_invalid_index_snapshot_policy::<Cli>(
+            "krabka-profiles",
+        );
     }
 
     #[test]
@@ -569,33 +616,10 @@ mod tests {
     #[test]
     fn wal_fetch_limits_preserve_defaults_and_reject_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-profiles", "--target", "block-builder"]).unwrap();
-        assert_eq!(cli.wal_fetch_max.bytes_i32(), 2_097_152);
-        assert_eq!(cli.wal_fetch_partition_max.bytes_i32(), 262_144);
+        assert!(cli.wal_fetch_max.bytes_i32() == 2_097_152);
+        assert!(cli.wal_fetch_partition_max.bytes_i32() == 262_144);
 
-        for (flag, invalid) in [
-            ("--wal-fetch-max", "0"),
-            ("--wal-fetch-max", "not-a-number"),
-            ("--wal-fetch-max", "-1B"),
-            ("--wal-fetch-max", "1.5B"),
-            ("--wal-fetch-max", "2147483648B"),
-            ("--wal-fetch-partition-max", "0"),
-            ("--wal-fetch-partition-max", "not-a-number"),
-            ("--wal-fetch-partition-max", "-1B"),
-            ("--wal-fetch-partition-max", "1.5B"),
-            ("--wal-fetch-partition-max", "2147483648B"),
-        ] {
-            assert!(
-                Cli::try_parse_from([
-                    "krabka-profiles",
-                    "--target",
-                    "block-builder",
-                    flag,
-                    invalid,
-                ])
-                .is_err(),
-                "{flag} should reject {invalid:?}"
-            );
-        }
+        wal_fetch_limit_flags::assert_rejects_invalid_wal_fetch_limits::<Cli>("krabka-profiles");
     }
 
     #[test]
@@ -879,44 +903,33 @@ overrides:
 
         let overrides = load_profiles_limits_overrides_config(Some(&path)).unwrap();
 
+        // The file's defaults, and the process default for every cap the file
+        // leaves alone.
+        let file_defaults = krabka_profiles::limits::Limits {
+            max_async_query_concurrency: 5,
+            query_admission: krabka_query_frontend::AdmissionLimits::default(),
+            ingestion_rate: per_sec(10_000),
+            ingestion_burst_profiles: 10_000,
+            max_series: 0,
+            max_label_name: bytes(1024),
+            max_label_value: bytes(100),
+            max_label_names_per_series: 10,
+            max_flamegraph_nodes_default: 8192,
+            max_flamegraph_nodes_max: 0,
+            max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
+            max_session_id_cardinality: 32,
+            compactor_blocks_retention_period: secs(0),
+        };
         assert!(
             *overrides.for_tenant(&"tenant-a".parse().unwrap())
                 == krabka_profiles::limits::Limits {
-                    max_async_query_concurrency: 5,
-                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
-                    ingestion_rate: per_sec(10_000),
-                    ingestion_burst_profiles: 10_000,
-                    max_series: 0,
-                    max_label_name: bytes(1024),
-                    max_label_value: bytes(100),
-                    max_label_names_per_series: 10,
-                    max_flamegraph_nodes_default: 8192,
                     max_flamegraph_nodes_max: 512,
                     max_query_length: secs(30),
-                    max_session_id_cardinality: 32,
-                    compactor_blocks_retention_period: secs(0),
+                    ..file_defaults.clone()
                 }
         );
-        // An unlisted tenant takes the file's defaults, and the process default
-        // for every cap the file leaves alone.
-        assert!(
-            *overrides.for_tenant(&"tenant-b".parse().unwrap())
-                == krabka_profiles::limits::Limits {
-                    max_async_query_concurrency: 5,
-                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
-                    ingestion_rate: per_sec(10_000),
-                    ingestion_burst_profiles: 10_000,
-                    max_series: 0,
-                    max_label_name: bytes(1024),
-                    max_label_value: bytes(100),
-                    max_label_names_per_series: 10,
-                    max_flamegraph_nodes_default: 8192,
-                    max_flamegraph_nodes_max: 0,
-                    max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
-                    max_session_id_cardinality: 32,
-                    compactor_blocks_retention_period: secs(0),
-                }
-        );
+        // An unlisted tenant takes the file's defaults.
+        assert!(*overrides.for_tenant(&"tenant-b".parse().unwrap()) == file_defaults);
     }
 
     #[test]
@@ -1043,26 +1056,52 @@ overrides:
     /// must be untouched by the same fault.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
+        let broker = InProcessBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
 
+        struct RoleTopicExpectation {
+            target: &'static str,
+            refuses_without_topics: bool,
+        }
         let roles = [
-            ("distributor", true),
-            ("block-builder", true),
-            ("querier", true),
-            ("query-frontend", true),
-            ("compactor", false),
-            ("symbolizer", false),
+            RoleTopicExpectation {
+                target: "distributor",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "block-builder",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "querier",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "query-frontend",
+                refuses_without_topics: true,
+            },
+            RoleTopicExpectation {
+                target: "compactor",
+                refuses_without_topics: false,
+            },
+            RoleTopicExpectation {
+                target: "symbolizer",
+                refuses_without_topics: false,
+            },
             // `all` runs four of those roles, and asks once for the process.
-            ("all", true),
+            RoleTopicExpectation {
+                target: "all",
+                refuses_without_topics: true,
+            },
         ];
 
-        for (target, refuses) in roles {
+        for role in &roles {
+            let RoleTopicExpectation {
+                target,
+                refuses_without_topics: refuses,
+            } = role;
             let outcome = require_role_topics(&cli_for(target, &bootstrap), None).await;
-            check!(outcome.is_err() == refuses, "{target} before provisioning");
+            check!(outcome.is_err() == *refuses, "{target} before provisioning");
             if let Err(error) = outcome {
                 check!(
                     error
@@ -1083,7 +1122,7 @@ overrides:
         .await
         .expect("provision the profiles WAL topic");
 
-        for (target, _) in roles {
+        for RoleTopicExpectation { target, .. } in &roles {
             check!(
                 require_role_topics(&cli_for(target, &bootstrap), None)
                     .await
@@ -1118,6 +1157,17 @@ mod all_in_one;
 #[cfg(all(test, unix))]
 mod sigterm_exits_the_querier;
 
+/// Test fixtures that the binary's suites share with suites under `tests/`,
+/// which reach them with `#[path]`.
+#[cfg(all(test, unix))]
+mod render_roundtrip;
+#[cfg(all(test, unix))]
+mod sigterm_child_runtime;
+#[cfg(all(test, unix))]
+mod synthetic_cpu_profile;
+#[cfg(all(test, unix))]
+mod wal_topic;
+
 /// `Target` is private to this binary, so the one place its clap spellings can
 /// be checked against the shared role vocabulary is here.
 #[cfg(test)]
@@ -1129,38 +1179,43 @@ mod target_names_match_the_role_vocabulary;
 #[cfg(test)]
 mod the_compactor_runs_under_supervision;
 
+/// A bare in-process broker, shared with the other signal binary's tests.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/in_process_broker.rs"]
+mod in_process_broker;
+
+/// The invalid WAL fetch limits, shared with the other signal binary that
+/// parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/wal_fetch_limit_flags.rs"]
+mod wal_fetch_limit_flags;
+
+/// The invalid index snapshot policy values, shared with the other signal
+/// binary that parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/index_snapshot_flags.rs"]
+mod index_snapshot_flags;
+
 mod all_stage;
 mod alloc;
 mod bind_all_stage_server;
-mod block_builder_config;
 mod block_builder_stage;
 mod build_all_stages;
 mod build_distributor_state;
 mod build_object_store;
 mod build_profile_read_path;
+mod build_ready_object_store;
 mod cli;
 mod client_resource_policy;
 mod compaction_loop;
-mod compaction_policy_from_cli;
 mod compactor_stage;
 mod configured_object_store;
-mod debuginfod_config;
-mod load_profiles_limits_overrides_config;
-mod parse_client_dispatch_queue_capacity;
-mod parse_client_frame_max;
-mod parse_consumer_fetch_size;
-mod parse_min_two_usize;
-mod parse_non_empty_string;
-mod parse_positive_time_or_legacy;
-mod parse_positive_time_or_legacy_millis;
-mod parse_positive_time_or_legacy_nanos;
-mod parse_positive_u32;
-mod parse_positive_usize;
-mod parse_positive_whole_byte_size;
+mod parse_cli;
 mod process_security;
 mod profile_read_path;
 mod read_path_stage;
 mod require_role_topics;
+mod role_config;
 mod role_shutdown_token;
 mod run;
 mod run_all;
@@ -1168,11 +1223,11 @@ mod run_block_builder;
 mod run_compaction_pass;
 mod run_compactor;
 mod run_distributor;
-mod run_querier;
-mod run_query_frontend;
+mod run_read_role;
 mod run_symbolizer;
 mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
+mod supervise_until_shutdown;
 mod symbolizer_stage;
 mod target;
 
@@ -1182,7 +1237,6 @@ mod target;
 
 use all_stage::AllStage;
 use bind_all_stage_server::bind_all_stage_server;
-use block_builder_config::block_builder_config;
 use block_builder_stage::block_builder_stage;
 use build_all_stages::build_all_stages;
 use build_distributor_state::build_distributor_state;
@@ -1191,26 +1245,24 @@ use build_profile_read_path::build_profile_read_path;
 use cli::Cli;
 use client_resource_policy::client_resource_policy;
 use compaction_loop::compaction_loop;
-use compaction_policy_from_cli::compaction_policy_from_cli;
 use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
-use debuginfod_config::debuginfod_config;
-use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
-use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
-use parse_client_frame_max::parse_client_frame_max;
-use parse_consumer_fetch_size::parse_consumer_fetch_size;
-use parse_min_two_usize::parse_min_two_usize;
-use parse_non_empty_string::parse_non_empty_string;
-use parse_positive_time_or_legacy::parse_positive_time_or_legacy;
-use parse_positive_time_or_legacy_millis::parse_positive_time_or_legacy_millis;
-use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
-use parse_positive_u32::parse_positive_u32;
-use parse_positive_usize::parse_positive_usize;
-use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
+use krabka_observability::cli_value_parsers::{
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
+};
+use parse_cli::{
+    parse_min_two_usize, parse_non_empty_string, parse_positive_time_or_legacy_millis,
+    parse_positive_time_or_legacy_nanos,
+};
 use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
 use read_path_stage::read_path_stage;
 use require_role_topics::require_role_topics;
+use role_config::{
+    block_builder_config, compaction_policy_from_cli, debuginfod_config,
+    load_profiles_limits_overrides_config,
+};
 use role_shutdown_token::role_shutdown_token;
 use run::run;
 use run_all::run_all;
@@ -1218,11 +1270,11 @@ use run_block_builder::run_block_builder;
 use run_compaction_pass::run_compaction_pass;
 use run_compactor::run_compactor;
 use run_distributor::run_distributor;
-use run_querier::run_querier;
-use run_query_frontend::run_query_frontend;
+use run_read_role::{ReadRoleInputs, run_querier, run_query_frontend};
 use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;
+use supervise_until_shutdown::supervise_until_shutdown;
 use symbolizer_stage::symbolizer_stage;
 use target::Target;
 

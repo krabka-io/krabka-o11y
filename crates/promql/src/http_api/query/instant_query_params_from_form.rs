@@ -8,7 +8,9 @@ pub(crate) fn instant_query_params_from_form(body: &[u8]) -> Result<InstantQuery
     let mut limit = None;
     let mut timeout = None;
     let mut stats = None;
-    for (name, value) in form_urlencoded::parse(body) {
+    for pair in form_urlencoded::parse(body) {
+        let name = pair.0;
+        let value = pair.1;
         match name.as_ref() {
             "query" => query = Some(value.into_owned()),
             "time" => time = Some(value.into_owned()),

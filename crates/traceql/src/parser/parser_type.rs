@@ -1,14 +1,24 @@
 use super::{
     Aggregate, ArithmeticOp, ComparisonOp, DEFAULT_COMPARE_TOP_N, Field, FieldExpr, Intrinsic,
-    Pipeline, Query, QueryHints, Result, ScalarExpr, Scope, SpansetExpr, StructuralOp, Token,
-    TraceqlError, Value, WithBinding, intrinsic, is_duration_field, numeric_filter_field,
-    numeric_filter_value, parse_duration_nanos, scope, scopeless_intrinsic, value_add, value_div,
-    value_mod, value_mul, value_neg, value_pow, value_sub,
+    NumericFilter, Pipeline, Query, QueryHints, Result, ScalarExpr, Scope, SpansetExpr,
+    StructuralOp, Token, TraceqlError, Value, WithBinding, intrinsic, is_duration_field,
+    numeric_filter_field, numeric_filter_value, parse_duration_nanos, scope, scopeless_intrinsic,
+    value_add, value_div, value_mod, value_mul, value_neg, value_pow, value_sub,
 };
 
 pub(crate) struct Parser {
     pub(crate) tokens: Vec<Token>,
     pub(crate) pos: usize,
+}
+
+struct ScalarOperands {
+    lhs: ScalarExpr,
+    rhs: ScalarExpr,
+}
+
+struct ArithmeticBinding {
+    op: ArithmeticOp,
+    precedence: u8,
 }
 
 impl Parser {
@@ -48,18 +58,30 @@ impl Parser {
                 Value::Str(value) if value == "maxInt" => Value::Int(i64::MAX),
                 value => value,
             };
-            match (name.as_str(), &value) {
-                ("most_recent", Value::Bool(value)) if !most_recent_seen => {
-                    hints.most_recent = *value;
-                    most_recent_seen = true;
+            let handled = if let Value::Bool(bool_value) = &value {
+                match name.as_str() {
+                    "most_recent" if !most_recent_seen => {
+                        hints.most_recent = *bool_value;
+                        most_recent_seen = true;
+                        true
+                    }
+                    "exemplars" if hints.exemplars.is_none() => {
+                        hints.exemplars = Some(*bool_value);
+                        true
+                    }
+                    "sample" if hints.sample.is_none() => {
+                        hints.sample = Some(*bool_value);
+                        true
+                    }
+                    _ => false,
                 }
-                ("exemplars", Value::Bool(value)) if hints.exemplars.is_none() => {
-                    hints.exemplars = Some(*value);
-                }
-                ("sample", Value::Bool(value)) if hints.sample.is_none() => {
-                    hints.sample = Some(*value);
-                }
-                _ => hints.values.push((name, value)),
+            } else {
+                false
+            };
+            if !handled {
+                hints
+                    .values
+                    .push(crate::ast::QueryHintValue { name, value });
             }
             if !eat!(self, &Token::Comma) {
                 break;
@@ -79,8 +101,11 @@ impl Parser {
             if let Some(by) = self.parse_adjacent_by()? {
                 out.push(by);
             }
-            while let Some((op, value)) = self.parse_numeric_filter(metrics)? {
-                out.push(Pipeline::Filter { op, value });
+            while let Some(filter) = self.parse_numeric_filter(metrics)? {
+                out.push(Pipeline::Filter {
+                    op: filter.op,
+                    value: filter.value,
+                });
                 if !metrics {
                     break;
                 }
@@ -216,14 +241,18 @@ impl Parser {
         } else {
             DEFAULT_COMPARE_TOP_N
         };
-        let (start, end) = if eat!(self, &Token::Comma) {
-            let start = self.parse_signed_int()?;
+        let start: Option<i64>;
+        let end: Option<i64>;
+        if eat!(self, &Token::Comma) {
+            let parsed_start = self.parse_signed_int()?;
             self.expect(&Token::Comma)?;
-            let end = self.parse_signed_int()?;
-            (Some(start), Some(end))
+            let parsed_end = self.parse_signed_int()?;
+            start = Some(parsed_start);
+            end = Some(parsed_end);
         } else {
-            (None, None)
-        };
+            start = None;
+            end = None;
+        }
         self.expect(&Token::RParen)?;
         Ok(Pipeline::Compare {
             selection: Box::new(selection),
@@ -329,10 +358,7 @@ impl Parser {
         usize::try_from(value).map_err(|e| TraceqlError::Parse(e.to_string()))
     }
 
-    pub(crate) fn parse_numeric_filter(
-        &mut self,
-        metrics: bool,
-    ) -> Result<Option<(ComparisonOp, f64)>> {
+    pub(crate) fn parse_numeric_filter(&mut self, metrics: bool) -> Result<Option<NumericFilter>> {
         let Some(op) = self.parse_comparison_op() else {
             return Ok(None);
         };
@@ -343,7 +369,7 @@ impl Parser {
             }
             value => numeric_filter_value(value)?,
         };
-        Ok(Some((op, value)))
+        Ok(Some(NumericFilter { op, value }))
     }
 
     pub(crate) fn parse_field_list(&mut self) -> Result<Vec<Field>> {
@@ -532,14 +558,17 @@ impl Parser {
             ));
         }
         super::validate_scalar_comparison(&lhs, op, &rhs)?;
-        Ok(match (lhs, rhs) {
-            (ScalarExpr::Field(lhs), ScalarExpr::Field(rhs)) => {
-                FieldExpr::FieldComparison { lhs, op, rhs }
-            }
-            (ScalarExpr::Field(lhs), ScalarExpr::Literal(rhs)) => {
-                FieldExpr::Comparison { lhs, op, rhs }
-            }
-            (lhs, rhs) => FieldExpr::ExpressionComparison { lhs, op, rhs },
+        let operands = ScalarOperands { lhs, rhs };
+        Ok(match operands {
+            ScalarOperands {
+                lhs: ScalarExpr::Field(lhs),
+                rhs: ScalarExpr::Field(rhs),
+            } => FieldExpr::FieldComparison { lhs, op, rhs },
+            ScalarOperands {
+                lhs: ScalarExpr::Field(lhs),
+                rhs: ScalarExpr::Literal(rhs),
+            } => FieldExpr::Comparison { lhs, op, rhs },
+            ScalarOperands { lhs, rhs } => FieldExpr::ExpressionComparison { lhs, op, rhs },
         })
     }
 
@@ -588,34 +617,54 @@ impl Parser {
             }
         };
         loop {
-            let (op, precedence) = match self.peek() {
-                Token::Plus => (ArithmeticOp::Add, 10),
-                Token::Minus => (ArithmeticOp::Sub, 10),
-                Token::Star => (ArithmeticOp::Mul, 20),
-                Token::Slash => (ArithmeticOp::Div, 20),
-                Token::Mod => (ArithmeticOp::Mod, 20),
-                Token::Caret => (ArithmeticOp::Pow, 30),
+            let binding = match self.peek() {
+                Token::Plus => ArithmeticBinding {
+                    op: ArithmeticOp::Add,
+                    precedence: 10,
+                },
+                Token::Minus => ArithmeticBinding {
+                    op: ArithmeticOp::Sub,
+                    precedence: 10,
+                },
+                Token::Star => ArithmeticBinding {
+                    op: ArithmeticOp::Mul,
+                    precedence: 20,
+                },
+                Token::Slash => ArithmeticBinding {
+                    op: ArithmeticOp::Div,
+                    precedence: 20,
+                },
+                Token::Mod => ArithmeticBinding {
+                    op: ArithmeticOp::Mod,
+                    precedence: 20,
+                },
+                Token::Caret => ArithmeticBinding {
+                    op: ArithmeticOp::Pow,
+                    precedence: 30,
+                },
                 _ => break,
             };
-            if precedence < minimum {
+            if binding.precedence < minimum {
                 break;
             }
             self.pos += 1;
-            let rhs = self.parse_scalar_expression(precedence + 1, false)?;
-            lhs = match (lhs, rhs) {
-                (ScalarExpr::Literal(lhs), ScalarExpr::Literal(rhs)) => {
-                    ScalarExpr::Literal(match op {
-                        ArithmeticOp::Add => value_add(lhs, rhs)?,
-                        ArithmeticOp::Sub => value_sub(lhs, rhs)?,
-                        ArithmeticOp::Mul => value_mul(lhs, rhs)?,
-                        ArithmeticOp::Div => value_div(lhs, rhs)?,
-                        ArithmeticOp::Mod => value_mod(lhs, rhs)?,
-                        ArithmeticOp::Pow => value_pow(lhs, rhs)?,
-                    })
-                }
-                (lhs, rhs) => ScalarExpr::Binary {
+            let rhs = self.parse_scalar_expression(binding.precedence + 1, false)?;
+            let operands = ScalarOperands { lhs, rhs };
+            lhs = match operands {
+                ScalarOperands {
+                    lhs: ScalarExpr::Literal(lhs),
+                    rhs: ScalarExpr::Literal(rhs),
+                } => ScalarExpr::Literal(match binding.op {
+                    ArithmeticOp::Add => value_add(lhs, rhs)?,
+                    ArithmeticOp::Sub => value_sub(lhs, rhs)?,
+                    ArithmeticOp::Mul => value_mul(lhs, rhs)?,
+                    ArithmeticOp::Div => value_div(lhs, rhs)?,
+                    ArithmeticOp::Mod => value_mod(lhs, rhs)?,
+                    ArithmeticOp::Pow => value_pow(lhs, rhs)?,
+                }),
+                ScalarOperands { lhs, rhs } => ScalarExpr::Binary {
                     lhs: Box::new(lhs),
-                    op,
+                    op: binding.op,
                     rhs: Box::new(rhs),
                 },
             };

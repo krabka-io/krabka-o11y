@@ -17,11 +17,11 @@ use super::{
 #[cfg(feature = "experimental-functions")]
 use super::{QUERY_RANGE_CONTEXT, QueryRangeContext};
 use crate::{
-    DurationExprContext, PromqlError, PromqlLabels as Labels,
+    Annotations, DurationExprContext, PromqlError, PromqlLabels as Labels,
     error::Result,
     parse_promql_with_duration_context,
     planner::StepGrid,
-    result::{Annotations, QueryResult, RangeSeries, SampleValue},
+    result::{AnnotatedQueryResult, QueryResult, RangeSeries, RangeSeriesSample, SampleValue},
     store::MetricStore,
 };
 
@@ -41,7 +41,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<QueryResult> {
         self.query_range_with_annotations(tenant, query, start_ms, end_ms, step)
             .await
-            .map(|(result, _)| result)
+            .map(|annotated| annotated.result)
     }
 
     /// Evaluates a range query over `[start_ms, end_ms]` with its annotations.
@@ -72,7 +72,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
         step: Time,
-    ) -> Result<(QueryResult, Annotations)> {
+    ) -> Result<AnnotatedQueryResult> {
         ANNOTATION_SOURCE
             .scope(
                 query.to_owned(),
@@ -83,7 +83,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                     finalize_metric_names(&mut result)?;
                     validate_unique_instant_labelsets(&result)?;
                     let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
-                    Ok((result, annotations))
+                    Ok(AnnotatedQueryResult {
+                        result,
+                        annotations,
+                    })
                 }),
             )
             .await
@@ -111,15 +114,8 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Err(PromqlError::Plan("end must be >= start".to_string()));
         }
 
-        let expr = parse_promql_with_duration_context(
-            query,
-            DurationExprContext::range(start_ms, end_ms, step),
-        )?;
-        emit_range_sort_warnings(&expr);
-        let mut expr = &expr;
-        while let Expr::Paren(paren) = expr {
-            expr = &paren.expr;
-        }
+        let parsed_expr = parse_range_expression(query, start_ms, end_ms, step)?;
+        let expr = unparenthesized_expr(&parsed_expr);
 
         // A plannable instant expression (a bare selector, a scalar expression,
         // an aggregation/binary/call/unary over those, …) routes through the
@@ -163,14 +159,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         }
     }
 
-    /// Per-step planner range driver with both evaluation scopes applied.
-    ///
-    /// The driver runs in `QUERY_RANGE_CONTEXT`, so any nested duration-helper
-    /// scalar fold (`step()`, `start()`, and the other experimental forms)
-    /// resolves to the query's range grid. It also runs in `AT_MODIFIER_BOUNDS`,
-    /// so a bare top-level selector's `@ start()` / `@ end()` resolves to the
-    /// query's range bounds.
-    #[cfg(feature = "experimental-functions")]
+    /// Per-step planner range driver with every configured evaluation scope.
     async fn eval_range_via_planner_scoped(
         &self,
         tenant: &str,
@@ -179,39 +168,18 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
         step: Time,
     ) -> Result<Option<Vec<RangeSeries>>> {
+        let future = self.eval_range_via_planner(tenant, expr, start_ms, end_ms, step);
+        #[cfg(feature = "experimental-functions")]
+        let future = QUERY_RANGE_CONTEXT.scope(
+            QueryRangeContext {
+                start_ms,
+                end_ms,
+                step,
+            },
+            future,
+        );
         AT_MODIFIER_BOUNDS
-            .scope(
-                AtModifierBounds { start_ms, end_ms },
-                QUERY_RANGE_CONTEXT.scope(
-                    QueryRangeContext {
-                        start_ms,
-                        end_ms,
-                        step,
-                    },
-                    self.eval_range_via_planner(tenant, expr, start_ms, end_ms, step),
-                ),
-            )
-            .await
-    }
-
-    /// Per-step planner range driver with the `AT_MODIFIER_BOUNDS` scope applied.
-    ///
-    /// The driver runs in `AT_MODIFIER_BOUNDS`, so a bare top-level selector's
-    /// `@ start()` / `@ end()` resolves to the query's range bounds.
-    #[cfg(not(feature = "experimental-functions"))]
-    async fn eval_range_via_planner_scoped(
-        &self,
-        tenant: &str,
-        expr: &Expr,
-        start_ms: i64,
-        end_ms: i64,
-        step: Time,
-    ) -> Result<Option<Vec<RangeSeries>>> {
-        AT_MODIFIER_BOUNDS
-            .scope(
-                AtModifierBounds { start_ms, end_ms },
-                self.eval_range_via_planner(tenant, expr, start_ms, end_ms, step),
-            )
+            .scope(AtModifierBounds { start_ms, end_ms }, future)
             .await
     }
 
@@ -314,7 +282,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                                     samples: Vec::new(),
                                 })
                                 .samples
-                                .push((step_time_ms, sample.value));
+                                .push(RangeSeriesSample::new(step_time_ms, sample.value));
                         }
                     }
                     QueryResult::Scalar { value, .. } => {
@@ -328,7 +296,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                                 samples: Vec::new(),
                             })
                             .samples
-                            .push((step_time_ms, SampleValue::Float(value)));
+                            .push(RangeSeriesSample::new(
+                                step_time_ms,
+                                SampleValue::Float(value),
+                            ));
                     }
                     QueryResult::Str { .. } | QueryResult::RangeMatrix(_) => {
                         // The planner only ever assembles an instant vector or a
@@ -362,15 +333,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
         step: Time,
     ) -> Result<QueryResult> {
-        let expr = parse_promql_with_duration_context(
-            query,
-            DurationExprContext::range(start_ms, end_ms, step),
-        )?;
-        emit_range_sort_warnings(&expr);
-        let mut expr = &expr;
-        while let Expr::Paren(paren) = expr {
-            expr = &paren.expr;
-        }
+        let parsed_expr = parse_range_expression(query, start_ms, end_ms, step)?;
+        let expr = unparenthesized_expr(&parsed_expr);
         let series = self
             .eval_range_via_planner_scoped(tenant, expr, start_ms, end_ms, step)
             .await?
@@ -380,4 +344,20 @@ impl<S: MetricStore> PromqlEngine<S> {
         validate_unique_instant_labelsets(&result)?;
         Ok(result)
     }
+}
+
+fn parse_range_expression(query: &str, start_ms: i64, end_ms: i64, step: Time) -> Result<Expr> {
+    let expr = parse_promql_with_duration_context(
+        query,
+        DurationExprContext::range(start_ms, end_ms, step),
+    )?;
+    emit_range_sort_warnings(&expr);
+    Ok(expr)
+}
+
+fn unparenthesized_expr(mut expr: &Expr) -> &Expr {
+    while let Expr::Paren(paren) = expr {
+        expr = &paren.expr;
+    }
+    expr
 }

@@ -8,6 +8,9 @@
 //! Prometheus API share one router, as the Grafana suite serves them, so a
 //! query sees the sample that a push wrote.
 
+#[path = "../../observability/tests/support/server_security_pki.rs"]
+mod server_security_pki;
+
 use std::{
     net::SocketAddr,
     path::PathBuf,
@@ -42,11 +45,8 @@ use opentelemetry_proto::tonic::{
     },
 };
 use prost::Message as _;
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
-};
 use serde_json::Value;
+use server_security_pki::{Leaf, Pem, authority};
 use tempfile::TempDir;
 
 const TENANT_A: &str = "tenant-a";
@@ -70,35 +70,30 @@ struct Pki {
     ca_pem: String,
 }
 
+struct PkiPaths {
+    server: String,
+    key: String,
+    credentials: String,
+}
+
+struct InternalClientPaths {
+    token: String,
+    ca: String,
+}
+
 impl Pki {
     fn new() -> Self {
         let dir = TempDir::new().expect("a temporary directory");
-        let mut params = CertificateParams::new(Vec::<String>::new()).expect("valid parameters");
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params
-            .distinguished_name
-            .push(DnType::CommonName, "krabka metrics test ca");
-        let authority = CertifiedIssuer::self_signed(params, KeyPair::generate().expect("a key"))
-            .expect("a self-signed CA");
-
-        let mut params =
-            CertificateParams::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()])
-                .expect("valid parameters");
-        params.distinguished_name.push(DnType::CommonName, "server");
-        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        let key = KeyPair::generate().expect("a key");
-        let certificate = params
-            .signed_by(&key, &authority)
-            .expect("a signed server certificate");
+        let authority = authority("krabka metrics test ca");
+        let Pem { certificate, key } = Leaf::LOCAL_SERVER.signed_by(&authority);
 
         let pki = Self {
             dir,
             ca_pem: authority.pem(),
         };
         pki.write("ca.pem", &pki.ca_pem);
-        pki.write("server.pem", certificate.pem());
-        pki.write("server-key.pem", key.serialize_pem());
+        pki.write("server.pem", certificate);
+        pki.write("server-key.pem", key);
         pki.write(
             "credentials.yaml",
             format!(
@@ -110,9 +105,7 @@ impl Pki {
     }
 
     fn write(&self, name: &str, contents: impl AsRef<[u8]>) -> PathBuf {
-        let path = self.dir.path().join(name);
-        std::fs::write(&path, contents).expect("the temporary file is writable");
-        path
+        server_security_pki::write_file(self.dir.path(), name, contents)
     }
 
     fn path(&self, name: &str) -> String {
@@ -121,19 +114,19 @@ impl Pki {
 
     /// TLS and authentication, with `extra` flags after them.
     fn security(&self, extra: &[&str]) -> ServerSecurity {
-        let (server, key, credentials) = (
-            self.path("server.pem"),
-            self.path("server-key.pem"),
-            self.path("credentials.yaml"),
-        );
+        let paths = PkiPaths {
+            server: self.path("server.pem"),
+            key: self.path("server-key.pem"),
+            credentials: self.path("credentials.yaml"),
+        };
         let argv = [
             "test",
             "--server-tls-cert-path",
-            &server,
+            &paths.server,
             "--server-tls-key-path",
-            &key,
+            &paths.key,
             "--auth-credentials-config",
-            &credentials,
+            &paths.credentials,
         ]
         .into_iter()
         .chain(extra.iter().copied());
@@ -182,7 +175,12 @@ impl RecordingHeadSink {
 }
 
 /// The distributor, the Prometheus API and `/ready`, served with `security`.
-async fn serve_stack(security: &ServerSecurity) -> (SocketAddr, Arc<RecordingHeadSink>) {
+struct ServedStack {
+    address: SocketAddr,
+    sink: Arc<RecordingHeadSink>,
+}
+
+async fn serve_stack(security: &ServerSecurity) -> ServedStack {
     let head = WalHead::new();
     let sink = Arc::new(RecordingHeadSink {
         head: head.clone(),
@@ -202,7 +200,33 @@ async fn serve_stack(security: &ServerSecurity) -> (SocketAddr, Arc<RecordingHea
     )
     .await
     .expect("the stack serves");
-    (addr, sink)
+    ServedStack {
+        address: addr,
+        sink,
+    }
+}
+
+struct SecurityFixture {
+    pki: Pki,
+    address: SocketAddr,
+    sink: Arc<RecordingHeadSink>,
+    client: reqwest::Client,
+    timestamp_ms: i64,
+}
+
+async fn security_fixture() -> SecurityFixture {
+    install_crypto_provider();
+    let pki = Pki::new();
+    let served = serve_stack(&pki.security(&[])).await;
+    let client = pki.https_client();
+    let timestamp_ms = now_ms();
+    SecurityFixture {
+        pki,
+        address: served.address,
+        sink: served.sink,
+        client,
+        timestamp_ms,
+    }
 }
 
 fn now_ms() -> i64 {
@@ -269,11 +293,14 @@ fn query(
 
 #[tokio::test]
 async fn a_granted_principal_pushes_and_queries_its_tenant() {
-    install_crypto_provider();
-    let pki = Pki::new();
-    let (addr, sink) = serve_stack(&pki.security(&[])).await;
-    let client = pki.https_client();
-    let timestamp_ms = now_ms();
+    let fixture = security_fixture().await;
+    let SecurityFixture {
+        pki: _pki,
+        address: addr,
+        sink,
+        client,
+        timestamp_ms,
+    } = fixture;
 
     let pushed = push(&client, addr, TENANT_A, timestamp_ms)
         .bearer_auth(GRAFANA_TOKEN)
@@ -297,11 +324,14 @@ async fn a_granted_principal_pushes_and_queries_its_tenant() {
 
 #[tokio::test]
 async fn a_principal_without_the_tenant_is_refused_on_push_and_query() {
-    install_crypto_provider();
-    let pki = Pki::new();
-    let (addr, sink) = serve_stack(&pki.security(&[])).await;
-    let client = pki.https_client();
-    let timestamp_ms = now_ms();
+    let fixture = security_fixture().await;
+    let SecurityFixture {
+        pki: _pki,
+        address: addr,
+        sink,
+        client,
+        timestamp_ms,
+    } = fixture;
 
     let pushed = push(&client, addr, TENANT_B, timestamp_ms)
         .bearer_auth(GRAFANA_TOKEN)
@@ -330,7 +360,9 @@ async fn a_principal_without_the_tenant_is_refused_on_push_and_query() {
 async fn a_request_without_a_valid_credential_is_unauthorized() {
     install_crypto_provider();
     let pki = Pki::new();
-    let (addr, sink) = serve_stack(&pki.security(&[])).await;
+    let served = serve_stack(&pki.security(&[])).await;
+    let addr = served.address;
+    let sink = served.sink;
     let client = pki.https_client();
     let timestamp_ms = now_ms();
 
@@ -356,7 +388,9 @@ async fn a_request_without_a_valid_credential_is_unauthorized() {
 async fn ready_answers_without_a_credential() {
     install_crypto_provider();
     let pki = Pki::new();
-    let (addr, _sink) = serve_stack(&pki.security(&[])).await;
+    let served = serve_stack(&pki.security(&[])).await;
+    let addr = served.address;
+    let _sink = served.sink;
 
     let answer = pki
         .https_client()
@@ -408,7 +442,9 @@ fn otlp_export(tenant: &str) -> tonic::Request<ExportMetricsServiceRequest> {
 async fn an_otlp_grpc_export_from_a_principal_without_the_tenant_is_permission_denied() {
     install_crypto_provider();
     let pki = Pki::new();
-    let (addr, sink) = serve_stack(&pki.security(&[])).await;
+    let served = serve_stack(&pki.security(&[])).await;
+    let addr = served.address;
+    let sink = served.sink;
     let tls = tonic::transport::ClientTlsConfig::new()
         .ca_certificate(tonic::transport::Certificate::from_pem(&pki.ca_pem))
         .domain_name("localhost");
@@ -443,12 +479,15 @@ const RULE_FILE: &str = "groups:\n  - name: api-up\n    rules:\n      - record: 
 async fn the_ruler_installs_its_bundled_rules_with_the_internal_client_credential() {
     install_crypto_provider();
     let pki = Pki::new();
-    let (token, ca) = (pki.path("ruler-token"), pki.path("ca.pem"));
+    let paths = InternalClientPaths {
+        token: pki.path("ruler-token"),
+        ca: pki.path("ca.pem"),
+    };
     let security = pki.security(&[
         "--internal-client-token-path",
-        &token,
+        &paths.token,
         "--internal-client-tls-ca-path",
-        &ca,
+        &paths.ca,
     ]);
     let state = prometheus_api_state_for_store(InMemoryMetricStore::new());
     let listener = serve_prometheus_router(
@@ -466,7 +505,7 @@ async fn the_ruler_installs_its_bundled_rules_with_the_internal_client_credentia
     let installed = install_bundled_rule_groups(listener, &security, &rule_file, &tenant_a).await;
     let without_token = install_bundled_rule_groups(
         listener,
-        &pki.security(&["--internal-client-tls-ca-path", &ca]),
+        &pki.security(&["--internal-client-tls-ca-path", &paths.ca]),
         &rule_file,
         &tenant_a,
     )

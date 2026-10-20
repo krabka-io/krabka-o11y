@@ -262,12 +262,14 @@ async fn all_drains_acknowledged_writes_and_a_fresh_cold_querier_reads_the_whole
     let readiness = RoleReadiness::new();
     let stop = Shutdown::new();
     let querier = tokio::spawn(run_querier(
-        cli,
-        krabka_promql::metrics::ServiceMetrics::new(),
-        readiness.clone(),
+        RoleLaunch {
+            cli,
+            metrics: krabka_promql::metrics::ServiceMetrics::new(),
+            readiness: readiness.clone(),
+            wal_security: None,
+            audit: super::super::AuditHandle::disabled(),
+        },
         ServerSecurity::default(),
-        None,
-        super::super::AuditHandle::disabled(),
         stop.clone(),
     ));
     tokio::time::timeout(std::time::Duration::from_secs(30), async {

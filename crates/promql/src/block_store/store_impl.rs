@@ -13,31 +13,61 @@ use crate::{
     error::Result,
     store::{
         ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord,
-        MetadataScan, MetricStore, NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+        MetadataScan, MetricStore, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
     },
 };
-
-mod append_exemplar_label_map;
-mod blockstore_error;
-mod datafusion_error;
-mod exemplar_table;
 mod exemplars_from_batch;
-mod float_table;
-mod histogram_table;
 mod metadata_from_batch;
-mod metadata_table;
 mod metric_block_store;
 mod missing_block_warnings;
-mod named_stats;
-
-use append_exemplar_label_map::append_exemplar_label_map;
-use blockstore_error::blockstore_error;
-use datafusion_error::datafusion_error;
-use exemplar_table::EXEMPLAR_TABLE;
 use exemplars_from_batch::exemplars_from_batch;
-use float_table::FLOAT_TABLE;
-use histogram_table::HISTOGRAM_TABLE;
 use metadata_from_batch::metadata_from_batch;
-use metadata_table::METADATA_TABLE;
 use missing_block_warnings::missing_block_warnings;
-use named_stats::named_stats;
+
+use crate::series_stats::{SeriesRef, label_name_cardinality, label_value_cardinality, tsdb_stats};
+
+pub(crate) const EXEMPLAR_TABLE: &str = "metric_exemplars";
+
+pub(crate) const FLOAT_TABLE: &str = "metric_float_samples";
+
+pub(crate) const HISTOGRAM_TABLE: &str = "metric_native_histograms";
+
+pub(crate) const METADATA_TABLE: &str = "metric_metadata";
+
+pub(crate) fn blockstore_error(error: krabka_blockstore::BlockStoreError) -> PromqlError {
+    let message = error.to_string();
+    drop(error);
+    PromqlError::Store(message)
+}
+
+pub(crate) fn datafusion_error(error: datafusion::error::DataFusionError) -> PromqlError {
+    let message = error.to_string();
+    drop(error);
+    PromqlError::Store(message)
+}
+
+pub(crate) fn append_exemplar_label_map(
+    labels: &mut Labels,
+    label_maps: &MapArray,
+    row: usize,
+) -> Result<()> {
+    let entries = label_maps.value(row);
+    let keys = entries
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| PromqlError::Store("exemplar label map key column has wrong type".into()))?;
+    let values = entries
+        .column(1)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| {
+            PromqlError::Store("exemplar label map value column has wrong type".into())
+        })?;
+    for index in 0..keys.len() {
+        if !keys.is_null(index) && !values.is_null(index) {
+            labels.insert(keys.value(index), values.value(index));
+        }
+    }
+    Ok(())
+}

@@ -14,7 +14,22 @@ export TMPDIR="$TOOLS_DIR/tmp"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 mkdir -p "$TMPDIR" "$TOOLS_DIR/wasix"
 
+stage_runtime() {
+  mkdir -p "$WEBSITE_DIR/static/lab/sdk"
+  cp -R "$SDK_DIR/js/dist" "$SDK_DIR/js/pkg" "$WEBSITE_DIR/static/lab/sdk/"
+  cp "$SDK_DIR/LICENSE" "$WEBSITE_DIR/static/lab/sdk/LICENSE"
+}
+
+if python3 -B "$WEBSITE_DIR/scripts/lab-cache.py" runtime-check; then
+  echo 'Reusing the completed browser runtime.'
+  stage_runtime
+  exit 0
+fi
+
 if [[ ! -d "$SDK_DIR/.git" ]]; then
+  # The runtime cache contains outputs only. Remove an invalid partial restore
+  # before cloning the pinned source into this generated directory.
+  rm -rf "$SDK_DIR"
   git clone --filter=blob:none --no-checkout https://github.com/wasmerio/wasmer-sdk.git "$SDK_DIR"
   git -C "$SDK_DIR" checkout --detach "$SDK_REV"
 fi
@@ -90,6 +105,5 @@ record = {'version': '0.19.0', 'revision': sys.argv[3], 'nightly': sys.argv[4],
           'wasmSha256': hashlib.sha256(wasm.read_bytes()).hexdigest()}
 (sdk / '.krabka-runtime-build.json').write_text(json.dumps(record, indent=2) + '\n')
 PY
-mkdir -p "$WEBSITE_DIR/static/lab/sdk"
-cp -R "$SDK_DIR/js/dist" "$SDK_DIR/js/pkg" "$WEBSITE_DIR/static/lab/sdk/"
-cp "$SDK_DIR/LICENSE" "$WEBSITE_DIR/static/lab/sdk/LICENSE"
+python3 -B "$WEBSITE_DIR/scripts/lab-cache.py" runtime-record
+stage_runtime

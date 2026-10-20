@@ -10,6 +10,11 @@ use crate::{
     planner::histogram_trim_operators::{HISTOGRAM_TRIM_LOWER, HISTOGRAM_TRIM_UPPER},
 };
 
+struct BinaryOperands {
+    left: f64,
+    right: f64,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum BinaryOp {
     Add,
@@ -146,14 +151,21 @@ impl BinaryOp {
         }
 
         let sample_value = float_sample_value(&sample).ok()?;
-        let (left, right) = match scalar_side {
-            ScalarSide::Left => (scalar, sample_value),
-            ScalarSide::Right => (sample_value, scalar),
+        let operands = match scalar_side {
+            ScalarSide::Left => BinaryOperands {
+                left: scalar,
+                right: sample_value,
+            },
+            ScalarSide::Right => BinaryOperands {
+                left: sample_value,
+                right: scalar,
+            },
         };
         let value = if self.is_comparison() && !binary_returns_bool(modifier) {
-            self.compare(left, right).then_some(sample_value)?
+            self.compare(operands.left, operands.right)
+                .then_some(sample_value)?
         } else {
-            self.apply_scalar(left, right, modifier)?
+            self.apply_scalar(operands.left, operands.right, modifier)?
         };
         let preserves_name = self.is_comparison() && !binary_returns_bool(modifier);
         let drop_name = if preserves_name {
@@ -196,23 +208,32 @@ impl BinaryOp {
                 drop_name: false,
             });
         }
-        let factor = match (self, scalar_side) {
-            (Self::Mul, ScalarSide::Left | ScalarSide::Right) => scalar,
-            (Self::Div, ScalarSide::Right) => 1.0 / scalar,
+        let factor = match self {
+            Self::Mul => scalar,
+            Self::Div if matches!(scalar_side, ScalarSide::Right) => 1.0 / scalar,
             _ => {
                 // Every operator but `*` and `histogram / scalar` is undefined
                 // between a histogram and a float: Prometheus drops the sample
                 // and raises an info saying so.
-                let (lhs, rhs) = match scalar_side {
-                    ScalarSide::Left => ("float", "histogram"),
-                    ScalarSide::Right => ("histogram", "float"),
-                };
-                emit_info(incompatible_types_in_binop_info(lhs, self.symbol(), rhs));
+                if matches!(scalar_side, ScalarSide::Left) {
+                    emit_info(incompatible_types_in_binop_info(
+                        "float",
+                        self.symbol(),
+                        "histogram",
+                    ));
+                } else {
+                    emit_info(incompatible_types_in_binop_info(
+                        "histogram",
+                        self.symbol(),
+                        "float",
+                    ));
+                }
                 return None;
             }
         };
         let mut out = scaled_native_histogram(histogram, factor);
-        if matches!((self, scalar_side), (Self::Div, ScalarSide::Right))
+        if matches!(self, Self::Div)
+            && matches!(scalar_side, ScalarSide::Right)
             && matches!(scalar.classify(), std::num::FpCategory::Zero)
         {
             // `FloatHistogram.Div` removes the buckets outright when it divides

@@ -1,6 +1,5 @@
 use super::{
-    BTreeMap, Instant, Mutex, MutexGuard, SERIES_SWEEP_INTERVAL, SeriesTrackerState, TenantId,
-    TenantSeries, Time, TimeExt,
+    BTreeMap, Instant, Mutex, MutexGuard, SeriesFingerprint, TenantId, Time, TimeExt, minutes,
 };
 
 /// Per-tenant series state for the ingest gates that need it.
@@ -106,8 +105,8 @@ impl SeriesTracker {
         self.lock()
             .tenants
             .iter()
-            .find(|(name, _)| name.as_str() == tenant)
-            .map_or(0, |(_, tracked)| tracked.series.len())
+            .find(|entry| entry.0.as_str() == tenant)
+            .map_or(0, |entry| entry.1.series.len())
     }
 
     /// Drops every tenant's idle series, and then every tenant left with none.
@@ -129,9 +128,9 @@ impl SeriesTracker {
         while tenants.len() > self.max_tenants {
             let oldest = tenants
                 .iter()
-                .filter(|(name, _)| *name != keep)
-                .min_by_key(|(_, tenant)| tenant.last_seen)
-                .map(|(name, _)| name.clone());
+                .filter(|entry| entry.0 != keep)
+                .min_by_key(|entry| entry.1.last_seen)
+                .map(|entry| entry.0.clone());
             match oldest {
                 Some(name) => {
                     tenants.remove(&name);
@@ -141,3 +140,90 @@ impl SeriesTracker {
         }
     }
 }
+
+/// Everything the series tracker keeps under its one lock.
+#[derive(Debug)]
+pub(crate) struct SeriesTrackerState {
+    pub(crate) tenants: BTreeMap<TenantId, TenantSeries>,
+    /// Instant at which the next idle sweep may run.
+    pub(crate) next_sweep: Instant,
+}
+
+/// One tenant's series state: the active-series set and each series' newest
+/// accepted sample, in one map.
+#[derive(Clone, Debug)]
+pub(crate) struct TenantSeries {
+    pub(crate) series: BTreeMap<SeriesFingerprint, SeriesActivity>,
+    /// Latest clock-confidence bound reported for this tenant.
+    pub(crate) clock_uncertainty: Time,
+    /// Monotonic instant of this tenant's most recent write. The tracker
+    /// evicts the least-recently-written tenant when it is over its cap.
+    pub(crate) last_seen: Instant,
+    /// The tenant's resolved idle timeout, stamped on every write so the sweep
+    /// does not have to resolve the tenant's limits again.
+    pub(crate) idle_timeout: Time,
+}
+
+impl TenantSeries {
+    pub(crate) fn new(now: Instant, idle_timeout: Time) -> Self {
+        Self {
+            series: BTreeMap::new(),
+            clock_uncertainty: Time::ZERO,
+            last_seen: now,
+            idle_timeout,
+        }
+    }
+
+    /// Records a write to `fingerprint` at `now` and returns its state.
+    pub(crate) fn touch(
+        &mut self,
+        fingerprint: SeriesFingerprint,
+        now: Instant,
+    ) -> &mut SeriesActivity {
+        self.series
+            .entry(fingerprint)
+            .and_modify(|activity| activity.last_seen = now)
+            .or_insert_with(|| SeriesActivity::new(now))
+    }
+
+    /// Drops the series this tenant has not written to within its idle
+    /// timeout. A zero timeout keeps every series that was ever written.
+    pub(crate) fn sweep(&mut self, now: Instant) {
+        if self.idle_timeout <= Time::ZERO {
+            return;
+        }
+        let idle_timeout = self.idle_timeout.to_std();
+        self.series
+            .retain(|_, activity| now.duration_since(activity.last_seen) < idle_timeout);
+    }
+}
+
+/// What the distributor remembers about one series of one tenant.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SeriesActivity {
+    /// Newest sample timestamp accepted for the series, in epoch
+    /// milliseconds. `None` until the series carries a timestamped sample,
+    /// which is what lets the first sample of a series be any age.
+    pub(crate) latest_sample_ms: Option<i64>,
+    /// Monotonic instant of the most recent write to the series. The idle
+    /// sweep compares it against the tenant's idle timeout.
+    pub(crate) last_seen: Instant,
+}
+
+impl SeriesActivity {
+    pub(crate) const fn new(now: Instant) -> Self {
+        Self {
+            latest_sample_ms: None,
+            last_seen: now,
+        }
+    }
+}
+
+/// How often the series tracker looks for idle series to evict.
+///
+/// The sweep walks every tracked tenant, so it must not run per request. It
+/// runs at most once per this interval, over a map the tenant cap already
+/// bounds. A series therefore survives its tenant's idle timeout by up to one
+/// interval. The value is the period at which Mimir's ingester refreshes its
+/// own active-series set, `-ingester.active-series-metrics-update-period`.
+pub(crate) const SERIES_SWEEP_INTERVAL: Time = minutes(1);

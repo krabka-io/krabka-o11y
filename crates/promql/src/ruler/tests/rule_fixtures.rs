@@ -1,0 +1,282 @@
+use super::*;
+
+/// A tenant's rule groups, keyed by namespace and then group name.
+pub(crate) type RuleSet = BTreeMap<String, BTreeMap<String, serde_yaml::Value>>;
+
+/// A 30s group that records `job:up:current` from `up` and alerts
+/// `InstanceUp` once `up > 0` has held for 5m.
+pub(crate) fn mixed_rule_group() -> serde_yaml::Value {
+    serde_yaml::from_str(
+        r"
+name: mixed
+interval: 30s
+rules:
+  - record: job:up:current
+    expr: up
+  - alert: InstanceUp
+    expr: up > 0
+    for: 5m
+",
+    )
+    .expect("rule group yaml")
+}
+
+/// An engine over `tenant-a`'s `up{job="api"}`, which is 1 at each of
+/// `sample_times_ms`.
+pub(crate) fn up_api_engine(sample_times_ms: &[i64]) -> PromqlEngine<InMemoryMetricStore> {
+    let mut store = InMemoryMetricStore::new();
+    for &ts_ms in sample_times_ms {
+        store.push_float("tenant-a", labels("up", "api"), ts_ms, 1.0);
+    }
+    PromqlEngine::new(Arc::new(store), EngineOpts::default())
+}
+
+/// One `up{job}` sample of `tenant-a`.
+#[derive(Clone, Copy)]
+pub(crate) struct UpSample<'a> {
+    pub(crate) job: &'a str,
+    pub(crate) ts_ms: i64,
+    pub(crate) value: f64,
+}
+
+/// An engine over `tenant-a`'s `up` series holding `samples`.
+pub(crate) fn up_samples_engine(samples: &[UpSample<'_>]) -> PromqlEngine<InMemoryMetricStore> {
+    let mut store = InMemoryMetricStore::new();
+    for sample in samples {
+        store.push_float(
+            "tenant-a",
+            labels("up", sample.job),
+            sample.ts_ms,
+            sample.value,
+        );
+    }
+    PromqlEngine::new(Arc::new(store), EngineOpts::default())
+}
+
+pub(crate) fn up_transition_engine() -> PromqlEngine<InMemoryMetricStore> {
+    up_samples_engine(&[
+        UpSample {
+            job: "api",
+            ts_ms: 60_000,
+            value: 1.0,
+        },
+        UpSample {
+            job: "api",
+            ts_ms: 120_000,
+            value: 0.0,
+        },
+    ])
+}
+
+pub(crate) fn up_alert_rule(with_for_duration: bool) -> serde_yaml::Value {
+    let yaml = if with_for_duration {
+        "alert: InstanceUp\nexpr: up > 0\nfor: 5m\n"
+    } else {
+        "alert: InstanceUp\nexpr: up > 0\n"
+    };
+    serde_yaml::from_str(yaml).expect("alerting rule yaml")
+}
+
+/// Two same-time `up` series for rule-label merge and collision cases.
+pub(crate) fn two_job_up_engine() -> PromqlEngine<InMemoryMetricStore> {
+    up_samples_engine(&[
+        UpSample {
+            job: "api",
+            ts_ms: 60_000,
+            value: 1.0,
+        },
+        UpSample {
+            job: "web",
+            ts_ms: 60_000,
+            value: 1.0,
+        },
+    ])
+}
+
+/// The firing `InstanceUp{job="api"}` alert active since `starts_at_ms`.
+pub(crate) fn instance_up_alert(starts_at_ms: i64) -> super::super::AlertmanagerAlert {
+    let mut labels = BTreeMap::new();
+    labels.insert("alertname".to_string(), "InstanceUp".to_string());
+    labels.insert("job".to_string(), "api".to_string());
+    super::super::AlertmanagerAlert {
+        labels,
+        annotations: BTreeMap::new(),
+        starts_at_ms,
+        ends_at_ms: None,
+        generator_url: String::new(),
+    }
+}
+
+/// The `job:up:current{job="api"}` = 1 record a recording rule appends at
+/// `timestamp_ms`.
+pub(crate) fn job_up_current_record(timestamp_ms: i64) -> WalRecord {
+    WalRecord {
+        tenant: "tenant-a".to_string(),
+        labels: vec![
+            krabka_metrics::MetricLabelPair::new("__name__", "job:up:current".into()),
+            krabka_metrics::MetricLabelPair::new("job", "api".into()),
+        ],
+        payload: SamplePayload::Float {
+            timestamp_ms,
+            value: 1.0,
+            start_timestamp_ms: None,
+        },
+        exemplars: Vec::new(),
+    }
+}
+
+/// A rule set of the `team-a/recording` group, which records
+/// `job:up:current`, and the `team-b/alerting` group read from `alerting_yaml`.
+pub(crate) fn namespaced_rule_set(alerting_yaml: &str) -> RuleSet {
+    let recording_group: serde_yaml::Value = serde_yaml::from_str(
+        r"
+name: recording
+rules:
+  - record: job:up:current
+    expr: up
+",
+    )
+    .expect("recording group yaml");
+    let alerting_group: serde_yaml::Value =
+        serde_yaml::from_str(alerting_yaml).expect("alerting group yaml");
+    let mut recording_namespace = BTreeMap::new();
+    recording_namespace.insert("recording".to_string(), recording_group);
+    let mut alerting_namespace = BTreeMap::new();
+    alerting_namespace.insert("alerting".to_string(), alerting_group);
+    let mut rules = BTreeMap::new();
+    rules.insert("team-a".to_string(), recording_namespace);
+    rules.insert("team-b".to_string(), alerting_namespace);
+    rules
+}
+
+/// One rule group that holds only its name and evaluation interval.
+pub(crate) struct IntervalGroup {
+    pub(crate) namespace: &'static str,
+    pub(crate) group_name: &'static str,
+    pub(crate) interval: &'static str,
+}
+
+/// A rule set of rule-less `groups`.
+pub(crate) fn interval_rule_set(groups: &[IntervalGroup]) -> RuleSet {
+    let mut rules = RuleSet::new();
+    for group in groups {
+        let mut group_mapping = serde_yaml::Mapping::new();
+        group_mapping.insert(
+            serde_yaml::Value::String("name".to_string()),
+            serde_yaml::Value::String(group.group_name.to_string()),
+        );
+        group_mapping.insert(
+            serde_yaml::Value::String("interval".to_string()),
+            serde_yaml::Value::String(group.interval.to_string()),
+        );
+        let yaml = serde_yaml::Value::Mapping(group_mapping);
+        rules
+            .entry(group.namespace.to_string())
+            .or_default()
+            .insert(group.group_name.to_string(), yaml);
+    }
+    rules
+}
+
+pub(crate) fn standard_due_interval_rule_set(include_additional_group: bool) -> RuleSet {
+    let mut groups = vec![
+        IntervalGroup {
+            namespace: "team-a",
+            group_name: "new",
+            interval: "30s",
+        },
+        IntervalGroup {
+            namespace: "team-a",
+            group_name: "not-yet",
+            interval: "5m",
+        },
+        IntervalGroup {
+            namespace: "team-b",
+            group_name: "due",
+            interval: "1m",
+        },
+    ];
+    if include_additional_group {
+        groups.push(IntervalGroup {
+            namespace: "team-c",
+            group_name: "also-due",
+            interval: "30s",
+        });
+    }
+    interval_rule_set(&groups)
+}
+
+/// When a `tenant-a` rule group last evaluated.
+pub(crate) struct GroupLastEval {
+    pub(crate) namespace: &'static str,
+    pub(crate) group: &'static str,
+    pub(crate) last_eval_ms: i64,
+}
+
+/// The group state that `last_evals` replay into.
+pub(crate) fn group_state(last_evals: &[GroupLastEval]) -> super::super::RulerGroupState {
+    let mut state = super::super::RulerGroupState::default();
+    state.apply_records(
+        last_evals
+            .iter()
+            .map(|last_eval| super::super::RulerGroupStateRecord {
+                tenant: "tenant-a".to_string(),
+                namespace: last_eval.namespace.to_string(),
+                group: last_eval.group.to_string(),
+                last_eval_ms: last_eval.last_eval_ms,
+            }),
+    );
+    state
+}
+
+/// The group state of the sharded-scheduling tests: `team-a/not-yet` last
+/// evaluated at 120s, `team-b/due` at 60s and `team-c/also-due` at 90s.
+pub(crate) fn staggered_group_state() -> super::super::RulerGroupState {
+    group_state(&[
+        GroupLastEval {
+            namespace: "team-a",
+            group: "not-yet",
+            last_eval_ms: 120_000,
+        },
+        GroupLastEval {
+            namespace: "team-b",
+            group: "due",
+            last_eval_ms: 60_000,
+        },
+        GroupLastEval {
+            namespace: "team-c",
+            group: "also-due",
+            last_eval_ms: 90_000,
+        },
+    ])
+}
+
+/// The sinks an `up > 0` recording-and-alerting evaluation wrote to.
+pub(crate) struct UpRuleSinks<'a> {
+    pub(crate) wal_sink: &'a RecordingSink,
+    pub(crate) alert_sink: &'a RecordingAlertmanagerSink,
+}
+
+/// Checks the evaluation at 6m that follows a pending one at 1m: one more
+/// recording, and the `InstanceUp` alert that has been pending since 1m firing.
+pub(crate) fn assert_up_rules_fired_at_six_minutes(
+    firing: &super::super::RulerGroupEvaluation,
+    sinks: &UpRuleSinks<'_>,
+) {
+    assert2::assert!(
+        *firing
+            == super::super::RulerGroupEvaluation {
+                recording_records: 1,
+                alerts_dispatched: 1,
+                last_eval_ms: 360_000,
+            }
+    );
+    assert2::assert!(
+        sinks.wal_sink.records()
+            == vec![
+                job_up_current_record(60_000),
+                job_up_current_record(360_000),
+            ]
+    );
+    assert2::assert!(sinks.alert_sink.alerts() == vec![instance_up_alert(60_000)]);
+}

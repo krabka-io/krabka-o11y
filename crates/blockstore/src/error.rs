@@ -9,6 +9,18 @@ use parquet::errors::ParquetError;
 mod tests {
     use super::*;
 
+    struct SkipReasonCase {
+        name: &'static str,
+        failure: BlockReadFailure,
+        expected: Option<BlockSkipReason>,
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct SkipReasonObservation {
+        name: &'static str,
+        reason: Option<BlockSkipReason>,
+    }
+
     fn not_found(path: &str) -> ObjectStoreError {
         ObjectStoreError::NotFound {
             path: path.to_string(),
@@ -28,43 +40,53 @@ mod tests {
     /// its absence) is the scan's licence to skip that block.
     #[test]
     fn skip_reason_separates_the_blocks_fault_from_the_stores() {
-        let cases: Vec<(&str, BlockReadFailure, Option<BlockSkipReason>)> = vec![
-            (
-                "the object is gone",
-                BlockReadFailure::ObjectStore(not_found("b1.parquet")),
-                Some(BlockSkipReason::Missing),
-            ),
-            (
-                "the object went while the footer was being read",
-                BlockReadFailure::Parquet(ParquetError::External(Box::new(not_found(
+        let cases = [
+            SkipReasonCase {
+                name: "the object is gone",
+                failure: BlockReadFailure::ObjectStore(not_found("b1.parquet")),
+                expected: Some(BlockSkipReason::Missing),
+            },
+            SkipReasonCase {
+                name: "the object went while the footer was being read",
+                failure: BlockReadFailure::Parquet(ParquetError::External(Box::new(not_found(
                     "b1.parquet",
                 )))),
-                Some(BlockSkipReason::Missing),
-            ),
-            (
-                "the bytes are not a parquet block",
-                BlockReadFailure::Parquet(ParquetError::General("corrupt footer".to_string())),
-                Some(BlockSkipReason::Corrupt),
-            ),
-            (
-                "the store is unreachable",
-                BlockReadFailure::ObjectStore(unreachable_store()),
-                None,
-            ),
-            (
-                "the store failed while the footer was being read",
-                BlockReadFailure::Parquet(ParquetError::External(Box::new(unreachable_store()))),
-                None,
-            ),
+                expected: Some(BlockSkipReason::Missing),
+            },
+            SkipReasonCase {
+                name: "the bytes are not a parquet block",
+                failure: BlockReadFailure::Parquet(ParquetError::General(
+                    "corrupt footer".to_string(),
+                )),
+                expected: Some(BlockSkipReason::Corrupt),
+            },
+            SkipReasonCase {
+                name: "the store is unreachable",
+                failure: BlockReadFailure::ObjectStore(unreachable_store()),
+                expected: None,
+            },
+            SkipReasonCase {
+                name: "the store failed while the footer was being read",
+                failure: BlockReadFailure::Parquet(ParquetError::External(Box::new(
+                    unreachable_store(),
+                ))),
+                expected: None,
+            },
         ];
 
         let got = cases
             .iter()
-            .map(|(name, failure, _)| (*name, failure.skip_reason()))
+            .map(|case| SkipReasonObservation {
+                name: case.name,
+                reason: case.failure.skip_reason(),
+            })
             .collect::<Vec<_>>();
         let want = cases
             .iter()
-            .map(|(name, _, reason)| (*name, *reason))
+            .map(|case| SkipReasonObservation {
+                name: case.name,
+                reason: case.expected,
+            })
             .collect::<Vec<_>>();
         assert2::assert!(got == want);
     }
@@ -134,13 +156,62 @@ mod tests {
 }
 
 mod block_read_failure;
-mod block_skip_reason;
 mod block_store_error;
-mod result;
-mod skipped_block;
 
 pub use block_read_failure::BlockReadFailure;
-pub use block_skip_reason::BlockSkipReason;
-pub use block_store_error::BlockStoreError;
-pub use result::Result;
-pub use skipped_block::SkippedBlock;
+pub use block_store_error::{BlockStoreError, UnreadableBlock};
+
+/// Convenience alias used throughout the crate.
+pub type Result<T> = std::result::Result<T, BlockStoreError>;
+
+/// Why a scan left one block out of the result it returned.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum BlockSkipReason {
+    /// The index named a key the object store does not have.
+    Missing,
+
+    /// The object is there, and is not a readable Parquet block.
+    Corrupt,
+}
+
+impl Display for BlockSkipReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let word = match self {
+            Self::Missing => "missing",
+            Self::Corrupt => "corrupt",
+        };
+        f.write_str(word)
+    }
+}
+
+/// One block a scan could not read and left out of its result.
+///
+/// `detail` is the backend error rendered as text, unlike
+/// [`BlockReadFailure`](BlockReadFailure), which keeps it typed. The
+/// two serve different readers: a caller deciding *what to do* matches on the
+/// typed failure, and a caller writing a `warnings` entry into a Loki or Tempo
+/// response body needs a sentence. Keeping the report plain also keeps it
+/// `Clone` and `PartialEq`, which neither `object_store::Error` nor
+/// `ParquetError` is, so a test can compare a whole report at once.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SkippedBlock {
+    /// The object key the index named.
+    pub object_key: String,
+
+    /// Why the block was left out.
+    pub reason: BlockSkipReason,
+
+    /// The backend error, rendered for a human.
+    pub detail: String,
+}
+
+impl Display for SkippedBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "block `{}` skipped ({}): {}",
+            self.object_key, self.reason, self.detail
+        )
+    }
+}

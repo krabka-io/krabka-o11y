@@ -3,6 +3,12 @@ use super::{
     RawProfile, labels_key, labels_with_sample_labels,
 };
 
+struct SampleTypeGroup {
+    labels: Labels,
+    profile_type: String,
+    samples: Vec<DecodedSample>,
+}
+
 /// Split one multi-value pprof into one `DecodedProfile` per `sample_type[]`.
 ///
 /// # Errors
@@ -14,33 +20,36 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
         .filter(|name| !name.is_empty())
         .ok_or_else(|| ProfilesError::Invalid("missing __name__".to_string()))?
         .to_string();
-    let (period_type, period_unit) = raw.profile.period_type_strings();
+    let period_type_and_unit = raw.profile.period_type_strings();
+    let period_type = period_type_and_unit.name;
+    let period_unit = period_type_and_unit.unit;
     let sample_types = raw.profile.sample_types();
     let timestamp_ns = raw.profile.inner().time_nanos;
-    let location_refs = raw
-        .profile
-        .inner()
-        .location
-        .iter()
-        .enumerate()
-        .map(|(idx, location)| {
-            let idx = u32::try_from(idx).map_err(|err| {
-                ProfilesError::Decode(format!("location index does not fit u32: {err}"))
-            })?;
-            Ok((location.id, idx))
-        })
-        .collect::<Result<HashMap<_, _>, ProfilesError>>()?;
+    let mut location_refs = HashMap::<u64, u32>::default();
+    let mut location_index = 0_usize;
+    for location in &raw.profile.inner().location {
+        let local_index = u32::try_from(location_index).map_err(|err| {
+            ProfilesError::Decode(format!("location index does not fit u32: {err}"))
+        })?;
+        location_refs.insert(location.id, local_index);
+        location_index = location_index.saturating_add(1);
+    }
     let mut out = Vec::with_capacity(sample_types.len());
-    for (idx, (sample_type, sample_unit)) in sample_types.into_iter().enumerate() {
+    let mut idx = 0_usize;
+    for sample_type_and_unit in sample_types {
+        let sample_type = sample_type_and_unit.name;
+        let sample_unit = sample_type_and_unit.unit;
         if sample_type.is_empty() || sample_unit.is_empty() {
             return Err(ProfilesError::Decode(format!(
                 "sample_type[{idx}] is missing or invalid"
             )));
         }
 
-        let mut groups =
-            BTreeMap::<Vec<(String, String)>, (Labels, String, Vec<DecodedSample>)>::new();
-        for (sample_idx, sample) in raw.profile.samples().iter().enumerate() {
+        let mut groups = BTreeMap::<Vec<krabka_blockstore::LabelPair>, SampleTypeGroup>::new();
+        let mut sample_idx = 0_usize;
+        for sample in raw.profile.samples() {
+            let current_sample_idx = sample_idx;
+            sample_idx = sample_idx.saturating_add(1);
             let value = sample
                 .value
                 .get(idx)
@@ -57,7 +66,7 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
             }
             let timestamp_ns = raw
                 .sample_timestamps_ns
-                .get(sample_idx)
+                .get(current_sample_idx)
                 .and_then(|timestamps| timestamps.get(idx))
                 .copied()
                 .unwrap_or(timestamp_ns);
@@ -103,28 +112,34 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
             }
             let sample_labels = labels_with_sample_labels(&labels, &raw.profile, sample);
             let key = labels_key(&sample_labels);
-            groups
-                .entry(key)
-                .or_insert((sample_labels, profile_type, Vec::new()))
-                .2
-                .push(DecodedSample {
-                    stacktrace_location_refs,
-                    value,
-                    timestamp_ns,
-                    span_id: raw.sample_span_ids.get(sample_idx).copied().flatten(),
-                    trace_id: raw.sample_trace_ids.get(sample_idx).cloned().flatten(),
-                });
+            let group = groups.entry(key).or_insert_with(|| SampleTypeGroup {
+                labels: sample_labels,
+                profile_type,
+                samples: Vec::new(),
+            });
+            group.samples.push(DecodedSample {
+                stacktrace_location_refs,
+                value,
+                timestamp_ns,
+                span_id: raw
+                    .sample_span_ids
+                    .get(current_sample_idx)
+                    .copied()
+                    .flatten(),
+                trace_id: raw
+                    .sample_trace_ids
+                    .get(current_sample_idx)
+                    .cloned()
+                    .flatten(),
+            });
         }
 
-        out.extend(
-            groups
-                .into_values()
-                .map(|(labels, profile_type, samples)| DecodedProfile {
-                    labels,
-                    profile_type,
-                    samples,
-                }),
-        );
+        out.extend(groups.into_values().map(|group| DecodedProfile {
+            labels: group.labels,
+            profile_type: group.profile_type,
+            samples: group.samples,
+        }));
+        idx = idx.saturating_add(1);
     }
 
     Ok(out)

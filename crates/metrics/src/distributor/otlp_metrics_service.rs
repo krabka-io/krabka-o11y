@@ -1,7 +1,7 @@
 use super::{
     Arc, ByteSize, ByteSizeExt, DistributorState, ExportMetricsServiceRequest,
-    ExportMetricsServiceResponse, MetricsService, Status, StdDurationExt, TonicRequest,
-    TonicResponse, otlp_grpc_export_inner, status_from_push_error,
+    ExportMetricsServiceResponse, IngestRequest, MetricsService, RequestOutcome, Status,
+    StdDurationExt, TonicRequest, TonicResponse, otlp_grpc_export_inner, status_from_push_error,
 };
 
 /// Builds the OTLP gRPC metrics service implementation.
@@ -25,11 +25,12 @@ impl MetricsService for OtlpMetricsService {
         let started = std::time::Instant::now();
         let result = otlp_grpc_export_inner(&self.state, request).await;
         if let Some(metrics) = &self.state.metrics {
-            let elapsed = started.elapsed().as_time();
-            match &result {
-                Ok(items) => metrics.record_ingest(true, ByteSize::ZERO, *items, elapsed),
-                Err(_) => metrics.record_ingest(false, ByteSize::ZERO, 0, elapsed),
-            }
+            metrics.record_ingest(IngestRequest {
+                outcome: RequestOutcome::from_result(&result),
+                body: ByteSize::ZERO,
+                items: result.as_ref().map_or(0, |items| *items),
+                elapsed: started.elapsed().as_time(),
+            });
         }
         match result {
             Ok(_) => Ok(TonicResponse::new(ExportMetricsServiceResponse {

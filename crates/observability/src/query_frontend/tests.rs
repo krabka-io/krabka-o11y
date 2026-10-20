@@ -70,9 +70,11 @@ fn stream_merge_groups_labels_deduplicates_and_applies_one_global_limit() {
 
     let merged = merge_frontend_results(
         vec![first, second],
-        LokiDirection::Backward,
-        Some(3),
-        None,
+        LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(3),
+            interval: None,
+        },
         40,
     );
 
@@ -101,9 +103,11 @@ fn matrix_merge_groups_labels_orders_samples_and_deduplicates_boundaries() {
 
     let merged = merge_frontend_results(
         vec![first, second],
-        LokiDirection::Forward,
-        None,
-        None,
+        LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: None,
+            interval: None,
+        },
         i64::MAX,
     );
 
@@ -115,8 +119,15 @@ fn matrix_merge_groups_labels_orders_samples_and_deduplicates_boundaries() {
 
 #[test]
 fn truncated_global_limits_keep_original_order_with_scrambled_ties() {
+    #[derive(Eq, Ord, PartialEq, PartialOrd)]
+    struct OrderedEntry {
+        timestamp: i64,
+        stream: usize,
+        entry: usize,
+    }
+
     for direction in [LokiDirection::Forward, LokiDirection::Backward] {
-        let mut ledger = Vec::new();
+        let mut ledger: Vec<OrderedEntry> = Vec::new();
         let mut streams = Vec::new();
         for stream in 0..3 {
             let mut values = Vec::new();
@@ -135,7 +146,11 @@ fn truncated_global_limits_keep_original_order_with_scrambled_ties() {
                 } else {
                     timestamp
                 };
-                ledger.push((effective_timestamp, stream, entry));
+                ledger.push(OrderedEntry {
+                    timestamp: effective_timestamp,
+                    stream,
+                    entry,
+                });
                 values.push(json!([timestamp_value, format!("row-{id}")]));
             }
             streams.push(json!({"stream":{"app":stream.to_string()},"values":values}));
@@ -144,38 +159,34 @@ fn truncated_global_limits_keep_original_order_with_scrambled_ties() {
             "status":"success", "warnings":["preserved"],
             "data":{"resultType":"streams","result":streams}
         });
-        ledger.sort_by_key(|&(timestamp, stream, entry)| {
-            (
-                match direction {
-                    LokiDirection::Forward => timestamp,
-                    LokiDirection::Backward => -timestamp,
-                },
-                stream,
-                entry,
-            )
+        ledger.sort_by_key(|entry| OrderedEntry {
+            timestamp: match direction {
+                LokiDirection::Forward => entry.timestamp,
+                LokiDirection::Backward => -entry.timestamp,
+            },
+            stream: entry.stream,
+            entry: entry.entry,
         });
         for limit in [0, 1, 2, 99, 100, 150, 299, 300, usize::MAX] {
             let mut keep = [[false; 100]; 3];
-            for &(_, stream, entry) in ledger.iter().take(limit) {
-                keep[stream][entry] = true;
+            for selected in ledger.iter().take(limit) {
+                keep[selected.stream][selected.entry] = true;
             }
-            let expected = original["data"]["result"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .enumerate()
-                .filter_map(|(stream_index, stream)| {
-                    let values = stream["values"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .enumerate()
-                        .filter(|(entry, _)| keep[stream_index][*entry])
-                        .map(|(_, value)| value.clone())
-                        .collect::<Vec<_>>();
-                    (!values.is_empty()).then(|| json!({"stream":stream["stream"],"values":values}))
-                })
-                .collect::<Vec<_>>();
+            let streams = original["data"]["result"].as_array().unwrap();
+            let mut expected = Vec::new();
+            for stream_index in 0..streams.len() {
+                let stream = &streams[stream_index];
+                let stream_values = stream["values"].as_array().unwrap();
+                let mut values = Vec::new();
+                for entry_index in 0..stream_values.len() {
+                    if keep[stream_index][entry_index] {
+                        values.push(stream_values[entry_index].clone());
+                    }
+                }
+                if !values.is_empty() {
+                    expected.push(json!({"stream":stream["stream"],"values":values}));
+                }
+            }
             let mut response = original.clone();
             apply_global_stream_limit(&mut response, direction, Some(limit));
             assert!(response["data"]["result"] == json!(expected));
@@ -187,7 +198,8 @@ fn truncated_global_limits_keep_original_order_with_scrambled_ties() {
 #[test]
 fn global_limits_preserve_ties_and_clean_empty_streams_at_the_boundary() {
     for direction in [LokiDirection::Forward, LokiDirection::Backward] {
-        for limit in [0, 1, 2, 3, 4, 5, usize::MAX] {
+        let limits = [0, 1, 2, 3, 4, 5, usize::MAX];
+        for limit in limits {
             let mut response = json!({
                 "status":"success", "data":{"resultType":"streams", "result":[
                     {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
@@ -196,33 +208,40 @@ fn global_limits_preserve_ties_and_clean_empty_streams_at_the_boundary() {
                     {"stream":{"app":"missing"}}
                 ]}
             });
-            let expected = match (direction, limit) {
-                (_, 0) => json!([]),
-                (LokiDirection::Forward, 1) => json!([
+            let expected = if limit == 0 {
+                json!([])
+            } else if direction == LokiDirection::Forward && limit == 1 {
+                json!([
                     {"stream":{"app":"a"},"values":[["10","a10"]]}
-                ]),
-                (LokiDirection::Forward, 2) => json!([
+                ])
+            } else if direction == LokiDirection::Forward && limit == 2 {
+                json!([
                     {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]}
-                ]),
-                (LokiDirection::Forward, 3) => json!([
+                ])
+            } else if direction == LokiDirection::Forward && limit == 3 {
+                json!([
                     {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
                     {"stream":{"app":"b"},"values":[["20","b20"]]}
-                ]),
-                (LokiDirection::Backward, 1) => json!([
+                ])
+            } else if direction == LokiDirection::Backward && limit == 1 {
+                json!([
                     {"stream":{"app":"b"},"values":[["30","b30"]]}
-                ]),
-                (LokiDirection::Backward, 2) => json!([
+                ])
+            } else if direction == LokiDirection::Backward && limit == 2 {
+                json!([
                     {"stream":{"app":"a"},"values":[["20","a20"]]},
                     {"stream":{"app":"b"},"values":[["30","b30"]]}
-                ]),
-                (LokiDirection::Backward, 3) => json!([
+                ])
+            } else if direction == LokiDirection::Backward && limit == 3 {
+                json!([
                     {"stream":{"app":"a"},"values":[["20","a20"]]},
                     {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]}
-                ]),
-                _ => json!([
+                ])
+            } else {
+                json!([
                     {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
                     {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]}
-                ]),
+                ])
             };
 
             apply_global_stream_limit(&mut response, direction, Some(limit));

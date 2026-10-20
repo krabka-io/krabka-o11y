@@ -1,0 +1,1 @@
+quantile_over_time(0.5, {app="api"} | logfmt | unwrap value [1m])

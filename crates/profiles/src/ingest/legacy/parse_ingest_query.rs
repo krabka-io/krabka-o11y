@@ -3,9 +3,31 @@ use super::{
     split_app_labels, urldecode,
 };
 
+struct QueryParameter<'a> {
+    key: &'a str,
+    value: &'a str,
+}
+
+fn query_parameter(pair: &str) -> QueryParameter<'_> {
+    match pair.find('=') {
+        Some(separator) => QueryParameter {
+            key: &pair[..separator],
+            value: &pair[separator + 1..],
+        },
+        None => QueryParameter {
+            key: pair,
+            value: "",
+        },
+    }
+}
+
 ///
 /// # Errors
 /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+///
+/// # Panics
+/// The parser's validated profile suffix must still be present when it truncates
+/// the suffix from the name.
 pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
     let mut name = String::new();
     let mut labels = Vec::new();
@@ -18,11 +40,14 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
     let mut jfr_event = "wall".to_string();
 
     for pair in query.split('&').filter(|pair| !pair.is_empty()) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let value = urldecode(value);
+        let parameter = query_parameter(pair);
+        let key = parameter.key;
+        let value = urldecode(parameter.value);
         match key {
             "name" => {
-                (name, labels) = split_app_labels(&value)?;
+                let parsed = split_app_labels(&value)?;
+                name = parsed.name;
+                labels = parsed.labels;
             }
             "format" => {
                 format = match value.as_str() {
@@ -68,22 +93,21 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
         return Err(ProfilesError::Invalid("missing ?name".to_string()));
     }
 
-    let profile_type_suffix = name
-        .rsplit_once('.')
-        .filter(|(_, suffix)| {
-            matches!(
-                *suffix,
-                "alloc_objects" | "alloc_space" | "inuse_objects" | "inuse_space"
-            )
-        })
-        .map(|(application, suffix)| (application.to_string(), suffix.to_string()));
-    if let Some((application, _)) = &profile_type_suffix {
-        name.clone_from(application);
+    let profile_type_suffix = name.rfind('.').and_then(|separator| {
+        let suffix = &name[separator + 1..];
+        matches!(
+            suffix,
+            "alloc_objects" | "alloc_space" | "inuse_objects" | "inuse_space"
+        )
+        .then(|| suffix.to_string())
+    });
+    if profile_type_suffix.is_some() {
+        name.truncate(name.rfind('.').expect("validated profile suffix"));
     }
 
     Ok(IngestQuery {
         name,
-        profile_type_suffix: profile_type_suffix.map(|(_, suffix)| suffix),
+        profile_type_suffix,
         labels,
         format,
         sample_rate,

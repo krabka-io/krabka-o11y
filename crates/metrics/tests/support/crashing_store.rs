@@ -2,11 +2,10 @@
 
 use std::sync::Mutex;
 
-use async_trait::async_trait;
 use futures::{StreamExt as _, stream::BoxStream};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
+    CopyOptions, MultipartUpload, PutMultipartOptions, PutOptions, PutPayload, PutResult,
+    memory::InMemory, path::Path,
 };
 
 /// Where a [`CrashingStore`] stops: at the `occurrence`th write, counted
@@ -83,8 +82,10 @@ impl std::fmt::Display for CrashingStore {
     }
 }
 
-#[async_trait]
-impl ObjectStore for CrashingStore {
+krabka_blockstore::delegate_object_store! {
+    CrashingStore => inner;
+    forward [get_opts, list, list_with_delimiter];
+
     async fn put_opts(
         &self,
         location: &Path,
@@ -104,14 +105,6 @@ impl ObjectStore for CrashingStore {
         self.inner.put_multipart_opts(location, options).await
     }
 
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
     fn delete_stream(
         &self,
         locations: BoxStream<'static, object_store::Result<Path>>,
@@ -123,14 +116,6 @@ impl ObjectStore for CrashingStore {
         } else {
             self.inner.delete_stream(locations)
         }
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
     }
 
     async fn copy_opts(

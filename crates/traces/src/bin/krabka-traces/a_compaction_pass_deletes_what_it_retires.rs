@@ -13,9 +13,9 @@ use std::{
 use assert2::check;
 use clap::Parser as _;
 use futures::StreamExt as _;
-use krabka_blockstore::{BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, TraceIndex};
+use krabka_blockstore::{BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, OffsetRange, TraceIndex};
 use krabka_traces::{
-    AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
+    AttrValue, KeyValue, Span, SpanRecord,
     blockbuilder::{TRACE_BLOCK_OBJECT_PREFIX, build_blocks},
 };
 use object_store::{ObjectStore, memory::InMemory, path::Path};
@@ -64,27 +64,20 @@ fn configured(store: Arc<dyn ObjectStore>) -> ConfiguredObjectStore {
 }
 
 fn span_record(trace: u8, start_ns: i64) -> SpanRecord {
+    // A pass only moves whole blocks, so the span carries just what a block
+    // needs: its ids, its time, and the service that names its trace.
     SpanRecord {
         tenant: "tenant-a".into(),
         span: Span {
             trace_id: [trace; 16],
             span_id: [trace; 8],
-            parent_span_id: None,
-            name: "GET /".into(),
-            kind: SpanKind::Server,
             start_ns,
             duration_ns: 5,
-            status: StatusCode::Ok,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "service.name".into(),
                 value: AttrValue::Str("api".into()),
             }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: "test".into(),
-            instrumentation_version: String::new(),
+            ..Span::default()
         },
     }
 }
@@ -110,7 +103,7 @@ async fn publish_block(
         "tenant-a",
         7,
         &[span_record(trace, start_ns)],
-        (offset, offset),
+        OffsetRange::new(offset, offset),
     )
     .await
     .expect("the block is written");
@@ -159,15 +152,7 @@ async fn a_pass_leaves_the_bucket_holding_exactly_what_the_index_names() {
     let expired = publish_block(&store, 3, now - 30 * DAY_NS, 30).await;
     let cli = compactor_cli("336h");
 
-    let outputs = run_compactor_once(
-        &cli,
-        &configured(store.clone()),
-        compaction_policy_from_cli(&cli),
-        &load_overrides(&cli),
-        &ServiceMetrics::new(),
-    )
-    .await
-    .expect("the pass runs");
+    let outputs = run_compaction_pass(&store, &cli).await;
 
     check!(outputs == 1, "the two fresh blocks merged into one");
     let published = published_block_keys(&store).await;
@@ -193,15 +178,7 @@ async fn a_pass_with_nothing_to_do_deletes_nothing() {
     let cli = compactor_cli("0s");
     let before = block_keys_in_store(&store).await;
 
-    let outputs = run_compactor_once(
-        &cli,
-        &configured(store.clone()),
-        compaction_policy_from_cli(&cli),
-        &load_overrides(&cli),
-        &ServiceMetrics::new(),
-    )
-    .await
-    .expect("the pass runs");
+    let outputs = run_compaction_pass(&store, &cli).await;
 
     check!(outputs == 0);
     check!(block_keys_in_store(&store).await == before);
@@ -211,4 +188,16 @@ async fn a_pass_with_nothing_to_do_deletes_nothing() {
 fn load_overrides(cli: &Cli) -> OverridesProvider {
     load_traces_limits_overrides_config(None, None, limits_from_cli(cli))
         .expect("the overrides load")
+}
+
+async fn run_compaction_pass(store: &Arc<dyn ObjectStore>, cli: &Cli) -> usize {
+    run_compactor_once(
+        cli,
+        &configured(Arc::clone(store)),
+        compaction_policy_from_cli(cli),
+        &load_overrides(cli),
+        &ServiceMetrics::new(),
+    )
+    .await
+    .expect("the pass runs")
 }

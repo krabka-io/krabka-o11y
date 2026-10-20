@@ -8,9 +8,8 @@ use std::{
 
 use arrow::{
     array::{
-        ArrayRef, BooleanArray, BooleanBuilder, Float64Builder, Int64Array, Int64Builder,
-        MapBuilder, StringBuilder, StringDictionaryBuilder, UInt32Builder, UInt64Array,
-        UInt64Builder,
+        ArrayRef, BooleanArray, BooleanBuilder, Int64Array, Int64Builder, MapBuilder,
+        StringBuilder, StringDictionaryBuilder, UInt32Builder, UInt64Array, UInt64Builder,
     },
     compute::filter_record_batch,
     datatypes::{DataType, Field, Int32Type},
@@ -31,7 +30,7 @@ use krabka_blockstore::{
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};
-use krabka_telemetry::propagation::{TRACEPARENT, set_remote_parent};
+use krabka_telemetry::propagation::TRACEPARENT;
 use krabka_units::prelude::*;
 use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
@@ -57,17 +56,26 @@ use crate::{
     wire::{GnssFix, UnixNanos},
 };
 
+fn block_decl(kind: MetricBlockKind) -> Option<krabka_blockstore::BlockSchema> {
+    (kind == MetricBlockKind::ClockReadings).then(crate::clock_reading_decl)
+}
+
+#[cfg(test)]
+#[path = "../../blockstore/tests/support/flaky_put_store.rs"]
+mod flaky_put_store;
+
 #[cfg(test)]
 mod tests {
-    fn format_headers() -> Vec<krabka_client_consumer::Header> {
-        vec![krabka_client_consumer::Header {
-            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
-            value: Some(bytes::Bytes::from_static(
-                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
-            )),
-        }]
-    }
+    use crate::test_support::{DeliveredRecord, format_headers};
 
+    fn retention_windows(
+        tenant: &str,
+        window: krabka_units::Time,
+    ) -> BTreeMap<String, krabka_units::Time> {
+        let mut windows = BTreeMap::new();
+        windows.insert(tenant.to_owned(), window);
+        windows
+    }
     /// A buffer flushes on either threshold, and on neither when empty. The
     /// row and age thresholds are checked at their own boundary with the other
     /// far from its own, so each is shown to be sufficient by itself -- a
@@ -132,6 +140,19 @@ mod tests {
     }
 
     #[test]
+    fn only_clock_blocks_have_a_signal_specific_declaration() {
+        check!(super::block_decl(super::MetricBlockKind::ClockReadings).is_some());
+        for kind in [
+            super::MetricBlockKind::Float,
+            super::MetricBlockKind::NativeHistograms,
+            super::MetricBlockKind::Exemplars,
+            super::MetricBlockKind::Metadata,
+        ] {
+            check!(super::block_decl(kind).is_none(), "kind: {kind:?}");
+        }
+    }
+
+    #[test]
     fn a_compaction_buffer_fences_only_revoked_partitions() {
         use std::{collections::BTreeSet, time::Instant};
 
@@ -162,39 +183,42 @@ mod tests {
     use assert2::{assert, check};
     use async_trait::async_trait;
     use futures::{StreamExt as _, stream::BoxStream};
-    use krabka_blockstore::{BlockDeletionFailure, Labels, OrphanSweepStats, RetentionWindows};
+    use krabka_blockstore::{BlockDeletionFailure, Labels, OrphanSweepStats};
     use krabka_units::prelude::*;
-    use object_store::{
-        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-        ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
-        path::Path,
-    };
+    use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory, path::Path};
 
     use super::{
         CompactionLoopContext, CompactionRetentionPhase, ObjectStoreMetrics,
         ObjectStoreRetryPolicy, RetryingObjectStore, ServiceMetrics, compact_wal_records,
         encode_tenant_batches,
+        flaky_put_store::{FlakyPutStore, flaky_put_store},
     };
     use crate::{
-        BucketSpan, FloatRow, NativeHistogram, ResetHint,
+        BucketSpan, FloatRow, MetricLabelPair, NativeHistogram, ResetHint,
         distributor::wal_records_from_series,
         wal::{SamplePayload, WalExemplar, WalRecord},
         wire::{DecodedExemplar, DecodedSample, DecodedSeries},
     };
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
-        pairs
-            .iter()
-            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
-            .collect()
+    struct TestLabel<'a> {
+        name: &'a str,
+        value: &'a str,
+    }
+
+    fn labels(pairs: &[TestLabel<'_>]) -> Labels {
+        let mut labels = Labels::new();
+        for pair in pairs {
+            labels.insert(pair.name, pair.value);
+        }
+        labels
     }
 
     fn float_record(tenant: &str, metric: &str, job: &str, timestamp_ms: i64) -> WalRecord {
         WalRecord {
             tenant: tenant.to_string(),
             labels: vec![
-                ("__name__".into(), metric.into()),
-                ("job".into(), job.into()),
+                MetricLabelPair::new("__name__", metric.into()),
+                MetricLabelPair::new("job", job.into()),
             ],
             payload: SamplePayload::Float {
                 timestamp_ms,
@@ -232,19 +256,23 @@ mod tests {
     /// fingerprint, or with only float rows populated, all four arms agree.
     #[test]
     fn each_block_kind_draws_its_fingerprints_from_its_own_rows() {
+        struct BlockKindCase {
+            kind: super::MetricBlockKind,
+            fingerprint: u64,
+        }
         let named = |name: &str| {
             let mut labels = Labels::new();
             labels.insert("__name__", name);
             labels
         };
+        let mut series_labels = std::collections::BTreeMap::new();
+        series_labels.insert(1, named("float").into());
+        series_labels.insert(2, named("histogram").into());
+        series_labels.insert(3, named("exemplar").into());
+        series_labels.insert(4, named("metadata").into());
         let rows = super::TenantCompactionRows {
             tenant: "t".to_string(),
-            series_labels: std::collections::BTreeMap::from([
-                (1, named("float").into()),
-                (2, named("histogram").into()),
-                (3, named("exemplar").into()),
-                (4, named("metadata").into()),
-            ]),
+            series_labels,
             float_rows: vec![FloatRow {
                 fingerprint: 1,
                 timestamp_ms: 0,
@@ -277,15 +305,27 @@ mod tests {
             clock_rows: Vec::new(),
         };
 
-        for (kind, want) in [
-            (super::MetricBlockKind::Float, 1_u64),
-            (super::MetricBlockKind::NativeHistograms, 2),
-            (super::MetricBlockKind::Exemplars, 3),
-            (super::MetricBlockKind::Metadata, 4),
+        for BlockKindCase { kind, fingerprint } in [
+            BlockKindCase {
+                kind: super::MetricBlockKind::Float,
+                fingerprint: 1,
+            },
+            BlockKindCase {
+                kind: super::MetricBlockKind::NativeHistograms,
+                fingerprint: 2,
+            },
+            BlockKindCase {
+                kind: super::MetricBlockKind::Exemplars,
+                fingerprint: 3,
+            },
+            BlockKindCase {
+                kind: super::MetricBlockKind::Metadata,
+                fingerprint: 4,
+            },
         ] {
             let series = super::series_labels_for_kind(&rows, kind);
             check!(
-                series.iter().map(|s| s.fingerprint).collect::<Vec<_>>() == vec![want],
+                series.iter().map(|s| s.fingerprint).collect::<Vec<_>>() == vec![fingerprint],
                 "{kind:?}"
             );
         }
@@ -319,24 +359,29 @@ mod tests {
 
     #[test]
     fn compaction_object_keys_are_deterministic_by_tenant_kind_and_offsets() {
+        struct ObjectKeyCase {
+            kind: super::MetricBlockKind,
+            expected: &'static str,
+        }
         let cases = [
-            (
-                super::MetricBlockKind::Float,
-                "metrics/tenant!2Fa/float/00000000000000000042-00000000000000000099.parquet",
-            ),
-            (
-                super::MetricBlockKind::NativeHistograms,
-                "metrics/tenant!2Fa/native-histograms/00000000000000000042-00000000000000000099.parquet",
-            ),
-            (
-                super::MetricBlockKind::Exemplars,
-                "metrics/tenant!2Fa/exemplars/00000000000000000042-00000000000000000099.parquet",
-            ),
+            ObjectKeyCase {
+                kind: super::MetricBlockKind::Float,
+                expected: "metrics/tenant!2Fa/float/00000000000000000042-00000000000000000099.parquet",
+            },
+            ObjectKeyCase {
+                kind: super::MetricBlockKind::NativeHistograms,
+                expected: "metrics/tenant!2Fa/native-histograms/00000000000000000042-00000000000000000099.parquet",
+            },
+            ObjectKeyCase {
+                kind: super::MetricBlockKind::Exemplars,
+                expected: "metrics/tenant!2Fa/exemplars/00000000000000000042-00000000000000000099.parquet",
+            },
         ];
-        for (kind, expected) in cases {
+        for case in cases {
             check!(
-                super::compaction_object_key("tenant/a", kind, 42, 99) == expected,
-                "kind {kind:?}"
+                super::compaction_object_key("tenant/a", case.kind, 42, 99) == case.expected,
+                "kind {:?}",
+                case.kind
             );
         }
     }
@@ -362,36 +407,79 @@ mod tests {
     /// the tenant it came from.
     #[test]
     fn an_escaped_tenant_is_one_key_segment_that_reads_back_as_the_tenant() {
+        struct EscapedTenantCase {
+            name: &'static str,
+            tenant: &'static str,
+            segment: &'static str,
+        }
+        struct ObjectKeyCase {
+            segment_count: usize,
+            key: String,
+        }
         let cases = [
-            ("plain", "tenant-a", "tenant-a"),
-            ("star and parentheses", "team*(1)", "team!2A!281!29"),
-            ("bang", "a!b", "a!21b"),
-            ("apostrophe", "o'brien", "o!27brien"),
-            ("separator", "tenant/a", "tenant!2Fa"),
-            ("dot dot", "..", "!2E!2E"),
+            EscapedTenantCase {
+                name: "plain",
+                tenant: "tenant-a",
+                segment: "tenant-a",
+            },
+            EscapedTenantCase {
+                name: "star and parentheses",
+                tenant: "team*(1)",
+                segment: "team!2A!281!29",
+            },
+            EscapedTenantCase {
+                name: "bang",
+                tenant: "a!b",
+                segment: "a!21b",
+            },
+            EscapedTenantCase {
+                name: "apostrophe",
+                tenant: "o'brien",
+                segment: "o!27brien",
+            },
+            EscapedTenantCase {
+                name: "separator",
+                tenant: "tenant/a",
+                segment: "tenant!2Fa",
+            },
+            EscapedTenantCase {
+                name: "dot dot",
+                tenant: "..",
+                segment: "!2E!2E",
+            },
         ];
-        for (name, tenant, segment) in cases {
+        for EscapedTenantCase {
+            name,
+            tenant,
+            segment,
+        } in cases
+        {
             let keys = [
-                (
-                    4,
-                    super::compaction_object_key(tenant, super::MetricBlockKind::Float, 42, 99),
-                ),
-                (
-                    5,
-                    super::compaction_partition_object_key(
+                ObjectKeyCase {
+                    segment_count: 4,
+                    key: super::compaction_object_key(
+                        tenant,
+                        super::MetricBlockKind::Float,
+                        42,
+                        99,
+                    ),
+                },
+                ObjectKeyCase {
+                    segment_count: 5,
+                    key: super::compaction_partition_object_key(
                         tenant,
                         super::MetricBlockKind::Float,
                         super::PartitionIndex(3),
                         42,
                         99,
                     ),
-                ),
+                },
                 // A merged block. The `compacted` segment is what keeps the
                 // level-keyed names apart from the offset-keyed ones in a
                 // listing, and the tenant is escaped by the same rule.
-                (
-                    5,
-                    super::compacted_metric_object_key(
+                ObjectKeyCase {
+                    segment_count: 5,
+                    key: super::compacted_metric_object_key(
                         &krabka_blockstore::CompactionJob {
                             tenant: tenant.to_string(),
                             input_keys: vec!["a".to_string(), "b".to_string()],
@@ -402,9 +490,9 @@ mod tests {
                         },
                         super::MetricBlockKind::Float,
                     ),
-                ),
+                },
             ];
-            for (segment_count, key) in keys {
+            for ObjectKeyCase { segment_count, key } in keys {
                 let segments = key.split('/').collect::<Vec<_>>();
                 check!(segments.len() == segment_count, "{name}: {key}");
                 check!(segments[0] == "metrics", "{name}");
@@ -491,7 +579,11 @@ mod tests {
             &block_meta,
             vec![super::CompactionSeriesLabels {
                 fingerprint: 7,
-                labels: labels(&[("__name__", "up")]).into(),
+                labels: labels(&[TestLabel {
+                    name: "__name__",
+                    value: "up",
+                }])
+                .into(),
             }],
         );
         let encoded = manifest.encode().expect("encode manifest");
@@ -518,7 +610,11 @@ mod tests {
                     fingerprints: vec![7, 9],
                     series: vec![super::CompactionSeriesLabels {
                         fingerprint: 7,
-                        labels: labels(&[("__name__", "up")]).into(),
+                        labels: labels(&[TestLabel {
+                            name: "__name__",
+                            value: "up"
+                        }])
+                        .into(),
                     }],
                 }
         );
@@ -568,27 +664,6 @@ mod tests {
         UNIX_EPOCH + Duration::from_millis(u64::try_from(millis).expect("an epoch time"))
     }
 
-    /// A per-tenant window table. A tenant it does not name keeps its blocks
-    /// forever, which is what an unconfigured tenant does in production.
-    struct Windows(BTreeMap<String, Time>);
-
-    impl Windows {
-        fn new(entries: &[(&str, Time)]) -> Self {
-            Self(
-                entries
-                    .iter()
-                    .map(|(tenant, window)| ((*tenant).to_string(), *window))
-                    .collect(),
-            )
-        }
-    }
-
-    impl RetentionWindows for Windows {
-        fn block_retention(&self, tenant: &str) -> Time {
-            self.0.get(tenant).copied().unwrap_or(Time::ZERO)
-        }
-    }
-
     /// An object store that refuses to delete one key, delegates the rest, and
     /// records the order it was asked in.
     ///
@@ -600,6 +675,16 @@ mod tests {
         inner: Arc<InMemory>,
         refused: String,
         asked: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RefusesOneDelete {
+        fn refusing(inner: &Arc<InMemory>, refused: &str) -> Arc<dyn ObjectStore> {
+            Arc::new(Self {
+                inner: inner.clone(),
+                refused: refused.to_string(),
+                asked: Arc::new(Mutex::new(Vec::new())),
+            })
+        }
     }
 
     impl std::fmt::Debug for RefusesOneDelete {
@@ -614,32 +699,9 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl ObjectStore for RefusesOneDelete {
-        async fn put_opts(
-            &self,
-            location: &Path,
-            payload: PutPayload,
-            opts: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.inner.put_opts(location, payload, opts).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &Path,
-            opts: PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn MultipartUpload>> {
-            self.inner.put_multipart_opts(location, opts).await
-        }
-
-        async fn get_opts(
-            &self,
-            location: &Path,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
+    krabka_blockstore::delegate_object_store! {
+        RefusesOneDelete => inner;
+        forward [put_opts, put_multipart_opts, get_opts, list, list_with_delimiter, copy_opts];
 
         fn delete_stream(
             &self,
@@ -671,28 +733,30 @@ mod tests {
                 })
                 .boxed()
         }
+    }
 
-        fn list(
-            &self,
-            prefix: Option<&Path>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&Path>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &Path,
-            to: &Path,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
+    /// `tenant-a`'s rows for one series, fingerprint 7, named `metric_name`,
+    /// with no samples yet.
+    fn series_seven_rows(metric_name: &str) -> super::TenantCompactionRows {
+        super::TenantCompactionRows {
+            tenant: "tenant-a".to_string(),
+            series_labels: {
+                let mut series_labels = BTreeMap::new();
+                series_labels.insert(
+                    7,
+                    labels(&[TestLabel {
+                        name: "__name__",
+                        value: metric_name,
+                    }])
+                    .into(),
+                );
+                series_labels
+            },
+            float_rows: Vec::new(),
+            histogram_rows: Vec::new(),
+            exemplar_rows: Vec::new(),
+            metadata_rows: Vec::new(),
+            clock_rows: Vec::new(),
         }
     }
 
@@ -708,17 +772,13 @@ mod tests {
         let sink = super::ObjectStoreCompactionIndexSink::new(store.clone());
         let rows = super::TenantCompactionRows {
             tenant: tenant.to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]).into())]),
             float_rows: vec![FloatRow {
                 fingerprint: 7,
                 timestamp_ms,
                 value: 1.0,
                 start_timestamp_ms: None,
             }],
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
+            ..series_seven_rows("up")
         };
         let mut writes = super::write_compacted_tenant_blocks(
             &block_writer,
@@ -737,6 +797,59 @@ mod tests {
         store.head(&Path::from(key)).await.is_ok()
     }
 
+    /// Which of the stubborn tenant's two objects the backend refuses to
+    /// delete.
+    enum RefusedObject {
+        Block,
+        Manifest,
+    }
+
+    /// One retention pass over two expired tenants, `tenant-a` the stubborn one
+    /// whose refused object the backend keeps.
+    struct OneRefusalPass {
+        seeded: Arc<dyn ObjectStore>,
+        stubborn: super::CompactionIndexManifest,
+        yielding: super::CompactionIndexManifest,
+        stats: super::CompactionRetentionStats,
+    }
+
+    async fn retain_past_one_refusal(refused: RefusedObject) -> OneRefusalPass {
+        let inner = Arc::new(InMemory::new());
+        let seeded: Arc<dyn ObjectStore> = inner.clone();
+        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
+        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
+        let refused_key = match refused {
+            RefusedObject::Block => &stubborn.block_key,
+            RefusedObject::Manifest => &stubborn.index_key,
+        };
+        let object_store = RefusesOneDelete::refusing(&inner, refused_key);
+        let mut windows = retention_windows("tenant-a", secs(5));
+        windows.insert("tenant-b".to_owned(), secs(5));
+
+        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
+            .await
+            .expect("a refused delete is not a failed pass");
+        OneRefusalPass {
+            seeded,
+            stubborn,
+            yielding,
+            stats,
+        }
+    }
+
+    /// The failure a pass reports for the object `RefusesOneDelete` refuses.
+    fn refused_deletion(key: &str) -> BlockDeletionFailure {
+        BlockDeletionFailure {
+            object_key: key.to_string(),
+            failed_key: key.to_string(),
+            error: object_store::Error::Generic {
+                store: REFUSING_STORE,
+                source: REFUSAL.into(),
+            }
+            .to_string(),
+        }
+    }
+
     fn one_object_deleted() -> CompactionRetentionPhase {
         CompactionRetentionPhase {
             deleted: 1,
@@ -750,7 +863,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let old = write_float_block(&object_store, "tenant-a", 1, NOW_MS - 10_000).await;
         let fresh = write_float_block(&object_store, "tenant-a", 3, NOW_MS - 1_000).await;
-        let windows = Windows::new(&[("tenant-a", secs(5))]);
+        let windows = retention_windows("tenant-a", secs(5));
 
         let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
             .await
@@ -846,7 +959,7 @@ overrides:
                 .index_key
                 .starts_with("metrics/team!2A!281!29/float/")
         );
-        let windows = Windows::new(&[("team*(1)", secs(5))]);
+        let windows = retention_windows("team*(1)", secs(5));
 
         let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
             .await
@@ -865,16 +978,26 @@ overrides:
 
     #[tokio::test]
     async fn zero_and_negative_retention_windows_sweep_nothing() {
+        struct RetentionCase {
+            name: &'static str,
+            window: Time,
+        }
         // The retention window is an extent, so "no window configured" is any
         // non-positive extent. A sweep that read one as "delete everything"
         // would empty the bucket of every tenant an operator never configured.
-        for (name, window) in [
-            ("a zero window", Time::ZERO),
-            ("a negative window", Time::from_millis(-1)),
+        for RetentionCase { name, window } in [
+            RetentionCase {
+                name: "a zero window",
+                window: Time::ZERO,
+            },
+            RetentionCase {
+                name: "a negative window",
+                window: Time::from_millis(-1),
+            },
         ] {
             let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
             let ancient = write_float_block(&object_store, "tenant-a", 1, 0).await;
-            let windows = Windows::new(&[("tenant-a", window)]);
+            let windows = retention_windows("tenant-a", window);
 
             let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
                 .await
@@ -907,19 +1030,35 @@ overrides:
     /// in metrics records which blocks exist.
     #[tokio::test]
     async fn the_orphan_sweep_keeps_every_index_manifest() {
+        struct OrphanCase {
+            name: &'static str,
+            now: SystemTime,
+            deleted: usize,
+            within_grace: usize,
+        }
         const GRACE_AND_MORE: Duration = Duration::from_hours(2);
         // A zero window everywhere, so the orphan half is the only half that
         // can delete anything here.
-        let windows = Windows::new(&[]);
+        let windows = BTreeMap::<String, Time>::new();
 
-        for (name, now, deleted, within_grace) in [
-            (
-                "past the grace window",
-                SystemTime::now() + GRACE_AND_MORE,
-                1,
-                0,
-            ),
-            ("inside the grace window", SystemTime::now(), 0, 1),
+        for OrphanCase {
+            name,
+            now,
+            deleted,
+            within_grace,
+        } in [
+            OrphanCase {
+                name: "past the grace window",
+                now: SystemTime::now() + GRACE_AND_MORE,
+                deleted: 1,
+                within_grace: 0,
+            },
+            OrphanCase {
+                name: "inside the grace window",
+                now: SystemTime::now(),
+                deleted: 0,
+                within_grace: 1,
+            },
         ] {
             let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
             let first = write_float_block(&object_store, "tenant-a", 1, NOW_MS).await;
@@ -976,20 +1115,12 @@ overrides:
     /// behind it in the bucket for as long as that object refuses.
     #[tokio::test]
     async fn one_object_that_will_not_delete_does_not_stop_the_others() {
-        let inner = Arc::new(InMemory::new());
-        let seeded: Arc<dyn ObjectStore> = inner.clone();
-        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
-        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
-        let object_store: Arc<dyn ObjectStore> = Arc::new(RefusesOneDelete {
-            inner: inner.clone(),
-            refused: stubborn.block_key.clone(),
-            asked: Arc::new(Mutex::new(Vec::new())),
-        });
-        let windows = Windows::new(&[("tenant-a", secs(5)), ("tenant-b", secs(5))]);
-
-        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
-            .await
-            .expect("a refused delete is not a failed pass");
+        let OneRefusalPass {
+            seeded,
+            stubborn,
+            yielding,
+            stats,
+        } = retain_past_one_refusal(RefusedObject::Block).await;
 
         check!(
             stats
@@ -1009,15 +1140,7 @@ overrides:
                     blocks_deleted: CompactionRetentionPhase {
                         deleted: 1,
                         absent: 0,
-                        failures: vec![BlockDeletionFailure {
-                            object_key: stubborn.block_key.clone(),
-                            failed_key: stubborn.block_key.clone(),
-                            error: object_store::Error::Generic {
-                                store: REFUSING_STORE,
-                                source: REFUSAL.into(),
-                            }
-                            .to_string(),
-                        }],
+                        failures: vec![refused_deletion(&stubborn.block_key)],
                     },
                     orphans: OrphanSweepStats {
                         listed: 1,
@@ -1049,7 +1172,7 @@ overrides:
             refused: String::new(),
             asked: asked.clone(),
         });
-        let windows = Windows::new(&[("tenant-a", secs(5))]);
+        let windows = retention_windows("tenant-a", secs(5));
 
         super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
             .await
@@ -1067,20 +1190,12 @@ overrides:
     /// ordering exists to prevent.
     #[tokio::test]
     async fn an_expired_block_whose_manifest_will_not_delete_is_left_alone() {
-        let inner = Arc::new(InMemory::new());
-        let seeded: Arc<dyn ObjectStore> = inner.clone();
-        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
-        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
-        let object_store: Arc<dyn ObjectStore> = Arc::new(RefusesOneDelete {
-            inner: inner.clone(),
-            refused: stubborn.index_key.clone(),
-            asked: Arc::new(Mutex::new(Vec::new())),
-        });
-        let windows = Windows::new(&[("tenant-a", secs(5)), ("tenant-b", secs(5))]);
-
-        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
-            .await
-            .expect("a refused delete is not a failed pass");
+        let OneRefusalPass {
+            seeded,
+            stubborn,
+            yielding,
+            stats,
+        } = retain_past_one_refusal(RefusedObject::Manifest).await;
 
         check!(
             stats
@@ -1089,15 +1204,7 @@ overrides:
                     manifests_retired: CompactionRetentionPhase {
                         deleted: 1,
                         absent: 0,
-                        failures: vec![BlockDeletionFailure {
-                            object_key: stubborn.index_key.clone(),
-                            failed_key: stubborn.index_key.clone(),
-                            error: object_store::Error::Generic {
-                                store: REFUSING_STORE,
-                                source: REFUSAL.into(),
-                            }
-                            .to_string(),
-                        }],
+                        failures: vec![refused_deletion(&stubborn.index_key)],
                     },
                     // One block, not two: the tenant whose manifest refused is
                     // not offered to the second phase at all.
@@ -1193,7 +1300,7 @@ overrides:
             )
             .await
             .expect("write mismatched manifest");
-        let windows = Windows::new(&[("tenant-a", secs(5))]);
+        let windows = retention_windows("tenant-a", secs(5));
 
         let error = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
             .await
@@ -1306,14 +1413,33 @@ overrides:
         }
     }
 
+    /// The kind and row count of the one manifest a tenant-a write of offsets
+    /// 42 through 99 records.
+    struct ExpectedManifest {
+        kind: super::MetricBlockKind,
+        row_count: usize,
+    }
+
+    fn check_tenant_a_manifest(
+        sink: &RecordingIndexSink,
+        written: &super::CompactionIndexManifest,
+        expected: &ExpectedManifest,
+    ) {
+        let manifests = sink.manifests.lock().expect("manifest lock");
+        check!(manifests.as_slice() == std::slice::from_ref(written));
+        check!(manifests[0].tenant == "tenant-a");
+        check!(manifests[0].kind == expected.kind);
+        check!(manifests[0].first_offset == 42);
+        check!(manifests[0].last_offset == 99);
+        check!(manifests[0].row_count == expected.row_count);
+    }
+
     #[tokio::test]
     async fn write_compacted_tenant_blocks_writes_block_before_index_manifest() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
-            tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]).into())]),
             float_rows: vec![
                 FloatRow {
                     fingerprint: 7,
@@ -1328,10 +1454,7 @@ overrides:
                     start_timestamp_ms: None,
                 },
             ],
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
+            ..series_seven_rows("up")
         };
 
         let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 42, 99)
@@ -1348,16 +1471,30 @@ overrides:
         assert!(persisted[0].num_rows() == 2);
         assert!(
             crate::decode_float_samples(&persisted[0]).expect("decode persisted floats")
-                == vec![(7, 100, 1.0, Some(50)), (7, 200, 2.0, None)]
+                == vec![
+                    crate::FloatSampleRow {
+                        fingerprint: 7,
+                        timestamp_ms: 100,
+                        value: 1.0,
+                        start_timestamp_ms: Some(50),
+                    },
+                    crate::FloatSampleRow {
+                        fingerprint: 7,
+                        timestamp_ms: 200,
+                        value: 2.0,
+                        start_timestamp_ms: None,
+                    },
+                ]
         );
 
-        let manifests = sink.manifests.lock().expect("manifest lock");
-        check!(manifests.as_slice() == [writes[0].manifest.clone()]);
-        check!(manifests[0].tenant == "tenant-a");
-        check!(manifests[0].kind == super::MetricBlockKind::Float);
-        check!(manifests[0].first_offset == 42);
-        check!(manifests[0].last_offset == 99);
-        check!(manifests[0].row_count == 2);
+        check_tenant_a_manifest(
+            &sink,
+            &writes[0].manifest,
+            &ExpectedManifest {
+                kind: super::MetricBlockKind::Float,
+                row_count: 2,
+            },
+        );
     }
 
     #[tokio::test]
@@ -1366,14 +1503,6 @@ overrides:
         let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
-            tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(
-                7,
-                labels(&[("__name__", "http_requests_total")]).into(),
-            )]),
-            float_rows: Vec::new(),
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
             metadata_rows: vec![super::MetadataRow {
                 fingerprint: 7,
                 metric_family_name: "http_requests_total".to_string(),
@@ -1381,7 +1510,7 @@ overrides:
                 help: "Total HTTP requests.".to_string(),
                 unit: "requests".to_string(),
             }],
-            clock_rows: Vec::new(),
+            ..series_seven_rows("http_requests_total")
         };
 
         let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 42, 99)
@@ -1397,13 +1526,14 @@ overrides:
         assert!(persisted.len() == 1);
         assert!(persisted[0].num_rows() == 1);
 
-        let manifests = sink.manifests.lock().expect("manifest lock");
-        check!(manifests.as_slice() == [writes[0].manifest.clone()]);
-        check!(manifests[0].tenant == "tenant-a");
-        check!(manifests[0].kind == super::MetricBlockKind::Metadata);
-        check!(manifests[0].first_offset == 42);
-        check!(manifests[0].last_offset == 99);
-        check!(manifests[0].row_count == 1);
+        check_tenant_a_manifest(
+            &sink,
+            &writes[0].manifest,
+            &ExpectedManifest {
+                kind: super::MetricBlockKind::Metadata,
+                row_count: 1,
+            },
+        );
     }
 
     #[derive(Default)]
@@ -1427,8 +1557,7 @@ overrides:
 
     #[tokio::test]
     async fn process_compaction_partition_window_commits_after_blocks_and_indexes() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let committer = RecordingOffsetCommitter::default();
         let first = float_record("tenant-a", "up", "api", 100);
@@ -1503,6 +1632,42 @@ overrides:
         }
     }
 
+    // One float record at offset 42 on each of partitions 0 and 1.
+    fn two_partition_float_records() -> Vec<super::CompactionWalRecord> {
+        struct PartitionRecordCase {
+            partition: i32,
+            timestamp: i64,
+            context: &'static str,
+        }
+        [
+            PartitionRecordCase {
+                partition: 0,
+                timestamp: 100,
+                context: "encode p0",
+            },
+            PartitionRecordCase {
+                partition: 1,
+                timestamp: 200,
+                context: "encode p1",
+            },
+        ]
+        .into_iter()
+        .map(
+            |PartitionRecordCase {
+                 partition,
+                 timestamp,
+                 context,
+             }| super::CompactionWalRecord {
+                partition: super::PartitionIndex(partition),
+                offset: super::Offset(42),
+                value: float_record("tenant-a", "up", "api", timestamp)
+                    .encode()
+                    .expect(context),
+            },
+        )
+        .collect()
+    }
+
     #[tokio::test]
     async fn process_compaction_record_batch_does_not_commit_when_a_later_partition_write_fails() {
         // Two partitions processed in order (0, then 1). Partition 0's block +
@@ -1512,29 +1677,13 @@ overrides:
         // never written — silent data loss. The fix writes all partitions first
         // and commits once, so a mid-batch failure must leave NOTHING committed
         // and the next poll re-reads from the last committed offset (at-least-once).
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         // Float-only records => exactly one block (one index manifest) per
         // partition, so `ok_before_failure = 1` lets partition 0 through and fails
         // partition 1.
         let sink = FailAfterIndexSink::new(1);
         let committer = RecordingOffsetCommitter::default();
-        let records = vec![
-            super::CompactionWalRecord {
-                partition: super::PartitionIndex(0),
-                offset: super::Offset(42),
-                value: float_record("tenant-a", "up", "api", 100)
-                    .encode()
-                    .expect("encode p0"),
-            },
-            super::CompactionWalRecord {
-                partition: super::PartitionIndex(1),
-                offset: super::Offset(42),
-                value: float_record("tenant-a", "up", "api", 200)
-                    .encode()
-                    .expect("encode p1"),
-            },
-        ];
+        let records = two_partition_float_records();
 
         let result =
             super::process_compaction_record_batch(&block_writer, &sink, &committer, &records)
@@ -1546,26 +1695,10 @@ overrides:
 
     #[tokio::test]
     async fn process_compaction_record_batch_groups_partitions_and_uses_distinct_block_keys() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let committer = RecordingOffsetCommitter::default();
-        let records = vec![
-            super::CompactionWalRecord {
-                partition: super::PartitionIndex(0),
-                offset: super::Offset(42),
-                value: float_record("tenant-a", "up", "api", 100)
-                    .encode()
-                    .expect("encode p0"),
-            },
-            super::CompactionWalRecord {
-                partition: super::PartitionIndex(1),
-                offset: super::Offset(42),
-                value: float_record("tenant-a", "up", "api", 200)
-                    .encode()
-                    .expect("encode p1"),
-            },
-        ];
+        let records = two_partition_float_records();
 
         let result =
             super::process_compaction_record_batch(&block_writer, &sink, &committer, &records)
@@ -1598,28 +1731,22 @@ overrides:
     fn compaction_wal_records_from_consumer_records_filters_topic_and_requires_values() {
         let wal_record = float_record("tenant-a", "up", "api", 100);
         let records = vec![
-            krabka_client_consumer::ConsumerRecord {
-                topic: crate::WAL_TOPIC.to_string(),
+            DeliveredRecord {
                 partition: 2,
                 offset: 10,
-                leader_epoch: -1,
                 timestamp: 100,
-                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-                key: None,
-                value: Some(bytes::Bytes::from(wal_record.encode().expect("encode wal"))),
-                headers: format_headers(),
-            },
-            krabka_client_consumer::ConsumerRecord {
-                topic: "unrelated".to_string(),
+                payload: Some(wal_record.encode().expect("encode wal")),
+                ..DeliveredRecord::default()
+            }
+            .build(),
+            DeliveredRecord {
+                topic: "unrelated",
                 partition: 2,
                 offset: 11,
-                leader_epoch: -1,
                 timestamp: 101,
-                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-                key: None,
-                value: Some(bytes::Bytes::from_static(b"ignored")),
-                headers: format_headers(),
-            },
+                payload: Some(b"ignored".to_vec()),
+            }
+            .build(),
         ];
 
         let converted =
@@ -1635,17 +1762,15 @@ overrides:
                 }]
         );
 
-        let missing_value = vec![krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 3,
-            offset: 12,
-            leader_epoch: -1,
-            timestamp: 102,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: None,
-            headers: format_headers(),
-        }];
+        let missing_value = vec![
+            DeliveredRecord {
+                partition: 3,
+                offset: 12,
+                timestamp: 102,
+                ..DeliveredRecord::default()
+            }
+            .build(),
+        ];
         let err =
             super::compaction_wal_records_from_consumer_records(crate::WAL_TOPIC, &missing_value)
                 .expect_err("missing value should fail");
@@ -1658,9 +1783,20 @@ overrides:
         ));
     }
 
+    fn in_memory_block_writer() -> krabka_blockstore::BlockWriter {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        krabka_blockstore::BlockWriter::new(object_store)
+    }
+
+    #[derive(PartialEq)]
+    struct RecordedCommitCall {
+        topic: String,
+        offsets: Vec<super::CompactionPartitionOffset>,
+    }
+
     #[derive(Default)]
     struct RecordingCommitSync {
-        calls: Mutex<Vec<(String, Vec<super::CompactionPartitionOffset>)>>,
+        calls: Mutex<Vec<RecordedCommitCall>>,
     }
 
     #[async_trait]
@@ -1673,7 +1809,10 @@ overrides:
             self.calls
                 .lock()
                 .expect("commit calls lock")
-                .push((topic.to_string(), offsets.to_vec()));
+                .push(RecordedCommitCall {
+                    topic: topic.to_string(),
+                    offsets: offsets.to_vec(),
+                });
             Ok(())
         }
     }
@@ -1695,13 +1834,13 @@ overrides:
 
         assert!(
             *sync.calls.lock().expect("commit calls lock")
-                == vec![(
-                    crate::WAL_TOPIC.to_string(),
-                    vec![super::CompactionPartitionOffset {
+                == vec![RecordedCommitCall {
+                    topic: crate::WAL_TOPIC.to_string(),
+                    offsets: vec![super::CompactionPartitionOffset {
                         partition: super::PartitionIndex(2),
                         offset: super::Offset(11),
                     }],
-                )]
+                }]
         );
     }
 
@@ -1722,24 +1861,22 @@ overrides:
 
     #[tokio::test]
     async fn poll_compactor_once_converts_processes_and_commits_records() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let wal_record = float_record("tenant-a", "up", "api", 100);
         let mut poller = StaticPoller {
-            records: vec![krabka_client_consumer::ConsumerRecord {
-                topic: crate::WAL_TOPIC.to_string(),
-                partition: 4,
-                offset: 21,
-                leader_epoch: -1,
-                timestamp: 100,
-                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-                key: None,
-                value: Some(bytes::Bytes::from(wal_record.encode().expect("encode wal"))),
-                headers: format_headers(),
-            }],
+            records: vec![
+                DeliveredRecord {
+                    partition: 4,
+                    offset: 21,
+                    timestamp: 100,
+                    payload: Some(wal_record.encode().expect("encode wal")),
+                    ..DeliveredRecord::default()
+                }
+                .build(),
+            ],
         };
 
         let result = super::poll_compactor_once(
@@ -1787,32 +1924,48 @@ overrides:
         }
     }
 
+    // One float sample of `up` for tenant-a, as the WAL consumer delivers it.
+    // Where a WAL record sits and when it was created.
+    #[derive(Clone, Copy)]
+    struct WalPosition {
+        offset: i64,
+        timestamp: i64,
+    }
+
+    fn wal_consumer_record(at: WalPosition) -> krabka_client_consumer::ConsumerRecord {
+        let WalPosition { offset, timestamp } = at;
+        DeliveredRecord {
+            offset,
+            timestamp,
+            payload: Some(
+                float_record("tenant-a", "up", "api", timestamp)
+                    .encode()
+                    .expect("encode wal"),
+            ),
+            ..DeliveredRecord::default()
+        }
+        .build()
+    }
+
     #[tokio::test]
     async fn run_compactor_loop_accumulates_across_polls_and_flushes_once_on_stop() {
         // Two below-threshold polls must accumulate into ONE block (not one per
         // poll) and commit offsets only at the single shutdown flush.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
-        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
-            offset,
-            leader_epoch: -1,
-            timestamp,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", timestamp)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
         let mut poller = QueuePoller {
-            batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
+            batches: vec![
+                vec![wal_consumer_record(WalPosition {
+                    offset: 10,
+                    timestamp: 100,
+                })],
+                vec![wal_consumer_record(WalPosition {
+                    offset: 11,
+                    timestamp: 200,
+                })],
+            ],
         };
         let mut stop_after_empty =
             |result: &super::CompactionPollResult| result.polled_records == 0;
@@ -1863,29 +2016,22 @@ overrides:
     #[tokio::test]
     async fn run_compactor_loop_flushes_when_row_threshold_reached() {
         // Crossing flush_max_rows must flush mid-loop without waiting for stop.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
-        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
-            offset,
-            leader_epoch: -1,
-            timestamp,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", timestamp)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
         // Two records per poll; flush_max_rows == 2 flushes on the first poll.
         let mut poller = QueuePoller {
-            batches: vec![vec![make_record(10, 100), make_record(11, 200)]],
+            batches: vec![vec![
+                wal_consumer_record(WalPosition {
+                    offset: 10,
+                    timestamp: 100,
+                }),
+                wal_consumer_record(WalPosition {
+                    offset: 11,
+                    timestamp: 200,
+                }),
+            ]],
         };
         // Stop once the buffer has flushed (a committed offset surfaced) or polls drain.
         let mut stop_after_empty =
@@ -1910,6 +2056,16 @@ overrides:
 
         // One block flushed by the row threshold on the first poll; the empty
         // second poll triggers stop with an already-empty buffer (no extra write).
+        check_one_flush_committed_through_offset_12(&result, &commit);
+        check!(sink.manifests.lock().expect("manifest lock").len() == 1);
+    }
+
+    /// Checks that a loop wrote one block and committed partition 0 through
+    /// offset 11 (next offset 12) in a single commit call.
+    fn check_one_flush_committed_through_offset_12(
+        result: &super::CompactionLoopResult,
+        commit: &RecordingCommitSync,
+    ) {
         check!(result.writes == 1);
         check!(
             result.committed_offsets
@@ -1919,7 +2075,6 @@ overrides:
                 }]
         );
         check!(commit.calls.lock().expect("commit calls lock").len() == 1);
-        check!(sink.manifests.lock().expect("manifest lock").len() == 1);
     }
 
     struct FixedClock {
@@ -1948,31 +2103,24 @@ overrides:
     #[tokio::test]
     async fn run_compactor_loop_age_flush_uses_injected_clock() {
         // With a finite age, the buffer flushes only after the clock advances past it.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
-        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
-            offset,
-            leader_epoch: -1,
-            timestamp,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", timestamp)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
         let clock = std::sync::Arc::new(FixedClock::new(std::time::Instant::now()));
         let advance_clock = std::sync::Arc::clone(&clock);
         // Poll 1 buffers offset 10; poll 2 buffers offset 11; poll 3 is empty.
         let mut poller = QueuePoller {
-            batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
+            batches: vec![
+                vec![wal_consumer_record(WalPosition {
+                    offset: 10,
+                    timestamp: 100,
+                })],
+                vec![wal_consumer_record(WalPosition {
+                    offset: 11,
+                    timestamp: 200,
+                })],
+            ],
         };
         // Advance the clock past flush_max_age once both records are buffered (after 2 polls).
         let mut polls = 0_usize;
@@ -2002,15 +2150,7 @@ overrides:
         .expect("run compactor loop with clock");
 
         // Both records land in one age-triggered block; commit through offset 11 -> 12.
-        check!(result.writes == 1);
-        check!(
-            result.committed_offsets
-                == vec![super::CompactionPartitionOffset {
-                    partition: super::PartitionIndex(0),
-                    offset: super::Offset(12),
-                }]
-        );
-        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
+        check_one_flush_committed_through_offset_12(&result, &commit);
         let manifests = sink.manifests.lock().expect("manifest lock");
         assert!(manifests.len() == 1);
         check!(manifests[0].first_offset == 10);
@@ -2019,40 +2159,21 @@ overrides:
 
     #[tokio::test]
     async fn run_compactor_consumer_loop_uses_one_consumer_for_poll_and_commit() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
-        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
-            offset,
-            leader_epoch: -1,
-            timestamp,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", timestamp)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
-        let mut consumer = PollAndCommit {
-            batches: vec![vec![make_record(10, 100)], Vec::new()],
-            commit_calls: 0,
-            committed_offsets: Vec::new(),
-        };
+        let mut consumer = poll_and_commit(vec![
+            vec![wal_consumer_record(WalPosition {
+                offset: 10,
+                timestamp: 100,
+            })],
+            Vec::new(),
+        ]);
 
         let result = super::run_compactor_consumer_loop(
             &mut consumer,
             &block_writer,
             &sink,
-            super::CompactionLoopConfig {
-                wal_topic: crate::WAL_TOPIC.to_string(),
-                poll_timeout: millis(1),
-                flush_max_rows: 50_000,
-                flush_max_age: hours(1),
-            },
+            shutdown_flush_config(),
             |result| result.polled_records == 0,
             &ServiceMetrics::new(),
         )
@@ -2065,112 +2186,6 @@ overrides:
         check!(result.writes == 1);
         check!(consumer.commit_calls == 1);
         check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(11));
-    }
-
-    /// An object store whose first `failures` puts fail with `error`.
-    /// Everything else delegates to an in-memory store, and every attempt is
-    /// counted so a test can tell one try from four.
-    #[derive(Debug)]
-    struct FlakyPutStore {
-        inner: InMemory,
-        remaining_failures: std::sync::atomic::AtomicUsize,
-        attempts: std::sync::atomic::AtomicUsize,
-        error: fn() -> object_store::Error,
-    }
-
-    impl FlakyPutStore {
-        fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
-            Self {
-                inner: InMemory::new(),
-                remaining_failures: std::sync::atomic::AtomicUsize::new(failures),
-                attempts: std::sync::atomic::AtomicUsize::new(0),
-                error,
-            }
-        }
-
-        fn attempts(&self) -> usize {
-            self.attempts.load(std::sync::atomic::Ordering::SeqCst)
-        }
-    }
-
-    impl std::fmt::Display for FlakyPutStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("FlakyPutStore")
-        }
-    }
-
-    #[async_trait]
-    impl ObjectStore for FlakyPutStore {
-        async fn put_opts(
-            &self,
-            location: &object_store::path::Path,
-            payload: object_store::PutPayload,
-            options: object_store::PutOptions,
-        ) -> object_store::Result<object_store::PutResult> {
-            use std::sync::atomic::Ordering;
-            self.attempts.fetch_add(1, Ordering::SeqCst);
-            if self
-                .remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    (left > 0).then(|| left - 1)
-                })
-                .is_ok()
-            {
-                return Err((self.error)());
-            }
-            self.inner.put_opts(location, payload, options).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &object_store::path::Path,
-            options: object_store::PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-            self.inner.put_multipart_opts(location, options).await
-        }
-
-        async fn get_opts(
-            &self,
-            location: &object_store::path::Path,
-            options: object_store::GetOptions,
-        ) -> object_store::Result<object_store::GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&object_store::path::Path>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
-        {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&object_store::path::Path>,
-        ) -> object_store::Result<object_store::ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &object_store::path::Path,
-            to: &object_store::path::Path,
-            options: object_store::CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: futures::stream::BoxStream<
-                'static,
-                object_store::Result<object_store::path::Path>,
-            >,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::path::Path>>
-        {
-            self.inner.delete_stream(locations)
-        }
     }
 
     fn timed_out() -> object_store::Error {
@@ -2196,48 +2211,18 @@ overrides:
     /// The schedule is injected, so nothing here sleeps.
     #[tokio::test]
     async fn a_flush_rides_out_a_transient_object_store_and_commits_once() {
-        let store = Arc::new(FlakyPutStore::new(2, timed_out));
-        let retry = ObjectStoreRetryPolicy::immediate(4);
-        let block_writer = krabka_blockstore::BlockWriter::with_retry_policy(
-            Arc::clone(&store) as Arc<dyn ObjectStore>,
-            retry,
-        );
-        let sink = super::ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
-            Arc::clone(&store) as Arc<dyn ObjectStore>,
-            retry,
-            ObjectStoreMetrics::unregistered(),
-        ));
-        let record = krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
+        let store = Arc::new(flaky_put_store(2, timed_out));
+        let targets = retrying_flush_targets(&store);
+        let mut consumer = poll_and_commit(vec![vec![wal_consumer_record(WalPosition {
             offset: 10,
-            leader_epoch: -1,
             timestamp: 100,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", 100)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
-        let mut consumer = PollAndCommit {
-            batches: vec![vec![record]],
-            commit_calls: 0,
-            committed_offsets: Vec::new(),
-        };
+        })]]);
 
         let result = super::run_compactor_consumer_loop(
             &mut consumer,
-            &block_writer,
-            &sink,
-            super::CompactionLoopConfig {
-                wal_topic: crate::WAL_TOPIC.to_string(),
-                poll_timeout: millis(1),
-                flush_max_rows: 50_000,
-                flush_max_age: hours(1),
-            },
+            &targets.block_writer,
+            &targets.index_sink,
+            shutdown_flush_config(),
             |result| result.polled_records == 0,
             &ServiceMetrics::new(),
         )
@@ -2257,48 +2242,18 @@ overrides:
     /// only delay the report.
     #[tokio::test]
     async fn a_flush_refused_by_the_store_fails_at_once_and_commits_nothing() {
-        let store = Arc::new(FlakyPutStore::new(usize::MAX, forbidden));
-        let retry = ObjectStoreRetryPolicy::immediate(4);
-        let block_writer = krabka_blockstore::BlockWriter::with_retry_policy(
-            Arc::clone(&store) as Arc<dyn ObjectStore>,
-            retry,
-        );
-        let sink = super::ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
-            Arc::clone(&store) as Arc<dyn ObjectStore>,
-            retry,
-            ObjectStoreMetrics::unregistered(),
-        ));
-        let record = krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
+        let store = Arc::new(flaky_put_store(usize::MAX, forbidden));
+        let targets = retrying_flush_targets(&store);
+        let mut consumer = poll_and_commit(vec![vec![wal_consumer_record(WalPosition {
             offset: 10,
-            leader_epoch: -1,
             timestamp: 100,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", 100)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
-        let mut consumer = PollAndCommit {
-            batches: vec![vec![record]],
-            commit_calls: 0,
-            committed_offsets: Vec::new(),
-        };
+        })]]);
 
         let failure = super::run_compactor_consumer_loop(
             &mut consumer,
-            &block_writer,
-            &sink,
-            super::CompactionLoopConfig {
-                wal_topic: crate::WAL_TOPIC.to_string(),
-                poll_timeout: millis(1),
-                flush_max_rows: 50_000,
-                flush_max_age: hours(1),
-            },
+            &targets.block_writer,
+            &targets.index_sink,
+            shutdown_flush_config(),
             |result| result.polled_records == 0,
             &ServiceMetrics::new(),
         )
@@ -2312,40 +2267,24 @@ overrides:
     #[tokio::test]
     async fn run_compactor_consumer_loop_accumulates_multiple_polls_into_one_block() {
         // Two below-threshold polls accumulate into ONE block and commit once.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
-        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
-            offset,
-            leader_epoch: -1,
-            timestamp,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", timestamp)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
-        let mut consumer = PollAndCommit {
-            batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
-            commit_calls: 0,
-            committed_offsets: Vec::new(),
-        };
+        let mut consumer = poll_and_commit(vec![
+            vec![wal_consumer_record(WalPosition {
+                offset: 10,
+                timestamp: 100,
+            })],
+            vec![wal_consumer_record(WalPosition {
+                offset: 11,
+                timestamp: 200,
+            })],
+        ]);
 
         let result = super::run_compactor_consumer_loop(
             &mut consumer,
             &block_writer,
             &sink,
-            super::CompactionLoopConfig {
-                wal_topic: crate::WAL_TOPIC.to_string(),
-                poll_timeout: millis(1),
-                flush_max_rows: 50_000,
-                flush_max_age: hours(1),
-            },
+            shutdown_flush_config(),
             |result| result.polled_records == 0,
             &ServiceMetrics::new(),
         )
@@ -2448,23 +2387,17 @@ overrides:
             events: Arc::clone(&events),
             block_key: block_key.clone(),
         };
-        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
-            topic: crate::WAL_TOPIC.to_string(),
-            partition: 0,
-            offset,
-            leader_epoch: -1,
-            timestamp,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: Some(bytes::Bytes::from(
-                float_record("tenant-a", "up", "api", timestamp)
-                    .encode()
-                    .expect("encode wal"),
-            )),
-            headers: format_headers(),
-        };
         let mut poller = QueuePoller {
-            batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
+            batches: vec![
+                vec![wal_consumer_record(WalPosition {
+                    offset: 10,
+                    timestamp: 100,
+                })],
+                vec![wal_consumer_record(WalPosition {
+                    offset: 11,
+                    timestamp: 200,
+                })],
+            ],
         };
 
         let result = super::run_compactor_loop(
@@ -2472,12 +2405,7 @@ overrides:
             &block_writer,
             &sink,
             &committer,
-            super::CompactionLoopConfig {
-                wal_topic: crate::WAL_TOPIC.to_string(),
-                poll_timeout: millis(1),
-                flush_max_rows: 50_000,
-                flush_max_age: hours(1),
-            },
+            shutdown_flush_config(),
             |result| result.polled_records == 0,
             &ServiceMetrics::new(),
         )
@@ -2548,16 +2476,12 @@ overrides:
         };
         let later = vec![record(3, 400), record(4, 500)];
         let mut consumer = FrozenDrainConsumer {
-            inner: PollAndCommit {
-                batches: vec![
-                    vec![record(0, 100), record(1, 200)],
-                    Vec::new(),
-                    vec![record(2, 300)],
-                    later.clone(),
-                ],
-                commit_calls: 0,
-                committed_offsets: Vec::new(),
-            },
+            inner: poll_and_commit(vec![
+                vec![record(0, 100), record(1, 200)],
+                Vec::new(),
+                vec![record(2, 300)],
+                later.clone(),
+            ]),
             end: 3,
         };
         let mut first = true;
@@ -2594,9 +2518,24 @@ overrides:
         assert!(
             actual
                 == vec![
-                    (fingerprint, 100, 1.0, None),
-                    (fingerprint, 200, 1.0, None),
-                    (fingerprint, 300, 1.0, None)
+                    crate::FloatSampleRow {
+                        fingerprint,
+                        timestamp_ms: 100,
+                        value: 1.0,
+                        start_timestamp_ms: None,
+                    },
+                    crate::FloatSampleRow {
+                        fingerprint,
+                        timestamp_ms: 200,
+                        value: 1.0,
+                        start_timestamp_ms: None,
+                    },
+                    crate::FloatSampleRow {
+                        fingerprint,
+                        timestamp_ms: 300,
+                        value: 1.0,
+                        start_timestamp_ms: None,
+                    },
                 ]
         );
         assert!(
@@ -2619,6 +2558,47 @@ overrides:
                     }],
                 ]
         );
+    }
+
+    fn poll_and_commit(batches: Vec<Vec<krabka_client_consumer::ConsumerRecord>>) -> PollAndCommit {
+        PollAndCommit {
+            batches,
+            commit_calls: 0,
+            committed_offsets: Vec::new(),
+        }
+    }
+
+    // Thresholds no poll here reaches, so only the shutdown flush writes.
+    fn shutdown_flush_config() -> super::CompactionLoopConfig {
+        super::CompactionLoopConfig {
+            wal_topic: crate::WAL_TOPIC.to_string(),
+            poll_timeout: millis(1),
+            flush_max_rows: 50_000,
+            flush_max_age: hours(1),
+        }
+    }
+
+    // The block writer and index sink of a flush, both retrying over `store`.
+    struct RetryingFlushTargets {
+        block_writer: krabka_blockstore::BlockWriter,
+        index_sink: super::ObjectStoreCompactionIndexSink,
+    }
+
+    fn retrying_flush_targets(store: &Arc<FlakyPutStore>) -> RetryingFlushTargets {
+        let retry = ObjectStoreRetryPolicy::immediate(4);
+        let block_writer = krabka_blockstore::BlockWriter::with_retry_policy(
+            Arc::clone(store) as Arc<dyn ObjectStore>,
+            retry,
+        );
+        let sink = super::ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
+            Arc::clone(store) as Arc<dyn ObjectStore>,
+            retry,
+            ObjectStoreMetrics::unregistered(),
+        ));
+        RetryingFlushTargets {
+            block_writer,
+            index_sink: sink,
+        }
     }
 
     struct PollAndCommit {
@@ -2745,18 +2725,25 @@ overrides:
         assert!(consumer.take_revoked_partitions().is_empty());
     }
 
-    #[test]
-    fn compact_wal_records_extracts_histograms_and_exemplars() {
+    /// A `tenant-a` float sample of `request_duration_seconds` carrying one
+    /// exemplar with a trace ID, a span ID and one further label.
+    fn traced_request_duration_record() -> WalRecord {
         let mut record = float_record("tenant-a", "request_duration_seconds", "api", 20);
         record.exemplars = vec![WalExemplar {
             labels: vec![
-                ("trace_id".into(), "abc".into()),
-                ("span_id".into(), "def".into()),
-                ("kind".into(), "slow".into()),
+                MetricLabelPair::new("trace_id", "abc".into()),
+                MetricLabelPair::new("span_id", "def".into()),
+                MetricLabelPair::new("kind", "slow".into()),
             ],
             value: 2.0,
             timestamp_ms: 19,
         }];
+        record
+    }
+
+    #[test]
+    fn compact_wal_records_extracts_histograms_and_exemplars() {
+        let record = traced_request_duration_record();
         let hist_record = WalRecord {
             tenant: "tenant-a".into(),
             labels: record.labels.clone(),
@@ -2776,17 +2763,22 @@ overrides:
         check!(compacted[0].exemplar_rows[0].fingerprint == record.series_fingerprint());
         check!(compacted[0].exemplar_rows[0].trace_id.as_deref() == Some("abc"));
         check!(compacted[0].exemplar_rows[0].span_id.as_deref() == Some("def"));
-        check!(compacted[0].exemplar_rows[0].labels == vec![("kind".into(), "slow".into())]);
+        check!(
+            compacted[0].exemplar_rows[0].labels
+                == vec![krabka_blockstore::LabelPair::new("kind", "slow")]
+        );
     }
 
     #[test]
     fn compact_wal_records_does_not_duplicate_series_exemplars_per_sample() {
         let labels = krabka_blockstore::Labels::from_iter([
-            ("__name__".to_string(), "http_requests_total".into()),
-            ("job".to_string(), "api".into()),
+            krabka_blockstore::LabelPair::new("__name__", "http_requests_total"),
+            krabka_blockstore::LabelPair::new("job", "api"),
         ]);
         let exemplar_labels =
-            krabka_blockstore::Labels::from_iter([("trace_id".to_string(), "abc".into())]);
+            krabka_blockstore::Labels::from_iter([krabka_blockstore::LabelPair::new(
+                "trace_id", "abc",
+            )]);
         let records = wal_records_from_series(
             "tenant-a",
             &[DecodedSeries {
@@ -2814,14 +2806,14 @@ overrides:
     #[test]
     fn classic_histogram_metadata_is_indexed_by_its_metric_family() {
         let bucket_labels = Labels::from_iter([
-            ("__name__".into(), "duration_seconds_bucket".into()),
-            ("le".into(), "1".into()),
-            ("job".into(), "api".into()),
+            krabka_blockstore::LabelPair::new("__name__", "duration_seconds_bucket"),
+            krabka_blockstore::LabelPair::new("le", "1"),
+            krabka_blockstore::LabelPair::new("job", "api"),
         ]);
         let family_labels = Labels::from_iter([
-            ("__name__".into(), "duration_seconds".into()),
-            ("le".into(), "1".into()),
-            ("job".into(), "api".into()),
+            krabka_blockstore::LabelPair::new("__name__", "duration_seconds"),
+            krabka_blockstore::LabelPair::new("le", "1"),
+            krabka_blockstore::LabelPair::new("job", "api"),
         ]);
         let records = wal_records_from_series(
             "tenant-a",
@@ -2847,19 +2839,46 @@ overrides:
         assert!(compacted[0].series_labels[&bucket_labels.fingerprint()] == bucket_labels);
     }
 
-    #[test]
-    fn compact_wal_records_extracts_metric_metadata() {
-        let record = WalRecord {
-            tenant: "tenant-a".into(),
-            labels: vec![("__name__".into(), "http_requests_total".into())],
+    // A metric family's metadata, as one tenant's WAL carries it.
+    #[derive(Clone, Copy)]
+    struct FamilyMetadata<'a> {
+        tenant: &'a str,
+        family: &'a str,
+        metric_type: &'a str,
+        help: &'a str,
+        unit: &'a str,
+    }
+
+    fn metadata_record(metadata: FamilyMetadata<'_>) -> WalRecord {
+        let FamilyMetadata {
+            tenant,
+            family,
+            metric_type,
+            help,
+            unit,
+        } = metadata;
+        WalRecord {
+            tenant: tenant.into(),
+            labels: vec![MetricLabelPair::new("__name__", family.into())],
             payload: SamplePayload::Metadata {
-                metric_family_name: "http_requests_total".into(),
-                metric_type: "counter".into(),
-                help: "Total HTTP requests.".into(),
-                unit: "requests".into(),
+                metric_family_name: family.into(),
+                metric_type: metric_type.into(),
+                help: help.into(),
+                unit: unit.into(),
             },
             exemplars: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn compact_wal_records_extracts_metric_metadata() {
+        let record = metadata_record(FamilyMetadata {
+            tenant: "tenant-a",
+            family: "http_requests_total",
+            metric_type: "counter",
+            help: "Total HTTP requests.",
+            unit: "requests",
+        });
 
         let compacted = compact_wal_records(std::slice::from_ref(&record));
 
@@ -2879,50 +2898,34 @@ overrides:
     #[test]
     fn metadata_index_queries_tenant_metric_metadata() {
         let rows = compact_wal_records(&[
-            WalRecord {
-                tenant: "tenant-a".into(),
-                labels: vec![("__name__".into(), "http_requests_total".into())],
-                payload: SamplePayload::Metadata {
-                    metric_family_name: "http_requests_total".into(),
-                    metric_type: "counter".into(),
-                    help: "Total HTTP requests.".into(),
-                    unit: "requests".into(),
-                },
-                exemplars: Vec::new(),
-            },
-            WalRecord {
-                tenant: "tenant-a".into(),
-                labels: vec![("__name__".into(), "http_requests_total".into())],
-                payload: SamplePayload::Metadata {
-                    metric_family_name: "http_requests_total".into(),
-                    metric_type: "counter".into(),
-                    help: "Total HTTP requests.".into(),
-                    unit: "requests".into(),
-                },
-                exemplars: Vec::new(),
-            },
-            WalRecord {
-                tenant: "tenant-a".into(),
-                labels: vec![("__name__".into(), "up".into())],
-                payload: SamplePayload::Metadata {
-                    metric_family_name: "up".into(),
-                    metric_type: "gauge".into(),
-                    help: "Target health.".into(),
-                    unit: String::new(),
-                },
-                exemplars: Vec::new(),
-            },
-            WalRecord {
-                tenant: "tenant-b".into(),
-                labels: vec![("__name__".into(), "http_requests_total".into())],
-                payload: SamplePayload::Metadata {
-                    metric_family_name: "http_requests_total".into(),
-                    metric_type: "gauge".into(),
-                    help: "Wrong tenant.".into(),
-                    unit: String::new(),
-                },
-                exemplars: Vec::new(),
-            },
+            metadata_record(FamilyMetadata {
+                tenant: "tenant-a",
+                family: "http_requests_total",
+                metric_type: "counter",
+                help: "Total HTTP requests.",
+                unit: "requests",
+            }),
+            metadata_record(FamilyMetadata {
+                tenant: "tenant-a",
+                family: "http_requests_total",
+                metric_type: "counter",
+                help: "Total HTTP requests.",
+                unit: "requests",
+            }),
+            metadata_record(FamilyMetadata {
+                tenant: "tenant-a",
+                family: "up",
+                metric_type: "gauge",
+                help: "Target health.",
+                unit: "",
+            }),
+            metadata_record(FamilyMetadata {
+                tenant: "tenant-b",
+                family: "http_requests_total",
+                metric_type: "gauge",
+                help: "Wrong tenant.",
+                unit: "",
+            }),
         ]);
 
         let index = crate::MetadataIndex::from_compaction_rows(&rows);
@@ -2944,7 +2947,7 @@ overrides:
             float_record("tenant-a", "up", "api", 10),
             WalRecord {
                 tenant: "tenant-a".into(),
-                labels: vec![("__name__".into(), "latency".into())],
+                labels: vec![MetricLabelPair::new("__name__", "latency".into())],
                 payload: SamplePayload::Hist {
                     timestamp_ms: 20,
                     hist: hist(),
@@ -2961,16 +2964,7 @@ overrides:
 
     #[test]
     fn encode_tenant_batches_builds_exemplar_sidecar_batch() {
-        let mut record = float_record("tenant-a", "request_duration_seconds", "api", 20);
-        record.exemplars = vec![WalExemplar {
-            labels: vec![
-                ("trace_id".into(), "abc".into()),
-                ("span_id".into(), "def".into()),
-                ("kind".into(), "slow".into()),
-            ],
-            value: 2.0,
-            timestamp_ms: 19,
-        }];
+        let record = traced_request_duration_record();
         let compacted = compact_wal_records(std::slice::from_ref(&record));
 
         let batches = encode_tenant_batches(&compacted[0]).unwrap();
@@ -3024,210 +3018,144 @@ overrides:
 }
 
 mod clock_columns;
-mod clock_reading_row;
 mod compact_metric_blocks_once;
 mod compact_wal_records;
-mod compacted_block_request;
-mod compacted_block_write;
-mod compacted_metric_object_key;
-mod compaction_batch_result;
-mod compaction_batch_span;
 mod compaction_buffer;
-mod compaction_clock;
-mod compaction_commit_error;
-mod compaction_consumer_commit;
-mod compaction_consumer_commit_error;
-mod compaction_consumer_commit_mut;
-mod compaction_consumer_committer;
-mod compaction_consumer_poll;
-mod compaction_consumer_poll_error;
-mod compaction_consumer_record_error;
 mod compaction_index;
-mod compaction_index_error;
-mod compaction_index_key;
 mod compaction_index_listing;
 mod compaction_index_manifest;
-mod compaction_index_sink;
-mod compaction_loop_config;
-mod compaction_loop_context;
-mod compaction_loop_result;
-mod compaction_manifest_error;
-mod compaction_object_key;
-mod compaction_object_plan;
-mod compaction_object_plan_for_rows;
-mod compaction_object_prefix;
-mod compaction_offset_committer;
-mod compaction_partition_object_key;
-mod compaction_partition_object_plan;
-mod compaction_partition_offset;
-mod compaction_poll_error;
-mod compaction_poll_result;
-mod compaction_retention_error;
 mod compaction_retention_phase;
 mod compaction_retention_stats;
-mod compaction_series_labels;
-mod compaction_wal_record;
-mod compaction_wal_records_from_consumer_records;
-mod compaction_window_error;
-mod compaction_window_result;
-mod compaction_write_error;
+mod compaction_types;
+mod object_planning;
+pub use compaction_types::*;
+mod compaction_flush;
+mod compaction_readers;
+mod compactor_polling;
 mod consumer;
-mod consumer_build_error;
-mod deduplicate_series_timestamp_runs;
-mod default_flush_max_age;
-mod default_flush_max_rows;
 mod deferred_block_deletions;
 mod durable_compaction_consumer;
-mod encode_clock_reading_rows;
-mod encode_exemplar_rows;
-mod encode_metadata_rows;
-mod encode_tenant_batches;
+mod encode_rows;
 mod enforce_compaction_retention;
 mod exemplar_row;
-mod float_row;
-mod flush_buffer;
-mod flush_buffer_with_consumer;
-mod list_compaction_index;
-mod list_compaction_index_objects;
-mod list_compaction_manifests;
 mod materialize_metric_erasure_requests;
 mod merge_metric_blocks;
-mod metadata_row;
-mod metric_block_kind;
-mod metric_compaction_error;
-mod metric_compaction_job;
-mod metric_compaction_pass;
-mod metrics_compactor_build_error;
 mod metrics_compactor_config;
-mod metrics_compactor_config_error;
-mod metrics_compactor_runtime;
-mod native_histogram_row;
 mod object_store_compaction_index_sink;
 mod plan_metric_compactions;
-mod poll_compactor_consumer_once;
-mod poll_compactor_once;
 mod process_compaction_partition_window;
 mod process_compaction_record_batch;
 mod process_compaction_record_batch_with_consumer;
-mod read_compaction_manifests;
 mod run_compactor_consumer_loop;
 mod run_compactor_consumer_loop_with_clock;
 mod run_compactor_loop;
 mod run_compactor_loop_with_clock;
 mod series_labels_for_kind;
-mod system_compaction_clock;
-mod tenant_batches;
-mod tenant_compaction_rows;
-mod validate_non_empty;
 mod write_compacted_block;
-mod write_compacted_tenant_blocks;
-mod write_compacted_tenant_blocks_with_partition;
-mod write_compacted_tenant_partition_blocks;
-mod write_compaction_partition_window;
+mod write_compaction_windows;
+mod write_tenant_blocks;
 
 use clock_columns::ClockColumns;
-pub use clock_reading_row::ClockReadingRow;
 pub use compact_metric_blocks_once::compact_metric_blocks_once;
 pub use compact_wal_records::compact_wal_records;
-use compacted_block_request::CompactedBlockRequest;
-pub use compacted_block_write::CompactedBlockWrite;
-use compacted_metric_object_key::compacted_metric_object_key;
-pub use compaction_batch_result::CompactionBatchResult;
-use compaction_batch_span::compaction_batch_span;
 use compaction_buffer::CompactionBuffer;
-pub use compaction_clock::CompactionClock;
-pub use compaction_commit_error::CompactionCommitError;
-pub use compaction_consumer_commit::CompactionConsumerCommit;
-pub use compaction_consumer_commit_error::CompactionConsumerCommitError;
-pub use compaction_consumer_commit_mut::CompactionConsumerCommitMut;
-pub use compaction_consumer_committer::CompactionConsumerCommitter;
-pub use compaction_consumer_poll::CompactionConsumerPoll;
-pub use compaction_consumer_poll_error::CompactionConsumerPollError;
-pub use compaction_consumer_record_error::CompactionConsumerRecordError;
+
+fn take_due_compaction_buffer(
+    buffer: &mut CompactionBuffer,
+    config: &CompactionLoopConfig,
+    now: std::time::Instant,
+) -> Option<Vec<CompactionWalRecord>> {
+    buffer.should_flush(config, now).then(|| buffer.take())
+}
+
+fn append_compaction_records_until_due<Clock: CompactionClock + ?Sized>(
+    buffer: &mut CompactionBuffer,
+    records: Vec<CompactionWalRecord>,
+    config: &CompactionLoopConfig,
+    clock: &Clock,
+) -> Option<Vec<CompactionWalRecord>> {
+    let now = clock.now();
+    buffer.extend(records, now);
+    take_due_compaction_buffer(buffer, config, now)
+}
 pub use compaction_index::CompactionIndex;
-pub use compaction_index_error::CompactionIndexError;
 #[cfg_attr(test, mutants::skip)]
-pub(crate) use compaction_index_key::compaction_index_key;
 pub use compaction_index_listing::CompactionIndexListing;
 pub use compaction_index_manifest::CompactionIndexManifest;
-pub use compaction_index_sink::CompactionIndexSink;
-pub use compaction_loop_config::CompactionLoopConfig;
-pub use compaction_loop_context::CompactionLoopContext;
-pub use compaction_loop_result::CompactionLoopResult;
-pub use compaction_manifest_error::CompactionManifestError;
-pub use compaction_object_key::compaction_object_key;
-pub use compaction_object_plan::CompactionObjectPlan;
-#[cfg_attr(test, mutants::skip)]
-pub use compaction_object_plan::compaction_object_plan;
-pub use compaction_object_plan_for_rows::compaction_object_plan_for_rows;
-use compaction_object_prefix::COMPACTION_OBJECT_PREFIX;
-pub use compaction_offset_committer::CompactionOffsetCommitter;
-pub use compaction_partition_object_key::compaction_partition_object_key;
-#[cfg_attr(test, mutants::skip)]
-pub use compaction_partition_object_plan::compaction_partition_object_plan;
-pub use compaction_partition_offset::CompactionPartitionOffset;
-pub use compaction_poll_error::CompactionPollError;
-pub use compaction_poll_result::CompactionPollResult;
-pub use compaction_retention_error::CompactionRetentionError;
+pub use compaction_readers::{list_compaction_index, list_compaction_manifests};
 pub use compaction_retention_phase::CompactionRetentionPhase;
 pub use compaction_retention_stats::CompactionRetentionStats;
-pub use compaction_series_labels::CompactionSeriesLabels;
-pub use compaction_wal_record::CompactionWalRecord;
-pub use compaction_wal_records_from_consumer_records::compaction_wal_records_from_consumer_records;
-pub use compaction_window_error::CompactionWindowError;
-pub use compaction_window_result::CompactionWindowResult;
-pub use compaction_write_error::CompactionWriteError;
 pub use consumer::WalAssignmentConsumer;
-use consumer_build_error::consumer_build_error;
-use deduplicate_series_timestamp_runs::deduplicate_series_timestamp_runs;
-pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
-pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;
 pub use deferred_block_deletions::DeferredBlockDeletions;
 pub use durable_compaction_consumer::DurableCompactionConsumer;
-use encode_clock_reading_rows::encode_clock_reading_rows;
-use encode_exemplar_rows::encode_exemplar_rows;
-use encode_metadata_rows::encode_metadata_rows;
-pub use encode_tenant_batches::encode_tenant_batches;
+pub use encode_rows::{encode_exemplar_rows, encode_metadata_rows, encode_tenant_batches};
 pub use enforce_compaction_retention::enforce_compaction_retention;
 pub use exemplar_row::ExemplarRow;
 use exemplar_row::exemplar_row;
-pub use float_row::FloatRow;
-use flush_buffer::flush_buffer;
-use flush_buffer_with_consumer::flush_buffer_with_consumer;
-pub use list_compaction_index::list_compaction_index;
-use list_compaction_index_objects::list_compaction_index_objects;
-pub use list_compaction_manifests::list_compaction_manifests;
 use materialize_metric_erasure_requests::materialize_metric_erasure_requests;
 use merge_metric_blocks::merge_metric_blocks;
-pub use metadata_row::MetadataRow;
-pub use metric_block_kind::MetricBlockKind;
-pub use metric_compaction_error::MetricCompactionError;
-pub use metric_compaction_job::MetricCompactionJob;
-pub use metric_compaction_pass::MetricCompactionPass;
-pub use metrics_compactor_build_error::MetricsCompactorBuildError;
 pub use metrics_compactor_config::MetricsCompactorConfig;
-pub use metrics_compactor_config_error::MetricsCompactorConfigError;
-pub use metrics_compactor_runtime::MetricsCompactorRuntime;
-pub use native_histogram_row::NativeHistogramRow;
+use object_planning::compacted_metric_object_key;
+#[cfg_attr(test, mutants::skip)]
+pub use object_planning::compaction_object_plan;
+#[cfg_attr(test, mutants::skip)]
+pub use object_planning::compaction_partition_object_plan;
+pub use object_planning::{
+    CompactionObjectPlan, compaction_object_key, compaction_object_plan_for_rows,
+    compaction_partition_object_key,
+};
 pub use object_store_compaction_index_sink::ObjectStoreCompactionIndexSink;
 pub use plan_metric_compactions::plan_metric_compactions;
-pub use poll_compactor_consumer_once::poll_compactor_consumer_once;
-pub use poll_compactor_once::poll_compactor_once;
 pub use process_compaction_partition_window::process_compaction_partition_window;
 pub use process_compaction_record_batch::process_compaction_record_batch;
 use process_compaction_record_batch_with_consumer::process_compaction_record_batch_with_consumer;
-use read_compaction_manifests::read_compaction_manifests;
 pub use run_compactor_consumer_loop::run_compactor_consumer_loop;
 pub use run_compactor_consumer_loop_with_clock::run_compactor_consumer_loop_with_clock;
 pub use run_compactor_loop::run_compactor_loop;
 pub use run_compactor_loop_with_clock::run_compactor_loop_with_clock;
 pub(crate) use series_labels_for_kind::series_labels_for_kind;
-pub use system_compaction_clock::SystemCompactionClock;
-pub use tenant_batches::TenantBatches;
-pub use tenant_compaction_rows::TenantCompactionRows;
-use validate_non_empty::validate_non_empty;
 use write_compacted_block::write_compacted_block;
-pub use write_compacted_tenant_blocks::write_compacted_tenant_blocks;
-use write_compacted_tenant_blocks_with_partition::write_compacted_tenant_blocks_with_partition;
-pub use write_compacted_tenant_partition_blocks::write_compacted_tenant_partition_blocks;
-use write_compaction_partition_window::write_compaction_partition_window;
+pub use write_tenant_blocks::{
+    write_compacted_tenant_blocks, write_compacted_tenant_partition_blocks,
+};
+
+pub(crate) const COMPACTION_OBJECT_PREFIX: &str = "metrics";
+
+/// Default maximum age the oldest buffered WAL record may reach before a flush.
+pub const DEFAULT_FLUSH_MAX_AGE: Time = minutes(1);
+
+/// Default number of buffered WAL records that triggers a compaction flush.
+pub const DEFAULT_FLUSH_MAX_ROWS: usize = 50_000;
+
+// cargo-mutants: suffix conversion is covered by object-plan and manifest tests.
+#[cfg_attr(test, mutants::skip)]
+pub(crate) fn compaction_index_key(block_key: &str) -> String {
+    block_key.strip_suffix(".parquet").map_or_else(
+        || format!("{block_key}.index"),
+        |prefix| format!("{prefix}.index"),
+    )
+}
+
+pub(crate) fn consumer_build_error(error: &ConsumerError) -> MetricsCompactorBuildError {
+    MetricsCompactorBuildError::Consumer(error.to_string())
+}
+
+pub(crate) fn validate_non_empty(
+    field: &'static str,
+    value: &str,
+) -> Result<(), MetricsCompactorConfigError> {
+    if value.is_empty() {
+        Err(MetricsCompactorConfigError::Empty { field })
+    } else {
+        Ok(())
+    }
+}
+
+use compaction_flush::{flush_buffer, flush_buffer_with_consumer};
+pub(crate) use compactor_polling::compaction_batch_span;
+pub use compactor_polling::{
+    compaction_wal_records_from_consumer_records, poll_compactor_consumer_once, poll_compactor_once,
+};
+pub(crate) use write_compaction_windows::{
+    write_compaction_batch_windows, write_compaction_partition_window,
+};

@@ -25,8 +25,7 @@ use std::{
 };
 
 use assert2::{assert, check};
-use async_trait::async_trait;
-use futures::{TryStreamExt as _, stream::BoxStream};
+use futures::TryStreamExt as _;
 use krabka_metrics_service::{
     DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, MimirTenantAdminState, RefreshingMetricBlockStore,
     mimir_tenant_admin_router, serve_prometheus_router,
@@ -34,10 +33,7 @@ use krabka_metrics_service::{
 use krabka_observability::server_security::ServerSecurity;
 use krabka_promql::{EngineOpts, PrometheusApiState, WalHead, prometheus_router};
 use krabka_units::prelude::*;
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
+use object_store::{GetOptions, GetResult, ObjectStore, memory::InMemory, path::Path};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
@@ -59,6 +55,8 @@ mod diff_corpus;
 
 #[path = "../../metrics/tests/support/crashing_store.rs"]
 mod crashing_store;
+#[path = "support/pinned_prometheus_image.rs"]
+mod pinned_prometheus_image;
 #[path = "../../metrics/tests/support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -91,6 +89,58 @@ struct Krabka {
     _shutdown: oneshot::Sender<()>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct UploadResponse {
+    status: StatusCode,
+    body: String,
+}
+
+struct DeclaredUploadFile {
+    path: String,
+    size_bytes: usize,
+}
+
+struct UploadedFile {
+    path: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct QueryParameter {
+    name: String,
+    value: String,
+}
+
+impl QueryParameter {
+    fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// Two Krabkas holding the fixture block: one with the default unbounded
+/// lookback, which does not reach the fixture's samples, and one whose
+/// lookback does.
+struct LookbackPair {
+    recent: Krabka,
+    reaching: Krabka,
+}
+
+impl LookbackPair {
+    async fn with_fixture_uploaded() -> TestResult<Self> {
+        let recent = Krabka::start().await?;
+        recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+        let reaching =
+            Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
+        reaching
+            .upload(FIXTURE_ULID, &UploadBlock::fixture())
+            .await?;
+        Ok(Self { recent, reaching })
+    }
+}
+
 impl Krabka {
     async fn start() -> TestResult<Self> {
         Self::start_with(Arc::new(InMemory::new())).await
@@ -117,7 +167,9 @@ impl Krabka {
         let router = prometheus_router(Arc::new(api)).merge(mimir_tenant_admin_router(
             MimirTenantAdminState::new(Arc::clone(&store), query, head),
         ));
-        let (shutdown, stopped) = oneshot::channel();
+        let channel = oneshot::channel();
+        let shutdown = channel.0;
+        let stopped = channel.1;
         let addr: SocketAddr = "127.0.0.1:0".parse()?;
         let bound = serve_prometheus_router(addr, router, &ServerSecurity::default(), async {
             let _ = stopped.await;
@@ -135,7 +187,7 @@ impl Krabka {
         format!("{}/api/v1/upload/block/{ulid}/{step}", self.base)
     }
 
-    async fn post(&self, url: String, body: Vec<u8>) -> TestResult<(StatusCode, String)> {
+    async fn post(&self, url: String, body: Vec<u8>) -> TestResult<UploadResponse> {
         let response = self
             .client
             .post(url)
@@ -143,29 +195,54 @@ impl Krabka {
             .body(body)
             .send()
             .await?;
-        Ok((response.status(), response.text().await?))
+        Ok(UploadResponse {
+            status: response.status(),
+            body: response.text().await?,
+        })
     }
 
     /// Uploads `block` under `ulid`, and returns the `check` answer.
     async fn upload(&self, ulid: &str, block: &UploadBlock) -> TestResult<Value> {
-        let (status, body) = self
+        let response = self
             .post(self.upload_url(ulid, "start"), block.meta(ulid))
             .await?;
-        assert!(status == StatusCode::OK, "start: {body}");
-        for (path, bytes) in &block.uploaded {
-            let url = format!("{}?path={}", self.upload_url(ulid, "files"), encode(path));
-            let (status, body) = self.post(url, bytes.clone()).await?;
-            assert!(status == StatusCode::OK, "file {path}: {body}");
+        assert!(
+            response.status == StatusCode::OK,
+            "start: {}",
+            response.body
+        );
+        for file in &block.uploaded {
+            let url = format!(
+                "{}?path={}",
+                self.upload_url(ulid, "files"),
+                encode(&file.path)
+            );
+            let response = self.post(url, file.bytes.clone()).await?;
+            assert!(
+                response.status == StatusCode::OK,
+                "file {}: {}",
+                file.path,
+                response.body
+            );
         }
-        let (status, body) = self
+        let response = self
             .post(self.upload_url(ulid, "finish"), Vec::new())
             .await?;
-        assert!(status == StatusCode::OK, "finish: {body}");
+        assert!(
+            response.status == StatusCode::OK,
+            "finish: {}",
+            response.body
+        );
         self.get_json(&self.upload_url(ulid, "check"), &[]).await
     }
 
-    async fn get_json(&self, url: &str, params: &[(&str, String)]) -> TestResult<Value> {
-        let url = url::Url::parse_with_params(url, params)?;
+    async fn get_json(&self, url: &str, params: &[QueryParameter]) -> TestResult<Value> {
+        let mut url = url::Url::parse(url)?;
+        let mut query = url.query_pairs_mut();
+        for parameter in params {
+            query.append_pair(&parameter.name, &parameter.value);
+        }
+        drop(query);
         let text = self
             .client
             .get(url)
@@ -206,24 +283,64 @@ struct UploadBlock {
     min_time: i64,
     max_time: i64,
     labels: BTreeMap<String, String>,
-    declared: Vec<(String, usize)>,
-    uploaded: Vec<(String, Vec<u8>)>,
+    declared: Vec<DeclaredUploadFile>,
+    uploaded: Vec<UploadedFile>,
+}
+
+struct ExternalLabelCase {
+    name: &'static str,
+    value: &'static str,
+    status: StatusCode,
+    body: &'static str,
+}
+
+struct CrashPointCase {
+    key_part: &'static str,
+    occurrence: usize,
+    live: bool,
+}
+
+struct RangeWindow {
+    from: i64,
+    to: i64,
+    step: &'static str,
+}
+
+struct SeriesWindow {
+    from: i64,
+    to: i64,
 }
 
 impl UploadBlock {
     fn new(files: FixtureFiles) -> Self {
         let uploaded = vec![
-            ("index".to_owned(), files.index),
-            ("chunks/000001".to_owned(), files.chunks),
-            ("tombstones".to_owned(), files.tombstones),
+            UploadedFile {
+                path: "index".to_owned(),
+                bytes: files.index,
+            },
+            UploadedFile {
+                path: "chunks/000001".to_owned(),
+                bytes: files.chunks,
+            },
+            UploadedFile {
+                path: "tombstones".to_owned(),
+                bytes: files.tombstones,
+            },
         ];
         Self {
             min_time: FIXTURE_MIN_TIME,
             max_time: FIXTURE_MAX_TIME,
-            labels: BTreeMap::from([("__org_id__".to_owned(), TENANT.to_owned())]),
+            labels: {
+                let mut labels = BTreeMap::new();
+                labels.insert("__org_id__".to_owned(), TENANT.to_owned());
+                labels
+            },
             declared: uploaded
                 .iter()
-                .map(|(path, bytes)| (path.clone(), bytes.len()))
+                .map(|file| DeclaredUploadFile {
+                    path: file.path.clone(),
+                    size_bytes: file.bytes.len(),
+                })
                 .collect(),
             uploaded,
         }
@@ -238,7 +355,7 @@ impl UploadBlock {
             .chain(
                 self.declared
                     .iter()
-                    .map(|(path, size)| json!({"rel_path": path, "size_bytes": size})),
+                    .map(|file| json!({"rel_path": file.path, "size_bytes": file.size_bytes})),
             )
             .collect();
         serde_json::to_vec(&json!({
@@ -260,14 +377,29 @@ fn seconds(ms: i64) -> String {
     format!("{}.{:03}", ms.div_euclid(1000), ms.rem_euclid(1000))
 }
 
-/// One series as the query API returns it from a range selector: its labels,
-/// its float samples as `(ms, bits)`, and its histograms as `(ms, count bits,
-/// sum bits, sorted non-zero bucket count bits)`.
-type Series = (
-    BTreeMap<String, String>,
-    Vec<(i64, u64)>,
-    Vec<(i64, u64, u64, Vec<u64>)>,
-);
+/// One sample in the query API's float result.
+#[derive(Debug, PartialEq, Eq)]
+struct FloatBitsSample {
+    timestamp_ms: i64,
+    value_bits: u64,
+}
+
+/// One histogram sample in the query API's matrix result.
+#[derive(Debug, PartialEq, Eq)]
+struct HistogramBitsSample {
+    timestamp_ms: i64,
+    count_bits: u64,
+    sum_bits: u64,
+    bucket_count_bits: Vec<u64>,
+}
+
+/// One series as the query API returns it from a range selector.
+#[derive(Debug, PartialEq, Eq)]
+struct Series {
+    labels: BTreeMap<String, String>,
+    floats: Vec<FloatBitsSample>,
+    histograms: Vec<HistogramBitsSample>,
+}
 
 fn sorted_bits(mut values: Vec<f64>) -> Vec<u64> {
     values.retain(|value| *value != 0.0);
@@ -305,9 +437,12 @@ fn expected_series() -> Vec<Series> {
                 .iter()
                 .map(|sample| {
                     let t = sample["t"].as_i64().expect("t");
-                    (t, hex_f64(&sample["v"]).to_bits())
+                    FloatBitsSample {
+                        timestamp_ms: t,
+                        value_bits: hex_f64(&sample["v"]).to_bits(),
+                    }
                 })
-                .filter(|(_, bits)| *bits != STALE_NAN_BITS)
+                .filter(|sample| sample.value_bits != STALE_NAN_BITS)
                 .collect();
             let histograms = series["histograms"]
                 .as_array()
@@ -318,15 +453,19 @@ fn expected_series() -> Vec<Series> {
                     let mut buckets = hex_list(&histogram["positive_counts"]);
                     buckets.extend(hex_list(&histogram["negative_counts"]));
                     buckets.push(hex_f64(&histogram["zero_count"]));
-                    (
-                        histogram["t"].as_i64().expect("t"),
-                        hex_f64(&histogram["count"]).to_bits(),
-                        hex_f64(&histogram["sum"]).to_bits(),
-                        sorted_bits(buckets),
-                    )
+                    HistogramBitsSample {
+                        timestamp_ms: histogram["t"].as_i64().expect("t"),
+                        count_bits: hex_f64(&histogram["count"]).to_bits(),
+                        sum_bits: hex_f64(&histogram["sum"]).to_bits(),
+                        bucket_count_bits: sorted_bits(buckets),
+                    }
                 })
                 .collect();
-            (labels, floats, histograms)
+            Series {
+                labels,
+                floats,
+                histograms,
+            }
         })
         .collect()
 }
@@ -359,40 +498,46 @@ fn matrix_series(response: &Value) -> Vec<Series> {
             let labels = serde_json::from_value(entry["metric"].clone()).expect("labels");
             let floats = entry["values"]
                 .as_array()
-                .map(|values| {
+                .map_or_else(Default::default, |values| {
                     values
                         .iter()
-                        .map(|point| (parse_ms(&point[0]), parse_f64(&point[1]).to_bits()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let histograms = entry["histograms"]
-                .as_array()
-                .map(|values| {
-                    values
-                        .iter()
-                        .map(|point| {
-                            let histogram = &point[1];
-                            let buckets = histogram["buckets"]
-                                .as_array()
-                                .map(|buckets| {
-                                    buckets.iter().map(|bucket| parse_f64(&bucket[3])).collect()
-                                })
-                                .unwrap_or_default();
-                            (
-                                parse_ms(&point[0]),
-                                parse_f64(&histogram["count"]).to_bits(),
-                                parse_f64(&histogram["sum"]).to_bits(),
-                                sorted_bits(buckets),
-                            )
+                        .map(|point| FloatBitsSample {
+                            timestamp_ms: parse_ms(&point[0]),
+                            value_bits: parse_f64(&point[1]).to_bits(),
                         })
                         .collect()
-                })
-                .unwrap_or_default();
-            (labels, floats, histograms)
+                });
+            let histograms =
+                entry["histograms"]
+                    .as_array()
+                    .map_or_else(Default::default, |values| {
+                        values
+                            .iter()
+                            .map(|point| {
+                                let histogram = &point[1];
+                                let buckets = histogram["buckets"].as_array().map_or_else(
+                                    Default::default,
+                                    |buckets| {
+                                        buckets.iter().map(|bucket| parse_f64(&bucket[3])).collect()
+                                    },
+                                );
+                                HistogramBitsSample {
+                                    timestamp_ms: parse_ms(&point[0]),
+                                    count_bits: parse_f64(&histogram["count"]).to_bits(),
+                                    sum_bits: parse_f64(&histogram["sum"]).to_bits(),
+                                    bucket_count_bits: sorted_bits(buckets),
+                                }
+                            })
+                            .collect()
+                    });
+            Series {
+                labels,
+                floats,
+                histograms,
+            }
         })
         .collect();
-    series.sort_by(|left, right| left.0.cmp(&right.0));
+    series.sort_by(|left, right| left.labels.cmp(&right.labels));
     series
 }
 
@@ -401,8 +546,8 @@ async fn all_imported_samples(krabka: &Krabka) -> TestResult<Vec<Series>> {
         .get_json(
             &format!("{}/api/v1/query", krabka.base),
             &[
-                ("query", r#"{__name__=~"imported_.+"}[3h]"#.to_owned()),
-                ("time", seconds(FIXTURE_MAX_TIME)),
+                QueryParameter::new("query", r#"{__name__=~"imported_.+"}[3h]"#),
+                QueryParameter::new("time", seconds(FIXTURE_MAX_TIME)),
             ],
         )
         .await?;
@@ -419,17 +564,20 @@ async fn an_uploaded_prometheus_block_returns_the_samples_that_prometheus_reads(
     check!(check_body == json!({"result": "complete"}));
     check!(all_imported_samples(&krabka).await? == expected_series());
     let range = [
-        ("start", seconds(FIXTURE_MIN_TIME)),
-        ("end", seconds(FIXTURE_MAX_TIME)),
+        QueryParameter::new("start", seconds(FIXTURE_MIN_TIME)),
+        QueryParameter::new("end", seconds(FIXTURE_MAX_TIME)),
     ];
     let mut series_params = range.to_vec();
-    series_params.push(("match[]", r#"{__name__=~"imported_.+"}"#.to_owned()));
+    series_params.push(QueryParameter::new(
+        "match[]",
+        r#"{__name__=~"imported_.+"}"#,
+    ));
     let series = krabka
         .get_json(&format!("{}/api/v1/series", krabka.base), &series_params)
         .await?;
     let expected_labels: Vec<Value> = expected_series()
         .into_iter()
-        .map(|(labels, _, _)| json!(labels))
+        .map(|series| json!(series.labels))
         .collect();
     check!(series == json!({"status": "success", "data": expected_labels}));
     let labels = krabka
@@ -461,7 +609,8 @@ async fn a_reuploaded_prometheus_block_adds_no_samples() -> TestResult {
         .await?;
     let other_ulid = krabka.upload(OTHER_ULID, &UploadBlock::fixture()).await?;
 
-    check!(same_ulid == (StatusCode::CONFLICT, "block already exists\n".to_owned()));
+    check!(same_ulid.status == StatusCode::CONFLICT);
+    check!(same_ulid.body == "block already exists\n");
     check!(other_ulid == json!({"result": "complete", "existingBlock": FIXTURE_ULID}));
     check!(krabka.manifest_keys().await? == manifests);
     check!(all_imported_samples(&krabka).await? == samples);
@@ -469,76 +618,87 @@ async fn a_reuploaded_prometheus_block_adds_no_samples() -> TestResult {
 }
 
 /// A case name, the change to the fixture upload, and the `check` error.
-type CorruptCase = (&'static str, fn(&mut UploadBlock), &'static str);
+struct CorruptCase {
+    name: &'static str,
+    corrupt: fn(&mut UploadBlock),
+    error: &'static str,
+}
 
 /// Flips the low bit of the byte at `position` of the uploaded file `path`.
 fn flip(block: &mut UploadBlock, path: &str, position: usize) {
-    let (_, bytes) = block
+    let file = block
         .uploaded
         .iter_mut()
-        .find(|(name, _)| name == path)
+        .find(|file| file.path == path)
         .expect("the file is uploaded");
-    let position = position.min(bytes.len() - 1);
-    bytes[position] ^= 0x01;
+    let position = position.min(file.bytes.len() - 1);
+    file.bytes[position] ^= 0x01;
 }
 
 #[tokio::test]
 async fn an_invalid_prometheus_block_fails_and_leaves_no_index_entry() -> TestResult {
     let cases: [CorruptCase; 6] = [
-        (
-            "flipped index TOC checksum",
-            |block| flip(block, "index", usize::MAX),
-            "invalid Prometheus TSDB block: checksum mismatch in index TOC",
-        ),
-        (
-            "flipped chunk byte",
-            |block| flip(block, "chunks/000001", 12),
-            "invalid Prometheus TSDB block: checksum mismatch in chunk at reference 0x8",
-        ),
-        (
-            "index format version 1",
-            |block| block.uploaded[0].1[4] = 1,
-            "invalid Prometheus TSDB block: index format version 1 is not supported; import \
+        CorruptCase {
+            name: "flipped index TOC checksum",
+            corrupt: |block| flip(block, "index", usize::MAX),
+            error: "invalid Prometheus TSDB block: checksum mismatch in index TOC",
+        },
+        CorruptCase {
+            name: "flipped chunk byte",
+            corrupt: |block| flip(block, "chunks/000001", 12),
+            error: "invalid Prometheus TSDB block: checksum mismatch in chunk at reference 0x8",
+        },
+        CorruptCase {
+            name: "index format version 1",
+            corrupt: |block| block.uploaded[0].bytes[4] = 1,
+            error: "invalid Prometheus TSDB block: index format version 1 is not supported; import \
              accepts versions 2 and 3, rewrite older blocks with a current Prometheus first",
-        ),
-        (
-            "tenant label of another tenant",
-            |block| {
+        },
+        CorruptCase {
+            name: "tenant label of another tenant",
+            corrupt: |block| {
                 block
                     .labels
                     .insert("__org_id__".to_owned(), "tenant-b".to_owned());
             },
-            "invalid Prometheus TSDB block: block external label __org_id__=\"tenant-b\" does \
+            error: "invalid Prometheus TSDB block: block external label __org_id__=\"tenant-b\" does \
              not match tenant \"tenant-a\"",
-        ),
-        (
-            "samples past maxTime",
-            |block| block.max_time = block.min_time + 3_600_000,
-            "invalid Prometheus TSDB block: series {__name__=\"imported_counter_total\", \
+        },
+        CorruptCase {
+            name: "samples past maxTime",
+            corrupt: |block| block.max_time = block.min_time + 3_600_000,
+            error: "invalid Prometheus TSDB block: series {__name__=\"imported_counter_total\", \
              instance=\"i1\", job=\"fixture\"} has timestamp 1749999600000 outside the block \
              range [1749996000000, 1749999600000)",
-        ),
-        (
-            "declared chunk segment never uploaded",
-            |block| block.declared.push(("chunks/000002".to_owned(), 64)),
-            "invalid Prometheus TSDB block: the file chunks/000002 was not uploaded",
-        ),
+        },
+        CorruptCase {
+            name: "declared chunk segment never uploaded",
+            corrupt: |block| {
+                block.declared.push(DeclaredUploadFile {
+                    path: "chunks/000002".to_owned(),
+                    size_bytes: 64,
+                });
+            },
+            error: "invalid Prometheus TSDB block: the file chunks/000002 was not uploaded",
+        },
     ];
 
-    for (name, corrupt, error) in cases {
+    for case in cases {
         let krabka = Krabka::start().await?;
         let mut block = UploadBlock::fixture();
-        corrupt(&mut block);
+        (case.corrupt)(&mut block);
 
         let check_body = krabka.upload(FIXTURE_ULID, &block).await?;
 
         check!(
-            check_body == json!({"result": "failed", "error": error}),
-            "case: {name}"
+            check_body == json!({"result": "failed", "error": case.error}),
+            "case: {}",
+            case.name
         );
         check!(
             krabka.keys_under(MANIFEST_PREFIX).await?.is_empty(),
-            "case: {name}"
+            "case: {}",
+            case.name
         );
     }
     Ok(())
@@ -550,7 +710,10 @@ async fn a_repeated_file_path_is_read_once() -> TestResult {
     krabka.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
     let manifests = krabka.manifest_keys().await?;
     let mut repeated = UploadBlock::fixture();
-    let chunks = repeated.declared[1].clone();
+    let chunks = DeclaredUploadFile {
+        path: repeated.declared[1].path.clone(),
+        size_bytes: repeated.declared[1].size_bytes,
+    };
     repeated.declared.push(chunks);
 
     let check_body = krabka.upload(OTHER_ULID, &repeated).await?;
@@ -563,52 +726,74 @@ async fn a_repeated_file_path_is_read_once() -> TestResult {
 #[tokio::test]
 async fn start_accepts_only_the_external_labels_that_mimir_accepts() -> TestResult {
     let cases = [
-        (
-            "cluster",
-            "prod",
-            StatusCode::BAD_REQUEST,
-            "unsupported external label: cluster\n",
-        ),
-        (
-            "__tenant_id__",
-            TENANT,
-            StatusCode::BAD_REQUEST,
-            "unsupported external label: __tenant_id__\n",
-        ),
-        (
-            "__compactor_shard_id__",
-            "0_of_4",
-            StatusCode::BAD_REQUEST,
-            "invalid __compactor_shard_id__ external label: \"0_of_4\"\n",
-        ),
-        (
-            "__compactor_shard_id__",
-            "5_of_4",
-            StatusCode::BAD_REQUEST,
-            "invalid __compactor_shard_id__ external label: \"5_of_4\"\n",
-        ),
-        (
-            "__compactor_shard_id__",
-            "+1_of_4",
-            StatusCode::BAD_REQUEST,
-            "invalid __compactor_shard_id__ external label: \"+1_of_4\"\n",
-        ),
-        (
-            "__compactor_shard_id__",
-            "1-of-4",
-            StatusCode::BAD_REQUEST,
-            "invalid __compactor_shard_id__ external label: \"1-of-4\"\n",
-        ),
-        ("__compactor_shard_id__", "4_of_4", StatusCode::OK, ""),
-        ("__compactor_shard_id__", "", StatusCode::OK, ""),
-        ("__ingester_id__", "ingester-1", StatusCode::OK, ""),
-        ("__shard_id__", "1", StatusCode::OK, ""),
+        ExternalLabelCase {
+            name: "cluster",
+            value: "prod",
+            status: StatusCode::BAD_REQUEST,
+            body: "unsupported external label: cluster\n",
+        },
+        ExternalLabelCase {
+            name: "__tenant_id__",
+            value: TENANT,
+            status: StatusCode::BAD_REQUEST,
+            body: "unsupported external label: __tenant_id__\n",
+        },
+        ExternalLabelCase {
+            name: "__compactor_shard_id__",
+            value: "0_of_4",
+            status: StatusCode::BAD_REQUEST,
+            body: "invalid __compactor_shard_id__ external label: \"0_of_4\"\n",
+        },
+        ExternalLabelCase {
+            name: "__compactor_shard_id__",
+            value: "5_of_4",
+            status: StatusCode::BAD_REQUEST,
+            body: "invalid __compactor_shard_id__ external label: \"5_of_4\"\n",
+        },
+        ExternalLabelCase {
+            name: "__compactor_shard_id__",
+            value: "+1_of_4",
+            status: StatusCode::BAD_REQUEST,
+            body: "invalid __compactor_shard_id__ external label: \"+1_of_4\"\n",
+        },
+        ExternalLabelCase {
+            name: "__compactor_shard_id__",
+            value: "1-of-4",
+            status: StatusCode::BAD_REQUEST,
+            body: "invalid __compactor_shard_id__ external label: \"1-of-4\"\n",
+        },
+        ExternalLabelCase {
+            name: "__compactor_shard_id__",
+            value: "4_of_4",
+            status: StatusCode::OK,
+            body: "",
+        },
+        ExternalLabelCase {
+            name: "__compactor_shard_id__",
+            value: "",
+            status: StatusCode::OK,
+            body: "",
+        },
+        ExternalLabelCase {
+            name: "__ingester_id__",
+            value: "ingester-1",
+            status: StatusCode::OK,
+            body: "",
+        },
+        ExternalLabelCase {
+            name: "__shard_id__",
+            value: "1",
+            status: StatusCode::OK,
+            body: "",
+        },
     ];
 
-    for (name, value, status, body) in cases {
+    for case in cases {
         let krabka = Krabka::start().await?;
         let mut block = UploadBlock::fixture();
-        block.labels.insert(name.to_owned(), value.to_owned());
+        block
+            .labels
+            .insert(case.name.to_owned(), case.value.to_owned());
 
         let response = krabka
             .post(
@@ -618,8 +803,10 @@ async fn start_accepts_only_the_external_labels_that_mimir_accepts() -> TestResu
             .await?;
 
         check!(
-            response == (status, body.to_owned()),
-            "label: {name}={value:?}"
+            response.status == case.status && response.body == case.body,
+            "label: {}={:?}",
+            case.name,
+            case.value
         );
     }
     Ok(())
@@ -654,24 +841,9 @@ impl std::fmt::Display for RangeFailingStore {
     }
 }
 
-#[async_trait]
-impl ObjectStore for RangeFailingStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        options: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
+krabka_blockstore::delegate_object_store! {
+    RangeFailingStore => inner;
+    forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
 
     async fn get_opts(
         &self,
@@ -686,30 +858,36 @@ impl ObjectStore for RangeFailingStore {
         }
         self.inner.get_opts(location, options).await
     }
+}
 
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
+// Starts the fixture upload and sends every file, without finishing it.
+async fn start_and_upload_files(krabka: &Krabka, block: &UploadBlock) -> TestResult {
+    let response = krabka
+        .post(
+            krabka.upload_url(FIXTURE_ULID, "start"),
+            block.meta(FIXTURE_ULID),
+        )
+        .await?;
+    assert!(
+        response.status == StatusCode::OK,
+        "start: {}",
+        response.body
+    );
+    for file in &block.uploaded {
+        let url = format!(
+            "{}?path={}",
+            krabka.upload_url(FIXTURE_ULID, "files"),
+            encode(&file.path)
+        );
+        let response = krabka.post(url, file.bytes.clone()).await?;
+        assert!(
+            response.status == StatusCode::OK,
+            "file {}: {}",
+            file.path,
+            response.body
+        );
     }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -717,41 +895,30 @@ async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> Te
     let store = Arc::new(RangeFailingStore::default());
     let krabka = Krabka::start_with(store.clone()).await?;
     let block = UploadBlock::fixture();
-    let (status, body) = krabka
-        .post(
-            krabka.upload_url(FIXTURE_ULID, "start"),
-            block.meta(FIXTURE_ULID),
-        )
-        .await?;
-    assert!(status == StatusCode::OK, "start: {body}");
-    for (path, bytes) in &block.uploaded {
-        let url = format!(
-            "{}?path={}",
-            krabka.upload_url(FIXTURE_ULID, "files"),
-            encode(path)
-        );
-        let (status, body) = krabka.post(url, bytes.clone()).await?;
-        assert!(status == StatusCode::OK, "file {path}: {body}");
-    }
+    start_and_upload_files(&krabka, &block).await?;
     store.fail_ranges.store(true, Ordering::SeqCst);
 
-    let (failed_status, _) = krabka
+    let failed_response = krabka
         .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
         .await?;
     let during = krabka
         .get_json(&krabka.upload_url(FIXTURE_ULID, "check"), &[])
         .await?;
     store.fail_ranges.store(false, Ordering::SeqCst);
-    let (retry_status, retry_body) = krabka
+    let retry_response = krabka
         .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
         .await?;
     let after = krabka
         .get_json(&krabka.upload_url(FIXTURE_ULID, "check"), &[])
         .await?;
 
-    check!(failed_status == StatusCode::INTERNAL_SERVER_ERROR);
+    check!(failed_response.status == StatusCode::INTERNAL_SERVER_ERROR);
     check!(during == json!({"result": "validating"}));
-    check!(retry_status == StatusCode::OK, "retry: {retry_body}");
+    check!(
+        retry_response.status == StatusCode::OK,
+        "retry: {}",
+        retry_response.body
+    );
     check!(after == json!({"result": "complete"}));
     check!(all_imported_samples(&krabka).await? == expected_series());
     Ok(())
@@ -762,61 +929,70 @@ async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResu
     // The write where the process stops, and whether the samples are live
     // after the stop.
     let cases = [
-        ("/float.index", 1, false),
-        ("/native-histograms.index", 1, false),
-        ("/_published", 1, false),
-        ("/by-sha256/", 2, true),
+        CrashPointCase {
+            key_part: "/float.index",
+            occurrence: 1,
+            live: false,
+        },
+        CrashPointCase {
+            key_part: "/native-histograms.index",
+            occurrence: 1,
+            live: false,
+        },
+        CrashPointCase {
+            key_part: "/_published",
+            occurrence: 1,
+            live: false,
+        },
+        CrashPointCase {
+            key_part: "/by-sha256/",
+            occurrence: 2,
+            live: true,
+        },
     ];
 
-    for (key_part, occurrence, live) in cases {
+    for case in cases {
         let store = Arc::new(CrashingStore::default());
         let krabka = Krabka::start_with(store.clone()).await?;
         let block = UploadBlock::fixture();
-        let (status, body) = krabka
-            .post(
-                krabka.upload_url(FIXTURE_ULID, "start"),
-                block.meta(FIXTURE_ULID),
-            )
-            .await?;
-        assert!(status == StatusCode::OK, "start: {body}");
-        for (path, bytes) in &block.uploaded {
-            let url = format!(
-                "{}?path={}",
-                krabka.upload_url(FIXTURE_ULID, "files"),
-                encode(path)
-            );
-            let (status, body) = krabka.post(url, bytes.clone()).await?;
-            assert!(status == StatusCode::OK, "file {path}: {body}");
-        }
+        start_and_upload_files(&krabka, &block).await?;
         store.crash_at(Some(CrashPoint {
-            key_part: key_part.to_owned(),
-            occurrence,
+            key_part: case.key_part.to_owned(),
+            occurrence: case.occurrence,
         }));
 
-        let (stopped_status, _) = krabka
+        let stopped_response = krabka
             .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
             .await?;
         let during = all_imported_samples(&krabka).await?;
         store.crash_at(None);
-        let (retry_status, retry_body) = krabka
+        let retry_response = krabka
             .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
             .await?;
         let after = krabka
             .get_json(&krabka.upload_url(FIXTURE_ULID, "check"), &[])
             .await?;
 
-        let case = format!("{key_part} #{occurrence}");
+        let case_name = format!("{} #{}", case.key_part, case.occurrence);
         check!(
-            stopped_status == StatusCode::INTERNAL_SERVER_ERROR,
-            "case: {case}"
+            stopped_response.status == StatusCode::INTERNAL_SERVER_ERROR,
+            "case: {case_name}"
         );
-        let expected = if live { expected_series() } else { Vec::new() };
-        check!(during == expected, "case: {case}");
-        check!(retry_status == StatusCode::OK, "case: {case}: {retry_body}");
-        check!(after == json!({"result": "complete"}), "case: {case}");
+        let expected = if case.live {
+            expected_series()
+        } else {
+            Vec::new()
+        };
+        check!(during == expected, "case: {case_name}");
+        check!(
+            retry_response.status == StatusCode::OK,
+            "case: {case_name}: {}",
+            retry_response.body
+        );
+        check!(after == json!({"result": "complete"}), "case: {case_name}");
         check!(
             all_imported_samples(&krabka).await? == expected_series(),
-            "case: {case}"
+            "case: {case_name}"
         );
     }
     Ok(())
@@ -825,17 +1001,10 @@ async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResu
 async fn start_prometheus(
     files: &FixtureFiles,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    // //bazel/defs.bzl sets this from //bazel/images/images.bzl, the map that
-    // decides what `docker load` tags.
-    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG").expect(
-        "KRABKA_PROMETHEUS_IMAGE_TAG is unset. This suite runs under `bazel test \
-         --config=docker`, which loads the digest-pinned image and sets this. To run it under \
-         cargo, set it to that image's tag in //bazel/images/images.bzl.",
-    );
     let block = format!("/prometheus/{FIXTURE_ULID}");
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/prom/prometheus".to_owned(), tag)
+        pinned_prometheus_image::pinned_prometheus_image()
             .with_exposed_port(PROMETHEUS_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",
@@ -861,7 +1030,24 @@ async fn start_prometheus(
 }
 
 /// One request of the differential: a path and its parameters.
-type Request = (String, Vec<(&'static str, String)>);
+struct Request {
+    path: String,
+    params: Vec<QueryParameter>,
+}
+
+struct CardinalityRequestCase {
+    request: Request,
+    expected: Value,
+}
+
+impl Request {
+    fn new(path: impl Into<String>, params: Vec<QueryParameter>) -> Self {
+        Self {
+            path: path.into(),
+            params,
+        }
+    }
+}
 
 /// The offsets from the block start at which the differential reads
 /// `imported_deleted` near its tombstone, each with a 5m window.
@@ -947,29 +1133,38 @@ fn differential_requests() -> Vec<Request> {
     let mut requests = Vec::new();
     for time in instants {
         for query in instant_queries {
-            requests.push((
-                "/api/v1/query".to_owned(),
-                vec![("query", query.to_owned()), ("time", seconds(time))],
+            requests.push(Request::new(
+                "/api/v1/query",
+                vec![
+                    QueryParameter::new("query", query),
+                    QueryParameter::new("time", seconds(time)),
+                ],
             ));
         }
     }
     for query in range_queries {
-        requests.push((
-            "/api/v1/query_range".to_owned(),
+        requests.push(Request::new(
+            "/api/v1/query_range",
             vec![
-                ("query", query.to_owned()),
-                ("start", seconds(start)),
-                ("end", seconds(end)),
-                ("step", "60".to_owned()),
+                QueryParameter::new("query", query),
+                QueryParameter::new("start", seconds(start)),
+                QueryParameter::new("end", seconds(end)),
+                QueryParameter::new("step", "60"),
             ],
         ));
     }
-    let range = vec![("start", seconds(start)), ("end", seconds(end))];
+    let range = vec![
+        QueryParameter::new("start", seconds(start)),
+        QueryParameter::new("end", seconds(end)),
+    ];
     let mut series = range.clone();
-    series.push(("match[]", r#"{__name__=~"imported_.+"}"#.to_owned()));
-    requests.push(("/api/v1/series".to_owned(), series));
-    requests.push(("/api/v1/labels".to_owned(), range.clone()));
-    requests.push(("/api/v1/label/instance/values".to_owned(), range));
+    series.push(QueryParameter::new(
+        "match[]",
+        r#"{__name__=~"imported_.+"}"#,
+    ));
+    requests.push(Request::new("/api/v1/series", series));
+    requests.push(Request::new("/api/v1/labels", range.clone()));
+    requests.push(Request::new("/api/v1/label/instance/values", range));
     requests.extend(tombstone_requests());
     requests.extend(histogram_requests());
     requests.extend(cardinality_requests());
@@ -978,31 +1173,34 @@ fn differential_requests() -> Vec<Request> {
 }
 
 fn instant(query: &str, time: i64) -> Request {
-    (
-        "/api/v1/query".to_owned(),
-        vec![("query", query.to_owned()), ("time", seconds(time))],
+    Request::new(
+        "/api/v1/query",
+        vec![
+            QueryParameter::new("query", query),
+            QueryParameter::new("time", seconds(time)),
+        ],
     )
 }
 
 fn range_query(query: &str, start: i64, end: i64, step: &str) -> Request {
-    (
-        "/api/v1/query_range".to_owned(),
+    Request::new(
+        "/api/v1/query_range",
         vec![
-            ("query", query.to_owned()),
-            ("start", seconds(start)),
-            ("end", seconds(end)),
-            ("step", step.to_owned()),
+            QueryParameter::new("query", query),
+            QueryParameter::new("start", seconds(start)),
+            QueryParameter::new("end", seconds(end)),
+            QueryParameter::new("step", step),
         ],
     )
 }
 
 fn matched(path: &str, selector: &str, start: i64, end: i64) -> Request {
-    (
-        path.to_owned(),
+    Request::new(
+        path,
         vec![
-            ("match[]", selector.to_owned()),
-            ("start", seconds(start)),
-            ("end", seconds(end)),
+            QueryParameter::new("match[]", selector),
+            QueryParameter::new("start", seconds(start)),
+            QueryParameter::new("end", seconds(end)),
         ],
     )
 }
@@ -1026,18 +1224,48 @@ fn tombstone_requests() -> Vec<Request> {
         }
     }
     // Each window starts after the first chunk ends, at 1749997785000.
-    for (from, to, step) in [(2_100_000, 7_200_000, "60"), (2_100_000, 2_600_000, "15")] {
+    for window in [
+        RangeWindow {
+            from: 2_100_000,
+            to: 7_200_000,
+            step: "60",
+        },
+        RangeWindow {
+            from: 2_100_000,
+            to: 2_600_000,
+            step: "15",
+        },
+    ] {
         for query in &queries[..4] {
-            requests.push(range_query(query, start + from, start + to, step));
+            requests.push(range_query(
+                query,
+                start + window.from,
+                start + window.to,
+                window.step,
+            ));
         }
     }
-    for (from, to) in [(1_900_000, 2_600_000), (2_100_000, 2_600_000)] {
+    for window in [
+        SeriesWindow {
+            from: 1_900_000,
+            to: 2_600_000,
+        },
+        SeriesWindow {
+            from: 2_100_000,
+            to: 2_600_000,
+        },
+    ] {
         for path in [
             "/api/v1/series",
             "/api/v1/labels",
             "/api/v1/label/job/values",
         ] {
-            requests.push(matched(path, "imported_deleted", start + from, start + to));
+            requests.push(matched(
+                path,
+                "imported_deleted",
+                start + window.from,
+                start + window.to,
+            ));
         }
     }
     requests
@@ -1106,9 +1334,12 @@ fn cardinality_requests() -> Vec<Request> {
         start,
         end,
     ));
-    requests.push((
-        "/api/v1/label/__name__/values".to_owned(),
-        vec![("start", seconds(start)), ("end", seconds(end))],
+    requests.push(Request::new(
+        "/api/v1/label/__name__/values",
+        vec![
+            QueryParameter::new("start", seconds(start)),
+            QueryParameter::new("end", seconds(end)),
+        ],
     ));
     requests
 }
@@ -1117,20 +1348,20 @@ fn cardinality_requests() -> Vec<Request> {
 /// serving the block answers both routes empty.
 fn metadata_and_exemplar_requests() -> Vec<Request> {
     let range = [
-        ("start", seconds(FIXTURE_MIN_TIME)),
-        ("end", seconds(FIXTURE_MAX_TIME)),
+        QueryParameter::new("start", seconds(FIXTURE_MIN_TIME)),
+        QueryParameter::new("end", seconds(FIXTURE_MAX_TIME)),
     ];
     let mut requests = vec![
-        ("/api/v1/metadata".to_owned(), Vec::new()),
-        (
-            "/api/v1/metadata".to_owned(),
-            vec![("metric", "imported_gauge".to_owned())],
+        Request::new("/api/v1/metadata", Vec::new()),
+        Request::new(
+            "/api/v1/metadata",
+            vec![QueryParameter::new("metric", "imported_gauge")],
         ),
     ];
     for selector in ["imported_hist", r#"{__name__=~"imported_.+"}"#] {
-        let mut params = vec![("query", selector.to_owned())];
+        let mut params = vec![QueryParameter::new("query", selector)];
         params.extend(range.iter().cloned());
-        requests.push(("/api/v1/query_exemplars".to_owned(), params));
+        requests.push(Request::new("/api/v1/query_exemplars", params));
     }
     requests
 }
@@ -1142,7 +1373,9 @@ async fn differential_mismatches(
     krabka: &Krabka,
 ) -> TestResult<Vec<String>> {
     let mut mismatches = Vec::new();
-    for (path, params) in differential_requests() {
+    for request in differential_requests() {
+        let path = request.path;
+        let params = request.params;
         let upstream = krabka
             .get_json(&format!("{prometheus_base}{path}"), &params)
             .await?;
@@ -1190,7 +1423,9 @@ async fn every_differential_request_succeeds_on_the_imported_block() -> TestResu
     krabka.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
 
     let mut failures = Vec::new();
-    for (path, params) in differential_requests() {
+    for request in differential_requests() {
+        let path = request.path;
+        let params = request.params;
         let response = krabka
             .get_json(&format!("{}{path}", krabka.base), &params)
             .await?;
@@ -1212,7 +1447,9 @@ async fn an_imported_block_has_no_metadata_and_no_exemplars() -> TestResult {
     let krabka = Krabka::start().await?;
     krabka.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
 
-    for (path, params) in metadata_and_exemplar_requests() {
+    for request in metadata_and_exemplar_requests() {
+        let path = request.path;
+        let params = request.params;
         let response = krabka
             .get_json(&format!("{}{path}", krabka.base), &params)
             .await?;
@@ -1229,18 +1466,17 @@ async fn an_imported_block_has_no_metadata_and_no_exemplars() -> TestResult {
 
 /// The samples of `imported_deleted` that the Prometheus TSDB library reads,
 /// in the left-open window `(time - 5m, time]` of a range selector.
-fn expected_deleted_window(time: i64) -> Vec<(i64, u64)> {
-    let deleted = BTreeMap::from([
-        ("__name__".to_owned(), "imported_deleted".to_owned()),
-        ("job".to_owned(), "fixture".to_owned()),
-    ]);
+fn expected_deleted_window(time: i64) -> Vec<FloatBitsSample> {
+    let mut deleted = BTreeMap::new();
+    deleted.insert("__name__".to_owned(), "imported_deleted".to_owned());
+    deleted.insert("job".to_owned(), "fixture".to_owned());
     expected_series()
         .into_iter()
-        .find(|(labels, _, _)| *labels == deleted)
+        .find(|series| series.labels == deleted)
         .expect("the fixture holds imported_deleted")
-        .1
+        .floats
         .into_iter()
-        .filter(|(t, _)| *t > time - 300_000 && *t <= time)
+        .filter(|sample| sample.timestamp_ms > time - 300_000 && sample.timestamp_ms <= time)
         .collect()
 }
 
@@ -1262,15 +1498,15 @@ async fn the_tombstoned_series_matches_prometheus_where_prometheus_panics() -> T
             .get_json(
                 &format!("{}/api/v1/query", krabka.base),
                 &[
-                    ("query", "imported_deleted[5m]".to_owned()),
-                    ("time", seconds(time)),
+                    QueryParameter::new("query", "imported_deleted[5m]"),
+                    QueryParameter::new("time", seconds(time)),
                 ],
             )
             .await?;
         let expected = expected_deleted_window(time);
-        let actual: Vec<(i64, u64)> = matrix_series(&response)
+        let actual: Vec<FloatBitsSample> = matrix_series(&response)
             .into_iter()
-            .flat_map(|(_, floats, _)| floats)
+            .flat_map(|series| series.floats)
             .collect();
 
         check!(actual == expected, "offset {offset}");
@@ -1307,12 +1543,11 @@ async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> Te
             "min_bucket_count": buckets, "max_bucket_count": buckets,
         })
     };
-    let selector = vec![("selector", r#"{job="fixture"}"#.to_owned())];
+    let selector = vec![QueryParameter::new("selector", r#"{job="fixture"}"#)];
     let cases = [
-        (
-            "/api/v1/cardinality/label_names",
-            vec![],
-            json!({
+        CardinalityRequestCase {
+            request: Request::new("/api/v1/cardinality/label_names", Vec::new()),
+            expected: json!({
                 "label_values_count_total": 9,
                 "label_names_count": 3,
                 "cardinality": [
@@ -1321,14 +1556,16 @@ async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> Te
                     {"label_name": "job", "label_values_count": 1},
                 ],
             }),
-        ),
-        (
-            "/api/v1/cardinality/label_values",
-            vec![
-                ("label_names[]", "instance".to_owned()),
-                ("label_names[]", "job".to_owned()),
-            ],
-            json!({
+        },
+        CardinalityRequestCase {
+            request: Request::new(
+                "/api/v1/cardinality/label_values",
+                vec![
+                    QueryParameter::new("label_names[]", "instance"),
+                    QueryParameter::new("label_names[]", "job"),
+                ],
+            ),
+            expected: json!({
                 "series_count_total": 7,
                 "labels": [
                     {
@@ -1348,11 +1585,10 @@ async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> Te
                     },
                 ],
             }),
-        ),
-        (
-            "/api/v1/cardinality/active_series",
-            selector.clone(),
-            json!({"data": [
+        },
+        CardinalityRequestCase {
+            request: Request::new("/api/v1/cardinality/active_series", selector.clone()),
+            expected: json!({"data": [
                 with_instance("imported_counter_total", "i1"),
                 only_job("imported_deleted"),
                 only_job("imported_float_hist"),
@@ -1361,27 +1597,26 @@ async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> Te
                 only_job("imported_hist"),
                 only_job("imported_nhcb"),
             ]}),
-        ),
-        (
-            "/api/v1/cardinality/active_native_histogram_metrics",
-            selector,
+        },
+        CardinalityRequestCase {
+            request: Request::new(
+                "/api/v1/cardinality/active_native_histogram_metrics",
+                selector,
+            ),
             // The buckets of the last sample of each series: two positive,
             // four positive and two negative, and four custom buckets.
-            json!({"data": [
+            expected: json!({"data": [
                 histogram_metric("imported_float_hist", 2),
                 histogram_metric("imported_hist", 6),
                 histogram_metric("imported_nhcb", 4),
             ]}),
-        ),
+        },
     ];
-    let recent = Krabka::start().await?;
-    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
-    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
-    reaching
-        .upload(FIXTURE_ULID, &UploadBlock::fixture())
-        .await?;
+    let LookbackPair { recent, reaching } = LookbackPair::with_fixture_uploaded().await?;
 
-    for (path, params, expected) in cases {
+    for case in cases {
+        let path = case.request.path;
+        let params = case.request.params;
         let outside = recent
             .get_json(&format!("{}{path}", recent.base), &params)
             .await?;
@@ -1389,8 +1624,8 @@ async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> Te
             .get_json(&format!("{}{path}", reaching.base), &params)
             .await?;
 
-        check!(outside == empty_cardinality(path), "{path}");
-        check!(inside == expected, "{path}");
+        check!(outside == empty_cardinality(&path), "{path}");
+        check!(inside == case.expected, "{path}");
     }
     Ok(())
 }
@@ -1461,12 +1696,7 @@ async fn tsdb_status_counts_the_imported_block_inside_the_lookback() -> TestResu
             stat("instance=zürich", 1),
         ],
     });
-    let recent = Krabka::start().await?;
-    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
-    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
-    reaching
-        .upload(FIXTURE_ULID, &UploadBlock::fixture())
-        .await?;
+    let LookbackPair { recent, reaching } = LookbackPair::with_fixture_uploaded().await?;
 
     check!(tsdb_status_lists(&recent).await? == empty);
     check!(tsdb_status_lists(&reaching).await? == counted);

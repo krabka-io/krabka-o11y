@@ -1,23 +1,41 @@
 use krabka_metrics::wire::pb;
 use serde::Deserialize;
 
-use super::{SAMPLES_PER_BATCH, TestResult, remote_write_labels};
+use super::{FixtureLabel, SAMPLES_PER_BATCH, TestResult, remote_write_labels};
 
 pub const END_MS: i64 = 1_750_000_000_000;
 const START_MS: i64 = END_MS - 80 * 60 * 1_000;
 const LAST_MS: i64 = END_MS + 10 * 60 * 1_000;
 
+struct BoundFactor {
+    bound: &'static str,
+    factor: f64,
+}
+
+struct MetricFactor {
+    metric: &'static str,
+    factor: f64,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct FixtureLabelKey {
+    name: String,
+    value: String,
+}
+
 fn series(
     metric: &str,
-    labels: &[(&str, &str)],
+    labels: &[FixtureLabel<'_>],
     value: impl Fn(i32) -> Option<f64>,
 ) -> pb::v1::TimeSeries {
     pb::v1::TimeSeries {
-        labels: remote_write_labels(metric, labels),
+        labels: remote_write_labels(metric, labels.iter().copied()),
         samples: (START_MS..=LAST_MS)
             .step_by(5_000)
             .enumerate()
-            .filter_map(|(tick, timestamp)| {
+            .filter_map(|entry| {
+                let tick = entry.0;
+                let timestamp = entry.1;
                 value(i32::try_from(tick).expect("fixture tick fits i32"))
                     .map(|value| pb::v1::Sample { value, timestamp })
             })
@@ -30,17 +48,38 @@ pub fn batches() -> Vec<Vec<u8>> {
     let mut timeseries = Vec::new();
     for instance in 0..3 {
         let address = format!("demo.promlabs.com:{}", 10_000 + instance);
-        let labels = [("job", "demo"), ("instance", address.as_str())];
+        let labels = [
+            FixtureLabel {
+                name: "job",
+                value: "demo",
+            },
+            FixtureLabel {
+                name: "instance",
+                value: address.as_str(),
+            },
+        ];
         let multiplier = f64::from(instance + 1);
-        for (kind, base) in [
-            ("free", 1_000_000.0),
-            ("used", 3_000_000.0),
-            ("cached", 500_000.0),
+        for metric_factor in [
+            MetricFactor {
+                metric: "free",
+                factor: 1_000_000.0,
+            },
+            MetricFactor {
+                metric: "used",
+                factor: 3_000_000.0,
+            },
+            MetricFactor {
+                metric: "cached",
+                factor: 500_000.0,
+            },
         ] {
             let mut labels = labels.to_vec();
-            labels.push(("type", kind));
+            labels.push(FixtureLabel {
+                name: "type",
+                value: metric_factor.metric,
+            });
             timeseries.push(series("demo_memory_usage_bytes", &labels, |tick| {
-                Some(base * multiplier + f64::from(tick % 37) * 1_024.0)
+                Some(metric_factor.factor * multiplier + f64::from(tick % 37) * 1_024.0)
             }));
         }
         timeseries.push(series("demo_num_cpus", &labels, |_| Some(2.0 * multiplier)));
@@ -65,21 +104,47 @@ pub fn batches() -> Vec<Vec<u8>> {
                 _ => None,
             }
         }));
-        for (bound, factor) in [("0.1", 1.0), ("0.5", 2.0), ("1", 3.0), ("+Inf", 4.0)] {
+        for bucket in [
+            BoundFactor {
+                bound: "0.1",
+                factor: 1.0,
+            },
+            BoundFactor {
+                bound: "0.5",
+                factor: 2.0,
+            },
+            BoundFactor {
+                bound: "1",
+                factor: 3.0,
+            },
+            BoundFactor {
+                bound: "+Inf",
+                factor: 4.0,
+            },
+        ] {
             let mut labels = labels.to_vec();
-            labels.push(("le", bound));
+            labels.push(FixtureLabel {
+                name: "le",
+                value: bucket.bound,
+            });
             timeseries.push(series(
                 "demo_api_request_duration_seconds_bucket",
                 &labels,
-                |tick| Some(f64::from(tick % 120) * factor * multiplier),
+                |tick| Some(f64::from(tick % 120) * bucket.factor * multiplier),
             ));
         }
-        for (metric, factor) in [
-            ("demo_api_request_duration_seconds_sum", 1.75),
-            ("demo_api_request_duration_seconds_count", 4.0),
+        for metric in [
+            MetricFactor {
+                metric: "demo_api_request_duration_seconds_sum",
+                factor: 1.75,
+            },
+            MetricFactor {
+                metric: "demo_api_request_duration_seconds_count",
+                factor: 4.0,
+            },
         ] {
-            timeseries.push(series(metric, &labels, |tick| {
-                Some(f64::from(tick % 120) * factor * multiplier)
+            timeseries.push(series(metric.metric, &labels, |tick| {
+                Some(f64::from(tick % 120) * metric.factor * multiplier)
             }));
         }
     }
@@ -89,12 +154,18 @@ pub fn batches() -> Vec<Vec<u8>> {
             labels: series
                 .labels
                 .into_iter()
-                .map(|label| (label.name, label.value))
+                .map(|label| super::promql_corpus::CorpusLabel {
+                    name: label.name,
+                    value: label.value,
+                })
                 .collect(),
             floats: series
                 .samples
                 .into_iter()
-                .map(|sample| (sample.timestamp, sample.value))
+                .map(|sample| super::promql_corpus::CorpusFloatSample {
+                    timestamp_ms: sample.timestamp,
+                    value: sample.value,
+                })
                 .collect(),
             histograms: Vec::new(),
         })
@@ -202,7 +273,10 @@ mod tests {
             let key = part
                 .labels
                 .iter()
-                .map(|label| (label.name.clone(), label.value.clone()))
+                .map(|label| FixtureLabelKey {
+                    name: label.name.clone(),
+                    value: label.value.clone(),
+                })
                 .collect::<Vec<_>>();
             merged
                 .entry(key)

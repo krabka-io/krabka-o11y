@@ -1,7 +1,8 @@
 use super::{
     Arc, BTreeSet, Expr, FunctionRegistry, LabeledValue, Labels, LogicalPlanBuilder, PromqlError,
-    Result, SAMPLE_TIME_COLUMN, ScalarMathOp, ScalarMathPlan, VALUE_COLUMN, build_leaf_batch, col,
-    is_metadata_label, leaf_scan, leaf_schema, lit, prom_session_context,
+    Result, SAMPLE_TIME_COLUMN, ScalarMathOp, ScalarMathPlan, VALUE_COLUMN, build_leaf_batch,
+    build_leaf_batch::ScalarMathSampleRow, col, is_metadata_label, leaf_scan, leaf_schema, lit,
+    prom_session_context,
 };
 
 /// Builds the leaf table and projection that evaluates `op([bounds...,] value)`.
@@ -24,16 +25,20 @@ pub async fn plan_scalar_math(
     // label columns. The series fingerprint is recomputed over the projected
     // label set so it matches the output exactly.
     let mut label_names: BTreeSet<String> = BTreeSet::new();
-    let mut rows: Vec<(Labels, i64, f64)> = Vec::with_capacity(samples.len());
+    let mut rows = Vec::with_capacity(samples.len());
     for sample in samples {
         let mut labels = Labels::new();
-        for (name, value) in sample.labels.iter() {
-            if !is_metadata_label(name) {
-                label_names.insert(name.clone());
-                labels.insert(name, value);
+        for pair in sample.labels.iter() {
+            if !is_metadata_label(pair.name) {
+                label_names.insert(pair.name.clone());
+                labels.insert(pair.name, pair.value);
             }
         }
-        rows.push((labels, sample.ts_ms, sample.value));
+        rows.push(ScalarMathSampleRow {
+            labels,
+            timestamp_ms: sample.ts_ms,
+            value: sample.value,
+        });
     }
     let label_names: Vec<String> = label_names.into_iter().collect();
 

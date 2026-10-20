@@ -1,8 +1,8 @@
 use super::{
     Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, Principal, ProfileStore,
-    QuerierState, Query, RenderQuery, Response, authorize_tenant, flamebearer_json, flamegraph_dot,
-    parse_render_query, parse_render_time_param, profile_error_response, tenant_error_response,
-    tenant_from_headers, unix_now_ms,
+    QuerierState, Query, RenderQuery, Response, authorized_http_tenant, flamebearer_json,
+    flamegraph_dot, parse_render_query, parse_render_time_param, profile_error_response,
+    render_params::ParsedRenderQuery, unix_now_ms,
 };
 
 pub(crate) async fn render_inner<S>(
@@ -14,14 +14,14 @@ pub(crate) async fn render_inner<S>(
 where
     S: ProfileStore,
 {
-    let tenant = match tenant_from_headers(&headers, &state.tenant_policy) {
+    let tenant = match authorized_http_tenant(&state, &principal, &headers) {
         Ok(tenant) => tenant,
-        Err(error) => return tenant_error_response(&error),
+        Err(refused) => return *refused,
     };
-    if let Err(denied) = authorize_tenant(&principal, &tenant) {
-        return denied.into_response();
-    }
-    let (profile_type, selector) = match parse_render_query(&query.query) {
+    let ParsedRenderQuery {
+        profile_type,
+        selector,
+    } = match parse_render_query(&query.query) {
         Ok(parsed) => parsed,
         Err(err) => return profile_error_response(err),
     };
@@ -36,8 +36,8 @@ where
     };
     match state
         .select_merge_stacktraces_grouped(
-            (&tenant, &profile_type, &selector),
-            (start, end),
+            super::QueryTarget::new(&tenant, &profile_type, &selector),
+            super::QueryRange::new(start, end),
             query.max_nodes.unwrap_or(0),
             &query.group_by,
         )
@@ -49,11 +49,10 @@ where
                 .as_deref()
                 .is_some_and(|format| format.eq_ignore_ascii_case("dot")) =>
         {
-            (
-                [(axum::http::header::CONTENT_TYPE, "text/vnd.graphviz")],
-                flamegraph_dot(&flamegraph),
-            )
-                .into_response()
+            Response::builder()
+                .header(axum::http::header::CONTENT_TYPE, "text/vnd.graphviz")
+                .body(axum::body::Body::from(flamegraph_dot(&flamegraph)))
+                .expect("valid flamegraph response")
         }
         Ok(flamegraph) => Json(flamebearer_json(flamegraph, &profile_type)).into_response(),
         Err(err) => profile_error_response(err),

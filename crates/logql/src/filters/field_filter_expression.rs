@@ -1,4 +1,4 @@
-use super::{FieldFilter, FieldFilterLogicOp, Labels};
+use super::{FieldFilter, FieldFilterLogicOp, FieldFilterStep, Labels};
 
 #[derive(Clone, Debug, PartialEq)]
 /// A grouped Boolean expression over extracted-field filters.
@@ -7,7 +7,7 @@ pub enum FieldFilterExpression {
     Group(Box<FieldFilterExpression>),
     Chain {
         first: Box<FieldFilterExpression>,
-        rest: Vec<(FieldFilterLogicOp, FieldFilterExpression)>,
+        rest: Vec<FieldFilterStep<FieldFilterExpression>>,
     },
 }
 
@@ -20,10 +20,10 @@ impl FieldFilterExpression {
             Self::Group(expression) => expression.apply(fields),
             Self::Chain { first, rest } => {
                 let mut result = first.apply(fields);
-                for (op, expression) in rest {
-                    match op {
-                        FieldFilterLogicOp::And => result = result && expression.apply(fields),
-                        FieldFilterLogicOp::Or => result = result || expression.apply(fields),
+                for step in rest {
+                    match step.operation {
+                        FieldFilterLogicOp::And => result = result && step.filter.apply(fields),
+                        FieldFilterLogicOp::Or => result = result || step.filter.apply(fields),
                     }
                 }
                 result

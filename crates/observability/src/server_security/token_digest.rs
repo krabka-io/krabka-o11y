@@ -18,9 +18,10 @@ impl TokenDigest {
             return None;
         }
         let mut digest = [0_u8; 32];
-        for (byte, pair) in digest.iter_mut().zip(hex.as_chunks::<2>().0.iter()) {
-            *byte =
-                (Self::lowercase_hex_value(pair[0])? << 4) | Self::lowercase_hex_value(pair[1])?;
+        let pairs = hex.as_chunks::<2>().0;
+        for index in 0..digest.len() {
+            digest[index] = (Self::lowercase_hex_value(pairs[index][0])? << 4)
+                | Self::lowercase_hex_value(pairs[index][1])?;
         }
         Some(Self(digest))
     }

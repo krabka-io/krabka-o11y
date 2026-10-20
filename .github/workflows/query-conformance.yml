@@ -1,8 +1,16 @@
 name: query conformance
 
 on:
-  schedule:
-    - cron: "30 3 * * *"
+  workflow_call:
+    inputs:
+      ref:
+        description: Source tag or commit to test
+        type: string
+        required: true
+      strict:
+        description: Require every suite to pass
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       strict:
@@ -81,6 +89,10 @@ jobs:
       KRABKA_GENERATED_NIGHTLY: '1'
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - name: source commit
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
           bazelisk-cache: true
@@ -158,7 +170,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: query-raw-${{ matrix.suite }}-${{ github.sha }}-${{ github.run_attempt }}
+          name: query-raw-${{ matrix.suite }}-${{ env.SOURCE_SHA }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/query-evidence/${{ matrix.suite }}/
           if-no-files-found: error
 
@@ -170,9 +182,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - name: source commit
+        run: echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
       - uses: actions/download-artifact@v4
         with:
-          pattern: query-raw-*-${{ github.sha }}-${{ github.run_attempt }}
+          pattern: query-raw-*-${{ env.SOURCE_SHA }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/query-evidence
       - name: verify raw artifact hashes
         run: |
@@ -180,11 +196,11 @@ jobs:
           suites=(promql-full-default promql-full-experimental prometheus-http mimir-http
             loki-http tempo-http pyroscope-http metrics-transitions tempo-transitions profile-transitions backup-restore)
           for suite in "${suites[@]}"; do
-            manifest="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}/SHA256SUMS"
+            manifest="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${SOURCE_SHA}-${GITHUB_RUN_ATTEMPT}/SHA256SUMS"
             test -s "${manifest}"
           done
           for suite in "${suites[@]}"; do
-            evidence="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}"
+            evidence="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${SOURCE_SHA}-${GITHUB_RUN_ATTEMPT}"
             (cd "${evidence}" && sha256sum -c SHA256SUMS)
           done
       - name: aggregate all verdicts
@@ -206,6 +222,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: query-language-qualification-${{ github.sha }}-${{ github.run_attempt }}
+          name: query-language-qualification-${{ env.SOURCE_SHA }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/query-language-qualification.json
           if-no-files-found: error

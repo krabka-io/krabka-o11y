@@ -21,7 +21,7 @@ version = "0.4.0"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["The Krabka Authors"]
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -62,6 +62,8 @@ assert2 = "0.4"
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.23"
+bon = "3"
+yare = "3"
 bytes = "1"
 crc32c = "0.6"
 clap = { version = "4", features = ["derive"] }
@@ -86,6 +88,7 @@ futures = "0.3"
 futures-util = { version = "0.3", features = ["sink"] }
 hex = "0.4"
 jfrs = "0.2.5"
+maplit = "1"
 multer = "3"
 # mutants: `#[cfg_attr(test, mutants::skip)]` attribute for cargo-mutants. Used
 # only where `exclude_re` cannot reliably suppress a mutant (struct-field-deletion

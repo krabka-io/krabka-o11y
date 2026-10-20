@@ -26,7 +26,7 @@ use std::{hint::black_box, sync::Arc};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use datafusion::prelude::SessionContext;
 use krabka_blockstore::{
-    BlockKey, LogRow, TimeRange, labels, read_log_block_from_object_store,
+    BlockKey, LabelPair, LogRow, TimeRange, labels, read_log_block_from_object_store,
     register_log_blocks_from_object_store, series_fingerprint, write_log_block_to_object_store,
 };
 use krabka_o11y_benches::Seeded;
@@ -58,7 +58,12 @@ fn log_object_store_scan(criterion: &mut Criterion) {
         );
         let fingerprints = SHARDS
             .iter()
-            .map(|shard| series_fingerprint(&labels([("service", "api"), ("shard", *shard)])))
+            .map(|shard| {
+                series_fingerprint(&labels([
+                    LabelPair::new("service", "api"),
+                    LabelPair::new("shard", *shard),
+                ]))
+            })
             .collect::<Vec<_>>();
         let wanted = fingerprints[0];
         let window_end = rows / WINDOW_DIVISOR;

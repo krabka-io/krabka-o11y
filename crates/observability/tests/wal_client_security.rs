@@ -53,13 +53,13 @@ fn path(dir: &TempDir, name: &str) -> String {
 /// Writes a CA, a `localhost` server certificate that the CA signs, the
 /// server key, and a second CA that signs nothing.
 fn write_certificates(dir: &Path) {
-    let (ca_params, ca_key) = certificate_authority("Krabka test CA");
+    let ca = certificate_authority("Krabka test CA");
     fs::write(
         dir.join("ca.pem"),
-        ca_params.self_signed(&ca_key).expect("sign the CA").pem(),
+        ca.params.self_signed(&ca.key).expect("sign the CA").pem(),
     )
     .expect("write the CA");
-    let issuer = Issuer::new(ca_params, ca_key);
+    let issuer = Issuer::new(ca.params, ca.key);
 
     let server_key = KeyPair::generate().expect("server key");
     let mut server_params =
@@ -71,18 +71,29 @@ fn write_certificates(dir: &Path) {
     fs::write(dir.join("server.pem"), server_cert.pem()).expect("write the certificate");
     fs::write(dir.join("server.key"), server_key.serialize_pem()).expect("write the key");
 
-    let (other_params, other_key) = certificate_authority("Another CA");
+    let other_ca = certificate_authority("Another CA");
     fs::write(
         dir.join("other-ca.pem"),
-        other_params
-            .self_signed(&other_key)
+        other_ca
+            .params
+            .self_signed(&other_ca.key)
             .expect("sign the other CA")
             .pem(),
     )
     .expect("write the other CA");
 }
 
-fn certificate_authority(name: &str) -> (CertificateParams, KeyPair) {
+struct CertificateAuthority {
+    params: CertificateParams,
+    key: KeyPair,
+}
+
+struct SecurityPair {
+    security: Option<ClientSecurity>,
+    wrong: Option<ClientSecurity>,
+}
+
+fn certificate_authority(name: &str) -> CertificateAuthority {
     let key = KeyPair::generate().expect("CA key");
     let mut params = CertificateParams::new(Vec::<String>::new()).expect("CA parameters");
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -91,7 +102,7 @@ fn certificate_authority(name: &str) -> (CertificateParams, KeyPair) {
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::DigitalSignature,
     ];
-    (params, key)
+    CertificateAuthority { params, key }
 }
 
 /// Starts a broker whose only listener speaks `protocol`.
@@ -205,7 +216,10 @@ async fn a_sasl_plain_listener_serves_the_password_file_and_refuses_a_wrong_or_a
             &path(&files, password_file),
         ])
     };
-    let (security, wrong) = (plain("password"), plain("wrong-password"));
+    let security_pair = SecurityPair {
+        security: plain("password"),
+        wrong: plain("wrong-password"),
+    };
 
     let log_dir = tempfile::tempdir().expect("broker log directory");
     let broker = start_broker(log_dir.path(), ListenerProtocol::SaslPlaintext, |config| {
@@ -216,9 +230,13 @@ async fn a_sasl_plain_listener_serves_the_password_file_and_refuses_a_wrong_or_a
     })
     .await;
 
-    let with_policy = with_client_security(ConnectionOptions::default(), security.as_ref());
+    let with_policy = with_client_security(
+        ConnectionOptions::default(),
+        security_pair.security.as_ref(),
+    );
     assert!(metadata_served(&broker, with_policy).await);
-    let with_wrong = with_client_security(ConnectionOptions::default(), wrong.as_ref());
+    let with_wrong =
+        with_client_security(ConnectionOptions::default(), security_pair.wrong.as_ref());
     assert!(!metadata_served(&broker, with_wrong).await);
     assert!(!metadata_served(&broker, ConnectionOptions::default()).await);
     broker.shutdown().await;

@@ -7,6 +7,19 @@ use tokio::sync::oneshot;
 
 use super::*;
 
+struct OneShotChannel<T> {
+    sender: oneshot::Sender<T>,
+    receiver: oneshot::Receiver<T>,
+}
+
+fn one_shot_channel<T>() -> OneShotChannel<T> {
+    let channel = oneshot::channel();
+    OneShotChannel {
+        sender: channel.0,
+        receiver: channel.1,
+    }
+}
+
 struct ClosingConsumer {
     shutdown: Shutdown,
     fail_poll: bool,
@@ -44,8 +57,12 @@ async fn the_role_waits_for_consumer_close_after_shutdown_and_poll_failure() {
     for fail_poll in [false, true] {
         let shutdown = Shutdown::new();
         let readiness = RoleReadiness::new();
-        let (closing, closed) = oneshot::channel();
-        let (release, released) = oneshot::channel();
+        let closing_channel = one_shot_channel();
+        let closing = closing_channel.sender;
+        let closed = closing_channel.receiver;
+        let release_channel = one_shot_channel();
+        let release = release_channel.sender;
+        let released = release_channel.receiver;
         let consumer = ClosingConsumer {
             shutdown: shutdown.clone(),
             fail_poll,

@@ -1,5 +1,38 @@
+use axum::http::StatusCode;
+
 use super::*;
-use crate::{ByteSize, Time, WalLogRecord};
+use crate::{
+    ByteSize, Time, WalLogRecord,
+    service_metrics::{QueryRequest, RequestOutcome},
+};
+
+struct FetchedShardIndexes {
+    shard_range: TimeRange,
+    indexes: krabka_blockstore::LogIndexes,
+}
+
+struct CapturedFrontier {
+    version: Option<u64>,
+    frontier: CompactionFrontier,
+}
+
+struct HotTailFrontierCapture<'a> {
+    hot_tail: &'a HotTailState,
+    version: Option<u64>,
+    frontier: CompactionFrontier,
+}
+
+fn tighten_time_limit(value: &mut Time, candidate: Time) {
+    if candidate > Time::ZERO && (*value == Time::ZERO || candidate < *value) {
+        *value = candidate;
+    }
+}
+
+fn tighten_byte_limit(value: &mut ByteSize, candidate: ByteSize) {
+    if candidate > ByteSize::ZERO && (*value == ByteSize::ZERO || candidate < *value) {
+        *value = candidate;
+    }
+}
 
 struct SnapshotLogHotTail(Vec<Arc<WalLogRecord>>);
 
@@ -21,6 +54,18 @@ impl LogHotTail for SnapshotLogHotTail {
 }
 
 impl QuerierState {
+    fn with_dynamic_indexes(
+        &self,
+        label_index: Arc<LabelIndex>,
+        block_index: Arc<BlockIndex>,
+    ) -> Self {
+        Self {
+            label_index,
+            block_index,
+            ..self.clone()
+        }
+    }
+
     #[must_use]
     pub fn new(root: impl Into<PathBuf>, label_index: LabelIndex, block_index: BlockIndex) -> Self {
         Self {
@@ -68,9 +113,16 @@ impl QuerierState {
     /// Records one querier request outcome, that is the per-route count and
     /// latency, on the shared bundle. It is a no-op when metrics are not
     /// wired, as in test routers.
-    pub(crate) fn record_query(&self, route: &str, ok: bool, start: Instant) {
+    ///
+    /// A 2xx `status` counts as `status="ok"`, anything else as
+    /// `status="error"`.
+    pub(crate) fn record_query(&self, route: &str, status: StatusCode, start: Instant) {
         if let Some(metrics) = &self.metrics {
-            metrics.record_query(route, ok, start.elapsed().as_time());
+            metrics.record_query(QueryRequest {
+                route,
+                outcome: RequestOutcome::from_success_status(status),
+                elapsed: start.elapsed().as_time(),
+            });
         }
     }
 
@@ -129,31 +181,17 @@ impl QuerierState {
                     .all(|limit| limit.shard_aggregations.contains(name))
             });
             for limit in limits {
-                for (value, candidate) in [
-                    (&mut state.limits.max_query_length, limit.max_query_length),
-                    (
-                        &mut state.limits.max_query_lookback,
-                        limit.max_query_lookback,
-                    ),
-                    (&mut state.limits.max_query_range, limit.max_query_range),
-                ] {
-                    if candidate > Time::ZERO && (*value == Time::ZERO || candidate < *value) {
-                        *value = candidate;
-                    }
-                }
-                for (value, candidate) in [
-                    (&mut state.limits.max_query_read, limit.max_query_read),
-                    (
-                        &mut state.limits.max_query_string_bytes,
-                        limit.max_query_string_bytes,
-                    ),
-                ] {
-                    if candidate > ByteSize::ZERO
-                        && (*value == ByteSize::ZERO || candidate < *value)
-                    {
-                        *value = candidate;
-                    }
-                }
+                tighten_time_limit(&mut state.limits.max_query_length, limit.max_query_length);
+                tighten_time_limit(
+                    &mut state.limits.max_query_lookback,
+                    limit.max_query_lookback,
+                );
+                tighten_time_limit(&mut state.limits.max_query_range, limit.max_query_range);
+                tighten_byte_limit(&mut state.limits.max_query_read, limit.max_query_read);
+                tighten_byte_limit(
+                    &mut state.limits.max_query_string_bytes,
+                    limit.max_query_string_bytes,
+                );
                 let candidate = limit.max_entries_limit_per_query;
                 if candidate > 0
                     && (state.limits.max_entries_limit_per_query == 0
@@ -300,38 +338,51 @@ impl QuerierState {
         loop {
             let mut request = self.clone();
             let captured = self.hot_tail.as_ref().map(|hot_tail| {
-                let (version, frontier) = match &hot_tail.frontier {
+                let frontier = match &hot_tail.frontier {
                     CompactionFrontierSource::Shared(shared) => {
-                        let (version, frontier) = shared.snapshot_with_version();
-                        request.dynamic_index_cache =
-                            self.dynamic_index_cache.for_frontier(shared, version);
-                        (Some(version), frontier)
+                        let snapshot = shared.snapshot_with_version();
+                        request.dynamic_index_cache = self
+                            .dynamic_index_cache
+                            .for_frontier(shared, snapshot.version);
+                        CapturedFrontier {
+                            version: Some(snapshot.version),
+                            frontier: snapshot.frontier,
+                        }
                     }
-                    CompactionFrontierSource::Snapshot(frontier) => (None, frontier.clone()),
+                    CompactionFrontierSource::Snapshot(frontier) => CapturedFrontier {
+                        version: None,
+                        frontier: frontier.clone(),
+                    },
                 };
-                (hot_tail, version, frontier)
+                HotTailFrontierCapture {
+                    hot_tail,
+                    version: frontier.version,
+                    frontier: frontier.frontier,
+                }
             });
             let loaded = request.with_loaded_tenant_index(tenant, query_range).await;
-            let records = captured.as_ref().map(|(hot_tail, _, _)| {
+            let records = captured.as_ref().map(|capture| {
                 let range = hot_range.unwrap_or(TimeRange {
                     start_ns: i64::MIN,
                     end_ns: i64::MAX,
                 });
-                hot_tail
+                capture
+                    .hot_tail
                     .source
                     .records_shared_in_range(range.start_ns, range.end_ns)
             });
-            if let Some((hot_tail, Some(version), _)) = &captured
-                && let CompactionFrontierSource::Shared(shared) = &hot_tail.frontier
-                && shared.snapshot_with_version().0 != *version
+            if let Some(capture) = &captured
+                && let Some(version) = capture.version
+                && let CompactionFrontierSource::Shared(shared) = &capture.hot_tail.frontier
+                && shared.snapshot_with_version().version != version
             {
                 continue;
             }
             let mut request = loaded?;
-            if let Some((_, _, frontier)) = captured {
+            if let Some(capture) = captured {
                 request = request.with_hot_tail_frontier(
                     SnapshotLogHotTail(records.expect("hot tail snapshot exists")),
-                    frontier,
+                    capture.frontier,
                 );
             }
             request.dynamic_index = None;
@@ -353,28 +404,24 @@ impl QuerierState {
                 let cache_key = DynamicIndexCacheKey::TenantManifest {
                     tenant: tenant.to_string(),
                 };
-                if let Some((label_index, block_index)) = self.dynamic_index_cache.get(&cache_key) {
-                    let mut state = self.clone();
-                    state.label_index = label_index;
-                    state.block_index = block_index;
-                    return Ok(state);
+                if let Some(indexes) = self.dynamic_index_cache.get(&cache_key) {
+                    return Ok(self.with_dynamic_indexes(indexes.label_index, indexes.block_index));
                 }
-                let (label_index, block_index) =
-                    match read_tenant_log_index_manifest_from_object_store(
-                        store.as_ref(),
-                        prefix,
-                        tenant,
-                    )
-                    .await
-                    {
-                        Ok(indexes) => indexes,
-                        Err(BlockStoreError::ObjectStore(object_store::Error::NotFound {
-                            ..
-                        })) => {
-                            return Ok(self.clone());
-                        }
-                        Err(error) => return Err(error),
-                    };
+                let indexes = match read_tenant_log_index_manifest_from_object_store(
+                    store.as_ref(),
+                    prefix,
+                    tenant,
+                )
+                .await
+                {
+                    Ok(indexes) => indexes,
+                    Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
+                        return Ok(self.clone());
+                    }
+                    Err(error) => return Err(error),
+                };
+                let label_index = indexes.labels;
+                let block_index = indexes.blocks;
                 let label_index = Arc::new(label_index);
                 let block_index = Arc::new(block_index);
                 self.dynamic_index_cache.insert(
@@ -382,10 +429,7 @@ impl QuerierState {
                     Arc::clone(&label_index),
                     Arc::clone(&block_index),
                 );
-                let mut state = self.clone();
-                state.label_index = label_index;
-                state.block_index = block_index;
-                Ok(state)
+                Ok(self.with_dynamic_indexes(label_index, block_index))
             }
             DynamicIndexSource::TenantObjectStoreShards { store, prefix } => {
                 let cache_key = DynamicIndexCacheKey::TenantShards {
@@ -393,24 +437,18 @@ impl QuerierState {
                     start_ns: query_range.start_ns,
                     end_ns: query_range.end_ns,
                 };
-                if let Some((label_index, block_index)) = self.dynamic_index_cache.get(&cache_key) {
-                    let mut state = self.clone();
-                    state.label_index = label_index;
-                    state.block_index = block_index;
-                    return Ok(state);
+                if let Some(indexes) = self.dynamic_index_cache.get(&cache_key) {
+                    return Ok(self.with_dynamic_indexes(indexes.label_index, indexes.block_index));
                 }
-                let (label_index, block_index) = self
+                let indexes = self
                     .cached_tenant_shard_indexes(store.as_ref(), prefix, tenant, query_range)
                     .await?;
                 self.dynamic_index_cache.insert(
                     cache_key,
-                    Arc::clone(&label_index),
-                    Arc::clone(&block_index),
+                    Arc::clone(&indexes.label_index),
+                    Arc::clone(&indexes.block_index),
                 );
-                let mut state = self.clone();
-                state.label_index = label_index;
-                state.block_index = block_index;
-                Ok(state)
+                Ok(self.with_dynamic_indexes(indexes.label_index, indexes.block_index))
             }
         }
     }
@@ -438,16 +476,10 @@ impl QuerierState {
             )
             .await?;
         if shard_ranges.is_empty() {
-            shard_ranges =
-                match read_tenant_log_index_shard_ranges_from_object_store(store, prefix, tenant)
-                    .await
-                {
-                    Ok(shard_ranges) => shard_ranges,
-                    Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
-                        Vec::new()
-                    }
-                    Err(error) => return Err(error),
-                };
+            shard_ranges = read_tenant_log_index_shard_ranges_or_empty_from_object_store(
+                store, prefix, tenant,
+            )
+            .await?;
         }
 
         self.dynamic_index_cache
@@ -461,11 +493,11 @@ impl QuerierState {
         prefix: &ObjectPath,
         tenant: &str,
         query_range: TimeRange,
-    ) -> Result<(Arc<LabelIndex>, Arc<BlockIndex>), BlockStoreError> {
+    ) -> Result<TenantIndexPair, BlockStoreError> {
         let shard_ranges = self
             .cached_tenant_shard_ranges(store, prefix, tenant)
             .await?;
-        let mut indexes = Vec::new();
+        let mut indexes: Vec<TenantIndexPair> = Vec::new();
         let mut misses = Vec::new();
 
         for shard_range in shard_ranges
@@ -477,8 +509,8 @@ impl QuerierState {
                 start_ns: shard_range.start_ns,
                 end_ns: shard_range.end_ns,
             };
-            if let Some(index) = self.dynamic_index_cache.get_shard_index(&cache_key) {
-                indexes.push(index);
+            if let Some(indexes_for_shard) = self.dynamic_index_cache.get_shard_index(&cache_key) {
+                indexes.push(indexes_for_shard);
             } else {
                 misses.push(shard_range);
             }
@@ -486,33 +518,39 @@ impl QuerierState {
 
         let fetched = futures_util::stream::iter(misses)
             .map(|shard_range| async move {
-                let (label_index, block_index) = read_tenant_log_index_shard_from_object_store(
+                let indexes = read_tenant_log_index_shard_from_object_store(
                     store,
                     prefix,
                     tenant,
                     shard_range,
                 )
                 .await?;
-                Ok::<_, BlockStoreError>((shard_range, label_index, block_index))
+                Ok::<_, BlockStoreError>(FetchedShardIndexes {
+                    shard_range,
+                    indexes,
+                })
             })
             .buffer_unordered(self.dynamic_index_cache.shard_fetch_concurrency.get())
             .try_collect::<Vec<_>>()
             .await?;
 
-        for (shard_range, label_index, block_index) in fetched {
+        for fetched in fetched {
             let cache_key = DynamicShardIndexCacheKey {
                 tenant: tenant.to_string(),
-                start_ns: shard_range.start_ns,
-                end_ns: shard_range.end_ns,
+                start_ns: fetched.shard_range.start_ns,
+                end_ns: fetched.shard_range.end_ns,
             };
-            let label_index = Arc::new(label_index);
-            let block_index = Arc::new(block_index);
+            let label_index = Arc::new(fetched.indexes.labels);
+            let block_index = Arc::new(fetched.indexes.blocks);
             self.dynamic_index_cache.insert_shard_index(
                 cache_key,
                 Arc::clone(&label_index),
                 Arc::clone(&block_index),
             );
-            indexes.push((label_index, block_index));
+            indexes.push(TenantIndexPair {
+                label_index,
+                block_index,
+            });
         }
 
         // Shard reads filter both indexes to this tenant before caching them.
@@ -520,16 +558,15 @@ impl QuerierState {
         if indexes.len() == 1 {
             return Ok(indexes.pop().expect("one tenant shard exists"));
         }
-        let (labels, blocks) = merge_tenant_shard_indexes(tenant, indexes);
-        Ok((Arc::new(labels), Arc::new(blocks)))
+        Ok(merge_tenant_shard_indexes(tenant, indexes))
     }
 
     /// # Errors
     /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
     pub fn from_manifest(root: impl Into<PathBuf>) -> Result<Self, BlockStoreError> {
         let root = root.into();
-        let (label_index, block_index) = read_log_index_manifest(&root)?;
-        Ok(Self::new(root, label_index, block_index))
+        let indexes = read_log_index_manifest(&root)?;
+        Ok(Self::new(root, indexes.labels, indexes.blocks))
     }
 
     /// # Errors
@@ -541,9 +578,9 @@ impl QuerierState {
         tenant: &str,
     ) -> Result<Self, BlockStoreError> {
         let root = root.into();
-        let (label_index, block_index) =
+        let indexes =
             read_tenant_log_index_manifest_from_object_store(store, prefix, tenant).await?;
-        Ok(Self::new(root, label_index, block_index))
+        Ok(Self::new(root, indexes.labels, indexes.blocks))
     }
 
     /// # Errors
@@ -556,10 +593,10 @@ impl QuerierState {
         shard_range: TimeRange,
     ) -> Result<Self, BlockStoreError> {
         let root = root.into();
-        let (label_index, block_index) =
+        let indexes =
             read_tenant_log_index_shard_from_object_store(store, prefix, tenant, shard_range)
                 .await?;
-        Ok(Self::new(root, label_index, block_index))
+        Ok(Self::new(root, indexes.labels, indexes.blocks))
     }
 
     /// # Errors
@@ -572,10 +609,10 @@ impl QuerierState {
         query_range: TimeRange,
     ) -> Result<Self, BlockStoreError> {
         let root = root.into();
-        let (label_index, block_index) =
+        let indexes =
             read_tenant_log_index_shards_from_object_store(store, prefix, tenant, query_range)
                 .await?;
-        Ok(Self::new(root, label_index, block_index))
+        Ok(Self::new(root, indexes.labels, indexes.blocks))
     }
 }
 

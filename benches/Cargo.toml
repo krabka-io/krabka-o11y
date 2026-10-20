@@ -38,7 +38,7 @@ edition = "2024"
 # The workspace MSRV, repeated. Cargo's resolver reads it, and with it the
 # lockfile beside this file picks the same dependency versions as //Cargo.lock
 # rather than the newest ones the registry offers.
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 license = "Apache-2.0"
 authors = ["The Krabka Authors"]
 
@@ -80,6 +80,13 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
+# HTTP ingest profiling stays in this workspace so allocation instrumentation
+# and OTLP fixture dependencies do not reach production or unit-test binaries.
+allocation-counter = "0.8.1"
+async-trait = "0.1"
+bytes = "1"
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "metrics"] }
+prost = "0.14"
 assert2 = "0.4"
 # `async_tokio` so a bench body can be an `async` block driven by a runtime
 # Criterion enters once per iteration rather than by a hand-rolled `block_on`
@@ -99,6 +106,10 @@ debug = false
 # Criterion group inside it. That is what makes a benchmark id begin with its
 # target's name, which is how //tools/bench-ratchet.py's `--bench` narrows a
 # partial run to the ids that run belongs to.
+[[bench]]
+name = "template_regex"
+harness = false
+
 [[bench]]
 name = "blockstore_write"
 harness = false
@@ -145,6 +156,10 @@ harness = false
 
 [[bench]]
 name = "log_stream_query"
+harness = false
+
+[[bench]]
+name = "log_metric_windows"
 harness = false
 
 [[bench]]

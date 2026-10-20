@@ -4,9 +4,12 @@
 //! every sidecar is absent before its block is deleted. Failures and crashes
 //! preserve completed deletes, and a later sweep safely replays the sequence.
 
-use std::time::Duration;
+use stateright::{Model, Property};
 
-use stateright::{Checker, Model, Property};
+#[path = "support/bounded_model.rs"]
+mod bounded_model;
+
+use bounded_model::{ModelBounds, apply_transition, check_bounded_model};
 
 const MAX_DEPTH: usize = 24;
 const MAX_STATES: usize = 10_000;
@@ -31,7 +34,7 @@ struct DeletionState {
     seen: u8,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Start,
     Delete,
@@ -41,6 +44,64 @@ enum Action {
 
 struct DeletionModel {
     sidecars: usize,
+}
+
+impl DeletionModel {
+    fn transition(&self, state: &mut DeletionState, action: Action) -> bool {
+        match action {
+            Action::Start if matches!(state.phase, Phase::Idle) && state.block => {
+                state.phase = Phase::Sidecar {
+                    sidecar: 0,
+                    failed: false,
+                };
+            }
+            Action::Delete => match state.phase {
+                Phase::Sidecar { sidecar, failed } => {
+                    if !state.sidecars[sidecar] {
+                        state.seen |= SAW_REPLAY;
+                    }
+                    state.sidecars[sidecar] = false;
+                    state.phase = if sidecar + 1 == self.sidecars {
+                        if failed { Phase::Idle } else { Phase::Block }
+                    } else {
+                        Phase::Sidecar {
+                            sidecar: sidecar + 1,
+                            failed,
+                        }
+                    };
+                }
+                Phase::Block => {
+                    state.block = false;
+                    state.phase = Phase::Idle;
+                }
+                Phase::Idle => return false,
+            },
+            Action::Fail => match state.phase {
+                Phase::Sidecar { sidecar, .. } => {
+                    state.seen |= SAW_FAILURE;
+                    state.phase = if sidecar + 1 == self.sidecars {
+                        Phase::Idle
+                    } else {
+                        Phase::Sidecar {
+                            sidecar: sidecar + 1,
+                            failed: true,
+                        }
+                    };
+                }
+                Phase::Block => {
+                    state.seen |= SAW_FAILURE;
+                    state.phase = Phase::Idle;
+                }
+                Phase::Idle => return false,
+            },
+            Action::Crash if !matches!(state.phase, Phase::Idle) => {
+                state.seen |= SAW_CRASH;
+                state.phase = Phase::Idle;
+            }
+            Action::Start | Action::Crash => return false,
+        }
+        true
+    }
 }
 
 impl Model for DeletionModel {
@@ -69,60 +130,7 @@ impl Model for DeletionModel {
     }
 
     fn next_state(&self, last: &Self::State, action: Self::Action) -> Option<Self::State> {
-        let mut state = last.clone();
-        match action {
-            Action::Start if matches!(state.phase, Phase::Idle) && state.block => {
-                state.phase = Phase::Sidecar {
-                    sidecar: 0,
-                    failed: false,
-                };
-            }
-            Action::Delete => match state.phase {
-                Phase::Sidecar { sidecar, failed } => {
-                    if !state.sidecars[sidecar] {
-                        state.seen |= SAW_REPLAY;
-                    }
-                    state.sidecars[sidecar] = false;
-                    state.phase = if sidecar + 1 == self.sidecars {
-                        if failed { Phase::Idle } else { Phase::Block }
-                    } else {
-                        Phase::Sidecar {
-                            sidecar: sidecar + 1,
-                            failed,
-                        }
-                    };
-                }
-                Phase::Block => {
-                    state.block = false;
-                    state.phase = Phase::Idle;
-                }
-                Phase::Idle => return None,
-            },
-            Action::Fail => match state.phase {
-                Phase::Sidecar { sidecar, .. } => {
-                    state.seen |= SAW_FAILURE;
-                    state.phase = if sidecar + 1 == self.sidecars {
-                        Phase::Idle
-                    } else {
-                        Phase::Sidecar {
-                            sidecar: sidecar + 1,
-                            failed: true,
-                        }
-                    };
-                }
-                Phase::Block => {
-                    state.seen |= SAW_FAILURE;
-                    state.phase = Phase::Idle;
-                }
-                Phase::Idle => return None,
-            },
-            Action::Crash if !matches!(state.phase, Phase::Idle) => {
-                state.seen |= SAW_CRASH;
-                state.phase = Phase::Idle;
-            }
-            Action::Start | Action::Crash => return None,
-        }
-        Some(state)
+        apply_transition(last, |state| self.transition(state, action))
     }
 
     fn properties(&self) -> Vec<Property<Self>> {
@@ -148,17 +156,14 @@ impl Model for DeletionModel {
 }
 
 fn check(sidecars: usize, expected_states: usize) {
-    let checker = DeletionModel { sidecars }
-        .checker()
-        .target_max_depth(MAX_DEPTH)
-        .target_state_count(MAX_STATES)
-        .timeout(Duration::from_secs(30))
-        .spawn_bfs()
-        .join();
-    assert2::check!(checker.max_depth() < MAX_DEPTH);
-    assert2::check!(checker.state_count() < MAX_STATES);
-    assert2::check!(checker.unique_state_count() == expected_states);
-    checker.assert_properties();
+    check_bounded_model(
+        DeletionModel { sidecars },
+        &ModelBounds {
+            max_depth: MAX_DEPTH,
+            max_states: MAX_STATES,
+            expected_states,
+        },
+    );
 }
 
 #[test]

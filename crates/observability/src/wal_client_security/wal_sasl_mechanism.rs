@@ -1,22 +1,28 @@
-use super::{SaslMechanism, ValueEnum, fmt};
+use derive_more::Display;
+
+use super::{SaslMechanism, ValueEnum};
 
 /// The SASL mechanism a write-ahead log connection authenticates with, as
 /// Kafka's `sasl.mechanism` names it.
 ///
 /// The flag accepts the names in upper case only, as the Kafka clients do.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Display, Eq, Hash, PartialEq, ValueEnum)]
 pub enum WalSaslMechanism {
     /// SASL/PLAIN, with a user name and a password file.
     #[value(name = "PLAIN")]
+    #[display("PLAIN")]
     Plain,
     /// SASL/SCRAM-SHA-256, with a user name and a password file.
     #[value(name = "SCRAM-SHA-256")]
+    #[display("SCRAM-SHA-256")]
     ScramSha256,
     /// SASL/SCRAM-SHA-512, with a user name and a password file.
     #[value(name = "SCRAM-SHA-512")]
+    #[display("SCRAM-SHA-512")]
     ScramSha512,
     /// SASL/OAUTHBEARER, with a bearer token file.
     #[value(name = "OAUTHBEARER")]
+    #[display("OAUTHBEARER")]
     OAuthBearer,
     /// SASL/GSSAPI (Kerberos). The flag accepts it, and
     /// [`WalClientSecurityArgs::load`](super::WalClientSecurityArgs::load)
@@ -26,6 +32,7 @@ pub enum WalSaslMechanism {
     /// no Krabka deployment asks for Kerberos yet. A clear refusal is better
     /// than a mechanism that nothing tests. `--help` does not list the value.
     #[value(name = "GSSAPI", hide = true)]
+    #[display("GSSAPI")]
     Gssapi,
 }
 
@@ -38,15 +45,5 @@ impl From<WalSaslMechanism> for SaslMechanism {
             WalSaslMechanism::OAuthBearer => Self::OAuthBearer,
             WalSaslMechanism::Gssapi => Self::Gssapi,
         }
-    }
-}
-
-impl fmt::Display for WalSaslMechanism {
-    // The flag spelling, which is also the Kafka wire name.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self
-            .to_possible_value()
-            .expect("no mechanism variant is skipped");
-        formatter.write_str(value.get_name())
     }
 }

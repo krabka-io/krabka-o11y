@@ -7,7 +7,7 @@ use krabka_blockstore::{
     repair_store, restore_backup,
 };
 use krabka_units::Time;
-use object_store::{ObjectStore, parse_url_opts, prefix::PrefixStore};
+use object_store::{ObjectStore, parse_url_opts, path::Path as ObjectPath, prefix::PrefixStore};
 use serde::Serialize;
 use url::Url;
 
@@ -242,24 +242,36 @@ async fn run(cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
-fn root_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
+/// Parses an object-store URL into its store and the path prefix it names.
+struct ParsedObjectStoreUrl {
+    store: Box<dyn ObjectStore>,
+    prefix: ObjectPath,
+}
+
+fn parse_store_url(raw: &str) -> Result<ParsedObjectStoreUrl, String> {
     let url = Url::parse(raw).map_err(|error| format!("invalid object-store URL: {error}"))?;
-    let (store, prefix) = parse_url_opts(&url, std::env::vars())
-        .map_err(|error| format!("object-store configuration failed: {error}"))?;
-    if prefix.as_ref().is_empty() {
-        return Ok(Arc::from(store));
+    parse_url_opts(&url, std::env::vars())
+        .map(|parsed| ParsedObjectStoreUrl {
+            store: parsed.0,
+            prefix: parsed.1,
+        })
+        .map_err(|error| format!("object-store configuration failed: {error}"))
+}
+
+fn root_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
+    let parsed = parse_store_url(raw)?;
+    if parsed.prefix.as_ref().is_empty() {
+        return Ok(Arc::from(parsed.store));
     }
-    Ok(Arc::new(PrefixStore::new(store, prefix)))
+    Ok(Arc::new(PrefixStore::new(parsed.store, parsed.prefix)))
 }
 
 fn scoped_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    let url = Url::parse(raw).map_err(|error| format!("invalid object-store URL: {error}"))?;
-    let (store, prefix) = parse_url_opts(&url, std::env::vars())
-        .map_err(|error| format!("object-store configuration failed: {error}"))?;
-    if prefix.as_ref().is_empty() {
+    let parsed = parse_store_url(raw)?;
+    if parsed.prefix.as_ref().is_empty() {
         return Err("object-store URL must include a dedicated prefix".into());
     }
-    Ok(Arc::new(PrefixStore::new(store, prefix)))
+    Ok(Arc::new(PrefixStore::new(parsed.store, parsed.prefix)))
 }
 
 fn parse_wal_offset(raw: &str) -> Result<WalOffset, String> {

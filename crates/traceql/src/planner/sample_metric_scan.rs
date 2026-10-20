@@ -5,6 +5,11 @@ use datafusion::arrow::array::AsArray;
 
 use super::{Result, ScanOptions, SessionContext, TraceqlError, collect_table, register_batches};
 
+pub(crate) struct SampledMetricTable {
+    pub(crate) table: String,
+    pub(crate) scale: f64,
+}
+
 /// Pinned Tempo samples the first entry, then every floor(1/fraction) entry,
 /// and scales by the measured inspected/admitted ratio. This runs before the
 /// selector so rejected spans still contribute to that measured ratio.
@@ -12,9 +17,12 @@ pub(crate) async fn sample_metric_scan(
     ctx: &SessionContext,
     table: &str,
     options: &ScanOptions,
-) -> Result<(String, f64)> {
+) -> Result<SampledMetricTable> {
     if options.sample_fraction.is_none() && options.trace_sample_fraction.is_none() {
-        return Ok((table.into(), 1.0));
+        return Ok(SampledMetricTable {
+            table: table.into(),
+            scale: 1.0,
+        });
     }
     let interval = options
         .sample_fraction
@@ -72,7 +80,10 @@ pub(crate) async fn sample_metric_scan(
     let factor =
         sampling_factor(inspected, admitted) * sampling_factor(traces_inspected, traces_admitted);
     register_batches(ctx, "metric_sampled_spans", output)?;
-    Ok(("metric_sampled_spans".into(), factor))
+    Ok(SampledMetricTable {
+        table: "metric_sampled_spans".into(),
+        scale: factor,
+    })
 }
 
 fn sampling_interval(fraction: f64) -> Result<usize> {
@@ -128,7 +139,7 @@ mod tests {
             .unwrap()
         });
         register_batches(&ctx, "input", batches.to_vec()).unwrap();
-        let (table, factor) = sample_metric_scan(
+        let sampled = sample_metric_scan(
             &ctx,
             "input",
             &ScanOptions {
@@ -138,7 +149,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let values = collect_table(&ctx, &table)
+        let values = collect_table(&ctx, &sampled.table)
             .await
             .unwrap()
             .into_iter()
@@ -151,7 +162,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(values == vec![10, 30, 50]);
-        assert!((factor - 5.0 / 3.0).abs() < f64::EPSILON);
+        assert!((sampled.scale - 5.0 / 3.0).abs() < f64::EPSILON);
         assert!(sampling_interval(0.4).unwrap() == 2);
         for invalid in [0.0, 1.0, -0.5, f64::NAN, f64::INFINITY] {
             assert!(sampling_interval(invalid).is_err());
@@ -176,7 +187,7 @@ mod tests {
             vec![RecordBatch::try_new(schema, vec![Arc::new(ids.finish())]).unwrap()],
         )
         .unwrap();
-        let (table, factor) = sample_metric_scan(
+        let sampled = sample_metric_scan(
             &ctx,
             "input",
             &ScanOptions {
@@ -186,7 +197,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let ids = collect_table(&ctx, &table)
+        let ids = collect_table(&ctx, &sampled.table)
             .await
             .unwrap()
             .into_iter()
@@ -198,6 +209,6 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(ids == vec![1, 1, 3]);
-        assert!((factor - 1.5).abs() < f64::EPSILON);
+        assert!((sampled.scale - 1.5).abs() < f64::EPSILON);
     }
 }

@@ -1,4 +1,4 @@
-use super::{BlockStoreError, Result};
+use super::{BlockLevel, BlockStoreError, Result};
 
 /// A cursor over an encoded index shard.
 ///
@@ -9,6 +9,25 @@ use super::{BlockStoreError, Result};
 pub(crate) struct ByteReader<'bytes> {
     bytes: &'bytes [u8],
     at: usize,
+}
+
+/// The time bounds of one block record in an index shard.
+pub(crate) struct ShardBlockBounds {
+    pub(crate) min_ts: i64,
+    pub(crate) max_ts: i64,
+}
+
+pub(crate) struct ShardBlockPrefix {
+    pub(crate) object_key: String,
+    pub(crate) bounds: ShardBlockBounds,
+    pub(crate) row_count: usize,
+    pub(crate) level: BlockLevel,
+}
+
+pub(crate) struct DecodedShardHeader<'bytes> {
+    pub reader: ByteReader<'bytes>,
+    pub tenant: String,
+    pub dictionary: Vec<String>,
 }
 
 impl<'bytes> ByteReader<'bytes> {
@@ -105,7 +124,67 @@ impl<'bytes> ByteReader<'bytes> {
         })
     }
 
+    /// A block's start, delta-coded against the previous block's start, then
+    /// its span.
+    pub(crate) fn block_bounds(&mut self, previous_min_ts: i64) -> Result<ShardBlockBounds> {
+        let min_ts = previous_min_ts.wrapping_add(self.ivarint("a block start")?);
+        let max_ts = min_ts.wrapping_add(self.ivarint("a block span")?);
+        Ok(ShardBlockBounds { min_ts, max_ts })
+    }
+
+    /// A block's compaction level, rejected when it does not fit a `u32`.
+    pub(crate) fn block_level(&mut self) -> Result<BlockLevel> {
+        let level = u32::try_from(self.uvarint("a block level")?).map_err(|_| {
+            BlockStoreError::InvalidBlock("names a compaction level beyond u32".to_string())
+        })?;
+        Ok(BlockLevel(level))
+    }
+
     pub(crate) const fn is_exhausted(&self) -> bool {
         self.at >= self.bytes.len()
     }
+}
+
+pub(crate) fn read_shard_block_prefix(
+    reader: &mut ByteReader<'_>,
+    previous_min: i64,
+) -> Result<ShardBlockPrefix> {
+    Ok(ShardBlockPrefix {
+        object_key: reader.string("a block object key")?,
+        bounds: reader.block_bounds(previous_min)?,
+        row_count: reader.count_unbounded("a block row count")?,
+        level: reader.block_level()?,
+    })
+}
+
+pub(crate) fn decode_shard_header<'bytes>(
+    bytes: &'bytes [u8],
+    magic: &[u8],
+    expected_version: u8,
+    shard_name: &str,
+) -> Result<DecodedShardHeader<'bytes>> {
+    let mut reader = ByteReader::new(bytes);
+    if reader.take(magic.len(), "the magic")? != magic {
+        return Err(BlockStoreError::InvalidBlock(format!(
+            "is not {shard_name}"
+        )));
+    }
+    let version = reader.u8("the format version")?;
+    if version != expected_version {
+        return Err(BlockStoreError::InvalidBlock(format!(
+            "is format version {version}, expected {expected_version}"
+        )));
+    }
+
+    let tenant = reader.string("the tenant name")?;
+    let dictionary_len = reader.count("dictionary entries")?;
+    let mut dictionary = Vec::with_capacity(dictionary_len);
+    for _ in 0..dictionary_len {
+        dictionary.push(reader.string("a dictionary entry")?);
+    }
+    Ok(DecodedShardHeader {
+        reader,
+        tenant,
+        dictionary,
+    })
 }

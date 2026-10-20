@@ -88,8 +88,9 @@ impl SnapshotManifest {
     /// Object keys of every payload this manifest names.
     pub(crate) fn payload_object_keys(&self, key: &str) -> BTreeSet<String> {
         self.tenants
-            .iter()
-            .flat_map(|(tenant, shards)| {
+            .keys()
+            .flat_map(|tenant| {
+                let shards = &self.tenants[tenant];
                 shards.iter().map(move |shard| {
                     shard_payload_object_key(key, tenant, shard.range(), &shard.content)
                 })

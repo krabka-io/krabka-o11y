@@ -14,6 +14,11 @@
 //! `status.code()` is `Some(0)` only for a process that returned from `main`.
 //! A process a signal killed reports `None`.
 
+#[path = "../../../../observability/tests/support/sigterm_child.rs"]
+mod sigterm_child;
+#[path = "../../../../profiles/src/bin/krabka-profiles/sigterm_child_runtime.rs"]
+mod sigterm_child_runtime;
+
 use std::{
     process::Command,
     time::{Duration, Instant},
@@ -21,8 +26,12 @@ use std::{
 
 use clap::Parser as _;
 
+use self::{
+    sigterm_child::terminate_and_wait_for_exit,
+    sigterm_child_runtime::{SigtermChildRuntime, free_loopback_addr},
+};
 use super::{
-    AuditHandle, Cli, RoleReadiness, ServerSecurity, Shutdown, run_querier,
+    AuditHandle, Cli, RoleLaunch, RoleReadiness, ServerSecurity, Shutdown, run_querier,
     spawn_shutdown_signal_listener,
 };
 
@@ -68,17 +77,7 @@ fn sigterm_makes_the_querier_process_exit() {
     // needs.
     wait_for_listener(&listen, Duration::from_secs(45));
 
-    // Through `sh` rather than a `kill` binary: the shell builtin is always
-    // there, including inside a Bazel test sandbox, and `unsafe_code` is
-    // forbidden workspace-wide so `libc::kill` is not an option.
-    let signalled = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {}", child.id()))
-        .status()
-        .expect("send SIGTERM");
-    assert2::assert!(signalled.success());
-
-    let status = wait_for_exit(&mut child, Duration::from_secs(30));
+    let status = terminate_and_wait_for_exit(&mut child, Duration::from_secs(30));
 
     assert2::assert!(status.code() == Some(0));
 }
@@ -86,19 +85,7 @@ fn sigterm_makes_the_querier_process_exit() {
 /// The role under test: the binary's own `run_querier`, pointed at a broker
 /// that never answers.
 fn run_querier_child() {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("child runtime");
-    // Registered before the parent can reach anything this process binds, so
-    // the parent's `kill` cannot land in the window before the role installs
-    // its own. Tokio's handlers are process-wide and refcounted, so the one
-    // the role installs later is this same registration.
-    let _terminate = runtime
-        .block_on(async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        })
-        .expect("install SIGTERM handler");
+    let runtime = SigtermChildRuntime::start();
 
     let listen = std::env::var(CHILD_LISTEN).expect("child listen address");
     let admin = std::env::var(CHILD_ADMIN).expect("child admin address");
@@ -123,26 +110,19 @@ fn run_querier_child() {
         let shutdown = Shutdown::new();
         spawn_shutdown_signal_listener(shutdown.clone());
         run_querier(
-            cli,
-            krabka_promql::metrics::ServiceMetrics::new(),
-            RoleReadiness::new(),
+            RoleLaunch {
+                cli,
+                metrics: krabka_promql::metrics::ServiceMetrics::new(),
+                readiness: RoleReadiness::new(),
+                wal_security: None,
+                audit: AuditHandle::disabled(),
+            },
             ServerSecurity::default(),
-            None,
-            AuditHandle::disabled(),
             shutdown,
         )
         .await
         .expect("the querier role returns on SIGTERM");
     });
-}
-
-/// An address nothing is listening on yet.
-fn free_loopback_addr() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
-    listener
-        .local_addr()
-        .expect("the bound address")
-        .to_string()
 }
 
 fn wait_for_listener(addr: &str, within: Duration) {
@@ -154,17 +134,4 @@ fn wait_for_listener(addr: &str, within: Duration) {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("the querier never bound {addr} within {within:?}");
-}
-
-fn wait_for_exit(child: &mut std::process::Child, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        match child.try_wait().expect("poll the child") {
-            Some(status) => return status,
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("the querier did not exit within {within:?} of SIGTERM");
 }

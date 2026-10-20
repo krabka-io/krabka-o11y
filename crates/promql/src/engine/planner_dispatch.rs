@@ -1,10 +1,11 @@
 use futures::{FutureExt, future::BoxFuture};
-use promql_parser::parser::{Call, Expr, UnaryExpr};
+use promql_parser::parser::{Call, Expr, UnaryExpr, VectorSelector};
 
 use super::{
     PromqlEngine,
     annotations::{emit_warning, invalid_quantile_warning, is_valid_quantile},
     histogram::histogram_accessor_from_function_name,
+    matrix_selector_at::MatrixSelectorAt,
     planned::PlannedInstant,
     planner_support::{
         is_extended_range_fold_call, label_ops_kind_from_function_name,
@@ -18,10 +19,22 @@ use super::{
 use crate::{
     PromqlError,
     error::Result,
-    planner::{ExtendedSelectorExpr, ExtendedSelectorModifier},
+    planner::{ExtendedSelectorExpr, ExtendedSelectorModifier, over_time_range::OverTimeFold},
     result::QueryResult,
     store::MetricStore,
 };
+
+/// A call expression and the `Call` node it wraps.
+#[derive(Clone, Copy)]
+struct CallNode<'a> {
+    expr: &'a Expr,
+    call_expr: &'a Call,
+}
+
+struct SelectorAndMatchers<'a> {
+    selector: &'a VectorSelector,
+    typed_matchers: Option<&'a [Vec<crate::PromqlMatcher>]>,
+}
 
 impl<S: MetricStore> PromqlEngine<S> {
     /// Plans an instant expression onto the `DataFusion` operator chain.
@@ -99,7 +112,8 @@ impl<S: MetricStore> PromqlEngine<S> {
                     ))
                 }
                 Expr::Call(call_expr) => {
-                    self.plan_call_expr(tenant, expr, call_expr, time_ms).await
+                    self.plan_call_expr(tenant, CallNode { expr, call_expr }, time_ms)
+                        .await
                 }
                 Expr::Aggregate(aggregate) => {
                     // A simple (no-param) float aggregation lowers onto a
@@ -250,8 +264,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         else {
             return Ok(None);
         };
-        let (selector, typed_matchers) = match extended.child() {
-            Some(Expr::VectorSelector(selector)) => (selector, None),
+        let target = match extended.child() {
+            Some(Expr::VectorSelector(selector)) => SelectorAndMatchers {
+                selector,
+                typed_matchers: None,
+            },
             Some(Expr::Extension(child)) => {
                 let Some(byte) = child
                     .expr
@@ -263,10 +280,17 @@ impl<S: MetricStore> PromqlEngine<S> {
                 let Expr::VectorSelector(selector) = &byte.child else {
                     return Ok(None);
                 };
-                (selector, Some(byte.matcher_sets.as_slice()))
+                SelectorAndMatchers {
+                    selector,
+                    typed_matchers: Some(byte.matcher_sets.as_slice()),
+                }
             }
             _ => return Ok(None),
         };
+        let SelectorAndMatchers {
+            selector,
+            typed_matchers,
+        } = target;
         match extended.modifier() {
             ExtendedSelectorModifier::Smoothed => {
                 let QueryResult::InstantVector(samples) = self
@@ -304,10 +328,10 @@ impl<S: MetricStore> PromqlEngine<S> {
     async fn plan_call_expr(
         &self,
         tenant: &str,
-        expr: &Expr,
-        call_expr: &Call,
+        call_node: CallNode<'_>,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
+        let CallNode { expr, call_expr } = call_node;
         // A rate-family call over a bare matrix selector. A FLOAT-only selector
         // rides the RangeManipulate + rate-UDF operator chain. A HISTOGRAM-bearing
         // selector cannot (the operator leaf is float-only), so it assembles the
@@ -318,7 +342,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         // anchored/smoothed selectors and every non-rate function, so the
         // interpreter still owns those. A present-but-empty-valued label now
         // rides the operator leaf too (NULL encodes absent, `""` present-empty).
-        if let Some((selector, kind)) = match_rate_range_call(expr) {
+        if let Some(call) = match_rate_range_call(expr) {
+            let selector = call.selector;
+            let kind = call.kind;
             if self
                 .matrix_selector_has_histogram_series(tenant, selector, time_ms)
                 .await?
@@ -334,7 +360,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 ));
             }
             return Ok(Some(
-                self.plan_rate_range(tenant, selector, time_ms, kind)
+                self.plan_rate_range(tenant, MatrixSelectorAt { selector, time_ms }, kind)
                     .await?,
             ));
         }
@@ -350,13 +376,15 @@ impl<S: MetricStore> PromqlEngine<S> {
         // subquery ranges, and anchored/smoothed selectors are rejected by the
         // matcher and stay on the interpreter; a present-but-empty-valued label
         // now rides the operator leaf too.
-        if let Some((selector, family, phi_arg)) = match_over_time_range_call(expr) {
+        if let Some(call) = match_over_time_range_call(expr) {
+            let selector = call.selector;
+            let family = call.family;
             // Resolve `quantile_over_time`'s `phi` (needed by both the float and
             // histogram paths). A non-scalar `phi` falls back to the interpreter;
             // an out-of-range/NaN `phi` is NOT an error — Prometheus returns
             // signed `±Inf` / `NaN` plus an `InvalidQuantileWarning` (matching
             // the `histogram_quantile` family), so we evaluate it directly.
-            let phi = match phi_arg {
+            let phi = match call.phi {
                 Some(arg) => {
                     let QueryResult::Scalar { value, .. } =
                         self.plan_and_resolve(tenant, arg, time_ms).await?
@@ -385,8 +413,12 @@ impl<S: MetricStore> PromqlEngine<S> {
                 ));
             }
             return Ok(Some(
-                self.plan_over_time_range(tenant, selector, time_ms, family, phi)
-                    .await?,
+                self.plan_over_time_range(
+                    tenant,
+                    MatrixSelectorAt { selector, time_ms },
+                    OverTimeFold { family, phi },
+                )
+                .await?,
             ));
         }
         // An EXPERIMENTAL `*_over_time` member (`mad`/`first`/`ts_of_*_over_time`)
@@ -399,13 +431,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `__name__` (like `last_over_time`); the others drop it
         // (`OverTimeFn::preserves_metric_name`). The kernel selection is faithful
         // to the interpreter, including any present-but-empty-valued label.
-        if let Some((selector, kind)) = match_experimental_over_time_range_call(expr) {
+        if let Some(call) = match_experimental_over_time_range_call(expr) {
             return Ok(Some(
                 self.plan_histogram_range_via_kernel(
                     tenant,
-                    selector,
+                    call.selector,
                     time_ms,
-                    OuterRangeFn::OverTime(kind),
+                    OuterRangeFn::OverTime(call.function),
                 )
                 .await?,
             ));
@@ -504,9 +536,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         // shared `apply_outer_range_fn`. A non-plannable / histogram-bearing inner,
         // a non-positive step, or an invalid scalar parameter falls back to the
         // interpreter.
-        if let Some((subquery, spec)) = match_subquery_range_call(call_expr) {
+        if let Some(call) = match_subquery_range_call(call_expr) {
             return self
-                .plan_subquery_range_call(tenant, subquery, spec, time_ms)
+                .plan_subquery_range_call(tenant, call.subquery, call.outer, time_ms)
                 .await;
         }
         // The EXPERIMENTAL scalar/range functions that have no operator-leaf UDF:

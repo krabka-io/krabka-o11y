@@ -6,9 +6,27 @@
 // DataFusion plan/optimizer types; the test target's Send auto-trait evaluation
 // then overflows the default depth, so raise it.
 #![recursion_limit = "512"]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_possible_wrap,
+        clippy::explicit_auto_deref,
+        clippy::float_cmp,
+        clippy::items_after_statements,
+        clippy::iter_cloned_collect,
+        clippy::needless_borrow,
+        clippy::needless_pass_by_value,
+        clippy::needless_range_loop,
+        clippy::struct_field_names,
+        clippy::too_many_lines,
+        clippy::useless_conversion,
+        clippy::useless_vec,
+    )
+)]
 
 mod block_store;
 mod conformance;
+mod duration_terms;
 mod engine;
 mod error;
 mod extension;
@@ -23,9 +41,18 @@ mod query_frontend;
 mod range_array;
 mod result;
 mod ruler;
+mod series_stats;
 mod store;
 #[cfg(test)]
 mod test_support;
+mod wal_record;
+
+pub(crate) fn yaml_optional_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_string)
+}
 
 pub use block_store::MetricBlockStore;
 pub use conformance::{
@@ -35,12 +62,12 @@ pub use conformance::{
 };
 pub use engine::{EngineOpts, PromqlEngine};
 pub use error::PromqlError;
-mod promql_labels;
-mod promql_string;
 pub use extension::{
-    instant_manipulate::{InstantManipulate, InstantManipulateExec},
-    normalize::{SeriesNormalize, SeriesNormalizeExec},
-    range_manipulate::{RangeManipulate, RangeManipulateExec, build_extended_range_schema},
+    instant_manipulate::{InstantManipulate, InstantManipulateExec, InstantManipulateSettings},
+    normalize::{NanSamples, SeriesNormalize, SeriesNormalizeExec, SeriesNormalizeSettings},
+    range_manipulate::{
+        RangeManipulate, RangeManipulateExec, RangeManipulateSettings, build_extended_range_schema,
+    },
     series_divide::{SeriesDivide, SeriesDivideExec},
 };
 pub use functions::{
@@ -48,39 +75,38 @@ pub use functions::{
 };
 pub use http_api::{
     PrometheusApiState, mimir_alertmanager_router, mimir_ruler_prometheus_router,
-    mimir_ruler_router, prometheus_router,
+    mimir_ruler_router, prometheus_router, remote_read_reset_hint,
 };
 pub use ids::{Offset, PartitionIndex};
 pub use in_memory::{
-    DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead,
+    DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead, WalRecordAt,
 };
+pub use krabka_metrics::{MetricLabels as PromqlLabels, MetricString as PromqlString};
 pub use merged_store::MergedMetricStore;
 pub use planner::{
     DurationExprContext, format_promql_expr, format_promql_query, parse_promql,
     parse_promql_with_duration_context, serialize_promql_expr, serialize_promql_query,
 };
-pub use promql_labels::PromqlLabels;
-pub use promql_string::PromqlString;
 pub use query_frontend::{
     FrontendRangeQuery, FrontendRangeRequest, ObjectStoreQueryFrontendCache, QueryFrontendCache,
     QueryFrontendOptions, QueryShard, RangeQueryCache, RangeQueryExecutor,
     execute_range_query_frontend, merge_range_query_results, plan_range_query,
 };
-pub use range_array::RangeArray;
+pub use range_array::{PairedRangeArrays, RangeArray, RangeWindow};
 pub use result::{
-    AnnotatedQueryResult, Annotations, HistogramQuantileRepair, InstantSample, QueryResult,
-    RangeSeries, SampleValue,
+    AnnotatedQueryResult, Annotations, FloatSample, HistogramQuantileRepair, InstantSample,
+    QueryResult, RangeSeries, RangeSeriesSample, SampleValue,
 };
 pub use ruler::{
     AlertmanagerAlert, AlertmanagerSink, RecordingRuleWalSink, RulerAlertState,
-    RulerAlertStateRecord, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupEvaluationStatus,
-    RulerGroupState, RulerGroupStateRecord, RulerRuleEvaluationStatus, RulerShard, RulerStateSink,
-    RulerWalError, evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
+    RulerAlertStateRecord, RulerEvaluationReport, RulerEvaluationSchedule, RulerEvaluationState,
+    RulerGroupEvaluation, RulerGroupEvaluationStatus, RulerGroupState, RulerGroupStateRecord,
+    RulerRuleEvaluationStatus, RulerShard, RulerSinks, RulerStateSink, RulerWalError,
+    evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
     evaluate_and_dispatch_alerting_rule, evaluate_and_dispatch_alerting_rule_group,
     evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,
     evaluate_and_persist_alerting_rule_with_state, evaluate_and_persist_ruler_rule_group,
     evaluate_and_persist_ruler_rule_set,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
     evaluate_and_persist_ruler_rule_set_with_report, evaluate_recording_rule,
     evaluate_ruler_rule_group, evaluate_ruler_rule_set, filter_ruler_rule_set_due_for_eval,

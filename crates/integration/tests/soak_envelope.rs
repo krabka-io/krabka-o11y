@@ -1,3 +1,6 @@
+// The PromQL query future in the soak suite carries DataFusion state, whose
+// `Send` check needs the same trait recursion depth as the other query suites.
+#![recursion_limit = "512"]
 //! The operating-envelope soak: every signal, through its real writer and
 //! read path, against one real object store, in eight phases.
 //!
@@ -38,6 +41,7 @@
 //! ```text
 //! KRABKA_MINIO_IMAGE_REF=<ref> KRABKA_SOAK_PHASE_SECONDS=4 \
 //!     cargo test -p krabka-integration --test soak_envelope -- --ignored --nocapture
+
 //! ```
 
 mod support;
@@ -54,12 +58,14 @@ use support::{
 #[ignore = "soak: needs a MinIO container and a wall-clock budget"]
 async fn operating_envelope() {
     let config = Arc::new(Config::from_env());
-    let (_container, backing) = minio::start().await;
+    let minio = minio::start().await;
     let started = Instant::now();
 
     let mut entries = Vec::new();
     for kind in SignalKind::ALL {
-        let (stores, meters) = StoreMeters::wrap(&backing, &format!("soak/{}", kind.name()));
+        let metered = StoreMeters::wrap(&minio.store, &format!("soak/{}", kind.name()));
+        let stores = metered.stores;
+        let meters = metered.meters;
         let ctx = phases::context(kind, &stores, meters, &config).await;
         entries.extend(phases::run_signal(kind, &ctx, &stores).await);
     }

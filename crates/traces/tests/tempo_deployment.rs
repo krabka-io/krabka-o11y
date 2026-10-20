@@ -13,16 +13,31 @@ use opentelemetry_proto::tonic::{
     trace::v1::{ResourceSpans, ScopeSpans, Span, Status, TracesData},
 };
 use prost::Message as _;
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt as _,
-    core::{ContainerPort, Mount, WaitFor},
+    core::{ContainerPort, Mount},
 };
+
+#[derive(bon::Builder, Clone, Copy)]
+struct QueryParameter<'a> {
+    name: &'a str,
+    value: &'a str,
+}
+
+fn parameter<'a>(name: &'a str, value: &'a str) -> QueryParameter<'a> {
+    QueryParameter::builder().name(name).value(value).build()
+}
 
 #[path = "../../metrics-service/tests/support/container_deployment.rs"]
 mod container_deployment;
-use container_deployment::{TestResult, base_url, image, start, start_broker};
+#[path = "../../metrics-service/tests/support/deployment_evidence.rs"]
+mod deployment_evidence;
+use container_deployment::{
+    Deployment, TestResult, base_url, image, start, start_infrastructure, wait_until_ready,
+};
+use deployment_evidence::{QueryOutcome, record_evidence};
 
 const PORT: u16 = 3200;
 const ADMIN: u16 = 9404;
@@ -30,83 +45,36 @@ const START: u64 = 1_700_000_000_000_000_000;
 const TIMEOUT: Duration = Duration::from_secs(45);
 const TENANT: &str = "tenant-a";
 
-// Containers release their mounts before the temporary directories are removed.
-struct Deployment {
-    distributor: ContainerAsync<GenericImage>,
-    hot: ContainerAsync<GenericImage>,
-    _minio: ContainerAsync<GenericImage>,
-    _broker: ContainerAsync<GenericImage>,
-    data: tempfile::TempDir,
-    _broker_data: tempfile::TempDir,
-    network: String,
-    client: Client,
-}
-
 impl Deployment {
     async fn start(overrides: Option<&str>) -> TestResult<Self> {
-        let broker_data = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
-        if let Some(overrides) = overrides {
-            std::fs::write(data.path().join("overrides.yaml"), overrides)?;
-        }
-        let network = format!(
-            "krabka-traces-{}",
-            broker_data
-                .path()
-                .file_name()
-                .ok_or("directory name")?
-                .to_string_lossy()
-                .trim_start_matches('.')
-                .to_ascii_lowercase()
-        );
-        let broker = start_broker(broker_data.path(), &network).await?;
-        let minio = start(
-            image("MINIO")
-                .with_entrypoint("/bin/sh")
-                .with_wait_for(WaitFor::message_on_stderr("API:"))
-                .with_network(&network)
-                .with_container_name(format!("{network}-minio"))
-                .with_env_var("MINIO_ROOT_USER", "krabkatraces")
-                .with_env_var("MINIO_ROOT_PASSWORD", "krabkatraces")
-                .with_cmd([
-                    "-c",
-                    "mkdir -p /data/traces && exec /usr/bin/minio server /data",
-                ]),
+        let infrastructure = start_infrastructure("traces", overrides).await?;
+        let distributor = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "distributor",
+            false,
+            &[],
         )
         .await?;
-        let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
-        let distributor = role(&network, data.path(), "distributor", false, &[]).await?;
-        let hot = role(&network, data.path(), "querier", true, &[]).await?;
-        let deployment = Self {
+        let hot = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "querier",
+            true,
+            &[],
+        )
+        .await?;
+        Self {
             distributor,
             hot,
-            _minio: minio,
-            _broker: broker,
-            data,
-            _broker_data: broker_data,
-            network,
-            client,
-        };
-        deployment.ready(&deployment.distributor).await?;
-        deployment.ready(&deployment.hot).await?;
-        Ok(deployment)
+            infrastructure,
+        }
+        .wait_until_serving(ADMIN)
+        .await
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>) -> TestResult {
-        let url = format!("{}/ready", base_url(container, ADMIN).await?);
-        tokio::time::timeout(TIMEOUT, async {
-            loop {
-                if let Ok(response) = self.client.get(&url).send().await
-                    && response.status() == StatusCode::OK
-                {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .map_err(|error| format!("{url}: {error}"))?;
-        Ok(())
+        wait_until_ready(&self.infrastructure.client, container, ADMIN).await
     }
 
     async fn role(
@@ -114,14 +82,22 @@ impl Deployment {
         target: &str,
         args: &[String],
     ) -> TestResult<ContainerAsync<GenericImage>> {
-        let container = role(&self.network, self.data.path(), target, false, args).await?;
+        let container = role(
+            &self.infrastructure.network,
+            self.infrastructure.data.path(),
+            target,
+            false,
+            args,
+        )
+        .await?;
         self.ready(&container).await?;
         Ok(container)
     }
 
     async fn push(&self, tenant: &str, data: TracesData) -> TestResult {
         accepted(
-            self.client
+            self.infrastructure
+                .client
                 .post(format!(
                     "{}/v1/traces",
                     base_url(&self.distributor, 4318).await?
@@ -140,11 +116,15 @@ impl Deployment {
         container: &ContainerAsync<GenericImage>,
         tenant: &str,
         path: &str,
-        params: &[(&str, &str)],
+        params: &[QueryParameter<'_>],
     ) -> TestResult<reqwest::Response> {
         let mut url = url::Url::parse(&format!("{}{path}", base_url(container, PORT).await?))?;
-        url.query_pairs_mut().extend_pairs(params.iter().copied());
+        for parameter in params {
+            url.query_pairs_mut()
+                .append_pair(parameter.name, parameter.value);
+        }
         Ok(self
+            .infrastructure
             .client
             .get(url)
             .header("X-Scope-OrgID", tenant)
@@ -157,7 +137,7 @@ impl Deployment {
         container: &ContainerAsync<GenericImage>,
         tenant: &str,
         path: &str,
-        params: &[(&str, &str)],
+        params: &[QueryParameter<'_>],
     ) -> TestResult<Value> {
         let response = self.request(container, tenant, path, params).await?;
         let status = response.status();
@@ -419,6 +399,7 @@ async fn receiver(gzip: bool, grpc: bool) -> TestResult {
     } else {
         let body = data.encode_to_vec();
         let mut request = deployment
+            .infrastructure
             .client
             .post(format!(
                 "{}/v1/traces",
@@ -450,6 +431,7 @@ async fn zipkin_receiver_survives_storage_and_restart() -> TestResult {
     let body = json!([{"traceId":hex::encode([1;16]), "id":hex::encode([1;8]), "name":"checkout", "kind":"SERVER", "timestamp":START/1000, "duration":500_000, "localEndpoint":{"serviceName":"checkout"}, "tags":{"http.route":"/checkout"}}]);
     accepted(
         deployment
+            .infrastructure
             .client
             .post(format!(
                 "{}/api/v2/spans",
@@ -645,21 +627,61 @@ async fn traceql_search_uses_structural_relationships_after_restart() -> TestRes
     .await
 }
 
-fn transition_search_rows(result: &Value) -> TestResult<Vec<(String, String)>> {
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct TraceSpanIdentity {
+    trace_id: String,
+    span_id: String,
+}
+
+struct SearchQueryCase {
+    query: &'static str,
+    span_ids: Vec<u8>,
+}
+
+struct TraceQueryCase {
+    path: &'static str,
+    query: &'static str,
+    expected: Value,
+}
+
+struct MetricExpectation {
+    name: &'static str,
+    counts: [f64; 2],
+}
+
+struct ContainerPhase<'a> {
+    container: &'a ContainerAsync<GenericImage>,
+    phase: &'static str,
+}
+
+struct TenantService {
+    tenant: &'static str,
+    service: &'static str,
+}
+
+fn transition_search_rows(result: &Value) -> TestResult<Vec<TraceSpanIdentity>> {
     let mut rows = Vec::new();
     for trace in result["traces"].as_array().ok_or("missing search traces")? {
         let trace_id = trace["traceID"].as_str().ok_or("missing trace ID")?;
         for set in trace["spanSets"].as_array().ok_or("missing span sets")? {
             for span in set["spans"].as_array().ok_or("missing selected spans")? {
-                rows.push((
-                    trace_id.to_owned(),
-                    span["spanID"].as_str().ok_or("missing span ID")?.to_owned(),
-                ));
+                rows.push(TraceSpanIdentity {
+                    trace_id: trace_id.to_owned(),
+                    span_id: span["spanID"].as_str().ok_or("missing span ID")?.to_owned(),
+                });
             }
         }
     }
     rows.sort();
     Ok(rows)
+}
+
+fn transition_search_rows_json(rows: Vec<TraceSpanIdentity>) -> Value {
+    Value::Array(
+        rows.into_iter()
+            .map(|row| json!([row.trace_id, row.span_id]))
+            .collect(),
+    )
 }
 
 async fn wait_trace_query(
@@ -678,17 +700,17 @@ async fn wait_trace_query(
                     tenant,
                     path,
                     &[
-                        ("q", query),
-                        ("start", "1700000000"),
-                        ("end", "1700000001"),
-                        ("step", "1s"),
-                        ("limit", "10"),
-                        ("spss", "10"),
+                        parameter("q", query),
+                        parameter("start", "1700000000"),
+                        parameter("end", "1700000001"),
+                        parameter("step", "1s"),
+                        parameter("limit", "10"),
+                        parameter("spss", "10"),
                     ],
                 )
                 .await?;
             let actual = if path == "/api/search" {
-                json!(transition_search_rows(&response)?)
+                transition_search_rows_json(transition_search_rows(&response)?)
             } else {
                 let mut series = response["series"]
                     .as_array()
@@ -733,63 +755,94 @@ async fn check_trace_queries(
         vec![]
     };
     let mut cases = Vec::new();
-    for (query, ids) in [
-        (
-            r#"{ resource.service.name = "checkout" }"#,
-            span_ids.to_vec(),
-        ),
-        (
-            r#"{ name = "checkout" } >> { status = error }"#,
-            child.clone(),
-        ),
-        (
-            r#"{ resource.service.name = "checkout" } | count() > 1"#,
-            counted,
-        ),
-        (
-            r#"{ resource.service.name = "checkout" && name = "checkout" && duration >= 500ms } >> { .db.system = "postgresql" && status = error && duration > 100ms && duration < 200ms }"#,
-            child,
-        ),
-        (
-            r#"{ resource.service.name = "checkout" && .http.route = "/checkout" && duration >= 500ms }"#,
-            root,
-        ),
-        (r#"{ resource.service.name = "missing" }"#, vec![]),
+    for case in [
+        SearchQueryCase {
+            query: r#"{ resource.service.name = "checkout" }"#,
+            span_ids: span_ids.to_vec(),
+        },
+        SearchQueryCase {
+            query: r#"{ name = "checkout" } >> { status = error }"#,
+            span_ids: child.clone(),
+        },
+        SearchQueryCase {
+            query: r#"{ resource.service.name = "checkout" } | count() > 1"#,
+            span_ids: counted,
+        },
+        SearchQueryCase {
+            query: r#"{ resource.service.name = "checkout" && name = "checkout" && duration >= 500ms } >> { .db.system = "postgresql" && status = error && duration > 100ms && duration < 200ms }"#,
+            span_ids: child,
+        },
+        SearchQueryCase {
+            query: r#"{ resource.service.name = "checkout" && .http.route = "/checkout" && duration >= 500ms }"#,
+            span_ids: root,
+        },
+        SearchQueryCase {
+            query: r#"{ resource.service.name = "missing" }"#,
+            span_ids: vec![],
+        },
     ] {
-        let expected = ids
+        let rows = case
+            .span_ids
             .iter()
-            .map(|id| (hex::encode([1; 16]), hex::encode([*id; 8])))
+            .map(|id| TraceSpanIdentity {
+                trace_id: hex::encode([1; 16]),
+                span_id: hex::encode([*id; 8]),
+            })
             .collect::<Vec<_>>();
-        cases.push(("/api/search", query, json!(expected)));
+        cases.push(TraceQueryCase {
+            path: "/api/search",
+            query: case.query,
+            expected: transition_search_rows_json(rows),
+        });
     }
     if !span_ids.is_empty() {
         // The root starts exactly on the first right-closed bucket boundary;
         // the child starts 100ms later, so it belongs to the following bucket.
         let series = span_ids.iter().map(|id| {
-            let (name, counts) = if *id == 1 { ("checkout", [1.0, 0.0]) } else { ("database", [0.0, 1.0]) };
+            let metric = if *id == 1 {
+                MetricExpectation {
+                    name: "checkout",
+                    counts: [1.0, 0.0],
+                }
+            } else {
+                MetricExpectation {
+                    name: "database",
+                    counts: [0.0, 1.0],
+                }
+            };
+            let name = metric.name;
+            let counts = metric.counts;
             json!({"labels":[{"key":"name","value":{"stringValue":name}}],
                 "promLabels":format!("{{name=\"{name}\"}}"),
                 "samples":[{"timestampMs":"1700000000000","value":counts[0]}, {"timestampMs":"1700000001000","value":counts[1]}],
                 "exemplars":[]})
         }).collect::<Vec<_>>();
-        cases.push(("/api/metrics/query_range", r#"{ resource.service.name = "checkout" && duration > 0ns } | count_over_time() by(name) with(exemplars=false)"#, json!(series)));
+        cases.push(TraceQueryCase {
+            path: "/api/metrics/query_range",
+            query: r#"{ resource.service.name = "checkout" && duration > 0ns } | count_over_time() by(name) with(exemplars=false)"#,
+            expected: json!(series),
+        });
     }
-    for (path, query, expected) in cases {
-        let result = wait_trace_query(deployment, container, tenant, path, query, &expected).await;
-        evidence.push(
-            json!({"phase":phase, "tenant":tenant, "path":path, "query":query,
-            "expected":expected, "actual":result.as_ref().ok(),
-            "status":if result.is_ok() {"matched"} else {"mismatch"},
-            "error":result.as_ref().err().map(ToString::to_string)}),
-        );
-        if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-            let output = std::path::PathBuf::from(output);
-            std::fs::create_dir_all(&output)?;
-            std::fs::write(
-                output.join(filename),
-                serde_json::to_vec_pretty(&json!({"cases":evidence}))?,
-            )?;
-        }
+    for case in cases {
+        let result = wait_trace_query(
+            deployment,
+            container,
+            tenant,
+            case.path,
+            case.query,
+            &case.expected,
+        )
+        .await;
+        record_evidence(
+            evidence,
+            QueryOutcome {
+                request: json!({"phase":phase, "tenant":tenant, "path":case.path, "query":case.query}),
+                expected: &case.expected,
+                outcome: &result,
+            }
+            .evidence_case(),
+            filename,
+        )?;
         result?;
     }
     Ok(())
@@ -826,9 +879,9 @@ async fn tags(special: bool) -> TestResult {
                 TENANT,
                 "/api/v2/search/tags",
                 &[
-                    ("scope", "span"),
-                    ("start", "1700000000"),
-                    ("end", "1700000001"),
+                    parameter("scope", "span"),
+                    parameter("start", "1700000000"),
+                    parameter("end", "1700000001"),
                 ],
             )
             .await?;
@@ -839,9 +892,9 @@ async fn tags(special: bool) -> TestResult {
                 TENANT,
                 "/api/v2/search/tags",
                 &[
-                    ("scope", "resource"),
-                    ("start", "1700000000"),
-                    ("end", "1700000001"),
+                    parameter("scope", "resource"),
+                    parameter("start", "1700000000"),
+                    parameter("end", "1700000001"),
                 ],
             )
             .await?;
@@ -856,7 +909,10 @@ async fn tags(special: bool) -> TestResult {
                 container,
                 TENANT,
                 &path,
-                &[("start", "1700000000"), ("end", "1700000001")],
+                &[
+                    parameter("start", "1700000000"),
+                    parameter("end", "1700000001"),
+                ],
             )
             .await?;
         assert!(result["tagValues"] == json!([{"type":"string","value":"/checkout"}]));
@@ -865,7 +921,10 @@ async fn tags(special: bool) -> TestResult {
                 container,
                 TENANT,
                 "/api/search/tag/service.name/values",
-                &[("start", "1700000000"), ("end", "1700000001")],
+                &[
+                    parameter("start", "1700000000"),
+                    parameter("end", "1700000001"),
+                ],
             )
             .await?;
         assert!(result["tagValues"] == json!(["checkout"]));
@@ -910,48 +969,71 @@ async fn tenants_keep_the_same_trace_id_isolated_across_restart() -> TestResult 
     deployment
         .trace(&cold, "tenant-b", 1, &expected(1, &[1], "other"))
         .await?;
-    for (container, phase) in [(&deployment.hot, "hot-cold-overlap"), (&cold, "restart")] {
+    for phase in [
+        ContainerPhase {
+            container: &deployment.hot,
+            phase: "hot-cold-overlap",
+        },
+        ContainerPhase {
+            container: &cold,
+            phase: "restart",
+        },
+    ] {
         check_trace_queries(
             &deployment,
-            container,
+            phase.container,
             TENANT,
             &[1],
-            phase,
+            phase.phase,
             &mut evidence,
             filename,
         )
         .await?;
         check_trace_queries(
             &deployment,
-            container,
+            phase.container,
             "tenant-b",
             &[],
-            phase,
+            phase.phase,
             &mut evidence,
             filename,
         )
         .await?;
         check_trace_queries(
             &deployment,
-            container,
+            phase.container,
             "tenant-c",
             &[],
-            phase,
+            phase.phase,
             &mut evidence,
             filename,
         )
         .await?;
-        deployment.missing(container, "tenant-c", 1).await?;
-        for (tenant, service) in [(TENANT, "checkout"), ("tenant-b", "other")] {
+        deployment.missing(phase.container, "tenant-c", 1).await?;
+        for tenant_service in [
+            TenantService {
+                tenant: TENANT,
+                service: "checkout",
+            },
+            TenantService {
+                tenant: "tenant-b",
+                service: "other",
+            },
+        ] {
             let result = deployment
                 .get(
-                    container,
-                    tenant,
+                    phase.container,
+                    tenant_service.tenant,
                     "/api/v2/search/tag/resource.service.name/values",
-                    &[("start", "1700000000"), ("end", "1700000001")],
+                    &[
+                        parameter("start", "1700000000"),
+                        parameter("end", "1700000001"),
+                    ],
                 )
                 .await?;
-            assert!(result["tagValues"] == json!([{"type":"string","value":service}]));
+            assert!(
+                result["tagValues"] == json!([{"type":"string","value":tenant_service.service}])
+            );
         }
     }
     Ok(())
@@ -966,6 +1048,7 @@ async fn otlp_ingest_limit_rejects_a_batch_without_leaking_spans() -> TestResult
     .await?;
     let body = input(9, &[1, 2], "rejected").encode_to_vec();
     let response = deployment
+        .infrastructure
         .client
         .post(format!(
             "{}/v1/traces",
@@ -1018,6 +1101,7 @@ async fn single_binary_shutdown_drains_an_in_flight_trace_to_storage() -> TestRe
     let cold = deployment.role("querier", &[]).await?;
     accepted(
         deployment
+            .infrastructure
             .client
             .post(format!("{}/v1/traces", base_url(&all, 4318).await?))
             .header("X-Scope-OrgID", TENANT)

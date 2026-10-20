@@ -14,6 +14,6 @@ pub(crate) fn histogram_buckets_shrank(
     let next = spanned_histogram_counts(next_spans, next_counts);
     spanned_histogram_counts(last_spans, last_counts)
         .into_iter()
-        .filter(|&(_, count)| count > 0.0)
-        .any(|(index, count)| next.get(&index).copied().unwrap_or(0.0) < count)
+        .filter(|entry| entry.1 > 0.0)
+        .any(|entry| next.get(&entry.0).copied().unwrap_or(0.0) < entry.1)
 }

@@ -3,11 +3,11 @@
 #[allow(dead_code)]
 #[path = "../../blockstore/tests/support/lifecycle_store.rs"]
 mod lifecycle_store;
+mod support;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
-    ops::Range,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -20,8 +20,8 @@ use axum::{
 };
 use futures_util::stream::BoxStream;
 use krabka_blockstore::{
-    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogBlockStoreError, LogRow, TimeRange,
-    labels, list_tenant_log_index_shard_ranges_from_object_store, log_block_object_path,
+    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogBlockStoreError, LogRow,
+    TimeRange, labels, list_tenant_log_index_shard_ranges_from_object_store, log_block_object_path,
     log_tenant_index_manifest_object_path, read_log_block, read_log_block_from_object_store,
     read_log_index_manifest, read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
@@ -34,15 +34,15 @@ use krabka_blockstore::{
 };
 use krabka_client_consumer::ConsumerError;
 use krabka_observability::{
-    CompactionFrontier, CompactionOffsetCommitter, CriticalTaskError, KafkaWalHeader,
-    KafkaWalRecord, LogWalConsumer, Offset, OverridesProvider, PartitionIndex, QuerierIndexSource,
-    Role, ServiceConfig, ServiceDependencies, ServiceRuntimeError, SharedCompactionFrontier,
-    WalConsumerError, WalLogRecord, WalPosition, build_kafka_wal_record, build_service_router,
-    compact_kafka_wal_records_to_object_store, compact_log_block_to_object_store,
-    compact_next_kafka_wal_batch_to_object_store, compact_wal_records_to_object_store,
-    read_compaction_frontier_from_object_store, run_compactor_once, run_compactor_until_idle,
-    run_compactor_until_shutdown, serve_service, serve_service_listener,
-    write_compaction_frontier_to_object_store,
+    CompactionError, CompactionFrontier, CompactionOffsetCommitter, CompactorRunError,
+    CriticalTaskError, KafkaWalCompactionError, KafkaWalHeader, KafkaWalRecord, LogWalConsumer,
+    Offset, OverridesProvider, PartitionIndex, QuerierIndexSource, Role, ServiceConfig,
+    ServiceDependencies, ServiceRuntimeError, SharedCompactionFrontier, WalConsumerError,
+    WalLogRecord, WalPosition, build_service_router, compact_kafka_wal_records_to_object_store,
+    compact_log_block_to_object_store, compact_next_kafka_wal_batch_to_object_store,
+    compact_wal_records_to_object_store, read_compaction_frontier_from_object_store,
+    run_compactor_once, run_compactor_until_idle, run_compactor_until_shutdown, serve_service,
+    serve_service_listener, write_compaction_frontier_to_object_store,
 };
 use krabka_units::{Time, bytes, hours, millis, minutes};
 use object_store::{
@@ -50,7 +50,7 @@ use object_store::{
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, local::LocalFileSystem,
     path::Path as ObjectPath,
 };
-use prost::bytes::Bytes;
+use support::{LogEntry, kafka_wal_record, log_entry};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
@@ -61,13 +61,48 @@ use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 
 #[derive(Clone)]
 struct RecordingObjectStore {
-    inner: Arc<object_store::memory::InMemory>,
+    inner: Arc<dyn ObjectStore>,
     get_paths: Arc<std::sync::Mutex<Vec<String>>>,
-    put_paths: Arc<std::sync::Mutex<Vec<(String, usize)>>>,
+    put_paths: Arc<std::sync::Mutex<Vec<PutPath>>>,
     /// Every put and every delete in the order the store saw them. The two
     /// path lists above cannot say which came first, and the retention sweep's
     /// contract is exactly an order: the index before the object.
     writes: Arc<std::sync::Mutex<Vec<ObjectStoreWrite>>>,
+    put_failures: Arc<PutFailures>,
+}
+
+#[derive(Clone)]
+struct PutPath {
+    path: String,
+}
+
+/// Which `put`s a [`RecordingObjectStore`] refuses with a transient error,
+/// and how many it has refused.
+#[derive(Debug, Default)]
+struct PutFailures {
+    remaining: std::sync::Mutex<usize>,
+    failed: std::sync::atomic::AtomicUsize,
+    /// Only a put whose path contains this fails; `None` matches every put.
+    matching_path: Option<String>,
+}
+
+impl PutFailures {
+    /// Whether the put to `location` fails, counting the failure when it does.
+    fn take_failure(&self, location: &ObjectPath) -> bool {
+        let mut remaining = self.remaining.lock().unwrap();
+        let matches_path = self
+            .matching_path
+            .as_ref()
+            .is_none_or(|matching_path| location.as_ref().contains(matching_path));
+        if *remaining > 0 && matches_path {
+            *remaining -= 1;
+            self.failed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// One mutating call a [`RecordingObjectStore`] served.
@@ -79,19 +114,72 @@ enum ObjectStoreWrite {
 
 impl RecordingObjectStore {
     fn new() -> Self {
+        Self::over(
+            object_store::memory::InMemory::new(),
+            PutFailures::default(),
+        )
+    }
+
+    fn over(inner: impl ObjectStore, put_failures: PutFailures) -> Self {
         Self {
-            inner: Arc::new(object_store::memory::InMemory::new()),
+            inner: Arc::new(inner),
             get_paths: Arc::new(std::sync::Mutex::new(Vec::new())),
             put_paths: Arc::new(std::sync::Mutex::new(Vec::new())),
             writes: Arc::new(std::sync::Mutex::new(Vec::new())),
+            put_failures: Arc::new(put_failures),
         }
+    }
+
+    /// Fails the first `put` to `inner` once, as a transient error.
+    fn fail_first_put(inner: impl ObjectStore) -> Self {
+        Self::over(
+            inner,
+            PutFailures {
+                remaining: std::sync::Mutex::new(1),
+                ..PutFailures::default()
+            },
+        )
+    }
+
+    /// Fails the first `put` whose path contains `matching_path` once.
+    fn fail_first_matching_put(inner: impl ObjectStore, matching_path: &str) -> Self {
+        Self::over(
+            inner,
+            PutFailures {
+                remaining: std::sync::Mutex::new(1),
+                matching_path: Some(matching_path.to_string()),
+                ..PutFailures::default()
+            },
+        )
+    }
+
+    /// Fails every matching `put`, not just the first.
+    ///
+    /// `fail_first_matching_put` models a transient error that a retry rides
+    /// out. This models the write never landing at all, which is how a run
+    /// interrupted at that write looks to everything downstream of it.
+    fn fail_every_matching_put(inner: impl ObjectStore, matching_path: &str) -> Self {
+        Self::over(
+            inner,
+            PutFailures {
+                remaining: std::sync::Mutex::new(usize::MAX),
+                matching_path: Some(matching_path.to_string()),
+                ..PutFailures::default()
+            },
+        )
+    }
+
+    fn failed_put_count(&self) -> usize {
+        self.put_failures
+            .failed
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn get_paths(&self) -> Vec<String> {
         self.get_paths.lock().unwrap().clone()
     }
 
-    fn put_paths(&self) -> Vec<(String, usize)> {
+    fn put_paths(&self) -> Vec<PutPath> {
         self.put_paths.lock().unwrap().clone()
     }
 
@@ -112,18 +200,27 @@ impl fmt::Display for RecordingObjectStore {
     }
 }
 
+struct LoadedShardIndexes {
+    labels: LabelIndex,
+    blocks: BlockIndex,
+}
+
 async fn read_all_tenant_shard_indexes(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     tenant: &str,
-) -> Result<(LabelIndex, BlockIndex), LogBlockStoreError> {
-    read_tenant_log_index_shards_from_object_store(
+) -> Result<LoadedShardIndexes, LogBlockStoreError> {
+    let indexes = read_tenant_log_index_shards_from_object_store(
         store,
         prefix,
         tenant,
         TimeRange::new(i64::MIN, i64::MAX)?,
     )
-    .await
+    .await?;
+    Ok(LoadedShardIndexes {
+        labels: indexes.labels,
+        blocks: indexes.blocks,
+    })
 }
 
 #[async_trait]
@@ -134,10 +231,15 @@ impl ObjectStore for RecordingObjectStore {
         payload: PutPayload,
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
-        self.put_paths
-            .lock()
-            .unwrap()
-            .push((location.to_string(), payload.content_length()));
+        if self.put_failures.take_failure(location) {
+            return Err(object_store::Error::Generic {
+                store: "failing-put",
+                source: "transient put failure".into(),
+            });
+        }
+        self.put_paths.lock().unwrap().push(PutPath {
+            path: location.to_string(),
+        });
         self.writes
             .lock()
             .unwrap()
@@ -212,7 +314,13 @@ async fn compactor_writes_block_then_tenant_index_manifest() {
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("observability/logs");
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
+    );
     let mut block_index = BlockIndex::default();
     let key = BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap());
 
@@ -240,13 +348,13 @@ async fn compactor_writes_block_then_tenant_index_manifest() {
     let rows = read_log_block_from_object_store(&store, &prefix, &key)
         .await
         .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok", "api error"]
-    );
+    assert!(lines(&rows) == vec!["api ok", "api error"]);
 
-    let (loaded_labels, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
 
     assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
     assert!(
@@ -255,56 +363,173 @@ async fn compactor_writes_block_then_tenant_index_manifest() {
     );
 }
 
+/// An empty local object store and indexes for one compaction call to write.
+struct CompactionTarget {
+    _dir: tempfile::TempDir,
+    store: LocalFileSystem,
+    prefix: ObjectPath,
+    label_index: LabelIndex,
+    block_index: BlockIndex,
+    committer: RecordingCommitter,
+}
+
+impl CompactionTarget {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+        Self {
+            _dir: dir,
+            store,
+            prefix: ObjectPath::from("observability/logs"),
+            label_index: LabelIndex::default(),
+            block_index: BlockIndex::default(),
+            committer: RecordingCommitter::default(),
+        }
+    }
+
+    async fn compact_wal(
+        &mut self,
+        records: Vec<WalLogRecord>,
+    ) -> Result<BlockDescriptor, CompactionError> {
+        compact_wal_records_to_object_store(
+            &self.store,
+            &self.prefix,
+            &mut self.label_index,
+            &mut self.block_index,
+            &mut self.committer,
+            records,
+        )
+        .await
+    }
+
+    async fn compact_kafka(
+        &mut self,
+        records: Vec<KafkaWalRecord>,
+    ) -> Result<BlockDescriptor, KafkaWalCompactionError> {
+        compact_kafka_wal_records_to_object_store(
+            &self.store,
+            &self.prefix,
+            &mut self.label_index,
+            &mut self.block_index,
+            &mut self.committer,
+            records,
+        )
+        .await
+    }
+
+    async fn compact_next(
+        &mut self,
+        consumer: &mut RecordingWalConsumer,
+    ) -> Result<Option<BlockDescriptor>, CompactorRunError> {
+        compact_next_kafka_wal_batch_to_object_store(
+            &self.store,
+            &self.prefix,
+            &mut self.label_index,
+            &mut self.block_index,
+            consumer,
+            millis(1),
+        )
+        .await
+    }
+
+    async fn block_lines(&self, key: &BlockKey) -> Vec<String> {
+        read_log_block_from_object_store(&self.store, &self.prefix, key)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.line)
+            .collect()
+    }
+
+    /// Checks that `descriptor` is the one block indexed under the
+    /// `{app="api", env="prod"}` series, and returns that series.
+    fn check_indexed_under_api_series(
+        &mut self,
+        descriptor: &BlockDescriptor,
+    ) -> krabka_blockstore::SeriesFingerprint {
+        let api = self.label_index.insert_series(
+            "tenant-a",
+            labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("env", "prod"),
+            ]),
+        );
+        check!(
+            self.block_index
+                .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
+                == vec![descriptor.clone()]
+        );
+        api
+    }
+
+    /// Checks that nothing was indexed for tenant-a.
+    fn check_nothing_indexed(&self) {
+        check!(self.label_index.label_names("tenant-a").is_empty());
+        check!(
+            self.block_index
+                .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[])
+                .is_empty()
+        );
+    }
+}
+
+fn committed_through(partition: i32, offset: i64) -> Vec<WalPosition> {
+    vec![WalPosition {
+        partition: PartitionIndex(partition),
+        offset: Offset(offset),
+    }]
+}
+
+fn ok_then_error(partition: i32) -> Vec<KafkaWalRecord> {
+    vec![
+        kafka_wal_record(
+            &wal_record_without_position(10, "api ok"),
+            PartitionIndex(partition),
+            Offset(42),
+        ),
+        kafka_wal_record(
+            &wal_record_without_position(19, "api error"),
+            PartitionIndex(partition),
+            Offset(43),
+        ),
+    ]
+}
+
+fn undecodable_kafka_record(partition: i32) -> KafkaWalRecord {
+    KafkaWalRecord {
+        value: b"not json".to_vec(),
+        partition: PartitionIndex(partition),
+        offset: Offset(42),
+        timestamp_ms: None,
+        headers: vec![kafka_header("krabka-format-version", "1")],
+    }
+}
+
 #[tokio::test]
 async fn compactor_commits_partition_offset_after_writing_block_and_index() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let mut block_index = BlockIndex::default();
-    let mut committer = RecordingCommitter::default();
+    let mut target = CompactionTarget::new();
 
-    let descriptor = compact_wal_records_to_object_store(
-        &store,
-        &prefix,
-        &mut label_index,
-        &mut block_index,
-        &mut committer,
-        vec![
+    let descriptor = target
+        .compact_wal(vec![
             wal_record(10, 42, "api ok"),
             wal_record(19, 43, "api error"),
-        ],
-    )
-    .await
-    .unwrap();
-
-    let key = BlockKey::new("tenant-a", 0, 42, 43, TimeRange::new(10, 19).unwrap());
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-
-    check!(descriptor.key == key);
-    check!(
-        committer.committed
-            == vec![WalPosition {
-                partition: PartitionIndex(0),
-                offset: Offset(43)
-            }]
-    );
-    check!(
-        block_index.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == vec![descriptor.clone()]
-    );
-
-    let rows = read_log_block_from_object_store(&store, &prefix, &key)
+        ])
         .await
         .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok", "api error"]
-    );
 
-    let (_, loaded_blocks) =
-        read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
+    let key = BlockKey::new("tenant-a", 0, 42, 43, TimeRange::new(10, 19).unwrap());
+
+    check!(descriptor.key == key);
+    check!(target.committer.committed == committed_through(0, 43));
+    let api = target.check_indexed_under_api_series(&descriptor);
+
+    assert!(target.block_lines(&key).await == ["api ok", "api error"]);
+
+    let loaded_indexes =
+        read_tenant_log_index_manifest_from_object_store(&target.store, &target.prefix, "tenant-a")
             .await
             .unwrap();
+    let loaded_blocks = loaded_indexes.blocks;
     assert!(
         loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
             == vec![descriptor]
@@ -313,67 +538,25 @@ async fn compactor_commits_partition_offset_after_writing_block_and_index() {
 
 #[tokio::test]
 async fn compactor_decodes_kafka_wal_records_before_writing_block() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let mut block_index = BlockIndex::default();
-    let mut committer = RecordingCommitter::default();
+    let mut target = CompactionTarget::new();
 
-    let descriptor = compact_kafka_wal_records_to_object_store(
-        &store,
-        &prefix,
-        &mut label_index,
-        &mut block_index,
-        &mut committer,
-        vec![
-            kafka_wal_record(&wal_record_without_position(10, "api ok"), 2, 42),
-            kafka_wal_record(&wal_record_without_position(19, "api error"), 2, 43),
-        ],
-    )
-    .await
-    .unwrap();
+    let descriptor = target.compact_kafka(ok_then_error(2)).await.unwrap();
 
     let key = BlockKey::new("tenant-a", 2, 42, 43, TimeRange::new(10, 19).unwrap());
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
 
     check!(descriptor.key == key);
-    check!(
-        committer.committed
-            == vec![WalPosition {
-                partition: PartitionIndex(2),
-                offset: Offset(43)
-            }]
-    );
-    check!(
-        block_index.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == vec![descriptor.clone()]
-    );
+    check!(target.committer.committed == committed_through(2, 43));
+    target.check_indexed_under_api_series(&descriptor);
 
-    let rows = read_log_block_from_object_store(&store, &prefix, &key)
-        .await
-        .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok", "api error"]
-    );
+    assert!(target.block_lines(&key).await == ["api ok", "api error"]);
 }
 
 #[tokio::test]
 async fn compactor_decodes_native_kafka_log_records_from_headers() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let mut block_index = BlockIndex::default();
-    let mut committer = RecordingCommitter::default();
+    let mut target = CompactionTarget::new();
 
-    let descriptor = compact_kafka_wal_records_to_object_store(
-        &store,
-        &prefix,
-        &mut label_index,
-        &mut block_index,
-        &mut committer,
-        vec![KafkaWalRecord {
+    let descriptor = target
+        .compact_kafka(vec![KafkaWalRecord {
             value: b"api error".to_vec(),
             partition: PartitionIndex(2),
             offset: Offset(44),
@@ -386,10 +569,9 @@ async fn compactor_decodes_native_kafka_log_records_from_headers() {
                 kafka_header("krabka-log-label-env", "prod"),
                 kafka_header("krabka-log-metadata-trace_id", "abc"),
             ],
-        }],
-    )
-    .await
-    .unwrap();
+        }])
+        .await
+        .unwrap();
 
     let key = BlockKey::new(
         "tenant-a",
@@ -400,17 +582,14 @@ async fn compactor_decodes_native_kafka_log_records_from_headers() {
     );
 
     assert!(descriptor.key == key);
-    assert!(
-        committer.committed
-            == vec![WalPosition {
-                partition: PartitionIndex(2),
-                offset: Offset(44)
-            }]
-    );
-    let rows = read_log_block_from_object_store(&store, &prefix, &key)
+    assert!(target.committer.committed == committed_through(2, 44));
+    let rows = read_log_block_from_object_store(&target.store, &target.prefix, &key)
         .await
         .unwrap();
-    let labels = labels([("app", "api"), ("env", "prod")]);
+    let labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let fingerprint = series_fingerprint(&labels);
     assert!(
         rows == vec![LogRow::new(
@@ -421,9 +600,11 @@ async fn compactor_decodes_native_kafka_log_records_from_headers() {
         )]
     );
 
-    let (loaded_labels, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&target.store, &target.prefix, "tenant-a")
         .await
         .unwrap();
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
     assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
     assert!(
         loaded_blocks.match_blocks(
@@ -436,143 +617,59 @@ async fn compactor_decodes_native_kafka_log_records_from_headers() {
 
 #[tokio::test]
 async fn compactor_does_not_commit_offset_for_invalid_wal_batch() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let mut block_index = BlockIndex::default();
-    let mut committer = RecordingCommitter::default();
+    let mut target = CompactionTarget::new();
     let mut record = wal_record(10, 42, "api ok");
     record.position = None;
 
-    let error = compact_wal_records_to_object_store(
-        &store,
-        &prefix,
-        &mut label_index,
-        &mut block_index,
-        &mut committer,
-        vec![record],
-    )
-    .await
-    .unwrap_err();
+    let error = target.compact_wal(vec![record]).await.unwrap_err();
 
     check!(error.to_string().contains("missing WAL position"));
-    check!(committer.committed.is_empty());
-    check!(label_index.label_names("tenant-a").is_empty());
-    check!(
-        block_index
-            .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[])
-            .is_empty()
-    );
+    check!(target.committer.committed.is_empty());
+    target.check_nothing_indexed();
 }
 
 #[tokio::test]
 async fn compactor_does_not_commit_offset_for_invalid_kafka_wal_payload() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let mut block_index = BlockIndex::default();
-    let mut committer = RecordingCommitter::default();
+    let mut target = CompactionTarget::new();
 
-    let error = compact_kafka_wal_records_to_object_store(
-        &store,
-        &prefix,
-        &mut label_index,
-        &mut block_index,
-        &mut committer,
-        vec![KafkaWalRecord {
-            value: b"not json".to_vec(),
-            partition: PartitionIndex(2),
-            offset: Offset(42),
-            timestamp_ms: None,
-            headers: vec![kafka_header("krabka-format-version", "1")],
-        }],
-    )
-    .await
-    .unwrap_err();
+    let error = target
+        .compact_kafka(vec![undecodable_kafka_record(2)])
+        .await
+        .unwrap_err();
 
     check!(
         error
             .to_string()
             .contains("wal record deserialization failed")
     );
-    check!(committer.committed.is_empty());
-    check!(label_index.label_names("tenant-a").is_empty());
-    check!(
-        block_index
-            .match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[])
-            .is_empty()
-    );
+    check!(target.committer.committed.is_empty());
+    target.check_nothing_indexed();
 }
 
 #[tokio::test]
 async fn compactor_polls_kafka_wal_batch_then_commits_after_object_store_write() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let mut block_index = BlockIndex::default();
-    let mut consumer = RecordingWalConsumer::new(vec![vec![
-        kafka_wal_record(&wal_record_without_position(10, "api ok"), 3, 42),
-        kafka_wal_record(&wal_record_without_position(19, "api error"), 3, 43),
-    ]]);
+    let mut target = CompactionTarget::new();
+    let mut consumer = RecordingWalConsumer::new(vec![ok_then_error(3)]);
 
-    let descriptor = compact_next_kafka_wal_batch_to_object_store(
-        &store,
-        &prefix,
-        &mut label_index,
-        &mut block_index,
-        &mut consumer,
-        millis(1),
-    )
-    .await
-    .unwrap()
-    .expect("compacted descriptor");
+    let descriptor = target
+        .compact_next(&mut consumer)
+        .await
+        .unwrap()
+        .expect("compacted descriptor");
 
     let key = BlockKey::new("tenant-a", 3, 42, 43, TimeRange::new(10, 19).unwrap());
 
     assert!(descriptor.key == key);
-    assert!(
-        consumer.committed
-            == vec![WalPosition {
-                partition: PartitionIndex(3),
-                offset: Offset(43)
-            }]
-    );
-    let rows = read_log_block_from_object_store(&store, &prefix, &key)
-        .await
-        .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok", "api error"]
-    );
+    assert!(consumer.committed == committed_through(3, 43));
+    assert!(target.block_lines(&key).await == ["api ok", "api error"]);
 }
 
 #[tokio::test]
 async fn compactor_does_not_commit_polled_batch_when_decode_fails() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let mut block_index = BlockIndex::default();
-    let mut consumer = RecordingWalConsumer::new(vec![vec![KafkaWalRecord {
-        value: b"not json".to_vec(),
-        partition: PartitionIndex(3),
-        offset: Offset(42),
-        timestamp_ms: None,
-        headers: vec![kafka_header("krabka-format-version", "1")],
-    }]]);
+    let mut target = CompactionTarget::new();
+    let mut consumer = RecordingWalConsumer::new(vec![vec![undecodable_kafka_record(3)]]);
 
-    let error = compact_next_kafka_wal_batch_to_object_store(
-        &store,
-        &prefix,
-        &mut label_index,
-        &mut block_index,
-        &mut consumer,
-        millis(1),
-    )
-    .await
-    .unwrap_err();
+    let error = target.compact_next(&mut consumer).await.unwrap_err();
 
     check!(
         error
@@ -580,7 +677,7 @@ async fn compactor_does_not_commit_polled_batch_when_decode_fails() {
             .contains("wal record deserialization failed")
     );
     check!(consumer.committed.is_empty());
-    check!(label_index.label_names("tenant-a").is_empty());
+    check!(target.label_index.label_names("tenant-a").is_empty());
 }
 
 #[tokio::test]
@@ -588,11 +685,8 @@ async fn compactor_runtime_compacts_one_polled_batch_from_service_config() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
-            kafka_wal_record(&wal_record_without_position(10, "api ok"), 4, 42),
-            kafka_wal_record(&wal_record_without_position(19, "api error"), 4, 43),
-        ]]));
+    let dependencies = ServiceDependencies::default()
+        .with_wal_consumer(RecordingWalConsumer::new(vec![ok_then_error(4)]));
 
     let descriptor = run_compactor_once(&config, dependencies, Some(&store))
         .await
@@ -602,54 +696,154 @@ async fn compactor_runtime_compacts_one_polled_batch_from_service_config() {
     let key = BlockKey::new("tenant-a", 4, 42, 43, TimeRange::new(10, 19).unwrap());
 
     assert!(descriptor.key == key);
-    let rows =
-        read_log_block_from_object_store(&store, &ObjectPath::from("observability/logs"), &key)
-            .await
-            .unwrap();
+    assert!(object_block_lines(&store, &key).await == ["api ok", "api error"]);
+}
+
+async fn object_block_lines(store: &LocalFileSystem, key: &BlockKey) -> Vec<String> {
+    read_log_block_from_object_store(store, &ObjectPath::from("observability/logs"), key)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.line)
+        .collect()
+}
+
+/// A compactor whose data root, and so its delete-request store, is `dir`.
+/// A compactor whose data root and object store share one temporary
+/// directory, so it can materialize delete requests in both.
+struct DeletingCompactor {
+    dir: tempfile::TempDir,
+    store: LocalFileSystem,
+    config: ServiceConfig,
+}
+
+impl DeletingCompactor {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+        let config = ServiceConfig {
+            data_root: dir.path().to_path_buf(),
+            ..compactor_config("observability/logs")
+        };
+        Self { dir, store, config }
+    }
+}
+
+const SECRET_LINES: [&str; 3] = ["api ok", "api secret", "api later secret"];
+
+/// A tenant-a block of three `api` lines: at `first_second`, one second
+/// later, and three seconds later. The middle one and the last one contain
+/// "secret".
+struct SecretBlock {
+    /// The fingerprint of the `api` series.
+    api: u64,
+    /// The WAL offset of the first line; the others follow it.
+    first_offset: i64,
+    first_second: i64,
+}
+
+impl SecretBlock {
+    /// The block's key and rows.
+    fn key_and_rows(&self) -> SecretBlockRows {
+        let SecretBlock {
+            api,
+            first_offset,
+            first_second,
+        } = *self;
+        let seconds = [first_second, first_second + 1, first_second + 3];
+        let key = BlockKey::new(
+            "tenant-a",
+            0,
+            first_offset,
+            first_offset + 2,
+            TimeRange::new(seconds[0] * 1_000_000_000, seconds[2] * 1_000_000_000).unwrap(),
+        );
+        let rows = seconds
+            .into_iter()
+            .zip(SECRET_LINES)
+            .map(|row| LogRow::new(api, row.0 * 1_000_000_000, row.1, BTreeMap::new()))
+            .collect();
+        SecretBlockRows { key, rows }
+    }
+}
+
+struct SecretBlockRows {
+    key: BlockKey,
+    rows: Vec<LogRow>,
+}
+
+struct ApiLabelIndex {
+    labels: LabelIndex,
+    fingerprint: u64,
+}
+
+fn api_label_index() -> ApiLabelIndex {
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
+    ApiLabelIndex {
+        labels: label_index,
+        fingerprint: api,
+    }
+}
+
+/// Accepts a delete request for the secret lines in `range`, then runs one
+/// compaction over an empty WAL poll, which writes no new block.
+async fn delete_secrets_then_compact_idle(
+    config: &ServiceConfig,
+    store: &LocalFileSystem,
+    range: &str,
+) {
+    let app = build_service_router(config, ServiceDependencies::default(), Some(store))
+        .await
+        .unwrap();
+    delete_secret_lines(&app, range).await;
+
+    let dependencies = ServiceDependencies::default()
+        .with_wal_consumer(RecordingWalConsumer::new(vec![Vec::new()]));
+    let descriptor = run_compactor_once(config, dependencies, Some(store))
+        .await
+        .unwrap();
+    assert!(descriptor.is_none());
+}
+
+fn check_one_block_for(loaded_blocks: &BlockIndex, key: &BlockKey, api: u64) {
     assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok", "api error"]
+        loaded_blocks
+            .match_blocks("tenant-a", key.time_range, &[api])
+            .len()
+            == 1
     );
 }
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_written_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let mut config = compactor_config("observability/logs");
-    config.data_root = dir.path().to_path_buf();
+    let DeletingCompactor {
+        dir: _dir,
+        store,
+        config,
+    } = DeletingCompactor::new();
     let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
         .await
         .unwrap();
-    let delete_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=14&end=16")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(delete_response.status() == StatusCode::NO_CONTENT);
+    delete_secret_lines(&app, "start=14&end=16").await;
     let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
-            kafka_wal_record(
-                &wal_record_without_position(14_000_000_000, "api ok"),
-                0,
-                42,
-            ),
-            kafka_wal_record(
-                &wal_record_without_position(15_000_000_000, "api secret"),
-                0,
-                43,
-            ),
-            kafka_wal_record(
-                &wal_record_without_position(17_000_000_000, "api later secret"),
-                0,
-                44,
-            ),
-        ]]));
+        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
+            [14, 15, 17]
+                .into_iter()
+                .zip(SECRET_LINES)
+                .zip(42..)
+                .map(|((second, line), offset)| {
+                    kafka_wal_record(
+                        &wal_record_without_position(second * 1_000_000_000, line),
+                        PartitionIndex(0),
+                        Offset(offset),
+                    )
+                })
+                .collect(),
+        ]));
 
     let descriptor = run_compactor_once(&config, dependencies, Some(&store))
         .await
@@ -664,162 +858,71 @@ async fn compactor_runtime_materializes_active_delete_requests_in_written_blocks
         TimeRange::new(14_000_000_000, 17_000_000_000).unwrap(),
     );
     assert!(descriptor.key == key);
-    let rows =
-        read_log_block_from_object_store(&store, &ObjectPath::from("observability/logs"), &key)
-            .await
-            .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>()
-            == vec!["api ok", "api later secret"]
-    );
+    assert!(object_block_lines(&store, &key).await == ["api ok", "api later secret"]);
 }
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_existing_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let mut config = compactor_config("observability/logs");
-    config.data_root = dir.path().to_path_buf();
+    let DeletingCompactor {
+        dir: _dir,
+        store,
+        config,
+    } = DeletingCompactor::new();
     let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let key = BlockKey::new(
-        "tenant-a",
-        0,
-        42,
-        44,
-        TimeRange::new(14_000_000_000, 17_000_000_000).unwrap(),
-    );
-    let descriptor = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &key,
-        vec![
-            LogRow::new(api, 14_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 15_000_000_000, "api secret", BTreeMap::new()),
-            LogRow::new(api, 17_000_000_000, "api later secret", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
+    let index = api_label_index();
+    let rows = SecretBlock {
+        api: index.fingerprint,
+        first_offset: 42,
+        first_second: 14,
+    }
+    .key_and_rows();
+    let descriptor = write_log_block_to_object_store(&store, &prefix, &rows.key, rows.rows)
+        .await
+        .unwrap();
     let mut block_index = BlockIndex::default();
     block_index.insert(descriptor);
     write_tenant_log_index_manifest_to_object_store(
         &store,
         &prefix,
         "tenant-a",
-        &label_index,
+        &index.labels,
         &block_index,
     )
     .await
     .unwrap();
 
-    let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
-        .await
-        .unwrap();
-    let delete_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=14&end=16")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(delete_response.status() == StatusCode::NO_CONTENT);
+    delete_secrets_then_compact_idle(&config, &store, "start=14&end=16").await;
 
-    let dependencies = ServiceDependencies::default()
-        .with_wal_consumer(RecordingWalConsumer::new(vec![Vec::new()]));
-    let descriptor = run_compactor_once(&config, dependencies, Some(&store))
-        .await
-        .unwrap();
-    assert!(descriptor.is_none());
-
-    let rows = read_log_block_from_object_store(&store, &prefix, &key)
-        .await
-        .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>()
-            == vec!["api ok", "api later secret"]
-    );
-    let (_, loaded_blocks) =
+    assert!(object_block_lines(&store, &rows.key).await == ["api ok", "api later secret"]);
+    let loaded_indexes =
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
             .unwrap();
-    assert!(
-        loaded_blocks
-            .match_blocks("tenant-a", key.time_range, &[api])
-            .len()
-            == 1
-    );
+    let loaded_blocks = loaded_indexes.blocks;
+    check_one_block_for(&loaded_blocks, &rows.key, index.fingerprint);
 }
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_existing_local_manifest_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let mut config = compactor_config("observability/logs");
-    config.data_root = dir.path().to_path_buf();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let key = BlockKey::new(
-        "tenant-a",
-        0,
-        42,
-        44,
-        TimeRange::new(14_000_000_000, 17_000_000_000).unwrap(),
-    );
-    let descriptor = write_log_block(
-        dir.path(),
-        &key,
-        vec![
-            LogRow::new(api, 14_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 15_000_000_000, "api secret", BTreeMap::new()),
-            LogRow::new(api, 17_000_000_000, "api later secret", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
+    let DeletingCompactor { dir, store, config } = DeletingCompactor::new();
+    let index = api_label_index();
+    let block_rows = SecretBlock {
+        api: index.fingerprint,
+        first_offset: 42,
+        first_second: 14,
+    }
+    .key_and_rows();
+    let descriptor = write_log_block(dir.path(), &block_rows.key, block_rows.rows).unwrap();
     let mut block_index = BlockIndex::default();
     block_index.insert(descriptor);
-    write_log_index_manifest(dir.path(), &label_index, &block_index).unwrap();
+    write_log_index_manifest(dir.path(), &index.labels, &block_index).unwrap();
 
-    let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
-        .await
-        .unwrap();
-    let delete_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=14&end=16")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(delete_response.status() == StatusCode::NO_CONTENT);
+    delete_secrets_then_compact_idle(&config, &store, "start=14&end=16").await;
 
-    let dependencies = ServiceDependencies::default()
-        .with_wal_consumer(RecordingWalConsumer::new(vec![Vec::new()]));
-    let descriptor = run_compactor_once(&config, dependencies, Some(&store))
-        .await
-        .unwrap();
-    assert!(descriptor.is_none());
-
-    let rows = read_log_block(dir.path(), &key).unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>()
-            == vec!["api ok", "api later secret"]
-    );
-    let (_, loaded_blocks) = read_log_index_manifest(dir.path()).unwrap();
-    assert!(
-        loaded_blocks
-            .match_blocks("tenant-a", key.time_range, &[api])
-            .len()
-            == 1
-    );
+    let rows = read_log_block(dir.path(), &block_rows.key).unwrap();
+    assert!(lines(&rows) == vec!["api ok", "api later secret"]);
+    let loaded_blocks = read_log_index_manifest(dir.path()).unwrap().blocks;
+    check_one_block_for(&loaded_blocks, &block_rows.key, index.fingerprint);
 }
 
 #[tokio::test]
@@ -833,32 +936,23 @@ async fn compactor_runtime_deletes_existing_shard_rows_without_a_catalog() {
 }
 
 async fn delete_existing_shard(catalog_exists: bool) {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let mut config = compactor_config("observability/logs");
-    config.data_root = dir.path().to_path_buf();
+    let DeletingCompactor {
+        dir: _dir,
+        store,
+        config,
+    } = DeletingCompactor::new();
     let prefix = ObjectPath::from("observability/logs");
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let key = BlockKey::new(
-        "tenant-a",
-        0,
-        52,
-        54,
-        TimeRange::new(24_000_000_000, 27_000_000_000).unwrap(),
-    );
-    let descriptor = write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &key,
-        vec![
-            LogRow::new(api, 24_000_000_000, "api ok", BTreeMap::new()),
-            LogRow::new(api, 25_000_000_000, "api secret", BTreeMap::new()),
-            LogRow::new(api, 27_000_000_000, "api later secret", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
+    let index = api_label_index();
+    let block_rows = SecretBlock {
+        api: index.fingerprint,
+        first_offset: 52,
+        first_second: 24,
+    }
+    .key_and_rows();
+    let descriptor =
+        write_log_block_to_object_store(&store, &prefix, &block_rows.key, block_rows.rows)
+            .await
+            .unwrap();
     let mut block_index = BlockIndex::default();
     block_index.insert(descriptor);
     let shard_range = TimeRange::new(24_000_000_000, 27_000_000_000).unwrap();
@@ -867,7 +961,7 @@ async fn delete_existing_shard(catalog_exists: bool) {
         &prefix,
         "tenant-a",
         &[shard_range],
-        &label_index,
+        &index.labels,
         &block_index,
     )
     .await
@@ -883,46 +977,15 @@ async fn delete_existing_shard(catalog_exists: bool) {
             .unwrap();
     }
 
-    let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
-        .await
-        .unwrap();
-    let delete_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=24&end=26")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(delete_response.status() == StatusCode::NO_CONTENT);
+    delete_secrets_then_compact_idle(&config, &store, "start=24&end=26").await;
 
-    let dependencies = ServiceDependencies::default()
-        .with_wal_consumer(RecordingWalConsumer::new(vec![Vec::new()]));
-    let descriptor = run_compactor_once(&config, dependencies, Some(&store))
-        .await
-        .unwrap();
-    assert!(descriptor.is_none());
-
-    let rows = read_log_block_from_object_store(&store, &prefix, &key)
-        .await
-        .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>()
-            == vec!["api ok", "api later secret"]
-    );
-    let (_, loaded_blocks) =
+    assert!(object_block_lines(&store, &block_rows.key).await == ["api ok", "api later secret"]);
+    let loaded_indexes =
         read_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", shard_range)
             .await
             .unwrap();
-    assert!(
-        loaded_blocks
-            .match_blocks("tenant-a", key.time_range, &[api])
-            .len()
-            == 1
-    );
+    let loaded_blocks = loaded_indexes.blocks;
+    check_one_block_for(&loaded_blocks, &block_rows.key, index.fingerprint);
 }
 
 #[tokio::test]
@@ -930,37 +993,9 @@ async fn compactor_once_loads_existing_manifest_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let first_run =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
-            kafka_wal_record(&wal_record_without_position(10, "api ok"), 4, 42),
-        ]]));
+    let runs = compact_ok_then_error_runs(&config, &store).await;
 
-    let first_descriptor = run_compactor_once(&config, first_run, Some(&store))
-        .await
-        .unwrap()
-        .expect("first compacted descriptor");
-
-    let second_run =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
-            kafka_wal_record(&wal_record_without_position(19, "api error"), 4, 43),
-        ]]));
-    let second_descriptor = run_compactor_once(&config, second_run, Some(&store))
-        .await
-        .unwrap()
-        .expect("second compacted descriptor");
-
-    let prefix = ObjectPath::from("observability/logs");
-    let (loaded_labels, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
-        .await
-        .unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
-    let api = series_fingerprint(&api_labels);
-
-    assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
-    assert!(
-        loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == vec![first_descriptor, second_descriptor]
-    );
+    assert_api_blocks_indexed(&store, &[runs.first, runs.second]).await;
 }
 
 #[tokio::test]
@@ -968,40 +1003,21 @@ async fn compactor_runtime_updates_object_store_shard_catalog_incrementally() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let first_run =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
-            kafka_wal_record(&wal_record_without_position(10, "api ok"), 4, 42),
-        ]]));
-    let first_descriptor = run_compactor_once(&config, first_run, Some(&store))
-        .await
-        .unwrap()
-        .expect("first compacted descriptor");
-
-    let second_run =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
-            kafka_wal_record(&wal_record_without_position(19, "api error"), 4, 43),
-        ]]));
-    let second_descriptor = run_compactor_once(&config, second_run, Some(&store))
-        .await
-        .unwrap()
-        .expect("second compacted descriptor");
+    let runs = compact_ok_then_error_runs(&config, &store).await;
 
     let prefix = ObjectPath::from("observability/logs");
     let shard_ranges =
         list_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
             .await
             .unwrap();
-    assert!(
-        shard_ranges
-            == vec![
-                first_descriptor.key.time_range,
-                second_descriptor.key.time_range
-            ]
-    );
+    assert!(shard_ranges == vec![runs.first.key.time_range, runs.second.key.time_range]);
 
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = series_fingerprint(&api_labels);
-    let (loaded_labels, loaded_blocks) = read_tenant_log_index_shards_from_object_store(
+    let loaded_indexes = read_tenant_log_index_shards_from_object_store(
         &store,
         &prefix,
         "tenant-a",
@@ -1009,11 +1025,13 @@ async fn compactor_runtime_updates_object_store_shard_catalog_incrementally() {
     )
     .await
     .unwrap();
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
 
     assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
     assert!(
         loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == vec![first_descriptor, second_descriptor]
+            == vec![runs.first, runs.second]
     );
 }
 
@@ -1055,8 +1073,8 @@ async fn compactor_drain_waits_through_an_empty_poll_with_records_still_pending(
                 Vec::new(),
                 vec![kafka_wal_record(
                     &wal_record_without_position(30, "api stopping"),
-                    5,
-                    44,
+                    PartitionIndex(5),
+                    Offset(44),
                 )],
             ],
             &commits,
@@ -1081,63 +1099,16 @@ async fn compactor_drain_waits_through_an_empty_poll_with_records_still_pending(
 async fn compactor_runtime_preserves_indexes_across_polled_batches_until_idle() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-    let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                5,
-                42,
-            )],
-            vec![kafka_wal_record(
-                &wal_record_without_position(19, "api error"),
-                5,
-                43,
-            )],
-            Vec::new(),
-        ]));
-
-    let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
-        .await
-        .unwrap();
+    let descriptors = compact_ok_then_error_batches(&store).await;
 
     assert!(descriptors.len() == 2);
-    let prefix = ObjectPath::from("observability/logs");
-    let (loaded_labels, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
-        .await
-        .unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
-    let api = series_fingerprint(&api_labels);
-
-    assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
-    assert!(
-        loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == descriptors
-    );
+    assert_api_blocks_indexed(&store, &descriptors).await;
 }
 
 #[tokio::test]
 async fn compactor_runtime_writes_shard_indexes_without_index_metadata_rewrites() {
     let store = RecordingObjectStore::new();
-    let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                5,
-                42,
-            )],
-            vec![kafka_wal_record(
-                &wal_record_without_position(19, "api error"),
-                5,
-                43,
-            )],
-            Vec::new(),
-        ]));
-
-    let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
-        .await
-        .unwrap();
+    let descriptors = compact_ok_then_error_batches(&store).await;
 
     let prefix = ObjectPath::from("observability/logs");
     let manifest_path =
@@ -1148,22 +1119,26 @@ async fn compactor_runtime_writes_shard_indexes_without_index_metadata_rewrites(
     let manifest_puts = store
         .put_paths()
         .into_iter()
-        .filter(|(path, _)| path == &manifest_path)
+        .filter(|put| put.path == manifest_path)
         .count();
     let shard_catalog_puts = store
         .put_paths()
         .into_iter()
-        .filter(|(path, _)| path == &shard_catalog_path)
+        .filter(|put| put.path == shard_catalog_path)
         .count();
-    let (_, loaded_blocks) = read_tenant_log_index_shards_from_object_store(
+    let loaded_blocks = read_tenant_log_index_shards_from_object_store(
         &store,
         &prefix,
         "tenant-a",
         TimeRange::new(i64::MIN, i64::MAX).unwrap(),
     )
     .await
-    .unwrap();
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
+    .unwrap()
+    .blocks;
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
 
     check!(
         manifest_puts == 0,
@@ -1183,41 +1158,48 @@ async fn compactor_runtime_writes_shard_indexes_without_index_metadata_rewrites(
 async fn compactor_runtime_writes_shards_with_only_the_new_block() {
     let store = RecordingObjectStore::new();
     let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![
-                kafka_wal_record(&wal_record_without_position(10, "api first"), 5, 42),
-                kafka_wal_record(&wal_record_without_position(30, "api first later"), 5, 43),
+    let dependencies = polls(
+        PartitionIndex(5),
+        &[
+            &[
+                polled(Offset(42), log_entry(10, "api first")),
+                polled(Offset(43), log_entry(30, "api first later")),
             ],
-            vec![
-                kafka_wal_record(&wal_record_without_position(20, "api second"), 5, 44),
-                kafka_wal_record(&wal_record_without_position(40, "api second later"), 5, 45),
+            &[
+                polled(Offset(44), log_entry(20, "api second")),
+                polled(Offset(45), log_entry(40, "api second later")),
             ],
-            Vec::new(),
-        ]));
+            &[],
+        ],
+    );
 
     let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
         .await
         .unwrap();
 
     let prefix = ObjectPath::from("observability/logs");
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let (_, first_blocks) = read_tenant_log_index_shard_from_object_store(
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
+    let first_blocks = read_tenant_log_index_shard_from_object_store(
         &store,
         &prefix,
         "tenant-a",
         descriptors[0].key.time_range,
     )
     .await
-    .unwrap();
-    let (_, second_blocks) = read_tenant_log_index_shard_from_object_store(
+    .unwrap()
+    .blocks;
+    let second_blocks = read_tenant_log_index_shard_from_object_store(
         &store,
         &prefix,
         "tenant-a",
         descriptors[1].key.time_range,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .blocks;
 
     assert!(
         first_blocks.match_blocks("tenant-a", TimeRange::new(0, 50).unwrap(), &[api])
@@ -1232,25 +1214,7 @@ async fn compactor_runtime_writes_shards_with_only_the_new_block() {
 #[tokio::test]
 async fn compactor_runtime_appends_batches_without_loading_tenant_manifest() {
     let store = RecordingObjectStore::new();
-    let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                5,
-                42,
-            )],
-            vec![kafka_wal_record(
-                &wal_record_without_position(19, "api error"),
-                5,
-                43,
-            )],
-            Vec::new(),
-        ]));
-
-    let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
-        .await
-        .unwrap();
+    let descriptors = compact_ok_then_error_batches(&store).await;
 
     let manifest_path = krabka_blockstore::log_tenant_index_manifest_object_path(
         &ObjectPath::from("observability/logs"),
@@ -1278,7 +1242,10 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
     let old_range = TimeRange::new(1, 1).unwrap();
     let old_key = BlockKey::new(tenant, 5, 40, 40, old_range);
     let mut old_labels = LabelIndex::default();
-    let old_fingerprint = old_labels.insert_series(tenant, labels([("app", "api")]));
+    let old_fingerprint = old_labels.insert_series(
+        tenant,
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut old_blocks = BlockIndex::default();
     old_blocks.insert(krabka_blockstore::BlockDescriptor::new_with_size(
         old_key,
@@ -1298,15 +1265,7 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
     store.get_paths.lock().unwrap().clear();
 
     let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                5,
-                42,
-            )],
-            Vec::new(),
-        ]));
+    let dependencies = one_api_ok_poll(PartitionIndex(5));
 
     let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
         .await
@@ -1327,6 +1286,7 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
 }
 
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn compactor_runtime_splits_mixed_tenant_wal_batch_into_tenant_blocks() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
@@ -1336,13 +1296,13 @@ async fn compactor_runtime_splits_mixed_tenant_wal_batch_into_tenant_blocks() {
             vec![
                 kafka_wal_record(
                     &wal_record_for_tenant("tenant-a", 10, "tenant a error"),
-                    5,
-                    42,
+                    PartitionIndex(5),
+                    Offset(42),
                 ),
                 kafka_wal_record(
                     &wal_record_for_tenant("tenant-b", 11, "tenant b error"),
-                    5,
-                    43,
+                    PartitionIndex(5),
+                    Offset(43),
                 ),
             ],
             Vec::new(),
@@ -1362,35 +1322,47 @@ async fn compactor_runtime_splits_mixed_tenant_wal_batch_into_tenant_blocks() {
     );
 
     let prefix = ObjectPath::from("observability/logs");
-    let (first_tenant_labels, first_tenant_blocks) =
-        read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
-            .await
-            .unwrap();
-    let (second_tenant_labels, second_tenant_blocks) =
-        read_all_tenant_shard_indexes(&store, &prefix, "tenant-b")
-            .await
-            .unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+        .await
+        .unwrap();
+    let first_tenant_labels = loaded_indexes.labels;
+    let first_tenant_blocks = loaded_indexes.blocks;
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-b")
+        .await
+        .unwrap();
+    let second_tenant_labels = loaded_indexes.labels;
+    let second_tenant_blocks = loaded_indexes.blocks;
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = series_fingerprint(&api_labels);
 
-    for (tenant_labels, tenant_blocks, tenant, descriptor) in [
-        (
-            &first_tenant_labels,
-            &first_tenant_blocks,
-            "tenant-a",
-            &descriptors[0],
-        ),
-        (
-            &second_tenant_labels,
-            &second_tenant_blocks,
-            "tenant-b",
-            &descriptors[1],
-        ),
+    struct TenantShardIndexCase<'a> {
+        labels: &'a LabelIndex,
+        blocks: &'a BlockIndex,
+        tenant: &'a str,
+        descriptor: &'a BlockDescriptor,
+    }
+    for case in [
+        TenantShardIndexCase {
+            labels: &first_tenant_labels,
+            blocks: &first_tenant_blocks,
+            tenant: "tenant-a",
+            descriptor: &descriptors[0],
+        },
+        TenantShardIndexCase {
+            labels: &second_tenant_labels,
+            blocks: &second_tenant_blocks,
+            tenant: "tenant-b",
+            descriptor: &descriptors[1],
+        },
     ] {
-        assert!(tenant_labels.label_values(tenant, "app") == BTreeSet::from(["api".into()]));
+        assert!(case.labels.label_values(case.tenant, "app") == BTreeSet::from(["api".into()]));
         assert!(
-            tenant_blocks.match_blocks(tenant, TimeRange::new(0, 30).unwrap(), &[api])
-                == vec![descriptor.clone()]
+            case.blocks
+                .match_blocks(case.tenant, TimeRange::new(0, 30).unwrap(), &[api])
+                == vec![case.descriptor.clone()]
         );
     }
 }
@@ -1402,16 +1374,10 @@ async fn compactor_runtime_keeps_polling_after_idle_until_shutdown() {
     let config = compactor_config("observability/logs");
     let prefix = ObjectPath::from("observability/logs");
     let key = BlockKey::new("tenant-a", 7, 43, 43, TimeRange::new(19, 19).unwrap());
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            Vec::new(),
-            vec![kafka_wal_record(
-                &wal_record_without_position(19, "api error"),
-                7,
-                43,
-            )],
-            Vec::new(),
-        ]));
+    let dependencies = polls(
+        PartitionIndex(7),
+        &[&[], &[polled(Offset(43), log_entry(19, "api error"))], &[]],
+    );
 
     let descriptors = tokio::time::timeout(
         Duration::from_secs(1),
@@ -1427,87 +1393,38 @@ async fn compactor_runtime_keeps_polling_after_idle_until_shutdown() {
     let rows = read_log_block_from_object_store(&store, &prefix, &key)
         .await
         .unwrap();
-    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api error"]);
+    assert!(lines(&rows) == vec!["api error"]);
 }
 
 #[tokio::test]
 async fn compactor_runtime_retries_object_store_errors_before_committing_offsets() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FailingPutObjectStore::fail_first_put(
-        LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
-    );
-    let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                6,
-                42,
-            )],
-            Vec::new(),
-        ]));
-
-    let descriptors = tokio::time::timeout(
-        Duration::from_secs(1),
-        run_compactor_until_shutdown(&config, dependencies, Some(&store), async {
-            // real-time wait (not a progress poll): shutdown future — this sleep is the
-            // compactor's run-duration/retry budget, not a poll cadence for a condition.
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-
-    assert!(descriptors.len() == 1);
-    assert!(store.failed_put_count() == 1);
+    let store =
+        RecordingObjectStore::fail_first_put(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
+    compact_one_record_through_one_failed_put(&store).await;
     let key = BlockKey::new("tenant-a", 6, 42, 42, TimeRange::new(10, 10).unwrap());
     let rows =
         read_log_block_from_object_store(&store, &ObjectPath::from("observability/logs"), &key)
             .await
             .unwrap();
-    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
+    assert!(lines(&rows) == vec!["api ok"]);
 }
 
 #[tokio::test]
 async fn compactor_runtime_retries_shard_manifest_write_errors_before_committing_offsets() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FailingPutObjectStore::fail_first_matching_put(
+    let store = RecordingObjectStore::fail_first_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
         "shards/time=10-10/manifest/snapshots/",
     );
-    let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                6,
-                42,
-            )],
-            Vec::new(),
-        ]));
-
-    let descriptors = tokio::time::timeout(
-        Duration::from_secs(1),
-        run_compactor_until_shutdown(&config, dependencies, Some(&store), async {
-            // real-time wait (not a progress poll): shutdown future — this sleep is the
-            // compactor's run-duration/retry budget, not a poll cadence for a condition.
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-
-    assert!(descriptors.len() == 1);
-    assert!(store.failed_put_count() == 1);
+    compact_one_record_through_one_failed_put(&store).await;
 
     let prefix = ObjectPath::from("observability/logs");
     let key = BlockKey::new("tenant-a", 6, 42, 42, TimeRange::new(10, 10).unwrap());
     let rows = read_log_block_from_object_store(&store, &prefix, &key)
         .await
         .unwrap();
-    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
+    assert!(lines(&rows) == vec!["api ok"]);
 
     let shard_ranges =
         list_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
@@ -1519,35 +1436,11 @@ async fn compactor_runtime_retries_shard_manifest_write_errors_before_committing
 #[tokio::test]
 async fn compactor_runtime_retries_compaction_frontier_write_errors_after_committing_offsets() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FailingPutObjectStore::fail_first_matching_put(
+    let store = RecordingObjectStore::fail_first_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
         "compaction-frontier.json",
     );
-    let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                6,
-                42,
-            )],
-            Vec::new(),
-        ]));
-
-    let descriptors = tokio::time::timeout(
-        Duration::from_secs(1),
-        run_compactor_until_shutdown(&config, dependencies, Some(&store), async {
-            // real-time wait (not a progress poll): shutdown future — this sleep is the
-            // compactor's run-duration/retry budget, not a poll cadence for a condition.
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-
-    assert!(descriptors.len() == 1);
-    assert!(store.failed_put_count() == 1);
+    compact_one_record_through_one_failed_put(&store).await;
 
     let persisted_frontier =
         read_compaction_frontier_from_object_store(&store, &ObjectPath::from("observability/logs"))
@@ -1566,16 +1459,11 @@ async fn compactor_runtime_advances_shared_compaction_frontier_after_commit() {
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
     let frontier = SharedCompactionFrontier::default();
-    let dependencies = ServiceDependencies::default()
-        .with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(19, "api error"),
-                8,
-                43,
-            )],
-            Vec::new(),
-        ]))
-        .with_compaction_frontier(frontier.clone());
+    let dependencies = polls(
+        PartitionIndex(8),
+        &[&[polled(Offset(43), log_entry(19, "api error"))], &[]],
+    )
+    .with_compaction_frontier(frontier.clone());
 
     let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
         .await
@@ -1614,16 +1502,11 @@ async fn compactor_runtime_reloads_shared_frontier_after_restart() {
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
     let first_frontier = SharedCompactionFrontier::default();
-    let first_run = ServiceDependencies::default()
-        .with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(19, "api error"),
-                8,
-                43,
-            )],
-            Vec::new(),
-        ]))
-        .with_compaction_frontier(first_frontier);
+    let first_run = polls(
+        PartitionIndex(8),
+        &[&[polled(Offset(43), log_entry(19, "api error"))], &[]],
+    )
+    .with_compaction_frontier(first_frontier);
     run_compactor_until_idle(&config, first_run, Some(&store))
         .await
         .unwrap();
@@ -1648,47 +1531,23 @@ async fn compactor_runtime_loads_existing_manifest_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let first_run =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                6,
-                42,
-            )],
-            Vec::new(),
-        ]));
+    let first_run = one_api_ok_poll(PartitionIndex(6));
 
     let mut descriptors = run_compactor_until_idle(&config, first_run, Some(&store))
         .await
         .unwrap();
 
-    let second_run =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(19, "api error"),
-                6,
-                43,
-            )],
-            Vec::new(),
-        ]));
+    let second_run = polls(
+        PartitionIndex(6),
+        &[&[polled(Offset(43), log_entry(19, "api error"))], &[]],
+    );
     descriptors.extend(
         run_compactor_until_idle(&config, second_run, Some(&store))
             .await
             .unwrap(),
     );
 
-    let prefix = ObjectPath::from("observability/logs");
-    let (loaded_labels, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
-        .await
-        .unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
-    let api = series_fingerprint(&api_labels);
-
-    assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
-    assert!(
-        loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api])
-            == descriptors
-    );
+    assert_api_blocks_indexed(&store, &descriptors).await;
 }
 
 #[tokio::test]
@@ -1699,8 +1558,8 @@ async fn compactor_runtime_reprocesses_uncommitted_wal_without_duplicate_manifes
     let first_run = ServiceDependencies::default().with_wal_consumer(
         RecordingWalConsumer::failing_first_commit(vec![vec![kafka_wal_record(
             &wal_record_without_position(10, "api ok"),
-            6,
-            42,
+            PartitionIndex(6),
+            Offset(42),
         )]]),
     );
 
@@ -1719,15 +1578,7 @@ async fn compactor_runtime_reprocesses_uncommitted_wal_without_duplicate_manifes
         .await
         .unwrap();
 
-    let second_run =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                6,
-                42,
-            )],
-            Vec::new(),
-        ]));
+    let second_run = one_api_ok_poll(PartitionIndex(6));
     let descriptors = run_compactor_until_idle(&config, second_run, Some(&store))
         .await
         .unwrap();
@@ -1742,13 +1593,18 @@ async fn compactor_runtime_reprocesses_uncommitted_wal_without_duplicate_manifes
     let rows = read_log_block_from_object_store(&store, &prefix, &key)
         .await
         .unwrap();
-    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
+    assert!(lines(&rows) == vec!["api ok"]);
     assert!(rewritten_bytes == first_bytes);
 
-    let (_, loaded_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
-    let api_labels = labels([("app", "api"), ("env", "prod")]);
+    let _ = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
+    let api_labels = labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]);
     let api = series_fingerprint(&api_labels);
 
     assert!(descriptors.len() == 1);
@@ -1763,15 +1619,7 @@ async fn compactor_service_target_keeps_running_after_idle() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                6,
-                42,
-            )],
-            Vec::new(),
-        ]));
+    let dependencies = one_api_ok_poll(PartitionIndex(6));
     let server_store = Arc::clone(&store);
     let server = tokio::spawn(async move {
         serve_service(config, dependencies, Some(server_store.as_ref())).await
@@ -1788,7 +1636,7 @@ async fn compactor_service_target_keeps_running_after_idle() {
     assert!(!server.is_finished());
     server.abort();
 
-    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
+    assert!(lines(&rows) == vec!["api ok"]);
 }
 
 #[tokio::test]
@@ -1796,20 +1644,14 @@ async fn compactor_service_accumulates_adjacent_small_wal_polls_into_one_block()
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "first"),
-                6,
-                42,
-            )],
-            vec![kafka_wal_record(
-                &wal_record_without_position(20, "second"),
-                6,
-                43,
-            )],
-            Vec::new(),
-        ]));
+    let dependencies = polls(
+        PartitionIndex(6),
+        &[
+            &[polled(Offset(42), log_entry(10, "first"))],
+            &[polled(Offset(43), log_entry(20, "second"))],
+            &[],
+        ],
+    );
 
     // The two small polls must land in ONE block spanning both offsets and
     // both timestamps. Waiting for that exact block is a progress poll rather
@@ -1831,9 +1673,7 @@ async fn compactor_service_accumulates_adjacent_small_wal_polls_into_one_block()
     let rows = read_log_block_from_object_store(&store, &prefix, &descriptors[0].key)
         .await
         .unwrap();
-    assert!(
-        rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["first", "second"]
-    );
+    assert!(lines(&rows) == vec!["first", "second"]);
 }
 
 #[tokio::test]
@@ -1841,33 +1681,10 @@ async fn compactor_service_listener_serves_http_while_polling_wal() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let config = compactor_config("observability/logs");
-    let dependencies =
-        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![
-            vec![kafka_wal_record(
-                &wal_record_without_position(10, "api ok"),
-                6,
-                42,
-            )],
-            Vec::new(),
-        ]));
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server_store = Arc::clone(&store);
-    let server = tokio::spawn(async move {
-        serve_service_listener(listener, config, dependencies, Some(server_store.as_ref()))
-            .await
-            .unwrap();
-    });
+    let dependencies = one_api_ok_poll(PartitionIndex(6));
+    let SpawnedListener { addr, server } = spawn_listener_over(&store, config, dependencies).await;
 
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    stream
-        .write_all(
-            format!("GET /ready HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").as_bytes(),
-        )
-        .await
-        .unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await.unwrap();
+    let response = get_ready(addr).await;
 
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(response.ends_with("ready\n"));
@@ -1893,7 +1710,7 @@ async fn compactor_service_listener_serves_http_while_polling_wal() {
     }
     server.abort();
     let rows = rows.expect("compactor writes block while HTTP server is running");
-    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
+    assert!(lines(&rows) == vec!["api ok"]);
 }
 
 #[tokio::test]
@@ -1907,7 +1724,7 @@ async fn compaction_interrupted_between_block_write_and_index_save_loses_nothing
     // The compactor writes the output block first and the tenant's shard
     // manifest second. Failing every write of that manifest cuts the run in
     // exactly the gap between the two: the block is durable, nothing names it.
-    let interrupted_store = FailingPutObjectStore::fail_every_matching_put(
+    let interrupted_store = RecordingObjectStore::fail_every_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
         "shards/time=10-10/manifest/snapshots/",
     );
@@ -1916,8 +1733,8 @@ async fn compaction_interrupted_between_block_write_and_index_save_loses_nothing
         RecordingWalConsumer::recording_commits_to(
             vec![vec![kafka_wal_record(
                 &wal_record_without_position(10, "api ok"),
-                6,
-                42,
+                PartitionIndex(6),
+                Offset(42),
             )]],
             &interrupted_commits,
         ),
@@ -1952,8 +1769,8 @@ async fn compaction_interrupted_between_block_write_and_index_save_loses_nothing
             vec![
                 vec![kafka_wal_record(
                     &wal_record_without_position(10, "api ok"),
-                    6,
-                    42,
+                    PartitionIndex(6),
+                    Offset(42),
                 )],
                 Vec::new(),
             ],
@@ -1981,7 +1798,7 @@ async fn compaction_interrupted_between_block_write_and_index_save_loses_nothing
     let rows = read_log_block_from_object_store(&restart_store, &prefix, &key)
         .await
         .unwrap();
-    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
+    assert!(lines(&rows) == vec!["api ok"]);
 
     // The interrupted run left no second, unreferenced copy behind: the block
     // key is derived from the tenant, partition, offsets and time range, so the
@@ -2002,15 +1819,8 @@ async fn compactor_service_stops_serving_when_its_wal_consumer_loop_panics() {
     let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     let config = compactor_config("observability/logs");
     let trigger = Arc::new(tokio::sync::Notify::new());
-    let dependencies = ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
-        trigger: Arc::clone(&trigger),
-    });
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server_store = Arc::clone(&store);
-    let server = tokio::spawn(async move {
-        serve_service_listener(listener, config, dependencies, Some(server_store.as_ref())).await
-    });
+    let dependencies = panicking_wal_dependencies(&trigger);
+    let SpawnedListener { addr, server } = spawn_listener_over(&store, config, dependencies).await;
 
     // The consumer is parked on the trigger, so the service is demonstrably
     // serving while a live consumer sits behind it.
@@ -2049,10 +1859,10 @@ async fn querier_service_stops_serving_when_its_spawned_wal_consumer_loop_panics
         ..ServiceConfig::default()
     };
     let trigger = Arc::new(tokio::sync::Notify::new());
-    let dependencies = ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
-        trigger: Arc::clone(&trigger),
-    });
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let dependencies = panicking_wal_dependencies(&trigger);
+    let listener = TcpListener::bind("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     let server =
         tokio::spawn(
@@ -2075,6 +1885,30 @@ async fn querier_service_stops_serving_when_its_spawned_wal_consumer_loop_panics
 }
 
 /// One `GET /ready`, read to end over a `Connection: close` request.
+/// A service listener on `127.0.0.1`, serving on a spawned task.
+struct SpawnedListener {
+    addr: std::net::SocketAddr,
+    server: tokio::task::JoinHandle<Result<(), ServiceRuntimeError>>,
+}
+
+/// Binds `127.0.0.1:0` and serves `config` with `dependencies` over `store`
+/// on a spawned task.
+async fn spawn_listener_over(
+    store: &Arc<LocalFileSystem>,
+    config: ServiceConfig,
+    dependencies: ServiceDependencies,
+) -> SpawnedListener {
+    let listener = TcpListener::bind("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_store = Arc::clone(store);
+    let server = tokio::spawn(async move {
+        serve_service_listener(listener, config, dependencies, Some(server_store.as_ref())).await
+    });
+    SpawnedListener { addr, server }
+}
+
 async fn get_ready(addr: std::net::SocketAddr) -> String {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     stream
@@ -2086,154 +1920,6 @@ async fn get_ready(addr: std::net::SocketAddr) -> String {
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
     response
-}
-
-#[derive(Debug)]
-struct FailingPutObjectStore<S> {
-    inner: Arc<S>,
-    failed_puts_remaining: std::sync::Mutex<usize>,
-    failed_puts: std::sync::atomic::AtomicUsize,
-    matching_path: Option<String>,
-}
-
-impl<S> FailingPutObjectStore<S> {
-    fn fail_first_put(inner: S) -> Self {
-        Self {
-            inner: Arc::new(inner),
-            failed_puts_remaining: std::sync::Mutex::new(1),
-            failed_puts: std::sync::atomic::AtomicUsize::new(0),
-            matching_path: None,
-        }
-    }
-
-    fn fail_first_matching_put(inner: S, matching_path: &str) -> Self {
-        Self {
-            inner: Arc::new(inner),
-            failed_puts_remaining: std::sync::Mutex::new(1),
-            failed_puts: std::sync::atomic::AtomicUsize::new(0),
-            matching_path: Some(matching_path.to_string()),
-        }
-    }
-
-    /// Fails every matching `put`, not just the first.
-    ///
-    /// `fail_first_matching_put` models a transient error that a retry rides
-    /// out. This models the write never landing at all, which is how a run
-    /// interrupted at that write looks to everything downstream of it.
-    fn fail_every_matching_put(inner: S, matching_path: &str) -> Self {
-        Self {
-            failed_puts_remaining: std::sync::Mutex::new(usize::MAX),
-            ..Self::fail_first_matching_put(inner, matching_path)
-        }
-    }
-
-    fn failed_put_count(&self) -> usize {
-        self.failed_puts.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-impl<S> fmt::Display for FailingPutObjectStore<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FailingPutObjectStore")
-    }
-}
-
-#[async_trait]
-impl<S> ObjectStore for FailingPutObjectStore<S>
-where
-    S: ObjectStore,
-{
-    async fn put_opts(
-        &self,
-        location: &ObjectPath,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        let should_fail = {
-            let mut remaining = self.failed_puts_remaining.lock().unwrap();
-            let matches_path = self
-                .matching_path
-                .as_ref()
-                .is_none_or(|matching_path| location.as_ref().contains(matching_path));
-            if *remaining > 0 && matches_path {
-                *remaining -= 1;
-                true
-            } else {
-                false
-            }
-        };
-        if should_fail {
-            self.failed_puts
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            return Err(object_store::Error::Generic {
-                store: "failing-put",
-                source: "transient put failure".into(),
-            });
-        }
-        self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &ObjectPath,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &ObjectPath,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    async fn get_ranges(
-        &self,
-        location: &ObjectPath,
-        ranges: &[Range<u64>],
-    ) -> object_store::Result<Vec<Bytes>> {
-        self.inner.get_ranges(location, ranges).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-    ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    fn list_with_offset(
-        &self,
-        prefix: Option<&ObjectPath>,
-        offset: &ObjectPath,
-    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list_with_offset(prefix, offset)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &ObjectPath,
-        to: &ObjectPath,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
 }
 
 #[derive(Default)]
@@ -2347,6 +2033,14 @@ impl LogWalConsumer for PanickingWalConsumer {
 
 /// Every `.parquet` object under `prefix`, that is every log block the store
 /// physically holds, whether or not an index names it.
+fn block_keys(index: &BlockIndex) -> Vec<BlockKey> {
+    index
+        .blocks()
+        .iter()
+        .map(|block| block.key.clone())
+        .collect()
+}
+
 async fn list_log_block_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> Vec<String> {
     use futures_util::StreamExt as _;
 
@@ -2365,7 +2059,10 @@ async fn list_log_block_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> V
 fn wal_record(timestamp_ns: i64, offset: i64, line: &str) -> WalLogRecord {
     WalLogRecord {
         tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         timestamp_ns,
         line: line.to_string(),
         structured_metadata: BTreeMap::new(),
@@ -2401,30 +2098,14 @@ fn wal_record_without_position(timestamp_ns: i64, line: &str) -> WalLogRecord {
 fn wal_record_for_tenant(tenant: &str, timestamp_ns: i64, line: &str) -> WalLogRecord {
     WalLogRecord {
         tenant: tenant.to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
+        labels: labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+        ]),
         timestamp_ns,
         line: line.to_string(),
         structured_metadata: BTreeMap::new(),
         position: None,
-    }
-}
-
-fn kafka_wal_record(record: &WalLogRecord, partition: i32, offset: i64) -> KafkaWalRecord {
-    let producer_record =
-        build_kafka_wal_record("__krabka_observability_logs_wal", record).expect("producer record");
-    KafkaWalRecord {
-        value: producer_record.value.expect("producer value").to_vec(),
-        partition: PartitionIndex(partition),
-        offset: Offset(offset),
-        timestamp_ms: producer_record.timestamp_ms,
-        headers: producer_record
-            .headers
-            .into_iter()
-            .map(|header| KafkaWalHeader {
-                key: header.key,
-                value: header.value.map(|value| value.to_vec()),
-            })
-            .collect(),
     }
 }
 
@@ -2488,17 +2169,20 @@ async fn seed_tenant_log_blocks(
     timestamps_ns: &[i64],
 ) -> Vec<BlockKey> {
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series(tenant, labels([("app", "api")]));
+    let api = label_index.insert_series(
+        tenant,
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut block_index = BlockIndex::default();
     let mut keys = Vec::new();
-    for (offset, timestamp_ns) in timestamps_ns.iter().enumerate() {
-        let offset = i64::try_from(offset).unwrap();
+    for row in timestamps_ns.iter().enumerate() {
+        let offset = i64::try_from(row.0).unwrap();
         let key = BlockKey::new(
             tenant,
             0,
             offset,
             offset,
-            TimeRange::new(*timestamp_ns, *timestamp_ns).unwrap(),
+            TimeRange::new(*row.1, *row.1).unwrap(),
         );
         compact_log_block_to_object_store(
             store,
@@ -2508,7 +2192,7 @@ async fn seed_tenant_log_blocks(
             &mut block_index,
             vec![LogRow::new(
                 api,
-                *timestamp_ns,
+                *row.1,
                 format!("api ok {offset}"),
                 BTreeMap::new(),
             )],
@@ -2520,19 +2204,31 @@ async fn seed_tenant_log_blocks(
     keys
 }
 
-/// Runs the compactor loop over an empty WAL until `gone` has no object left.
+/// One compactor run under a per-tenant retention overrides file.
+struct RetentionOverridesRun<'a> {
+    config: &'a ServiceConfig,
+    store: &'a dyn ObjectStore,
+    prefix: &'a ObjectPath,
+    overrides_yaml: &'a str,
+    /// The block whose object the sweep must delete.
+    swept_block: &'a BlockKey,
+}
+
+/// Runs the compactor loop over an empty WAL until `run.swept_block` has no
+/// object left.
 ///
 /// The sweep is the only thing this loop has to do, so the shutdown future is
 /// the condition the sweep produces. A run that never deletes the object stops
 /// on the poll budget instead, and the assertions after it then fail on what is
 /// still there rather than on a timeout.
-async fn run_compactor_with_retention_overrides(
-    config: &ServiceConfig,
-    store: &dyn ObjectStore,
-    prefix: &ObjectPath,
-    overrides_yaml: &str,
-    gone: &BlockKey,
-) {
+async fn run_compactor_with_retention_overrides(run: RetentionOverridesRun<'_>) {
+    let RetentionOverridesRun {
+        config,
+        store,
+        prefix,
+        overrides_yaml,
+        swept_block,
+    } = run;
     let dependencies = ServiceDependencies::default()
         .with_wal_consumer(RecordingWalConsumer::new(Vec::new()))
         .with_limits(Arc::new(
@@ -2543,7 +2239,7 @@ async fn run_compactor_with_retention_overrides(
         Duration::from_secs(10),
         run_compactor_until_shutdown(config, dependencies, Some(store), async {
             for _ in 0..200 {
-                if read_log_block_from_object_store(store, prefix, gone)
+                if read_log_block_from_object_store(store, prefix, swept_block)
                     .await
                     .is_err()
                 {
@@ -2563,44 +2259,26 @@ async fn run_compactor_with_retention_overrides(
 
 #[tokio::test]
 async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes_its_object() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let prefix = ObjectPath::from("observability/logs");
-    let now_ns = now_unix_nanos();
-    let keys = seed_tenant_log_blocks(
-        &store,
-        &prefix,
-        "tenant-a",
-        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
-    )
-    .await;
-    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+    let SeededRetentionStore {
+        _dir,
+        store,
+        prefix,
+        expired,
+        kept,
+    } = SeededRetentionStore::new().await;
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &expired,
-    )
-    .await;
+    sweep_with_one_hour_retention(&config, &store, &expired).await;
 
     // The tenant manifest, the shard manifest and the object, in that order of
     // increasing consequence. A block that left one and stayed in another is
     // exactly the state this sweep exists to avoid.
-    let (_, manifest_blocks) =
+    let manifest_blocks =
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
-            .unwrap();
-    check!(
-        manifest_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+            .unwrap()
+            .blocks;
+    check!(block_keys(&manifest_blocks) == vec![kept.clone()]);
     // Empty manifests fence concurrent appends without deleting their mutable key.
     let expired_shard = read_tenant_log_index_shard_from_object_store(
         &store,
@@ -2610,18 +2288,19 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
     )
     .await
     .unwrap();
-    check!(expired_shard == (LabelIndex::default(), BlockIndex::default()));
-    let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    check!(
+        expired_shard
+            == krabka_blockstore::LogIndexes {
+                labels: LabelIndex::default(),
+                blocks: BlockIndex::default()
+            }
+    );
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
-    check!(
-        shard_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+    let _ = loaded_indexes.labels;
+    let shard_blocks = loaded_indexes.blocks;
+    check!(block_keys(&shard_blocks) == vec![kept.clone()]);
     check!(
         list_log_block_paths(&store, &prefix).await
             == vec![log_block_object_path(&prefix, &kept).to_string()]
@@ -2631,24 +2310,19 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
     let rows = read_log_block_from_object_store(&store, &prefix, &kept)
         .await
         .unwrap();
-    check!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok 1"]);
+    check!(lines(&rows) == vec!["api ok 1"]);
 }
 
 #[tokio::test]
 async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
-    let prefix = ObjectPath::from("observability/logs");
-    let now_ns = now_unix_nanos();
-    let keys = seed_tenant_log_blocks(
-        &store,
-        &prefix,
-        "tenant-a",
-        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
-    )
-    .await;
-    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+    let SeededRetentionStore {
+        _dir,
+        store,
+        prefix,
+        expired,
+        kept,
+    } = SeededRetentionStore::new().await;
     check!(
         read_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
             .await
@@ -2657,14 +2331,7 @@ async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
         "the catalog names both shards before the sweep"
     );
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &expired,
-    )
-    .await;
+    sweep_with_one_hour_retention(&config, &store, &expired).await;
 
     check!(
         read_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
@@ -2672,7 +2339,7 @@ async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
             .unwrap()
             == vec![expired.time_range, kept.time_range]
     );
-    let (empty_labels, empty_blocks) = read_tenant_log_index_shard_from_object_store(
+    let empty_indexes = read_tenant_log_index_shard_from_object_store(
         &store,
         &prefix,
         "tenant-a",
@@ -2680,21 +2347,22 @@ async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
     )
     .await
     .unwrap();
-    check!((empty_labels, empty_blocks) == (LabelIndex::default(), BlockIndex::default()));
+    check!(
+        empty_indexes
+            == krabka_blockstore::LogIndexes {
+                labels: LabelIndex::default(),
+                blocks: BlockIndex::default()
+            }
+    );
 
     // A query that reads the tenant after the sweep still answers, and it
     // answers with the block the window keeps.
-    let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
-    check!(
-        shard_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+    let _ = loaded_indexes.labels;
+    let shard_blocks = loaded_indexes.blocks;
+    check!(block_keys(&shard_blocks) == vec![kept.clone()]);
 }
 
 /// A query that read the shard catalog before the sweep rewrote it still
@@ -2721,14 +2389,7 @@ async fn a_query_that_read_the_catalog_before_the_sweep_still_succeeds() {
             .unwrap();
     check!(stale_catalog == vec![expired.time_range]);
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &expired,
-    )
-    .await;
+    sweep_with_one_hour_retention(&config, &store, &expired).await;
     write_tenant_log_index_shard_catalog_to_object_store(
         &store,
         &prefix,
@@ -2738,9 +2399,11 @@ async fn a_query_that_read_the_catalog_before_the_sweep_still_succeeds() {
     .await
     .unwrap();
 
-    let (labels_index, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
+    let labels_index = loaded_indexes.labels;
+    let shard_blocks = loaded_indexes.blocks;
     check!(shard_blocks.blocks().is_empty());
     check!(labels_index.label_values("tenant-a", "app") == BTreeSet::new());
 }
@@ -2762,14 +2425,14 @@ async fn each_tenant_is_swept_by_its_own_retention_window() {
         );
     }
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "defaults:\n  retention_period: \"90m\"\noverrides:\n  tenant-short:\n    \
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &config,
+        store: &store,
+        prefix: &prefix,
+        overrides_yaml: "defaults:\n  retention_period: \"90m\"\noverrides:\n  tenant-short:\n    \
          retention_period: \"1h\"\n  tenant-forever:\n    retention_period: \"0s\"\n",
-        &keys["tenant-short"],
-    )
+        swept_block: &keys["tenant-short"],
+    })
     .await;
 
     let mut expected = vec![
@@ -2794,20 +2457,20 @@ async fn the_retention_sweep_finds_a_tenant_whose_name_needs_escaping() {
         seed_tenant_log_blocks(&store, &prefix, tenant, &[now_unix_nanos() - 2 * HOUR_NS]).await[0]
             .clone();
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "overrides:\n  \"team a/b\":\n    retention_period: \"1h\"\n",
-        &expired,
-    )
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &config,
+        store: &store,
+        prefix: &prefix,
+        overrides_yaml: "overrides:\n  \"team a/b\":\n    retention_period: \"1h\"\n",
+        swept_block: &expired,
+    })
     .await;
 
     check!(list_log_block_paths(&store, &prefix).await == Vec::<String>::new());
-    let (_, manifest_blocks) =
-        read_tenant_log_index_manifest_from_object_store(&store, &prefix, tenant)
-            .await
-            .unwrap();
+    let manifest_blocks = read_tenant_log_index_manifest_from_object_store(&store, &prefix, tenant)
+        .await
+        .unwrap()
+        .blocks;
     check!(manifest_blocks.blocks().is_empty());
 }
 
@@ -2825,14 +2488,7 @@ async fn the_retention_sweep_rewrites_the_index_before_it_deletes_the_object() {
     .await[0]
         .clone();
 
-    run_compactor_with_retention_overrides(
-        &config,
-        &store,
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &expired,
-    )
-    .await;
+    sweep_with_one_hour_retention(&config, &store, &expired).await;
 
     // The order is the contract. A reader that lists after the manifest put
     // never learns of the block, so it never asks for the object; the reverse
@@ -2861,7 +2517,10 @@ async fn a_block_a_delete_request_empties_has_its_object_deleted() {
     config.data_root = dir.path().to_path_buf();
     let prefix = ObjectPath::from("observability/logs");
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
+    let api = label_index.insert_series(
+        "tenant-a",
+        labels([krabka_blockstore::LabelPair::new("app", "api")]),
+    );
     let mut block_index = BlockIndex::default();
     let emptied = BlockKey::new(
         "tenant-a",
@@ -2905,18 +2564,7 @@ async fn a_block_a_delete_request_empties_has_its_object_deleted() {
         .await
         .unwrap();
     // A window that covers every row of the first block and none of the second.
-    let delete_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=14&end=15")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(delete_response.status() == StatusCode::NO_CONTENT);
+    delete_secret_lines(&app, "start=14&end=15").await;
 
     let descriptor = run_compactor_once(
         &config,
@@ -2931,18 +2579,12 @@ async fn a_block_a_delete_request_empties_has_its_object_deleted() {
     // The descriptor left the index, so nothing names the object any more. An
     // object no index names is unreachable, and leaving it would grow the
     // bucket for as long as it lives.
-    let (_, manifest_blocks) =
+    let manifest_blocks =
         read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
             .await
-            .unwrap();
-    check!(
-        manifest_blocks
-            .blocks()
-            .iter()
-            .map(|block| block.key.clone())
-            .collect::<Vec<_>>()
-            == vec![kept.clone()]
-    );
+            .unwrap()
+            .blocks;
+    check!(block_keys(&manifest_blocks) == vec![kept.clone()]);
     check!(
         list_log_block_paths(&store, &prefix).await
             == vec![log_block_object_path(&prefix, &kept).to_string()]
@@ -2954,15 +2596,9 @@ async fn a_query_planned_before_the_sweep_still_answers_without_the_deleted_bloc
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("observability/logs");
-    let now_ns = now_unix_nanos();
-    let keys = seed_tenant_log_blocks(
-        &store,
-        &prefix,
-        "tenant-a",
-        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
-    )
-    .await;
-    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+    let blocks = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let expired = blocks.expired;
+    let kept = blocks.kept;
 
     // A querier that resolves the tenant index per request and caches it. The
     // cache is what makes a query outlive the index it planned against, which
@@ -2993,13 +2629,13 @@ async fn a_query_planned_before_the_sweep_still_answers_without_the_deleted_bloc
     assert!(before.status() == StatusCode::OK);
     check!(loki_stream_lines(before).await == vec!["api ok 1".to_string(), "api ok 0".to_string()]);
 
-    run_compactor_with_retention_overrides(
-        &compactor_config("observability/logs"),
-        &store,
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &expired,
-    )
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &compactor_config("observability/logs"),
+        store: &store,
+        prefix: &prefix,
+        overrides_yaml: "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        swept_block: &expired,
+    })
     .await;
 
     // The cached index still names the deleted block. The rest of the answer is
@@ -3020,6 +2656,251 @@ async fn a_query_planned_before_the_sweep_still_answers_without_the_deleted_bloc
         answer["warnings"].as_array().map(Vec::len) == Some(1),
         "{answer}"
     );
+}
+
+/// One WAL record a poll returns, at `offset`.
+#[derive(Clone, Copy)]
+struct Polled<'a> {
+    offset: Offset,
+    entry: LogEntry<'a>,
+}
+
+const fn polled(offset: Offset, entry: LogEntry<'_>) -> Polled<'_> {
+    Polled { offset, entry }
+}
+
+/// Runs the compactor under `observability/logs` in `store` until the WAL is
+/// idle, over an `api ok` poll and then an `api error` poll on partition 5.
+async fn compact_ok_then_error_batches(store: &dyn ObjectStore) -> Vec<BlockDescriptor> {
+    let dependencies = polls(
+        PartitionIndex(5),
+        &[
+            &[polled(Offset(42), log_entry(10, "api ok"))],
+            &[polled(Offset(43), log_entry(19, "api error"))],
+            &[],
+        ],
+    );
+    run_compactor_until_idle(
+        &compactor_config("observability/logs"),
+        dependencies,
+        Some(store),
+    )
+    .await
+    .unwrap()
+}
+
+/// Dependencies whose WAL consumer returns one poll per entry of `batches`,
+/// each a list of records on `partition`.
+fn panicking_wal_dependencies(trigger: &Arc<tokio::sync::Notify>) -> ServiceDependencies {
+    ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
+        trigger: Arc::clone(trigger),
+    })
+}
+
+// One poll of the line `api ok` at offset 42, then an empty poll.
+fn one_api_ok_poll(partition: PartitionIndex) -> ServiceDependencies {
+    polls(
+        partition,
+        &[&[polled(Offset(42), log_entry(10, "api ok"))], &[]],
+    )
+}
+
+fn polls(partition: PartitionIndex, batches: &[&[Polled<'_>]]) -> ServiceDependencies {
+    ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(
+        batches
+            .iter()
+            .map(|batch| {
+                batch
+                    .iter()
+                    .map(|record| {
+                        kafka_wal_record(
+                            &wal_record_without_position(
+                                record.entry.timestamp_ns,
+                                record.entry.line,
+                            ),
+                            partition,
+                            record.offset,
+                        )
+                    })
+                    .collect()
+            })
+            .collect(),
+    ))
+}
+
+/// Checks that tenant-a's shard indexes name the `app="api"` label value and
+/// hold exactly `expected` for the `api` series.
+async fn assert_api_blocks_indexed(store: &dyn ObjectStore, expected: &[BlockDescriptor]) {
+    let prefix = ObjectPath::from("observability/logs");
+    let loaded_indexes = read_all_tenant_shard_indexes(store, &prefix, "tenant-a")
+        .await
+        .unwrap();
+    let loaded_labels = loaded_indexes.labels;
+    let loaded_blocks = loaded_indexes.blocks;
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
+
+    assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::from(["api".into()]));
+    assert!(
+        loaded_blocks.match_blocks("tenant-a", TimeRange::new(0, 30).unwrap(), &[api]) == expected
+    );
+}
+
+/// Runs the compactor once over "api ok" at offset 42, then once more over
+/// "api error" at offset 43, and returns the two blocks it wrote.
+async fn compact_ok_then_error_runs(
+    config: &ServiceConfig,
+    store: &LocalFileSystem,
+) -> CompactedRuns {
+    let first_descriptor = run_compactor_once(
+        config,
+        polls(
+            PartitionIndex(4),
+            &[&[polled(Offset(42), log_entry(10, "api ok"))]],
+        ),
+        Some(store),
+    )
+    .await
+    .unwrap()
+    .expect("first compacted descriptor");
+    let second_descriptor = run_compactor_once(
+        config,
+        polls(
+            PartitionIndex(4),
+            &[&[polled(Offset(43), log_entry(19, "api error"))]],
+        ),
+        Some(store),
+    )
+    .await
+    .unwrap()
+    .expect("second compacted descriptor");
+    CompactedRuns {
+        first: first_descriptor,
+        second: second_descriptor,
+    }
+}
+
+struct CompactedRuns {
+    first: BlockDescriptor,
+    second: BlockDescriptor,
+}
+
+/// Runs the compactor for 250 ms over one "api ok" record on partition 6, and
+/// checks that it wrote one block after `store` refused exactly one put.
+async fn compact_one_record_through_one_failed_put(store: &RecordingObjectStore) {
+    let config = compactor_config("observability/logs");
+    let dependencies = one_api_ok_poll(PartitionIndex(6));
+
+    let descriptors = tokio::time::timeout(
+        Duration::from_secs(1),
+        run_compactor_until_shutdown(&config, dependencies, Some(store), async {
+            // real-time wait (not a progress poll): shutdown future — this sleep is the
+            // compactor's run-duration/retry budget, not a poll cadence for a condition.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert!(descriptors.len() == 1);
+    assert!(store.failed_put_count() == 1);
+}
+
+/// A local object store that [`seed_expired_and_kept_blocks`] seeded under
+/// `observability/logs`.
+struct SeededRetentionStore {
+    _dir: tempfile::TempDir,
+    store: LocalFileSystem,
+    prefix: ObjectPath,
+    /// The block two hours old.
+    expired: BlockKey,
+    /// The block one minute old.
+    kept: BlockKey,
+}
+
+impl SeededRetentionStore {
+    async fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+        let prefix = ObjectPath::from("observability/logs");
+        let blocks = seed_expired_and_kept_blocks(&store, &prefix).await;
+        Self {
+            _dir: dir,
+            store,
+            prefix,
+            expired: blocks.expired,
+            kept: blocks.kept,
+        }
+    }
+}
+
+/// Seeds tenant-a with a block two hours old and a block one minute old, and
+/// returns their keys in that order.
+struct ExpiredAndKeptBlocks {
+    expired: BlockKey,
+    kept: BlockKey,
+}
+
+async fn seed_expired_and_kept_blocks(
+    store: &LocalFileSystem,
+    prefix: &ObjectPath,
+) -> ExpiredAndKeptBlocks {
+    let now_ns = now_unix_nanos();
+    let keys = seed_tenant_log_blocks(
+        store,
+        prefix,
+        "tenant-a",
+        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
+    )
+    .await;
+    ExpiredAndKeptBlocks {
+        expired: keys[0].clone(),
+        kept: keys[1].clone(),
+    }
+}
+
+/// Runs the compactor with a one-hour retention for tenant-a over the blocks
+/// under `observability/logs`, and checks it deletes `expired`.
+async fn sweep_with_one_hour_retention(
+    config: &ServiceConfig,
+    store: &dyn ObjectStore,
+    expired: &BlockKey,
+) {
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config,
+        store,
+        prefix: &ObjectPath::from("observability/logs"),
+        overrides_yaml: "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        swept_block: expired,
+    })
+    .await;
+}
+
+fn lines(rows: &[LogRow]) -> Vec<&str> {
+    rows.iter().map(|row| row.line.as_str()).collect()
+}
+
+/// Requests the deletion of tenant-a's `api` lines that contain "secret" in
+/// the window `range` names, and checks the request is accepted.
+async fn delete_secret_lines(app: &axum::Router, range: &str) {
+    let delete_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&{range}"
+                ))
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(delete_response.status() == StatusCode::NO_CONTENT);
 }
 
 fn loki_query(uri: &str) -> Request<Body> {
@@ -3068,15 +2949,9 @@ async fn the_retention_period_flag_sweeps_without_an_overrides_file() {
         ..compactor_config("observability/logs")
     };
     let prefix = ObjectPath::from("observability/logs");
-    let now_ns = now_unix_nanos();
-    let keys = seed_tenant_log_blocks(
-        &store,
-        &prefix,
-        "tenant-a",
-        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
-    )
-    .await;
-    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+    let blocks = seed_expired_and_kept_blocks(&store, &prefix).await;
+    let expired = blocks.expired;
+    let kept = blocks.kept;
 
     tokio::time::timeout(
         Duration::from_secs(10),
@@ -3118,6 +2993,7 @@ async fn the_retention_period_flag_sweeps_without_an_overrides_file() {
 /// By default the store is in memory. See `docs/object_store_contract.md` to
 /// run it against a provider.
 #[tokio::test]
+#[allow(clippy::items_after_statements)]
 async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     let mut lifecycle = LifecycleStore::open("logs", "block_lifecycle");
     let store = lifecycle.store();
@@ -3130,8 +3006,8 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
         ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
             kafka_wal_record(
                 &wal_record_without_position(now_ns - 2 * HOUR_NS, "api old"),
-                4,
-                42,
+                PartitionIndex(4),
+                Offset(42),
             ),
         ]]));
     let old = run_compactor_once(&config, first_run, Some(store.as_ref()))
@@ -3146,8 +3022,8 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
         ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
             kafka_wal_record(
                 &wal_record_without_position(now_ns - MINUTE_NS, "api new"),
-                4,
-                43,
+                PartitionIndex(4),
+                Offset(43),
             ),
         ]]));
     let new = run_compactor_once(&config, second_run, Some(store.as_ref()))
@@ -3156,33 +3032,54 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
         .expect("the second block is written");
 
     // Query: the index names both blocks, and each block reads.
-    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
-    let (_, blocks) = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
+    let api = series_fingerprint(&labels([
+        krabka_blockstore::LabelPair::new("app", "api"),
+        krabka_blockstore::LabelPair::new("env", "prod"),
+    ]));
+    let loaded_indexes = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
         .await
         .unwrap();
+    let _ = loaded_indexes.labels;
+    let blocks = loaded_indexes.blocks;
     check!(
         blocks.match_blocks("tenant-a", TimeRange::new(0, i64::MAX).unwrap(), &[api])
             == vec![old.clone(), new.clone()]
     );
-    for (descriptor, line) in [(&old, "api old"), (&new, "api new")] {
-        let rows = read_log_block_from_object_store(store.as_ref(), &prefix, &descriptor.key)
-            .await
-            .unwrap();
-        check!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec![line]);
+    struct ExpectedBlockLine<'a> {
+        descriptor: &'a BlockDescriptor,
+        line: &'a str,
+    }
+    for expected in [
+        ExpectedBlockLine {
+            descriptor: &old,
+            line: "api old",
+        },
+        ExpectedBlockLine {
+            descriptor: &new,
+            line: "api new",
+        },
+    ] {
+        let rows =
+            read_log_block_from_object_store(store.as_ref(), &prefix, &expected.descriptor.key)
+                .await
+                .unwrap();
+        check!(lines(&rows) == vec![expected.line]);
     }
 
     // Retention: the two-hour-old block is past a one-hour window.
-    run_compactor_with_retention_overrides(
-        &config,
-        store.as_ref(),
-        &prefix,
-        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
-        &old.key,
-    )
+    run_compactor_with_retention_overrides(RetentionOverridesRun {
+        config: &config,
+        store: store.as_ref(),
+        prefix: &prefix,
+        overrides_yaml: "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        swept_block: &old.key,
+    })
     .await;
-    let (_, blocks) = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
+    let loaded_indexes = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
         .await
         .unwrap();
+    let _ = loaded_indexes.labels;
+    let blocks = loaded_indexes.blocks;
     check!(blocks.blocks().to_vec() == vec![new.clone()]);
     check!(
         list_log_block_paths(store.as_ref(), &prefix).await

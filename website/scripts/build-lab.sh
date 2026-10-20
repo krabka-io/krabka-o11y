@@ -77,6 +77,16 @@ export WASIX_DATA_DIR="$tools/cargo-wasix"
 export WASIX_CACHE_DIR="$tools/cargo-wasix/cache"
 export CARGO_WASIX_NO_REGISTRY_CONFIG=1
 rust_marker="$tools/wasix/rust-toolchain.tag"
+# Actions restores the compiler directory, but rustup's alias is runner-local.
+# Relink a completed cached install before deciding to download it again.
+if [[ -f "$rust_marker" && "$(cat "$rust_marker")" == "$rust_tag" ]]; then
+  for compiler in "$WASIX_DATA_DIR/toolchains/"*"_${rust_tag}/rust"; do
+    if [[ -x "$compiler/bin/rustc" ]]; then
+      rustup toolchain link wasix "$compiler"
+      break
+    fi
+  done
+fi
 wasix_sysroot="$(rustup run wasix rustc --print sysroot 2>/dev/null || true)"
 if [[ ! -f "$rust_marker" || "$(cat "$rust_marker")" != "$rust_tag" || "$wasix_sysroot" != *"$rust_tag"* || ! -d "$wasix_sysroot" ]]; then
   "${native_cargo[@]}" wasix download-toolchain "$rust_tag"
@@ -119,9 +129,11 @@ mv "$tools/wasix-metadata.json.tmp" "$tools/wasix-metadata.json"
 python3 -B "$site/scripts/port-wasix.py" "$source_tree"
 cp "$site/wasi/services.Cargo.lock" "$source_tree/Cargo.lock"
 cp "$site/wasi/client.Cargo.lock" "$source_tree/wasi-client/Cargo.lock"
+python3 -B "$site/scripts/lab-cache.py" source-stamps
 export CARGO_TARGET_DIR="$tools/wasi-target"
-# cargo-wasix reuses optimized sidecars on cache hits, even after interruption.
-rm -f "$CARGO_TARGET_DIR/wasm32-wasmer-wasi/release/"*.wasi.wasm
+# Keep only outputs from a completed optimization with the same toolchain and
+# profile. Cargo rebuilds and optimizes a module when its Rust inputs change.
+python3 -B "$site/scripts/lab-cache.py" optimized-check
 
 build_wasi() {
   (
@@ -144,10 +156,11 @@ for name in "${modules[@]:0:8}"; do production_args+=(--bin "$name"); done
 build_wasi --manifest-path "$source_tree/Cargo.toml" "${production_args[@]}"
 echo 'Building the sandbox HTTP and network commands.'
 build_wasi --manifest-path "$source_tree/wasi-client/Cargo.toml" --bin krabka-lab-http --bin krabka-lab-network
+python3 -B "$site/scripts/lab-cache.py" optimized-record
 
 echo 'Building the pinned browser runtime.'
 bash "$site/scripts/build-runtime.sh"
-actual_sdk_revision="$(git -C "$tools/wasmer-sdk" rev-parse HEAD)"
+actual_sdk_revision="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["revision"])' "$tools/wasmer-sdk/.krabka-runtime-build.json")"
 [[ "$actual_sdk_revision" == "$sdk_revision" ]] || { echo 'Browser runtime source revision does not match its pin.' >&2; exit 1; }
 [[ -s "$lab/sdk/dist/index.js" && -s "$lab/sdk/pkg/wasmer_sdk_js_bg.wasm" ]] || { echo 'Browser runtime artifacts are missing.' >&2; exit 1; }
 
@@ -191,7 +204,7 @@ manifest = {
     "toolchain": {"target": "wasm32-wasmer-wasi", "rustRelease": rust_tag, "cargoWasix": cargo_wasix, "wasixcc": wasixcc,
                   "sysrootRelease": sysroot, "llvm": llvm, "binaryen": binaryen, "stdSource": std_build['revision'], "stdNetworkPatch": std_build['patch']},
     "locks": {"native": digest(repo / "Cargo.lock"), **lock_hashes},
-    "scripts": {name: digest(repo / "website/scripts" / name) for name in ["build-lab.sh", "prepare-wasix.py", "port-wasix.py", "build-runtime.sh", "prepare-wasix-std.py"]},
+    "scripts": {name: digest(repo / "website/scripts" / name) for name in ["build-lab.sh", "prepare-wasix.py", "port-wasix.py", "build-runtime.sh", "prepare-wasix-std.py", "lab-cache.py"]},
     "platformPatches": {path.name: digest(path) for path in sorted((repo / 'website/wasi').glob('*.patch'))},
     "modules": modules,
     "totalBytes": sum(module["bytes"] for module in modules),

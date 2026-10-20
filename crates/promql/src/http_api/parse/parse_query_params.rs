@@ -7,7 +7,9 @@ pub(crate) struct ParseQueryParams {
 
 pub(crate) fn parse_query_params(body: &[u8]) -> Result<ParseQueryParams, ApiError> {
     let mut query = None;
-    for (name, value) in form_urlencoded::parse(body) {
+    for pair in form_urlencoded::parse(body) {
+        let name = pair.0;
+        let value = pair.1;
         if name == "query" {
             query = Some(value.into_owned());
         }

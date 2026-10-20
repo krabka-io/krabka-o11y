@@ -13,24 +13,28 @@ mod extract;
 mod filters;
 mod labels;
 mod planner;
+mod regex_cache;
 mod stream;
 mod syntax;
 mod template;
+#[cfg(test)]
+mod test_support;
 mod types;
 mod util;
 
 pub use error::ParseError;
 pub use extract::{
-    JsonExtraction, JsonParserConfig, LogfmtExtraction, LogfmtParser, LogfmtParserConfig,
-    parse_json_object_entries,
+    JsonExtraction, JsonObjectEntry, JsonParserConfig, LogfmtExtraction, LogfmtField, LogfmtParser,
+    LogfmtParserConfig, parse_json_object_entries,
 };
 pub use filters::{
     ComparisonOp, FieldFilter, FieldFilterChain, FieldFilterExpression, FieldFilterLogicOp,
-    FieldValue, IpMatcher, LineFilter, LineFilterOp,
+    FieldFilterStep, FieldValue, IpMatcher, LineFilter, LineFilterOp,
 };
 pub use labels::{
-    LabelFormat, LabelFormatAssignment, LabelFormatValue, LabelSelection, LabelSelectionMatcher,
-    LabelSelectionSet, UnwrapConversion, UnwrapExpression,
+    DecimalSampleRatio, LabelFormat, LabelFormatAssignment, LabelFormatValue, LabelSelection,
+    LabelSelectionMatcher, LabelSelectionSet, UnwrapConversion, UnwrapExpression,
+    parse_decimal_sample_literal,
 };
 pub use planner::{PlanError, StreamPlan, plan_stream_query};
 pub use stream::{
@@ -42,21 +46,26 @@ pub use syntax::{
     MetricLabelJoin, MetricLabelReplace, MetricQuery, MetricScalarArithmetic,
     MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
     MetricVectorMatching, Quantile, RangeAggregation, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
+    VectorGrouping, arithmetic_text, parse_logql_expr, parse_metric_binary_arithmetic_query,
     parse_metric_binary_comparison_query, parse_metric_binary_set_query,
     parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
     parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
 };
 pub use template::{
-    LineFormat, TemplateBucket, TemplateBucketIterator, TemplateFloatHistogram, TemplateHistogram,
-    TemplateHistogramBucket, TemplateHistogramError, TemplateHistogramReference,
-    TemplateHistogramSlice, TemplateHistogramSpan, TemplateHistogramView, TemplateQueryResult,
-    TemplateRenderError, TemplateRuntimeValue as TemplateData, TemplateTime, TemplateTimeLocation,
-    go_string_equal_fold, parse_go_float, quote_go_bytes,
+    LineFormat, TemplateBucket, TemplateBucketIterator, TemplateBucketStep, TemplateFloatHistogram,
+    TemplateHistogram, TemplateHistogramBucket, TemplateHistogramError, TemplateHistogramField,
+    TemplateHistogramReference, TemplateHistogramSlice, TemplateHistogramSpan,
+    TemplateHistogramView, TemplateQueryResult, TemplateRenderError,
+    TemplateRuntimeValue as TemplateData, TemplateTime, TemplateTimeLocation, go_string_equal_fold,
+    parse_go_float, quote_go_bytes,
 };
 pub use types::{
     DestinationLabel, DurationNanos, JsonExpressionPath, OffsetNanos, QuantileDenominator,
     QuantileNumerator, SourceLabel,
+};
+pub use util::{
+    PrometheusDurationUnit, hex_digit_value, parse_prometheus_duration_literal,
+    prometheus_duration_unit,
 };
 
 mod labels_2;

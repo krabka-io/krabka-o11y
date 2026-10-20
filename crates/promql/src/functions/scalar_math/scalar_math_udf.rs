@@ -1,4 +1,5 @@
 use super::{
+    super::{check_udf_execution_args, coerce_udf_arg_types},
     Arc, Array, ArrayRef, ColumnarValue, DataFusionError, DataType, DfResult, Float64Array,
     Float64Builder, ScalarFunctionArgs, ScalarMathOp, ScalarUDF, ScalarUDFImpl, Signature,
     Volatility, scalar_f64,
@@ -41,34 +42,20 @@ impl ScalarUDFImpl for ScalarMathUdf {
     /// Every argument is a `Float64` column: the value plus any leading scalars.
     /// This method checks the arity and returns the types unchanged.
     fn coerce_types(&self, arg_types: &[DataType]) -> DfResult<Vec<DataType>> {
-        if arg_types.len() != self.op.arity() {
-            return Err(DataFusionError::Plan(format!(
-                "{} expects {} arguments, got {}",
-                self.name(),
-                self.op.arity(),
-                arg_types.len()
-            )));
-        }
-        Ok(arg_types.to_vec())
+        coerce_udf_arg_types(self.name(), self.op.arity(), arg_types)
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DfResult<ColumnarValue> {
         let name = self.name();
-        if args.args.len() != self.op.arity() {
-            return Err(DataFusionError::Execution(format!(
-                "{name} expects {} arguments, got {}",
-                self.op.arity(),
-                args.args.len()
-            )));
-        }
+        check_udf_execution_args(name, self.op.arity(), args.args.len())?;
         let rows = args.number_rows;
         let params = self.op.scalar_param_count();
 
         // The leading scalar bound columns (round's `to_nearest`, clamp's
         // bounds) are constant per query; read each once.
         let mut bounds = Vec::with_capacity(params);
-        for index in 0..params {
-            bounds.push(scalar_f64(&args.args[index], "bound", name)?);
+        for argument in args.args.iter().take(params) {
+            bounds.push(scalar_f64(argument, "bound", name)?);
         }
 
         // The value column trails the scalar params.

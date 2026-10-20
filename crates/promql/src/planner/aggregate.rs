@@ -48,7 +48,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use arrow::{
         array::{Float64Array, Int64Array, StringArray},
@@ -59,41 +59,64 @@ mod tests {
 
     use super::*;
 
+    /// One input series of the `agg_leaf` table.
+    #[derive(Clone, Copy)]
+    struct LeafRow<'a> {
+        group: &'a str,
+        job: &'a str,
+        /// `None` is the NULL "no value" cell.
+        sample_value: Option<f64>,
+    }
+
+    impl<'a> LeafRow<'a> {
+        /// A row in `group` with an empty `job` and no value.
+        const fn group(group: &'a str) -> Self {
+            Self {
+                group,
+                job: "",
+                sample_value: None,
+            }
+        }
+
+        const fn job(self, job: &'a str) -> Self {
+            Self { job, ..self }
+        }
+
+        const fn sample(self, sample_value: f64) -> Self {
+            Self {
+                sample_value: Some(sample_value),
+                ..self
+            }
+        }
+    }
+
+    /// Two `prod` series (1 and 2) and one `canary` series (4).
+    const PROD_AND_CANARY: [LeafRow<'static>; 3] = [
+        LeafRow::group("prod").job("api").sample(1.0),
+        LeafRow::group("prod").job("db").sample(2.0),
+        LeafRow::group("canary").job("api").sample(4.0),
+    ];
+
+    const GROUP_ROWS: [LeafRow<'static>; 3] = [
+        LeafRow::group("prod").job("api").sample(9.0),
+        LeafRow::group("prod").job("db").sample(2.0),
+        LeafRow::group("canary").job("api").sample(4.0),
+    ];
+
+    struct AggregateCase {
+        operation: SimpleAggregateOp,
+        rows: &'static [LeafRow<'static>],
+        expected: Vec<AggregateGroup>,
+    }
+
     /// Builds a leaf plan over an in-memory table like an instant-selector output.
     ///
     /// The table has the `job` and `group` labels plus
     /// `timestamp`/`value`/`sample_timestamp`.
-    async fn selector_like_leaf(ctx: &SessionContext, rows: &[(&str, &str, f64)]) -> LogicalPlan {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("group", DataType::Utf8, false),
-            Field::new("job", DataType::Utf8, false),
-            Field::new(TIME_COLUMN, DataType::Int64, false),
-            Field::new(VALUE_COLUMN, DataType::Float64, false),
-            Field::new(SAMPLE_TIME_COLUMN, DataType::Int64, false),
-        ]));
-        let groups = StringArray::from(rows.iter().map(|r| r.0).collect::<Vec<_>>());
-        let jobs = StringArray::from(rows.iter().map(|r| r.1).collect::<Vec<_>>());
-        let ts = Int64Array::from(rows.iter().map(|_| 0_i64).collect::<Vec<_>>());
-        let value = Float64Array::from(rows.iter().map(|r| r.2).collect::<Vec<_>>());
-        let sample_ts = Int64Array::from(rows.iter().map(|_| 0_i64).collect::<Vec<_>>());
-        let batch = RecordBatch::try_new(
-            Arc::clone(&schema),
-            vec![
-                Arc::new(groups),
-                Arc::new(jobs),
-                Arc::new(ts),
-                Arc::new(value),
-                Arc::new(sample_ts),
-            ],
-        )
-        .unwrap();
-        let table = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
-        ctx.register_table("agg_leaf", Arc::new(table)).unwrap();
-        ctx.table("agg_leaf")
+    async fn selector_like_leaf(session: &SessionContext, rows: &[LeafRow<'_>]) -> LogicalPlan {
+        AggLeaf::from_rows(rows, Field::new(VALUE_COLUMN, DataType::Float64, false))
+            .register(session)
             .await
-            .unwrap()
-            .into_optimized_plan()
-            .unwrap()
     }
 
     /// Like [`selector_like_leaf`], but with a nullable `value` column.
@@ -102,43 +125,79 @@ mod tests {
     /// UDF. This drives the pre-aggregate NULL filter: the planner must drop
     /// such rows before grouping, exactly as the interpreter omits no-value
     /// series.
-    async fn nullable_leaf(
-        ctx: &SessionContext,
-        rows: &[(&str, &str, Option<f64>)],
-    ) -> LogicalPlan {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("group", DataType::Utf8, false),
-            Field::new("job", DataType::Utf8, false),
-            Field::new(TIME_COLUMN, DataType::Int64, false),
-            Field::new(VALUE_COLUMN, DataType::Float64, true),
-            Field::new(SAMPLE_TIME_COLUMN, DataType::Int64, false),
-        ]));
-        let groups = StringArray::from(rows.iter().map(|r| r.0).collect::<Vec<_>>());
-        let jobs = StringArray::from(rows.iter().map(|r| r.1).collect::<Vec<_>>());
-        let ts = Int64Array::from(rows.iter().map(|_| 0_i64).collect::<Vec<_>>());
-        let value = Float64Array::from(rows.iter().map(|r| r.2).collect::<Vec<_>>());
-        let sample_ts = Int64Array::from(rows.iter().map(|_| 0_i64).collect::<Vec<_>>());
-        let batch = RecordBatch::try_new(
-            Arc::clone(&schema),
-            vec![
-                Arc::new(groups),
-                Arc::new(jobs),
-                Arc::new(ts),
-                Arc::new(value),
-                Arc::new(sample_ts),
-            ],
-        )
-        .unwrap();
-        let table = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
-        ctx.register_table("agg_leaf", Arc::new(table)).unwrap();
-        ctx.table("agg_leaf")
+    async fn nullable_leaf(session: &SessionContext, rows: &[LeafRow<'_>]) -> LogicalPlan {
+        AggLeaf::from_rows(rows, Field::new(VALUE_COLUMN, DataType::Float64, true))
+            .register(session)
             .await
-            .unwrap()
-            .into_optimized_plan()
-            .unwrap()
     }
 
-    async fn run(plan: LogicalPlan, ctx: &SessionContext) -> Vec<(Vec<(String, String)>, f64)> {
+    /// The columns of the `agg_leaf` table behind [`selector_like_leaf`] and
+    /// [`nullable_leaf`]: one row per `groups`/`jobs`/`sample_values` index, at time 0.
+    struct AggLeaf<'a> {
+        groups: Vec<&'a str>,
+        jobs: Vec<&'a str>,
+        sample_values: Vec<Option<f64>>,
+        /// How the `value` column is declared.
+        value_field: Field,
+    }
+
+    impl<'a> AggLeaf<'a> {
+        fn from_rows(rows: &[LeafRow<'a>], value_field: Field) -> Self {
+            Self {
+                groups: rows.iter().map(|row| row.group).collect(),
+                jobs: rows.iter().map(|row| row.job).collect(),
+                sample_values: rows.iter().map(|row| row.sample_value).collect(),
+                value_field,
+            }
+        }
+
+        /// Registers the table on `ctx` and returns a plan that scans it.
+        async fn register(self, session: &SessionContext) -> LogicalPlan {
+            let rows = self.sample_values.len();
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("group", DataType::Utf8, false),
+                Field::new("job", DataType::Utf8, false),
+                Field::new(TIME_COLUMN, DataType::Int64, false),
+                self.value_field,
+                Field::new(SAMPLE_TIME_COLUMN, DataType::Int64, false),
+            ]));
+            let batch = RecordBatch::try_new(
+                Arc::clone(&schema),
+                vec![
+                    Arc::new(StringArray::from(self.groups)),
+                    Arc::new(StringArray::from(self.jobs)),
+                    Arc::new(Int64Array::from(vec![0_i64; rows])),
+                    Arc::new(Float64Array::from(self.sample_values)),
+                    Arc::new(Int64Array::from(vec![0_i64; rows])),
+                ],
+            )
+            .unwrap();
+            let table = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
+            session.register_table("agg_leaf", Arc::new(table)).unwrap();
+            session
+                .table("agg_leaf")
+                .await
+                .unwrap()
+                .into_optimized_plan()
+                .unwrap()
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct AggregateGroup {
+        labels: BTreeMap<String, String>,
+        value: f64,
+    }
+
+    fn group(label: Option<&str>, value: f64) -> AggregateGroup {
+        let mut labels = BTreeMap::new();
+        if let Some(label) = label {
+            labels.insert("group".to_string(), label.to_string());
+        }
+        AggregateGroup { labels, value }
+    }
+
+    async fn run(plan: LogicalPlan, ctx: &SessionContext) -> Vec<AggregateGroup> {
         let batches = ctx
             .execute_logical_plan(plan)
             .await
@@ -148,6 +207,8 @@ mod tests {
             .unwrap();
         let mut out = Vec::new();
         for batch in &batches {
+            let schema = batch.schema();
+            let fields = schema.fields();
             let value = batch
                 .column_by_name(AGGREGATE_VALUE_COLUMN)
                 .unwrap()
@@ -155,9 +216,12 @@ mod tests {
                 .downcast_ref::<Float64Array>()
                 .unwrap();
             for row in 0..batch.num_rows() {
-                let mut labels = Vec::new();
-                for (index, field) in batch.schema().fields().iter().enumerate() {
+                let mut labels = BTreeMap::new();
+                let mut index = 0;
+                while index < fields.len() {
+                    let field = &fields[index];
                     if field.name() == AGGREGATE_VALUE_COLUMN {
+                        index += 1;
                         continue;
                     }
                     let column = batch
@@ -165,124 +229,90 @@ mod tests {
                         .as_any()
                         .downcast_ref::<StringArray>()
                         .unwrap();
-                    labels.push((field.name().clone(), column.value(row).to_string()));
+                    labels.insert(field.name().clone(), column.value(row).to_string());
+                    index += 1;
                 }
-                labels.sort();
-                out.push((labels, value.value(row)));
+                out.push(AggregateGroup {
+                    labels,
+                    value: value.value(row),
+                });
             }
         }
-        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.sort_by(|a, b| a.labels.cmp(&b.labels));
         out
     }
 
-    #[tokio::test]
-    async fn sum_by_collapses_to_group_labels() {
+    /// Checks that `sum by (group)` over `leaf` yields one group whose sum is NaN.
+    /// Runs `op` grouped `by (group)` over a selector-like leaf of `rows`.
+    async fn aggregate_by_group(
+        op: SimpleAggregateOp,
+        rows: &[LeafRow<'_>],
+    ) -> Vec<AggregateGroup> {
         let ctx = SessionContext::new();
-        let leaf = selector_like_leaf(
-            &ctx,
-            &[
-                ("prod", "api", 1.0),
-                ("prod", "db", 2.0),
-                ("canary", "api", 4.0),
-            ],
-        )
-        .await;
+        let leaf = selector_like_leaf(&ctx, rows).await;
+        let plan = plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
+        run(plan, &ctx).await
+    }
+
+    async fn assert_sum_by_group_is_nan(leaf: LogicalPlan, ctx: &SessionContext) {
         let plan = plan_simple_aggregate(
             leaf,
             SimpleAggregateOp::Sum,
             &Grouping::By(vec!["group".into()]),
         )
         .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(
-            got == vec![
-                (vec![("group".to_string(), "canary".to_string())], 4.0),
-                (vec![("group".to_string(), "prod".to_string())], 3.0),
-            ]
-        );
+        let got = run(plan, ctx).await;
+        assert2::assert!(got.len() == 1);
+        assert2::assert!(got[0].value.is_nan());
     }
 
+    /// `sum by (group)` and `sum without (job)` both collapse to the `group`
+    /// label.
     #[tokio::test]
-    async fn sum_without_drops_listed_and_name() {
-        let ctx = SessionContext::new();
-        let leaf = selector_like_leaf(
-            &ctx,
-            &[
-                ("prod", "api", 1.0),
-                ("prod", "db", 2.0),
-                ("canary", "api", 4.0),
-            ],
-        )
-        .await;
+    async fn sum_by_and_without_collapse_to_group_labels() {
         // without (job) -> group by `group`.
-        let plan = plan_simple_aggregate(
-            leaf,
-            SimpleAggregateOp::Sum,
-            &Grouping::Without(vec!["job".into()]),
-        )
-        .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(
-            got == vec![
-                (vec![("group".to_string(), "canary".to_string())], 4.0),
-                (vec![("group".to_string(), "prod".to_string())], 3.0),
-            ]
-        );
+        for grouping in [
+            Grouping::By(vec!["group".into()]),
+            Grouping::Without(vec!["job".into()]),
+        ] {
+            let ctx = SessionContext::new();
+            let leaf = selector_like_leaf(&ctx, &PROD_AND_CANARY).await;
+            let plan = plan_simple_aggregate(leaf, SimpleAggregateOp::Sum, &grouping).unwrap();
+            let got = run(plan, &ctx).await;
+            assert2::assert!(
+                got == vec![group(Some("canary"), 4.0), group(Some("prod"), 3.0)],
+                "{grouping:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn sum_by_empty_collapses_all() {
         let ctx = SessionContext::new();
-        let leaf = selector_like_leaf(
-            &ctx,
-            &[
-                ("prod", "api", 1.0),
-                ("prod", "db", 2.0),
-                ("canary", "api", 4.0),
-            ],
-        )
-        .await;
+        let leaf = selector_like_leaf(&ctx, &PROD_AND_CANARY).await;
         let plan =
             plan_simple_aggregate(leaf, SimpleAggregateOp::Sum, &Grouping::By(vec![])).unwrap();
         let got = run(plan, &ctx).await;
-        assert2::assert!(got == vec![(vec![], 7.0)]);
+        assert2::assert!(got == vec![group(None, 7.0)]);
     }
 
     #[tokio::test]
     async fn count_and_group_yield_floats() {
         let cases = [
-            (
-                SimpleAggregateOp::Count,
-                [
-                    ("prod", "api", 1.0),
-                    ("prod", "db", 2.0),
-                    ("canary", "api", 4.0),
-                ],
-                vec![
-                    (vec![("group".to_string(), "canary".to_string())], 1.0),
-                    (vec![("group".to_string(), "prod".to_string())], 2.0),
-                ],
-            ),
-            (
-                SimpleAggregateOp::Group,
-                [
-                    ("prod", "api", 9.0),
-                    ("prod", "db", 2.0),
-                    ("canary", "api", 4.0),
-                ],
-                vec![
-                    (vec![("group".to_string(), "canary".to_string())], 1.0),
-                    (vec![("group".to_string(), "prod".to_string())], 1.0),
-                ],
-            ),
+            AggregateCase {
+                operation: SimpleAggregateOp::Count,
+                rows: &PROD_AND_CANARY,
+                expected: vec![group(Some("canary"), 1.0), group(Some("prod"), 2.0)],
+            },
+            AggregateCase {
+                operation: SimpleAggregateOp::Group,
+                rows: &GROUP_ROWS,
+                expected: vec![group(Some("canary"), 1.0), group(Some("prod"), 1.0)],
+            },
         ];
-        for (op, rows, want) in cases {
-            let ctx = SessionContext::new();
-            let leaf = selector_like_leaf(&ctx, &rows).await;
-            let plan =
-                plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
-            let got = run(plan, &ctx).await;
-            assert2::assert!(got == want);
+        for case in cases {
+            let got = aggregate_by_group(case.operation, case.rows).await;
+            assert2::assert!(got == case.expected);
         }
     }
 
@@ -315,17 +345,15 @@ mod tests {
     #[tokio::test]
     async fn sum_propagates_nan() {
         let ctx = SessionContext::new();
-        let leaf =
-            selector_like_leaf(&ctx, &[("prod", "api", 1.0), ("prod", "db", f64::NAN)]).await;
-        let plan = plan_simple_aggregate(
-            leaf,
-            SimpleAggregateOp::Sum,
-            &Grouping::By(vec!["group".into()]),
+        let leaf = selector_like_leaf(
+            &ctx,
+            &[
+                LeafRow::group("prod").job("api").sample(1.0),
+                LeafRow::group("prod").job("db").sample(f64::NAN),
+            ],
         )
-        .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(got.len() == 1);
-        assert2::assert!(got[0].1.is_nan());
+        .await;
+        assert_sum_by_group_is_nan(leaf, &ctx).await;
     }
 
     #[tokio::test]
@@ -333,26 +361,32 @@ mod tests {
         // A group mixing genuine NaN with finite samples: Prometheus takes the
         // extremum over the non-NaN values (NaN ignored), unlike Arrow's built-in
         // min/max which propagate NaN.
-        for (op, want) in [
-            (SimpleAggregateOp::Min, 1.0_f64),
-            (SimpleAggregateOp::Max, 3.0_f64),
+        struct ExtremumCase {
+            operation: SimpleAggregateOp,
+            expected: f64,
+        }
+        for case in [
+            ExtremumCase {
+                operation: SimpleAggregateOp::Min,
+                expected: 1.0,
+            },
+            ExtremumCase {
+                operation: SimpleAggregateOp::Max,
+                expected: 3.0,
+            },
         ] {
-            let ctx = SessionContext::new();
-            let leaf = selector_like_leaf(
-                &ctx,
+            let got = aggregate_by_group(
+                case.operation,
                 &[
-                    ("prod", "api", f64::NAN),
-                    ("prod", "db", 3.0),
-                    ("prod", "x", 1.0),
-                    ("prod", "y", f64::NAN),
+                    LeafRow::group("prod").job("api").sample(f64::NAN),
+                    LeafRow::group("prod").job("db").sample(3.0),
+                    LeafRow::group("prod").job("x").sample(1.0),
+                    LeafRow::group("prod").job("y").sample(f64::NAN),
                 ],
             )
             .await;
-            let plan =
-                plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
-            let got = run(plan, &ctx).await;
             assert2::assert!(got.len() == 1);
-            assert2::assert!(got[0].1.to_bits() == want.to_bits());
+            assert2::assert!(got[0].value.to_bits() == case.expected.to_bits());
         }
     }
 
@@ -361,15 +395,16 @@ mod tests {
         // Every sample in the group is NaN: Prometheus keeps the series with a
         // NaN result (it does not drop the group).
         for op in [SimpleAggregateOp::Min, SimpleAggregateOp::Max] {
-            let ctx = SessionContext::new();
-            let leaf =
-                selector_like_leaf(&ctx, &[("prod", "api", f64::NAN), ("prod", "db", f64::NAN)])
-                    .await;
-            let plan =
-                plan_simple_aggregate(leaf, op, &Grouping::By(vec!["group".into()])).unwrap();
-            let got = run(plan, &ctx).await;
+            let got = aggregate_by_group(
+                op,
+                &[
+                    LeafRow::group("prod").job("api").sample(f64::NAN),
+                    LeafRow::group("prod").job("db").sample(f64::NAN),
+                ],
+            )
+            .await;
             assert2::assert!(got.len() == 1);
-            assert2::assert!(got[0].1.is_nan());
+            assert2::assert!(got[0].value.is_nan());
         }
     }
 
@@ -382,9 +417,9 @@ mod tests {
         let leaf = nullable_leaf(
             &ctx,
             &[
-                ("x", "api", None),
-                ("x", "db", None),
-                ("y", "api", Some(3.0)),
+                LeafRow::group("x").job("api"),
+                LeafRow::group("x").job("db"),
+                LeafRow::group("y").job("api").sample(3.0),
             ],
         )
         .await;
@@ -396,7 +431,7 @@ mod tests {
         .unwrap();
         let got = run(plan, &ctx).await;
         // Only group y survives; the all-NULL group x produces no row.
-        assert2::assert!(got == vec![(vec![("group".to_string(), "y".to_string())], 3.0)]);
+        assert2::assert!(got == vec![group(Some("y"), 3.0)]);
     }
 
     #[tokio::test]
@@ -408,10 +443,10 @@ mod tests {
         let leaf = nullable_leaf(
             &ctx,
             &[
-                ("prod", "api", Some(1.0)),
-                ("prod", "db", None),
-                ("prod", "x", Some(f64::NAN)),
-                ("prod", "y", None),
+                LeafRow::group("prod").job("api").sample(1.0),
+                LeafRow::group("prod").job("db"),
+                LeafRow::group("prod").job("x").sample(f64::NAN),
+                LeafRow::group("prod").job("y"),
             ],
         )
         .await;
@@ -424,7 +459,7 @@ mod tests {
         let got = run(plan, &ctx).await;
         // 2 value-bearing rows (1.0 and the genuine NaN); the two NULLs are
         // dropped before counting.
-        assert2::assert!(got == vec![(vec![("group".to_string(), "prod".to_string())], 2.0)]);
+        assert2::assert!(got == vec![group(Some("prod"), 2.0)]);
     }
 
     #[tokio::test]
@@ -436,36 +471,77 @@ mod tests {
         let leaf = nullable_leaf(
             &ctx,
             &[
-                ("prod", "api", Some(2.0)),
-                ("prod", "db", None),
-                ("prod", "x", Some(f64::NAN)),
+                LeafRow::group("prod").job("api").sample(2.0),
+                LeafRow::group("prod").job("db"),
+                LeafRow::group("prod").job("x").sample(f64::NAN),
             ],
         )
         .await;
-        let plan = plan_simple_aggregate(
-            leaf,
-            SimpleAggregateOp::Sum,
-            &Grouping::By(vec!["group".into()]),
-        )
-        .unwrap();
-        let got = run(plan, &ctx).await;
-        assert2::assert!(got.len() == 1);
-        assert2::assert!(got[0].1.is_nan());
+        assert_sum_by_group_is_nan(leaf, &ctx).await;
     }
 }
 
-mod aggregate_value_column;
-mod all_group_column;
-mod grouping;
-mod input_label_columns;
 mod plan_simple_aggregate;
-mod resolve_group_labels;
 mod simple_aggregate_op;
 
-pub use aggregate_value_column::AGGREGATE_VALUE_COLUMN;
-use all_group_column::ALL_GROUP_COLUMN;
-pub use grouping::Grouping;
-use input_label_columns::input_label_columns;
 pub use plan_simple_aggregate::plan_simple_aggregate;
-use resolve_group_labels::resolve_group_labels;
 pub use simple_aggregate_op::SimpleAggregateOp;
+
+/// Result-value column that the aggregation projection emits.
+pub const AGGREGATE_VALUE_COLUMN: &str = VALUE_COLUMN;
+
+/// Synthetic per-row grouping column for an empty `PromQL` grouping.
+pub(crate) const ALL_GROUP_COLUMN: &str = "__krabka_agg_all__";
+
+/// How a `PromQL` aggregation selects its grouping labels.
+#[derive(Clone, Debug)]
+pub enum Grouping {
+    /// `by (labels...)`: group by exactly these label columns.
+    By(Vec<String>),
+    /// `without (labels...)`: group by all input label columns except these and
+    /// except `__name__`, which `without` always drops.
+    Without(Vec<String>),
+}
+
+/// The `Utf8` label columns of an inner plan's output schema, in schema order.
+///
+/// The `value`/`timestamp`/`sample_timestamp` columns are the index and value
+/// columns of the operator chain. They are never labels.
+pub(crate) fn input_label_columns(input: &LogicalPlan) -> Vec<String> {
+    input
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| field.name().clone())
+        .filter(|name| name != VALUE_COLUMN && name != TIME_COLUMN && name != SAMPLE_TIME_COLUMN)
+        .collect()
+}
+
+/// Maps a `PromQL` [`Grouping`] onto the concrete grouping label columns.
+///
+/// The result is intersected with the labels present in the input. `by` keeps
+/// the listed labels in their given order and drops each label that is not
+/// present. `without` keeps every present label except the listed ones and
+/// `__name__`.
+pub(crate) fn resolve_group_labels(input_labels: &[String], grouping: &Grouping) -> Vec<String> {
+    match grouping {
+        Grouping::By(labels) => {
+            let present: BTreeSet<&String> = input_labels.iter().collect();
+            // Preserve the user's `by` order; drop labels absent from the input.
+            let mut seen = BTreeSet::new();
+            labels
+                .iter()
+                .filter(|name| present.contains(name) && seen.insert((*name).clone()))
+                .cloned()
+                .collect()
+        }
+        Grouping::Without(labels) => {
+            let excluded: BTreeSet<&String> = labels.iter().collect();
+            input_labels
+                .iter()
+                .filter(|name| name.as_str() != "__name__" && !excluded.contains(name))
+                .cloned()
+                .collect()
+        }
+    }
+}

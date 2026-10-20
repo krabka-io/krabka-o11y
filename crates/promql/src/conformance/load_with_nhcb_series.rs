@@ -19,11 +19,7 @@ pub(crate) fn load_with_nhcb_series(
             let key = conformance_labels_key(&native_labels);
             groups
                 .entry(key)
-                .or_insert_with(|| NhcbGroup {
-                    labels: native_labels,
-                    buckets: Vec::new(),
-                    sum_values: None,
-                })
+                .or_insert_with(|| NhcbGroup::new(native_labels))
                 .sum_values = Some(load_series.values.clone());
             continue;
         }
@@ -39,11 +35,7 @@ pub(crate) fn load_with_nhcb_series(
         let key = conformance_labels_key(&native_labels);
         groups
             .entry(key)
-            .or_insert_with(|| NhcbGroup {
-                labels: native_labels,
-                buckets: Vec::new(),
-                sum_values: None,
-            })
+            .or_insert_with(|| NhcbGroup::new(native_labels))
             .buckets
             .push(NhcbBucketSeries {
                 upper_bound,

@@ -74,6 +74,44 @@ mod rate_bucket {
     }
 }
 
+pub struct QueryEnforcer;
+
+impl QueryEnforcer {
+    ///
+    /// # Errors
+    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    pub fn check_search_limit(limits: &Limits, requested: u64) -> Result<(), LimitError> {
+        let limit = limits.max_traces_per_search;
+        if limit != 0 && requested > limit {
+            return Err(LimitError::TracesPerSearchExceeded { limit, requested });
+        }
+        Ok(())
+    }
+
+    ///
+    /// # Errors
+    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    pub fn check_search_duration(
+        limits: &Limits,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<(), LimitError> {
+        let limit_secs = u64::try_from(limits.max_search_duration.secs_i64()).unwrap_or(0);
+        if limit_secs == 0 {
+            return Ok(());
+        }
+        let observed = Time::from_nanos(end_ns.saturating_sub(start_ns));
+        let observed_secs = observed.secs_f64().ceil().to_u64().unwrap_or(0);
+        if observed_secs > limit_secs {
+            return Err(LimitError::SearchDurationExceeded {
+                limit_secs,
+                observed_secs,
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -132,26 +170,42 @@ mod tests {
     fn attribute_size_cap_enforced() {
         let limits = limits_with(0, 4);
 
-        for (attrs, want) in [
-            (vec![("ab".to_string(), 2_u64)], Ok(())),
-            (
+        struct Case {
+            attrs: Vec<MeasuredAttribute>,
+            want: Result<(), LimitError>,
+        }
+        for case in [
+            Case {
+                attrs: vec![MeasuredAttribute {
+                    key: "ab".to_string(),
+                    value_bytes: 2_u64,
+                }],
+                want: Ok(()),
+            },
+            Case {
                 // Over-long key.
-                vec![("toolong".to_string(), 1_u64)],
-                Err(LimitError::AttributeTooLong {
+                attrs: vec![MeasuredAttribute {
+                    key: "toolong".to_string(),
+                    value_bytes: 1_u64,
+                }],
+                want: Err(LimitError::AttributeTooLong {
                     limit: 4,
                     observed: 7,
                 }),
-            ),
-            (
+            },
+            Case {
                 // Over-long value.
-                vec![("a".to_string(), 7_u64)],
-                Err(LimitError::AttributeTooLong {
+                attrs: vec![MeasuredAttribute {
+                    key: "a".to_string(),
+                    value_bytes: 7_u64,
+                }],
+                want: Err(LimitError::AttributeTooLong {
                     limit: 4,
                     observed: 7,
                 }),
-            ),
+            },
         ] {
-            assert2::assert!(IngestEnforcer::check_attributes(&limits, &attrs) == want);
+            assert2::assert!(IngestEnforcer::check_attributes(&limits, &case.attrs) == case.want);
         }
     }
 
@@ -160,7 +214,10 @@ mod tests {
         // A value whose TRUE byte length exceeds the cap must be rejected even
         // when a stringification would under-report it (e.g. `Bytes`).
         let limits = limits_with(0, 4);
-        let oversized_bytes = vec![("k".to_string(), 8_u64)];
+        let oversized_bytes = vec![MeasuredAttribute {
+            key: "k".to_string(),
+            value_bytes: 8_u64,
+        }];
         assert2::assert!(matches!(
             IngestEnforcer::check_attributes(&limits, &oversized_bytes),
             Err(LimitError::AttributeTooLong { .. })
@@ -254,13 +311,16 @@ mod tests {
         );
     }
 }
-
-mod f64_from_u64;
 mod ingest_enforcer;
-mod query_enforcer;
-mod rounded_positive_rate;
+pub use ingest_enforcer::{IngestEnforcer, MeasuredAttribute};
 
-use f64_from_u64::f64_from_u64;
-pub use ingest_enforcer::IngestEnforcer;
-pub use query_enforcer::QueryEnforcer;
-use rounded_positive_rate::rounded_positive_rate;
+pub(crate) fn f64_from_u64(value: u64) -> f64 {
+    value.to_string().parse().unwrap_or(f64::INFINITY)
+}
+
+pub(crate) fn rounded_positive_rate(rate: f64) -> u64 {
+    if !rate.is_finite() || rate <= 0.0 {
+        return 0;
+    }
+    rate.round().to_string().parse().unwrap_or(u64::MAX)
+}

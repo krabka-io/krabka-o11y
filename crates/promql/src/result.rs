@@ -4,33 +4,109 @@ use krabka_metrics::NativeHistogram;
 
 use crate::PromqlLabels as Labels;
 
+/// A floating point sample before it is paired with series labels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FloatSample {
+    pub timestamp_ms: i64,
+    pub value: f64,
+}
+
+/// One labeled point in an instant vector.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct InstantSample {
+    pub labels: Labels,
+    pub ts_ms: i64,
+    pub value: SampleValue,
+    /// Whether `__name__` must be removed at the outer query boundary.
+    #[serde(skip)]
+    pub(crate) drop_name: bool,
+}
+
+/// A `PromQL` evaluation result.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum QueryResult {
+    Scalar {
+        ts_ms: i64,
+        value: f64,
+    },
+    InstantVector(Vec<InstantSample>),
+    RangeMatrix(Vec<RangeSeries>),
+    Str {
+        ts_ms: i64,
+        value: crate::PromqlString,
+    },
+}
+
+impl QueryResult {
+    /// Prometheus `data.resultType` string.
+    #[must_use]
+    pub fn result_type(&self) -> &'static str {
+        match self {
+            Self::Scalar { .. } => "scalar",
+            Self::InstantVector(_) => "vector",
+            Self::RangeMatrix(_) => "matrix",
+            Self::Str { .. } => "string",
+        }
+    }
+}
+
+/// A single sample value: a float or a native histogram.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum SampleValue {
+    Float(f64),
+    Histogram(NativeHistogram),
+}
+
+/// A query result and the annotations that its evaluation raised.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct AnnotatedQueryResult {
+    pub result: QueryResult,
+    pub annotations: Annotations,
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use crate::PromqlLabels as Labels;
 
+    struct ResultTypeCase {
+        result: QueryResult,
+        expected: &'static str,
+    }
+
+    struct EmptyAnnotationCase {
+        annotations: Annotations,
+        expected_empty: bool,
+    }
+
     #[test]
     fn result_type_strings_match_prometheus() {
-        for (result, want) in [
-            (
-                QueryResult::Scalar {
+        for case in [
+            ResultTypeCase {
+                result: QueryResult::Scalar {
                     ts_ms: 0,
                     value: 1.0,
                 },
-                "scalar",
-            ),
-            (QueryResult::InstantVector(vec![]), "vector"),
-            (QueryResult::RangeMatrix(vec![]), "matrix"),
-            (
-                QueryResult::Str {
+                expected: "scalar",
+            },
+            ResultTypeCase {
+                result: QueryResult::InstantVector(vec![]),
+                expected: "vector",
+            },
+            ResultTypeCase {
+                result: QueryResult::RangeMatrix(vec![]),
+                expected: "matrix",
+            },
+            ResultTypeCase {
+                result: QueryResult::Str {
                     ts_ms: 0,
                     value: "x".into(),
                 },
-                "string",
-            ),
+                expected: "string",
+            },
         ] {
-            assert2::assert!(result.result_type() == want);
+            assert2::assert!(case.result.result_type() == case.expected);
         }
     }
 
@@ -84,28 +160,29 @@ mod tests {
         let mut infos = Annotations::new();
         infos.info("info");
 
-        for (_case, annotations, want) in [
-            ("new", Annotations::new(), true),
-            ("warn", warnings, false),
-            ("info", infos, false),
+        for case in [
+            EmptyAnnotationCase {
+                annotations: Annotations::new(),
+                expected_empty: true,
+            },
+            EmptyAnnotationCase {
+                annotations: warnings,
+                expected_empty: false,
+            },
+            EmptyAnnotationCase {
+                annotations: infos,
+                expected_empty: false,
+            },
         ] {
-            assert2::assert!(annotations.is_empty() == want);
+            assert2::assert!(case.annotations.is_empty() == case.expected_empty);
         }
     }
 }
 
-mod annotated_query_result;
 mod annotations;
 mod histogram_quantile_repair;
-mod instant_sample;
-mod query_result;
 mod range_series;
-mod sample_value;
 
-pub use annotated_query_result::AnnotatedQueryResult;
 pub use annotations::Annotations;
 pub use histogram_quantile_repair::HistogramQuantileRepair;
-pub use instant_sample::InstantSample;
-pub use query_result::QueryResult;
-pub use range_series::RangeSeries;
-pub use sample_value::SampleValue;
+pub use range_series::{RangeSeries, RangeSeriesSample};

@@ -10,6 +10,21 @@ use krabka_units::prelude::*;
 
 use crate::wire::DecodedSeries;
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct HaElectionIdentity {
+    tenant: String,
+    cluster: String,
+}
+
+impl HaElectionIdentity {
+    fn new(tenant: impl Into<String>, cluster: impl Into<String>) -> Self {
+        Self {
+            tenant: tenant.into(),
+            cluster: cluster.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -29,6 +44,16 @@ mod tests {
             histograms: Vec::new(),
             exemplars: Vec::new(),
             metadata: None,
+        }
+    }
+
+    /// The election record of `replica` for cluster `c1` of tenant `tenant`.
+    fn tenant_c1_record(replica: &str, lease_timestamp_ms: i64) -> HaElectionRecord {
+        HaElectionRecord {
+            tenant: "tenant".to_string(),
+            cluster: "c1".to_string(),
+            replica: replica.to_string(),
+            lease_timestamp_ms,
         }
     }
 
@@ -69,34 +94,19 @@ mod tests {
 
         assert!(
             ha_election_at(&tracker, "tenant", &series, 42_000)
-                == HaElection::Update(HaElectionRecord {
-                    tenant: "tenant".to_string(),
-                    cluster: "c1".to_string(),
-                    replica: "r1".to_string(),
-                    lease_timestamp_ms: 42_000,
-                })
+                == HaElection::Update(tenant_c1_record("r1", 42_000))
         );
     }
 
     #[test]
     fn stale_elected_replica_can_fail_over() {
         let tracker = HaTracker::default();
-        tracker.persist_elected(&HaElectionRecord {
-            tenant: "tenant".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 10_000,
-        });
+        tracker.persist_elected(&tenant_c1_record("r1", 10_000));
         let replacement = [series_with("c1", "r2")];
 
         assert!(
             ha_election_at_with_timeout(&tracker, "tenant", &replacement, 45_001, secs(30))
-                == HaElection::Elect(HaElectionRecord {
-                    tenant: "tenant".to_string(),
-                    cluster: "c1".to_string(),
-                    replica: "r2".to_string(),
-                    lease_timestamp_ms: 45_001,
-                })
+                == HaElection::Elect(tenant_c1_record("r2", 45_001))
         );
     }
 
@@ -105,12 +115,7 @@ mod tests {
         // A negative extent is the "never fail over" sentinel: however stale the
         // lease, the incumbent keeps it and the challenger is dropped.
         let tracker = HaTracker::default();
-        tracker.persist_elected(&HaElectionRecord {
-            tenant: "tenant".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 10_000,
-        });
+        tracker.persist_elected(&tenant_c1_record("r1", 10_000));
         let replacement = [series_with("c1", "r2")];
 
         assert!(
@@ -128,12 +133,7 @@ mod tests {
     fn configured_failover_timeout_controls_takeover() {
         let tracker = || {
             let tracker = HaTracker::default();
-            tracker.persist_elected(&HaElectionRecord {
-                tenant: "tenant".to_owned(),
-                cluster: "c1".to_owned(),
-                replica: "r1".to_owned(),
-                lease_timestamp_ms: 1_000,
-            });
+            tracker.persist_elected(&tenant_c1_record("r1", 1_000));
             tracker
         };
         let replacement = [series_with("c1", "r2")];
@@ -148,12 +148,7 @@ mod tests {
         ));
         check!(
             tracker().elect("tenant", &replacement, 2_000, millis(999))
-                == HaElection::Elect(HaElectionRecord {
-                    tenant: "tenant".to_owned(),
-                    cluster: "c1".to_owned(),
-                    replica: "r2".to_owned(),
-                    lease_timestamp_ms: 2_000,
-                })
+                == HaElection::Elect(tenant_c1_record("r2", 2_000))
         );
 
         // The takeover needs the lease to be stale by MORE than the timeout,
@@ -246,28 +241,318 @@ mod tests {
     }
 }
 
-mod decide_election;
-mod default_ha_failover_timeout;
-mod ha_decision;
-mod ha_election;
-mod ha_election_at;
-mod ha_election_at_with_timeout;
-mod ha_election_record;
-mod ha_election_record_error;
-mod ha_tracker;
-mod ha_tracker_topic;
-mod now_ms;
-mod strip_replica_label;
+/// Pure HA election decision against an elected view that is already locked. A
+/// caller that holds the tracker lock can decide and commit atomically. A
+/// lock-free caller goes through [`ha_election_at_with_timeout`].
+pub(super) fn decide_election(
+    elected: &HashMap<HaElectionIdentity, HaElectionRecord>,
+    tenant: &str,
+    series: &[DecodedSeries],
+    lease_timestamp_ms: i64,
+    failover_timeout: Time,
+) -> HaElection {
+    let Some(first) = series.first() else {
+        return HaElection::Accept;
+    };
+    let Some(replica) = first.labels.get("__replica__") else {
+        return HaElection::Accept;
+    };
+    let cluster = first.labels.get("cluster").unwrap_or("");
 
-use decide_election::decide_election;
-pub use default_ha_failover_timeout::DEFAULT_HA_FAILOVER_TIMEOUT;
-pub use ha_decision::{HaDecision, ha_decision};
-pub use ha_election::{HaElection, ha_election};
-pub use ha_election_at::ha_election_at;
-pub use ha_election_at_with_timeout::ha_election_at_with_timeout;
-pub use ha_election_record::HaElectionRecord;
-pub use ha_election_record_error::HaElectionRecordError;
-pub use ha_tracker::HaTracker;
-pub use ha_tracker_topic::HA_TRACKER_TOPIC;
-use now_ms::now_ms;
-pub use strip_replica_label::strip_replica_label;
+    match elected.get(&HaElectionIdentity::new(tenant, cluster)) {
+        Some(elected) if elected.replica == replica => HaElection::Update(HaElectionRecord {
+            tenant: tenant.to_string(),
+            cluster: cluster.to_string(),
+            replica: replica.to_string(),
+            lease_timestamp_ms,
+        }),
+        Some(elected)
+            if failover_timeout >= Time::ZERO
+                && Time::from_millis(
+                    lease_timestamp_ms.saturating_sub(elected.lease_timestamp_ms),
+                ) > failover_timeout =>
+        {
+            HaElection::Elect(HaElectionRecord {
+                tenant: tenant.to_string(),
+                cluster: cluster.to_string(),
+                replica: replica.to_string(),
+                lease_timestamp_ms,
+            })
+        }
+        Some(_) => HaElection::Drop,
+        None => HaElection::Elect(HaElectionRecord {
+            tenant: tenant.to_string(),
+            cluster: cluster.to_string(),
+            replica: replica.to_string(),
+            lease_timestamp_ms,
+        }),
+    }
+}
+
+/// Whether a decoded ingest request should append to the WAL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HaDecision {
+    Accept,
+    Drop,
+}
+
+/// Synchronous compatibility helper for tests and direct callers.
+#[must_use]
+pub fn ha_decision(tracker: &HaTracker, tenant: &str, series: &[DecodedSeries]) -> HaDecision {
+    match ha_election(tracker, tenant, series) {
+        HaElection::Accept => HaDecision::Accept,
+        HaElection::Drop => HaDecision::Drop,
+        HaElection::Elect(record) | HaElection::Update(record) => {
+            tracker.persist_elected(&record);
+            HaDecision::Accept
+        }
+    }
+}
+
+/// The HA election action required for a decoded ingest request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HaElection {
+    Accept,
+    Drop,
+    Elect(HaElectionRecord),
+    Update(HaElectionRecord),
+}
+
+/// Inspects the `cluster` and `__replica__` labels of the first series. A
+/// missing `__replica__` means HA is off for the request, and the distributor
+/// accepts the request. Otherwise only the elected replica may write.
+#[must_use]
+pub fn ha_election(tracker: &HaTracker, tenant: &str, series: &[DecodedSeries]) -> HaElection {
+    ha_election_at(tracker, tenant, series, now_ms())
+}
+
+/// A persisted HA election record for the compacted HA-tracker topic.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct HaElectionRecord {
+    pub tenant: String,
+    pub cluster: String,
+    pub replica: String,
+    pub lease_timestamp_ms: i64,
+}
+
+impl HaElectionRecord {
+    /// # Errors
+    /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+    pub fn encode(&self) -> Result<Vec<u8>, HaElectionRecordError> {
+        serde_json::to_vec(self).map_err(|error| HaElectionRecordError::Encode(error.to_string()))
+    }
+
+    /// # Errors
+    /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+    pub fn decode(bytes: &[u8]) -> Result<Self, HaElectionRecordError> {
+        serde_json::from_slice(bytes)
+            .map_err(|error| HaElectionRecordError::Decode(error.to_string()))
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum HaElectionRecordError {
+    #[error("HA election record encode failed: {0}")]
+    Encode(String),
+
+    #[error("HA election record decode failed: {0}")]
+    Decode(String),
+}
+
+/// In-memory elected replica view. The distributor rebuilds it from the
+/// compacted HA-tracker topic, and extends it with an in-process first-seen
+/// election for unseen pairs.
+#[derive(Debug, Default)]
+pub struct HaTracker {
+    pub(super) elected: Mutex<HashMap<HaElectionIdentity, HaElectionRecord>>,
+}
+
+impl HaTracker {
+    #[must_use]
+    /// # Panics
+    /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
+    pub fn elected_replica(&self, tenant: &str, cluster: &str) -> Option<String> {
+        self.elected
+            .lock()
+            .expect("HaTracker mutex poisoned")
+            .get(&HaElectionIdentity::new(tenant, cluster))
+            .map(|record| record.replica.clone())
+    }
+
+    #[must_use]
+    /// # Panics
+    /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
+    pub fn election_record(&self, tenant: &str, cluster: &str) -> Option<HaElectionRecord> {
+        self.elected
+            .lock()
+            .expect("HaTracker mutex poisoned")
+            .get(&HaElectionIdentity::new(tenant, cluster))
+            .cloned()
+    }
+
+    pub fn set_elected(
+        &self,
+        tenant: impl Into<String>,
+        cluster: impl Into<String>,
+        replica: impl Into<String>,
+    ) {
+        self.set_elected_at(tenant, cluster, replica, now_ms());
+    }
+
+    /// # Panics
+    /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
+    pub fn set_elected_at(
+        &self,
+        tenant: impl Into<String>,
+        cluster: impl Into<String>,
+        replica: impl Into<String>,
+        lease_timestamp_ms: i64,
+    ) {
+        let tenant = tenant.into();
+        let cluster = cluster.into();
+        let replica = replica.into();
+        self.elected
+            .lock()
+            .expect("HaTracker mutex poisoned")
+            .insert(
+                HaElectionIdentity::new(tenant.clone(), cluster.clone()),
+                HaElectionRecord {
+                    tenant,
+                    cluster,
+                    replica,
+                    lease_timestamp_ms,
+                },
+            );
+    }
+
+    /// # Panics
+    /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
+    pub fn persist_elected(&self, record: &HaElectionRecord) {
+        self.elected
+            .lock()
+            .expect("HaTracker mutex poisoned")
+            .insert(
+                HaElectionIdentity::new(record.tenant.clone(), record.cluster.clone()),
+                record.clone(),
+            );
+    }
+
+    /// Decides and commits the HA election for `series` atomically, with the
+    /// current wall clock and the default failover timeout. See
+    /// [`Self::elect`].
+    pub fn elect_now(&self, tenant: &str, series: &[DecodedSeries]) -> HaElection {
+        self.elect(tenant, series, now_ms(), DEFAULT_HA_FAILOVER_TIMEOUT)
+    }
+
+    /// Decides and commits the HA election atomically, with the current wall
+    /// clock and the supplied failover timeout.
+    pub fn elect_now_with_timeout(
+        &self,
+        tenant: &str,
+        series: &[DecodedSeries],
+        failover_timeout: Time,
+    ) -> HaElection {
+        self.elect(tenant, series, now_ms(), failover_timeout)
+    }
+
+    /// Decides the HA election for `series` atomically. When the decision is
+    /// `Elect` or `Update`, it commits the in-memory winner under the same
+    /// lock. This closes the elect TOCTOU, because a second racing replica that
+    /// locks afterwards sees the committed winner and is dropped. The DURABLE
+    /// Kafka persist stays with the caller and can proceed asynchronously after
+    /// this function returns.
+    /// # Panics
+    /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
+    pub fn elect(
+        &self,
+        tenant: &str,
+        series: &[DecodedSeries],
+        lease_timestamp_ms: i64,
+        failover_timeout: Time,
+    ) -> HaElection {
+        let mut elected = self.elected.lock().expect("HaTracker mutex poisoned");
+        let decision = decide_election(
+            &elected,
+            tenant,
+            series,
+            lease_timestamp_ms,
+            failover_timeout,
+        );
+        if let HaElection::Elect(record) | HaElection::Update(record) = &decision {
+            elected.insert(
+                HaElectionIdentity::new(record.tenant.clone(), record.cluster.clone()),
+                record.clone(),
+            );
+        }
+        decision
+    }
+}
+
+/// The compacted HA-tracker topic: `(tenant, cluster)` to the elected replica.
+///
+/// Its `cleanup.policy=compact` requirement is part of the topic contract in
+/// [`krabka_observability::topic_contract`], which this crate re-exports the
+/// name from.
+pub use krabka_observability::topic_contract::METRICS_HA_TOPIC as HA_TRACKER_TOPIC;
+
+/// Default elected-replica lease timeout before another replica may take over.
+pub const DEFAULT_HA_FAILOVER_TIMEOUT: Time = secs(30);
+
+/// Timestamped HA election helper for deterministic tests and injectable clocks.
+#[must_use]
+pub fn ha_election_at(
+    tracker: &HaTracker,
+    tenant: &str,
+    series: &[DecodedSeries],
+    lease_timestamp_ms: i64,
+) -> HaElection {
+    ha_election_at_with_timeout(
+        tracker,
+        tenant,
+        series,
+        lease_timestamp_ms,
+        DEFAULT_HA_FAILOVER_TIMEOUT,
+    )
+}
+
+/// Timestamped HA election helper with an explicit failover timeout.
+#[must_use]
+/// # Panics
+/// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
+pub fn ha_election_at_with_timeout(
+    tracker: &HaTracker,
+    tenant: &str,
+    series: &[DecodedSeries],
+    lease_timestamp_ms: i64,
+    failover_timeout: Time,
+) -> HaElection {
+    let elected = tracker.elected.lock().expect("HaTracker mutex poisoned");
+    decide_election(
+        &elected,
+        tenant,
+        series,
+        lease_timestamp_ms,
+        failover_timeout,
+    )
+}
+
+pub(crate) fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+        })
+}
+
+/// Removes the HA coordination label from the series before the WAL append.
+pub fn strip_replica_label(series: &mut [DecodedSeries]) {
+    for series in series {
+        let labels = series
+            .labels
+            .iter()
+            .filter(|label| label.name != "__replica__")
+            .map(|label| krabka_blockstore::LabelPair::new(label.name, label.value))
+            .collect::<Vec<_>>();
+        series.labels = krabka_blockstore::Labels::from_pairs(labels);
+    }
+}

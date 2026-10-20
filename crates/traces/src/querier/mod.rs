@@ -3,6 +3,30 @@
 pub mod http;
 pub mod live;
 pub mod store;
+mod tag_scope_from_name;
+#[cfg(test)]
+pub(crate) mod test_rows;
+
+use tag_scope_from_name::tag_scope_from_name;
+
+pub(crate) const INTRINSIC_TAGS: &[&str] = &[
+    "span:childCount",
+    "span:duration",
+    "span:id",
+    "span:kind",
+    "span:name",
+    "span:Parent",
+    "span:nestedSetLeft",
+    "span:nestedSetParent",
+    "span:nestedSetRight",
+    "span:parentID",
+    "span:status",
+    "span:statusMessage",
+    "trace:duration",
+    "trace:id",
+    "trace:rootName",
+    "trace:rootService",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuerierConfig {
@@ -15,7 +39,10 @@ pub struct QuerierConfig {
 impl Default for QuerierConfig {
     fn default() -> Self {
         Self {
-            listen_addr: ([0, 0, 0, 0], 3200).into(),
+            listen_addr: std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                3200,
+            ),
             default_search_limit: 20,
             default_spss: 3,
             max_traces: 1000,
@@ -33,7 +60,10 @@ mod tests {
         let c = QuerierConfig::default();
         assert2::assert!(
             c == QuerierConfig {
-                listen_addr: ([0, 0, 0, 0], 3200).into(),
+                listen_addr: std::net::SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    3200
+                ),
                 default_search_limit: 20,
                 default_spss: 3,
                 max_traces: 1000,

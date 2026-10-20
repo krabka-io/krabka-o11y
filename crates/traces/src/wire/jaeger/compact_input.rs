@@ -1,30 +1,42 @@
+use std::ops::{Deref, DerefMut};
+
 use super::{
-    T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64, T_LIST, T_MAP,
-    T_SET, T_STOP, T_STRUCT, WireError,
+    CollectionHeader, FieldHeader, InputCursor, MapHeader, T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE,
+    T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64, T_LIST, T_MAP, T_SET, T_STOP, T_STRUCT, WireError,
+    check_collection_header, descend_skip_depth, read_length_prefixed_binary, wire_length,
 };
 
 pub(crate) struct CompactInput<'a> {
-    pub(crate) bytes: &'a [u8],
-    pub(crate) pos: usize,
+    cursor: InputCursor<'a>,
+    key_value_last_field_id: i16,
+}
+
+impl<'a> Deref for CompactInput<'a> {
+    type Target = InputCursor<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cursor
+    }
+}
+
+impl DerefMut for CompactInput<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cursor
+    }
 }
 
 impl<'a> CompactInput<'a> {
-    /// The deepest struct or collection nesting that `skip` descends through.
-    ///
-    /// Each level costs one byte on the wire and one stack frame, so an
-    /// unbounded skip turns a 64 KiB datagram into a stack overflow. Apache
-    /// Thrift's own protocols stop at the same depth, and a Jaeger batch
-    /// nests four deep.
-    const MAX_SKIP_DEPTH: u32 = 64;
-
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0 }
+        Self {
+            cursor: InputCursor::new(bytes),
+            key_value_last_field_id: 0,
+        }
     }
 
     pub(crate) fn read_field(
         &mut self,
         last_field_id: &mut i16,
-    ) -> Result<Option<(u8, i16)>, WireError> {
+    ) -> Result<Option<FieldHeader>, WireError> {
         let header = self.read_u8()?;
         let field_type = header & 0x0F;
         if field_type == T_STOP {
@@ -38,32 +50,31 @@ impl<'a> CompactInput<'a> {
             last_field_id.saturating_add(delta)
         };
         *last_field_id = field_id;
-        Ok(Some((field_type, field_id)))
+        Ok(Some(FieldHeader {
+            field_type,
+            field_id,
+        }))
     }
 
     pub(crate) fn read_struct_list<T>(
         &mut self,
         read_one: fn(&mut CompactInput<'_>) -> Result<T, WireError>,
     ) -> Result<Vec<T>, WireError> {
-        let (element_type, len) = self.read_list_header()?;
-        if element_type != T_STRUCT {
-            return Err(WireError::Decode("expected struct list".into()));
-        }
-        (0..len).map(|_| read_one(self)).collect()
+        let CollectionHeader { element_type, len } = self.read_list_header()?;
+        super::read_struct_list(element_type, len, T_STRUCT, || read_one(self))
     }
 
-    pub(crate) fn read_list_header(&mut self) -> Result<(u8, usize), WireError> {
+    pub(crate) fn read_list_header(&mut self) -> Result<CollectionHeader, WireError> {
         let header = self.read_u8()?;
         let element_type = header & 0x0F;
         let short_len = usize::from(header >> 4);
         let len = if short_len == 15 {
-            usize::try_from(self.read_varint()?)
-                .map_err(|_| WireError::Decode("list too large".into()))?
+            wire_length(self.read_varint()?, "list too large")?
         } else {
             short_len
         };
         self.check_collection_header(element_type, len)?;
-        Ok((element_type, len))
+        Ok(CollectionHeader { element_type, len })
     }
 
     /// Refuse a collection header that no encoder could have produced.
@@ -76,53 +87,32 @@ impl<'a> CompactInput<'a> {
     /// not a value type at all -- it terminates a struct -- and is the one
     /// element type whose skip would consume nothing.
     fn check_collection_header(&self, element_type: u8, len: usize) -> Result<(), WireError> {
-        if len == 0 {
-            return Ok(());
-        }
-        if element_type == T_STOP {
-            return Err(WireError::Decode(
-                "stop is not a collection element type".into(),
-            ));
-        }
-        let remaining = self.bytes.len().saturating_sub(self.pos);
-        if len > remaining {
-            return Err(WireError::Decode(format!(
-                "collection of {len} elements exceeds the {remaining} bytes left"
-            )));
-        }
-        Ok(())
+        check_collection_header(
+            CollectionHeader { element_type, len },
+            T_STOP,
+            self.remaining(),
+        )
     }
 
-    pub(crate) fn read_map_header(&mut self) -> Result<(u8, u8, usize), WireError> {
-        let len = usize::try_from(self.read_varint()?)
-            .map_err(|_| WireError::Decode("map too large".into()))?;
+    pub(crate) fn read_map_header(&mut self) -> Result<MapHeader, WireError> {
+        let len = wire_length(self.read_varint()?, "map too large")?;
         if len == 0 {
-            return Ok((T_STOP, T_STOP, 0));
+            return Ok(MapHeader {
+                key_type: T_STOP,
+                value_type: T_STOP,
+                len: 0,
+            });
         }
         let types = self.read_u8()?;
-        let (key_type, value_type) = (types >> 4, types & 0x0F);
-        self.check_collection_header(key_type, len)?;
-        self.check_collection_header(value_type, len)?;
-        Ok((key_type, value_type, len))
-    }
-
-    pub(crate) fn read_string(&mut self) -> Result<String, WireError> {
-        String::from_utf8(self.read_binary()?).map_err(|err| WireError::Decode(err.to_string()))
+        let key_type = types >> 4;
+        let value_type = types & 0x0F;
+        super::validate_map_header(key_type, value_type, len, T_STOP, self.remaining())
     }
 
     pub(crate) fn read_binary(&mut self) -> Result<Vec<u8>, WireError> {
-        let len = usize::try_from(self.read_varint()?)
-            .map_err(|_| WireError::Decode("binary too large".into()))?;
-        let end = self
-            .pos
-            .checked_add(len)
-            .ok_or_else(|| WireError::Decode("binary length overflow".into()))?;
-        if end > self.bytes.len() {
-            return Err(WireError::Decode("truncated binary".into()));
-        }
-        let out = self.bytes[self.pos..end].to_vec();
-        self.pos = end;
-        Ok(out)
+        let bytes = self.bytes;
+        let len = wire_length(self.read_varint()?, "binary too large");
+        read_length_prefixed_binary(bytes, &mut self.pos, len)
     }
 
     pub(crate) fn read_i32(&mut self) -> Result<i32, WireError> {
@@ -165,11 +155,7 @@ impl<'a> CompactInput<'a> {
     }
 
     pub(crate) fn read_u8(&mut self) -> Result<u8, WireError> {
-        let Some(byte) = self.bytes.get(self.pos).copied() else {
-            return Err(WireError::Decode("unexpected end of thrift payload".into()));
-        };
-        self.pos += 1;
-        Ok(byte)
+        self.cursor.read_u8()
     }
 
     pub(crate) fn skip(&mut self, field_type: u8) -> Result<(), WireError> {
@@ -188,24 +174,32 @@ impl<'a> CompactInput<'a> {
             T_DOUBLE => self.read_double().map(|_| ()),
             T_BINARY => self.read_binary().map(|_| ()),
             T_STRUCT => {
-                let depth = Self::descend(depth)?;
+                let depth = descend_skip_depth(depth)?;
                 let mut last = 0;
-                while let Some((inner_type, _)) = self.read_field(&mut last)? {
+                while let Some(FieldHeader {
+                    field_type: inner_type,
+                    ..
+                }) = self.read_field(&mut last)?
+                {
                     self.skip_value(inner_type, depth)?;
                 }
                 Ok(())
             }
             T_LIST | T_SET => {
-                let depth = Self::descend(depth)?;
-                let (element_type, len) = self.read_list_header()?;
+                let depth = descend_skip_depth(depth)?;
+                let CollectionHeader { element_type, len } = self.read_list_header()?;
                 for _ in 0..len {
                     self.skip_element(element_type, depth)?;
                 }
                 Ok(())
             }
             T_MAP => {
-                let depth = Self::descend(depth)?;
-                let (key_type, value_type, len) = self.read_map_header()?;
+                let depth = descend_skip_depth(depth)?;
+                let MapHeader {
+                    key_type,
+                    value_type,
+                    len,
+                } = self.read_map_header()?;
                 for _ in 0..len {
                     self.skip_element(key_type, depth)?;
                     self.skip_element(value_type, depth)?;
@@ -228,17 +222,54 @@ impl<'a> CompactInput<'a> {
         }
         self.skip_value(element_type, depth)
     }
+}
 
-    /// Step one level deeper, refusing nesting past [`Self::MAX_SKIP_DEPTH`].
-    fn descend(depth: u32) -> Result<u32, WireError> {
-        let depth = depth.saturating_add(1);
-        if depth > Self::MAX_SKIP_DEPTH {
-            return Err(WireError::Decode(format!(
-                "thrift nesting deeper than {}",
-                Self::MAX_SKIP_DEPTH
-            )));
-        }
-        Ok(depth)
+impl super::KeyValueReader for CompactInput<'_> {
+    fn read_binary(&mut self) -> Result<Vec<u8>, WireError> {
+        CompactInput::read_binary(self)
+    }
+
+    fn reset_key_value_fields(&mut self) {
+        self.key_value_last_field_id = 0;
+    }
+
+    fn next_key_value_field(&mut self) -> Result<Option<FieldHeader>, WireError> {
+        let mut last_field_id = self.key_value_last_field_id;
+        let field = self.read_field(&mut last_field_id)?;
+        self.key_value_last_field_id = last_field_id;
+        Ok(field)
+    }
+
+    fn read_key_value_part(
+        &mut self,
+        field_type: u8,
+        field_id: i16,
+    ) -> Result<Option<super::KeyValuePart>, WireError> {
+        Ok(match field_id {
+            1 if field_type == T_BINARY => Some(super::KeyValuePart::Key(self.read_string()?)),
+            3 if field_type == T_BINARY => Some(super::KeyValuePart::Value(super::AttrValue::Str(
+                self.read_string()?,
+            ))),
+            4 if field_type == T_DOUBLE => Some(super::KeyValuePart::Value(
+                super::AttrValue::Double(self.read_double()?),
+            )),
+            5 if field_type == T_BOOL_TRUE => {
+                Some(super::KeyValuePart::Value(super::AttrValue::Bool(true)))
+            }
+            5 if field_type == T_BOOL_FALSE => {
+                Some(super::KeyValuePart::Value(super::AttrValue::Bool(false)))
+            }
+            6 if field_type == T_I64 => Some(super::KeyValuePart::Value(super::AttrValue::Int(
+                self.read_i64()?,
+            ))),
+            7 if field_type == T_BINARY => Some(super::KeyValuePart::Value(
+                super::AttrValue::Bytes(self.read_binary()?),
+            )),
+            _ => {
+                self.skip(field_type)?;
+                None
+            }
+        })
     }
 }
 
@@ -264,7 +295,13 @@ mod tests {
 
         // One element in one byte is satisfiable, and still decodes.
         let mut input = CompactInput::new(&[0x1C, 0x00]);
-        check!(input.read_list_header().expect("reads") == (T_STRUCT, 1));
+        check!(
+            input.read_list_header().expect("reads")
+                == (CollectionHeader {
+                    element_type: T_STRUCT,
+                    len: 1
+                })
+        );
 
         // A compact map header is a varint length and then a types byte.
         let mut input = CompactInput::new(&[0x7F, 0x88]);
@@ -272,9 +309,22 @@ mod tests {
 
         // An empty collection declares nothing, so nothing has to fit.
         let mut input = CompactInput::new(&[0x0C]);
-        check!(input.read_list_header().expect("reads") == (T_STRUCT, 0));
+        check!(
+            input.read_list_header().expect("reads")
+                == (CollectionHeader {
+                    element_type: T_STRUCT,
+                    len: 0
+                })
+        );
         let mut input = CompactInput::new(&[0x00]);
-        check!(input.read_map_header().expect("reads") == (T_STOP, T_STOP, 0));
+        check!(
+            input.read_map_header().expect("reads")
+                == (MapHeader {
+                    key_type: T_STOP,
+                    value_type: T_STOP,
+                    len: 0
+                })
+        );
     }
 
     /// Stop terminates a struct; it is not a value type, and it is the one
@@ -320,12 +370,12 @@ mod tests {
         // byte after the header alone.
         let mut input = CompactInput::new(&[0x11, 0x2A]);
         let mut last = 0;
-        let (field_type, _) = input
+        let field = input
             .read_field(&mut last)
             .expect("reads")
             .expect("a field, not a stop");
-        check!(field_type == T_BOOL_TRUE);
-        check!(input.skip(field_type).is_ok());
+        check!(field.field_type == T_BOOL_TRUE);
+        check!(input.skip(field.field_type).is_ok());
         check!(input.read_u8().expect("the sentinel") == 0x2A);
     }
 
@@ -335,7 +385,7 @@ mod tests {
     /// past anything a Jaeger batch reaches.
     #[test]
     fn nesting_past_the_skip_depth_is_refused_rather_than_recursed() {
-        let depth = usize::try_from(CompactInput::MAX_SKIP_DEPTH).expect("fits");
+        let depth = usize::try_from(MAX_SKIP_DEPTH).expect("fits");
 
         // Each byte is a one-element list whose element is another list.
         let bomb = vec![0x19; depth * 4];
@@ -370,5 +420,7 @@ mod tests {
     use assert2::check;
 
     use super::*;
-    use crate::wire::jaeger::{decode_jaeger_thrift, test_support::encode_sample_batch};
+    use crate::wire::jaeger::{
+        decode_jaeger_thrift, test_support::encode_sample_batch, thrift_cursor::MAX_SKIP_DEPTH,
+    };
 }

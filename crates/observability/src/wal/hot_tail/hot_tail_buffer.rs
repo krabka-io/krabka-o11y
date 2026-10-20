@@ -56,7 +56,9 @@ impl HotTailBuffer {
 
     pub(crate) fn rebuild_buckets(&mut self) {
         self.buckets.clear();
-        for (index, record) in self.records.iter().enumerate() {
+        for indexed_record in self.records.iter().enumerate() {
+            let index = indexed_record.0;
+            let record = indexed_record.1;
             self.buckets
                 .entry(hot_tail_bucket_key(record.timestamp_ns, self.bucket_width))
                 .or_default()
@@ -78,8 +80,8 @@ impl HotTailBuffer {
         let start_bucket = hot_tail_bucket_key(start_ns, self.bucket_width);
         let end_bucket = hot_tail_bucket_key(end_ns, self.bucket_width);
         let mut matches: Vec<usize> = Vec::new();
-        for (_bucket, indices) in self.buckets.range(start_bucket..=end_bucket) {
-            for &index in indices {
+        for bucket in self.buckets.range(start_bucket..=end_bucket) {
+            for &index in bucket.1 {
                 let record = &self.records[index];
                 if record.timestamp_ns >= start_ns && record.timestamp_ns <= end_ns {
                     matches.push(index);

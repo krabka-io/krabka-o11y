@@ -1,8 +1,49 @@
 use super::{
-    Arc, BTreeSet, HashMap, LabelMatcher, MemTable, ProfileError, ProfileScan, ProfileStats,
-    ProfileStore, SampleRow, SymbolDb, compile_matchers, encode_rows, fingerprint_labels,
-    profile_samples_schema, queried_series_fingerprint, row_matches,
+    Arc, BTreeSet, HashMap, LabelMatcher, ProfileError, ProfileIdentity, ProfileScan, ProfileStats,
+    ProfileStore, SampleRow, SampleValues, StacktraceIdentity, SymbolDb, compile_matchers,
+    encode_rows, fingerprint_labels, queried_series_fingerprint, row_matches,
 };
+
+#[derive(Clone, Copy)]
+struct ProfileTimeBounds {
+    oldest_ms: i64,
+    newest_ms: i64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SampleAssociations {
+    pub span_id: Option<u64>,
+    pub trace_id: Option<Vec<u8>>,
+}
+
+impl SampleAssociations {
+    #[must_use]
+    pub const fn new(span_id: Option<u64>, trace_id: Option<Vec<u8>>) -> Self {
+        Self { span_id, trace_id }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SampleProvenance {
+    pub span_id: Option<u64>,
+    pub trace_id: Option<Vec<u8>>,
+    pub wal_sample_ids: Vec<Vec<u8>>,
+}
+
+impl SampleProvenance {
+    #[must_use]
+    pub fn new(
+        span_id: Option<u64>,
+        trace_id: Option<Vec<u8>>,
+        wal_sample_ids: Vec<Vec<u8>>,
+    ) -> Self {
+        Self {
+            span_id,
+            trace_id,
+            wal_sample_ids,
+        }
+    }
+}
 
 /// In-memory `ProfileStore` used by engine tests.
 #[derive(Clone, Debug, Default)]
@@ -26,21 +67,27 @@ impl InMemoryProfileStore {
 
     pub fn push_sample(
         &mut self,
-        profile: (&str, &str),
-        labels: Vec<(String, String)>,
-        stack: (u64, u32),
+        profile: ProfileIdentity<'_>,
+        labels: Vec<crate::ProfileLabel>,
+        stack: StacktraceIdentity,
         value: i64,
         timestamp_ms: i64,
     ) {
-        self.push_sample_with_total(profile, labels, stack, (value, value), timestamp_ms);
+        self.push_sample_with_total(
+            profile,
+            labels,
+            stack,
+            SampleValues::new(value, value),
+            timestamp_ms,
+        );
     }
 
     pub fn push_sample_with_total(
         &mut self,
-        profile: (&str, &str),
-        labels: Vec<(String, String)>,
-        stack: (u64, u32),
-        values: (i64, i64),
+        profile: ProfileIdentity<'_>,
+        labels: Vec<crate::ProfileLabel>,
+        stack: StacktraceIdentity,
+        values: SampleValues,
         timestamp_ms: i64,
     ) {
         self.push_sample_with_total_and_associations(
@@ -49,16 +96,16 @@ impl InMemoryProfileStore {
             stack,
             values,
             timestamp_ms,
-            (None, None),
+            SampleAssociations::default(),
         );
     }
 
     pub fn push_sample_with_total_and_span(
         &mut self,
-        profile: (&str, &str),
-        labels: Vec<(String, String)>,
-        stack: (u64, u32),
-        values: (i64, i64),
+        profile: ProfileIdentity<'_>,
+        labels: Vec<crate::ProfileLabel>,
+        stack: StacktraceIdentity,
+        values: SampleValues,
         timestamp_ms: i64,
         span_id: u64,
     ) {
@@ -68,18 +115,18 @@ impl InMemoryProfileStore {
             stack,
             values,
             timestamp_ms,
-            (Some(span_id), None),
+            SampleAssociations::new(Some(span_id), None),
         );
     }
 
     pub fn push_sample_with_total_and_associations(
         &mut self,
-        profile: (&str, &str),
-        labels: Vec<(String, String)>,
-        stack: (u64, u32),
-        values: (i64, i64),
+        profile: ProfileIdentity<'_>,
+        labels: Vec<crate::ProfileLabel>,
+        stack: StacktraceIdentity,
+        values: SampleValues,
         timestamp_ms: i64,
-        associations: (Option<u64>, Option<Vec<u8>>),
+        associations: SampleAssociations,
     ) {
         self.push_sample_with_provenance(
             profile,
@@ -87,24 +134,34 @@ impl InMemoryProfileStore {
             stack,
             values,
             timestamp_ms,
-            (associations.0, associations.1, Vec::new()),
+            SampleProvenance::new(associations.span_id, associations.trace_id, Vec::new()),
         );
     }
 
     /// Appends a sample with the WAL identities of its source samples.
     pub fn push_sample_with_provenance(
         &mut self,
-        profile: (&str, &str),
-        labels: Vec<(String, String)>,
-        stack: (u64, u32),
-        values: (i64, i64),
+        profile: ProfileIdentity<'_>,
+        labels: Vec<crate::ProfileLabel>,
+        stack: StacktraceIdentity,
+        values: SampleValues,
         timestamp_ms: i64,
-        associations: (Option<u64>, Option<Vec<u8>>, Vec<Vec<u8>>),
+        associations: SampleProvenance,
     ) {
-        let (tenant, profile_type) = profile;
-        let (partition, stacktrace_id) = stack;
-        let (value, total_value) = values;
-        let (span_id, trace_id, wal_sample_ids) = associations;
+        let ProfileIdentity {
+            tenant,
+            profile_type,
+        } = profile;
+        let StacktraceIdentity {
+            partition,
+            stacktrace_id,
+        } = stack;
+        let SampleValues { value, total_value } = values;
+        let SampleProvenance {
+            span_id,
+            trace_id,
+            wal_sample_ids,
+        } = associations;
         let fingerprint = fingerprint_labels(&labels);
         self.samples
             .entry(tenant.to_string())
@@ -146,17 +203,9 @@ impl ProfileStore for InMemoryProfileStore {
             .filter(|row| row_matches(row, &compiled))
             .collect();
         let batch = encode_rows(&rows)?;
-        let table = MemTable::try_new(profile_samples_schema(), vec![vec![batch]])
+        let table = crate::profile_samples_mem_table(vec![batch])
             .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let ctx = crate::profile_session_context();
-        let samples_table = "samples".to_string();
-        ctx.register_table(&samples_table, Arc::new(table))
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
-        Ok(ProfileScan {
-            ctx,
-            samples_table,
-            symbols: Arc::new(self.symbols.clone()),
-        })
+        ProfileScan::from_mem_table(table, Arc::new(self.symbols.clone()))
     }
 
     async fn query_stats(
@@ -172,16 +221,22 @@ impl ProfileStore for InMemoryProfileStore {
         // the whole head and then lists all selector-matching series, including
         // those with no individual profile timestamp in the requested window.
         let bounds = self.rows_in_range(tenant, i64::MIN, i64::MAX).fold(
-            None::<(i64, i64)>,
+            None::<ProfileTimeBounds>,
             |bounds, row| {
-                Some(
-                    bounds.map_or((row.timestamp_ms, row.timestamp_ms), |(oldest, newest)| {
-                        (oldest.min(row.timestamp_ms), newest.max(row.timestamp_ms))
-                    }),
-                )
+                Some(bounds.map_or(
+                    ProfileTimeBounds {
+                        oldest_ms: row.timestamp_ms,
+                        newest_ms: row.timestamp_ms,
+                    },
+                    |old| ProfileTimeBounds {
+                        oldest_ms: old.oldest_ms.min(row.timestamp_ms),
+                        newest_ms: old.newest_ms.max(row.timestamp_ms),
+                    },
+                ))
             },
         );
-        if !bounds.is_some_and(|(oldest, newest)| start_ms <= newest && end_ms >= oldest) {
+        if !bounds.is_some_and(|bounds| start_ms <= bounds.newest_ms && end_ms >= bounds.oldest_ms)
+        {
             return Ok(crate::ProfileQueryStats::default());
         }
         let mut stats = crate::ProfileQueryStats::default();
@@ -190,7 +245,11 @@ impl ProfileStore for InMemoryProfileStore {
         let rows: Vec<_> = self.rows_in_range(tenant, i64::MIN, i64::MAX).collect();
         for row in &rows {
             physical_series.insert(row.fingerprint);
-            profiles.insert((row.fingerprint, row.profile_type.as_str(), row.timestamp_ms));
+            profiles.insert(crate::ProfileInstanceKey {
+                fingerprint: row.fingerprint,
+                profile_type: row.profile_type.clone(),
+                timestamp_ms: row.timestamp_ms,
+            });
             if (profile_type.is_empty() || row.profile_type == profile_type)
                 && row_matches(row, &compiled)
             {
@@ -199,11 +258,8 @@ impl ProfileStore for InMemoryProfileStore {
                     .insert(queried_series_fingerprint(&row.labels));
             }
         }
-        stats.profiles = profiles
-            .iter()
-            .map(|(fp, ty, ts)| (*fp, (*ty).to_string(), *ts))
-            .collect();
         stats.profile_count = profiles.len() as u64;
+        stats.profiles = profiles;
         stats.sample_count = rows.len() as u64;
         stats.block_count = u64::from(!rows.is_empty());
         // Measure the retained row, label and association buffers, rather than
@@ -220,11 +276,11 @@ impl ProfileStore for InMemoryProfileStore {
             profile_bytes += row.trace_id.as_ref().map_or(0, Vec::capacity);
             profile_bytes += row.wal_sample_ids.capacity() * std::mem::size_of::<Vec<u8>>();
             profile_bytes += row.wal_sample_ids.iter().map(Vec::capacity).sum::<usize>();
-            index_bytes += row.labels.capacity() * std::mem::size_of::<(String, String)>();
+            index_bytes += row.labels.capacity() * std::mem::size_of::<crate::ProfileLabel>();
             index_bytes += row
                 .labels
                 .iter()
-                .map(|(name, value)| name.capacity() + value.capacity())
+                .map(|label| label.name.capacity() + label.value.capacity())
                 .sum::<usize>();
         }
         stats.scopes.push(crate::ProfileQueryScope {
@@ -254,7 +310,7 @@ impl ProfileStore for InMemoryProfileStore {
             if !row_matches(row, &compiled) {
                 continue;
             }
-            names.extend(row.labels.iter().map(|(name, _)| name.clone()));
+            names.extend(row.labels.iter().map(|label| label.name.clone()));
         }
         Ok(names.into_iter().collect())
     }
@@ -273,9 +329,9 @@ impl ProfileStore for InMemoryProfileStore {
             if !row_matches(row, &compiled) {
                 continue;
             }
-            for (label_name, value) in &row.labels {
-                if label_name == name {
-                    values.insert(value.clone());
+            for label in &row.labels {
+                if label.name == name {
+                    values.insert(label.value.clone());
                 }
             }
         }
@@ -302,7 +358,7 @@ impl ProfileStore for InMemoryProfileStore {
         label_names: &[String],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Vec<(String, String)>>, ProfileError> {
+    ) -> crate::ProfileSeriesResult {
         let compiled = compile_matchers(matchers)?;
         let mut out = BTreeSet::new();
         for row in self.rows_in_range(tenant, start_ms, end_ms) {
@@ -314,19 +370,11 @@ impl ProfileStore for InMemoryProfileStore {
             // list yields an empty vec, which surfaces as a spurious `[{}]`
             // entry — mirror the cold-path fix in `krabka_blockstore`'s index.
             let mut projected: Vec<_> = if label_names.is_empty() {
-                row.labels
-                    .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
-                    .collect()
+                row.labels.clone()
             } else {
                 label_names
                     .iter()
-                    .filter_map(|want| {
-                        row.labels
-                            .iter()
-                            .find(|(name, _)| name == want)
-                            .map(|(name, value)| (name.clone(), value.clone()))
-                    })
+                    .filter_map(|want| row.labels.iter().find(|label| label.name == *want).cloned())
                     .collect()
             };
             // Pyroscope's `/series` emits each set's labels SORTED by name, in

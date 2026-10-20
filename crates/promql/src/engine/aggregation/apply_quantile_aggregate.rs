@@ -4,6 +4,12 @@ use super::{
     is_valid_quantile, labels_key, quantile_value,
 };
 
+struct QuantileAggregateGroup {
+    labels: Labels,
+    values: Vec<f64>,
+    drop_name: bool,
+}
+
 /// Shared `quantile(phi, v)` core over an already-evaluated instant vector.
 ///
 /// This function backs both the interpreter
@@ -26,7 +32,7 @@ pub(crate) fn apply_quantile_aggregate(
     if !is_valid_quantile(quantile) {
         emit_warning(invalid_quantile_warning(quantile));
     }
-    let mut groups: BTreeMap<String, (Labels, Vec<f64>, bool)> = BTreeMap::new();
+    let mut groups: BTreeMap<String, QuantileAggregateGroup> = BTreeMap::new();
     for sample in samples {
         let SampleValue::Float(value) = sample.value else {
             emit_info(histogram_ignored_in_aggregation_info("quantile"));
@@ -35,19 +41,24 @@ pub(crate) fn apply_quantile_aggregate(
         let labels = aggregate_labels(&sample.labels, modifier);
         let group = groups
             .entry(labels_key(&labels))
-            .or_insert_with(|| (labels, Vec::new(), false));
-        group.1.push(value);
-        group.2 |= sample.drop_name;
+            .or_insert_with(|| QuantileAggregateGroup {
+                labels,
+                values: Vec::new(),
+                drop_name: false,
+            });
+        group.values.push(value);
+        group.drop_name |= sample.drop_name;
     }
 
     groups
         .into_values()
-        .filter_map(|(labels, mut values, drop_name)| {
+        .filter_map(|group| {
+            let mut values = group.values;
             quantile_value(quantile, &mut values).map(|value| InstantSample {
-                labels,
+                labels: group.labels,
                 ts_ms: time_ms,
                 value: SampleValue::Float(value),
-                drop_name,
+                drop_name: group.drop_name,
             })
         })
         .collect()

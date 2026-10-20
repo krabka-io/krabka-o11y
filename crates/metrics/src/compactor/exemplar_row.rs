@@ -8,7 +8,21 @@ pub struct ExemplarRow {
     pub value: f64,
     pub trace_id: Option<String>,
     pub span_id: Option<String>,
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<krabka_blockstore::LabelPair>,
+}
+
+impl crate::numeric_sample_columns::NumericSampleRow for ExemplarRow {
+    fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
+    fn timestamp_ms(&self) -> i64 {
+        self.timestamp_ms
+    }
+
+    fn value(&self) -> f64 {
+        self.value
+    }
 }
 
 pub(crate) fn exemplar_row(fingerprint: u64, exemplar: &WalExemplar) -> ExemplarRow {
@@ -16,11 +30,14 @@ pub(crate) fn exemplar_row(fingerprint: u64, exemplar: &WalExemplar) -> Exemplar
     let mut span_id = None;
     let mut labels = Vec::new();
 
-    for (name, value) in &exemplar.labels {
-        match name.as_str() {
-            "trace_id" => trace_id = Some(value.clone()),
-            "span_id" => span_id = Some(value.clone()),
-            _ => labels.push((name.clone(), value.clone())),
+    for label in &exemplar.labels {
+        match label.name.as_str() {
+            "trace_id" => trace_id = Some(label.value.clone()),
+            "span_id" => span_id = Some(label.value.clone()),
+            _ => labels.push(krabka_blockstore::LabelPair::new(
+                label.name.clone(),
+                label.value.clone(),
+            )),
         }
     }
 

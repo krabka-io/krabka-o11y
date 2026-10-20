@@ -28,10 +28,10 @@ pub(crate) fn read_path_stage(
     Box::new(move |token| {
         Box::pin(async move {
             let mut tasks = SupervisedTasks::new(token.clone());
-            for (name, handle) in
+            for background_task in
                 read.spawn_background(&cli, &metrics, &token, wal_security.as_ref(), catch_up)
             {
-                tasks.adopt(name, handle);
+                tasks.adopt(background_task.name, background_task.handle);
             }
             tokio::select! {
                 () = token.cancelled() => {}

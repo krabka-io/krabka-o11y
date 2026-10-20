@@ -1,11 +1,18 @@
 use super::{BTreeMap, ByteReader, TsdbImportError};
 
+/// An inclusive deleted timestamp interval from a Prometheus tombstones file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeletedTimestampRange {
+    pub min_time: i64,
+    pub max_time: i64,
+}
+
 /// The deleted time ranges of a block, keyed by index series reference.
 ///
 /// Each interval is inclusive at both ends, as Prometheus stores it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Tombstones {
-    intervals: BTreeMap<u64, Vec<(i64, i64)>>,
+    intervals: BTreeMap<u64, Vec<DeletedTimestampRange>>,
 }
 
 const MAGIC: u32 = 0x0130_BA30;
@@ -20,7 +27,9 @@ impl Tombstones {
         if file.len() < 9 {
             return Err(TsdbImportError::Truncated { section: SECTION });
         }
-        let (body, crc) = file.split_at(file.len() - 4);
+        let parts = file.split_at(file.len() - 4);
+        let body = parts.0;
+        let crc = parts.1;
         let mut reader = ByteReader::new(body, SECTION);
         let magic = reader.be32()?;
         if magic != MAGIC {
@@ -40,7 +49,7 @@ impl Tombstones {
                 section: SECTION.to_owned(),
             });
         }
-        let mut intervals = BTreeMap::<u64, Vec<(i64, i64)>>::new();
+        let mut intervals = BTreeMap::<u64, Vec<DeletedTimestampRange>>::new();
         let mut records = 0_u64;
         while reader.remaining() > 0 {
             records += 1;
@@ -57,7 +66,7 @@ impl Tombstones {
             intervals
                 .entry(series)
                 .or_default()
-                .push((min_time, max_time));
+                .push(DeletedTimestampRange { min_time, max_time });
         }
         Ok(Self { intervals })
     }
@@ -67,7 +76,7 @@ impl Tombstones {
         self.intervals.get(&series).is_some_and(|intervals| {
             intervals
                 .iter()
-                .any(|(min_time, max_time)| (*min_time..=*max_time).contains(&timestamp))
+                .any(|range| (range.min_time..=range.max_time).contains(&timestamp))
         })
     }
 

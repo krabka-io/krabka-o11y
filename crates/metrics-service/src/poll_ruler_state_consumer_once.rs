@@ -1,8 +1,7 @@
-use krabka_observability::persisted_format::validate_persisted_format;
-
 use super::{
     MetricStore, PrometheusApiState, RulerStateConsumerError, Time, WalHeadConsumerCommit,
-    WalHeadConsumerPoll, WalHeadConsumerRecord, WalHeadReplayResult, replay_ruler_state_records,
+    WalHeadConsumerPoll, WalHeadReplayResult, finish_wal_consumer_replay,
+    poll_checked_replay_records, replay_ruler_state_records,
 };
 
 #[tracing::instrument(
@@ -25,37 +24,21 @@ where
     S: MetricStore,
     C: WalHeadConsumerPoll + WalHeadConsumerCommit + ?Sized,
 {
-    let records = consumer
-        .poll(timeout)
-        .await
-        .map_err(|error| RulerStateConsumerError::Poll(error.to_string()))?;
-    for record in records.iter().filter(|record| record.topic == state_topic) {
-        validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
-        )
-        .map_err(|error| RulerStateConsumerError::UnsupportedFormat(error.to_string()))?;
-    }
-    let replay_records = records
-        .into_iter()
-        .map(|record| WalHeadConsumerRecord {
-            topic: record.topic,
-            partition: record.partition.into(),
-            offset: record.offset.into(),
-            value: record.value.map(|value| value.to_vec()),
-        })
-        .collect::<Vec<_>>();
+    let replay_records = poll_checked_replay_records(
+        consumer,
+        state_topic,
+        timeout,
+        |_| {},
+        |error| RulerStateConsumerError::Poll(error.to_string()),
+        |error| RulerStateConsumerError::UnsupportedFormat(error.to_string()),
+    )
+    .await?;
     let result = replay_ruler_state_records(state, state_topic, &replay_records)?;
-    let span = tracing::Span::current();
-    span.record("polled", result.polled_records);
-    span.record("replayed", result.replayed_records);
-    if result.replayed_records > 0 {
-        consumer
-            .commit_sync()
-            .await
-            .map_err(|error| RulerStateConsumerError::Commit(error.to_string()))?;
-    }
-    Ok(result)
+    finish_wal_consumer_replay(
+        consumer,
+        result,
+        |error| RulerStateConsumerError::Commit(error.to_string()),
+        || {},
+    )
+    .await
 }

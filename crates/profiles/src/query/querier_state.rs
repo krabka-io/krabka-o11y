@@ -1,14 +1,16 @@
+use krabka_pprof::{MillisRange, ProfileLabel, ProfileSelection, SpanProfileShards};
 use krabka_units::convert::TimeExt as _;
 
 use super::{
     Arc, BTreeMap, DEFAULT_HEATMAP_TIME_BUCKETS_MAX, DEFAULT_HEATMAP_VALUE_BUCKETS, DefaultStore,
-    EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSpanExemplarsBySeries,
-    InMemoryProfileStore, LabelMatcher, Limits, MatchOp, OverridesProvider, PROFILE_ID_LABEL,
-    ProfileError, ProfileStats, ProfileStore, QueryExecution, QueryRange, QueryTarget,
-    SampleSelector, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs, TenantId,
-    TenantPolicy, Time, heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan,
-    individual_exemplars_from_scan, parse_label_selector, span_exemplars_from_scan,
-    span_heatmap_points_from_scan, split_inclusive_range,
+    EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapExemplarRequest,
+    HeatmapSlotsMillis, HeatmapSpanExemplarsBySeries, InMemoryProfileStore, IndividualProfile,
+    LabelMatcher, Limits, MatchOp, OverridesProvider, PROFILE_ID_LABEL, ProfileError, ProfileStats,
+    ProfileStore, QueryExecution, QueryRange, QueryTarget, SampleSelector, Series, SeriesAgg,
+    SeriesExemplarQuery, ServiceMetrics, SpanExemplarsBySeries, SpanHeatmapRequest, StartMs,
+    TenantId, TenantPolicy, Time, heatmap_individual_exemplars_from_scan,
+    heatmap_span_exemplars_from_scan, individual_exemplars_from_scan, parse_label_selector,
+    span_exemplars_from_scan, span_heatmap_points_from_scan, split_inclusive_range,
 };
 
 pub struct QuerierState<S: ProfileStore = DefaultStore> {
@@ -29,6 +31,33 @@ pub struct QuerierState<S: ProfileStore = DefaultStore> {
     pub(crate) admin_store: Arc<dyn object_store::ObjectStore>,
     pub(crate) heatmap_value_buckets: usize,
     pub(crate) heatmap_time_buckets_max: usize,
+}
+
+/// A validated series exemplar query: its parsed selector, and where its
+/// scan starts once the one-step lookback before the range is included.
+struct SeriesExemplarScan {
+    base_matchers: Vec<LabelMatcher>,
+    scan_start: i64,
+}
+
+/// A merge query that passed its tenant's limits: the node cap it runs
+/// under, and the millisecond ranges it reads.
+struct AdmittedMerge {
+    max_nodes: i64,
+    ranges: MergeRanges,
+}
+
+/// The millisecond ranges an admitted merge query reads.
+enum MergeRanges {
+    /// The whole requested range, read in one pass.
+    Whole(QueryRange),
+    /// The requested range cut into adjacent, non-overlapping shards.
+    Shards(Vec<QueryRange>),
+}
+
+enum SpanProfileOutput {
+    Graph(FlameGraph),
+    Tree(Vec<u8>),
 }
 
 impl QuerierState<DefaultStore> {
@@ -216,6 +245,30 @@ impl<S: ProfileStore> QuerierState<S> {
         self.store.stats(tenant.as_str(), 0, i64::MAX).await
     }
 
+    /// Admits a merge query: checks `range` against `tenant`'s query-length
+    /// limit, caps `max_nodes`, and splits the range into shards when this
+    /// querier runs sharded.
+    fn admit_merge(
+        &self,
+        tenant: &TenantId,
+        range: QueryRange,
+        max_nodes: i64,
+    ) -> Result<AdmittedMerge, ProfileError> {
+        let start_ms = range.start_ms;
+        let end_ms = range.end_ms;
+        self.validate_query_range(tenant, start_ms, end_ms)?;
+        let ranges = match &self.execution {
+            QueryExecution::Direct => MergeRanges::Whole(range),
+            QueryExecution::Sharded(config) => {
+                MergeRanges::Shards(split_inclusive_range(start_ms, end_ms, config.shard_width)?)
+            }
+        };
+        Ok(AdmittedMerge {
+            max_nodes: self.effective_max_nodes(tenant, max_nodes),
+            ranges,
+        })
+    }
+
     pub(crate) fn effective_max_nodes(&self, tenant: &TenantId, requested: i64) -> i64 {
         self.overrides
             .for_tenant(tenant)
@@ -232,8 +285,8 @@ impl<S: ProfileStore> QuerierState<S> {
         max_nodes: i64,
     ) -> Result<FlameGraph, ProfileError> {
         self.select_merge_stacktraces_with_stack_trace_selector(
-            (tenant, profile_type, label_selector),
-            (start_ms, end_ms),
+            QueryTarget::new(tenant, profile_type, label_selector),
+            QueryRange::new(start_ms, end_ms),
             max_nodes,
             &[],
         )
@@ -247,8 +300,13 @@ impl<S: ProfileStore> QuerierState<S> {
         max_nodes: i64,
         group_by: &[String],
     ) -> Result<FlameGraph, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        let QueryTarget {
+            tenant,
+            profile_type,
+            label_selector,
+        } = target;
+        let start_ms = range.start_ms;
+        let end_ms = range.end_ms;
         if group_by.is_empty() {
             return self
                 .select_merge_stacktraces(
@@ -268,7 +326,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 tenant.as_str(),
                 profile_type,
                 label_selector,
-                (start_ms, end_ms),
+                QueryRange::new(start_ms, end_ms),
                 max_nodes,
                 group_by,
             )
@@ -300,33 +358,88 @@ impl<S: ProfileStore> QuerierState<S> {
         stack_trace_call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<FlameGraph, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
-                self.engine
-                    .select_merge_stacktraces_with_selectors(
-                        (tenant.as_str(), profile_type, label_selector),
-                        (start_ms, end_ms),
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
+        match self
+            .select_merge_stacktraces_output(
+                target,
+                range,
+                max_nodes,
+                stack_trace_call_sites,
+                sample_selector,
+                false,
+            )
+            .await?
+        {
+            SpanProfileOutput::Graph(graph) => Ok(graph),
+            SpanProfileOutput::Tree(_) => unreachable!("graph query returned a tree"),
+        }
+    }
+
+    async fn select_merge_stacktraces_output(
+        &self,
+        target: QueryTarget<'_>,
+        range: QueryRange,
+        max_nodes: i64,
+        stack_trace_call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+        tree: bool,
+    ) -> Result<SpanProfileOutput, ProfileError> {
+        let QueryTarget {
+            tenant,
+            profile_type,
+            label_selector,
+        } = target;
+        let AdmittedMerge { max_nodes, ranges } = self.admit_merge(tenant, range, max_nodes)?;
+        let selection = ProfileSelection::new(tenant.as_str(), profile_type, label_selector);
+        match ranges {
+            MergeRanges::Whole(whole) => {
+                if tree {
+                    self.engine
+                        .select_merge_stacktraces_tree_with_selectors(
+                            selection,
+                            whole,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Tree)
+                } else {
+                    self.engine
+                        .select_merge_stacktraces_with_selectors(
+                            selection,
+                            whole,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Graph)
+                }
             }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
-                self.engine
-                    .select_merge_stacktraces_with_selectors_sharded(
-                        (tenant.as_str(), profile_type, label_selector),
-                        &shards,
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
+            MergeRanges::Shards(shards) => {
+                if tree {
+                    self.engine
+                        .select_merge_stacktraces_tree_with_selectors_sharded(
+                            selection,
+                            &shards,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Tree)
+                } else {
+                    self.engine
+                        .select_merge_stacktraces_with_selectors_sharded(
+                            selection,
+                            &shards,
+                            max_nodes,
+                            stack_trace_call_sites,
+                            sample_selector,
+                        )
+                        .await
+                        .map(SpanProfileOutput::Graph)
+                }
             }
         }
     }
@@ -339,34 +452,19 @@ impl<S: ProfileStore> QuerierState<S> {
         stack_trace_call_sites: &[String],
         sample_selector: SampleSelector<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
-                self.engine
-                    .select_merge_stacktraces_tree_with_selectors(
-                        (tenant.as_str(), profile_type, label_selector),
-                        (start_ms, end_ms),
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
-            }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
-                self.engine
-                    .select_merge_stacktraces_tree_with_selectors_sharded(
-                        (tenant.as_str(), profile_type, label_selector),
-                        &shards,
-                        max_nodes,
-                        stack_trace_call_sites,
-                        sample_selector,
-                    )
-                    .await
-            }
+        match self
+            .select_merge_stacktraces_output(
+                target,
+                range,
+                max_nodes,
+                stack_trace_call_sites,
+                sample_selector,
+                true,
+            )
+            .await?
+        {
+            SpanProfileOutput::Tree(tree) => Ok(tree),
+            SpanProfileOutput::Graph(_) => unreachable!("tree query returned a graph"),
         }
     }
 
@@ -379,18 +477,23 @@ impl<S: ProfileStore> QuerierState<S> {
         range: QueryRange,
         stack_trace_call_sites: &[String],
     ) -> Result<Vec<Series>, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        let QueryTarget {
+            tenant,
+            profile_type,
+            label_selector,
+        } = target;
+        let start_ms = range.start_ms;
+        let end_ms = range.end_ms;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         match &self.execution {
             QueryExecution::Direct => {
                 self.engine
                     .select_series_with_stack_trace_selector(
-                        (tenant.as_str(), profile_type, label_selector),
+                        ProfileSelection::new(tenant.as_str(), profile_type, label_selector),
                         group_by,
                         step,
                         agg,
-                        (start_ms, end_ms),
+                        QueryRange::new(start_ms, end_ms),
                         stack_trace_call_sites,
                     )
                     .await
@@ -399,7 +502,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
                     .select_series_with_stack_trace_selector_sharded(
-                        (tenant.as_str(), profile_type, label_selector),
+                        ProfileSelection::new(tenant.as_str(), profile_type, label_selector),
                         group_by,
                         step,
                         agg,
@@ -411,50 +514,86 @@ impl<S: ProfileStore> QuerierState<S> {
         }
     }
 
-    pub(crate) async fn select_series_span_exemplars(
+    /// Validates a series exemplar query and parses its selector.
+    fn series_exemplar_scan(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        step: Time,
-        range: QueryRange,
-        call_sites: &[String],
-    ) -> Result<SpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        query: &SeriesExemplarQuery<'_>,
+    ) -> Result<SeriesExemplarScan, ProfileError> {
+        let QueryTarget {
+            tenant,
+            label_selector,
+            ..
+        } = query.target;
+        let start_ms = query.range.start_ms;
+        let end_ms = query.range.end_ms;
         self.validate_query_range(tenant, start_ms, end_ms)?;
-        let scan_start = start_ms.saturating_sub(step.millis_i64());
-        let base_matchers = parse_label_selector(label_selector)?;
-        let groups = if group_by.is_empty() {
+        Ok(SeriesExemplarScan {
+            base_matchers: parse_label_selector(label_selector)?,
+            // The first point covers the one-step lookback before `start_ms`.
+            scan_start: start_ms.saturating_sub(query.step.millis_i64()),
+        })
+    }
+
+    async fn series_exemplar_groups(
+        &self,
+        query: &SeriesExemplarQuery<'_>,
+        group_by: &[String],
+        empty_group_for_ungrouped: bool,
+    ) -> Result<(SeriesExemplarScan, Vec<Vec<ProfileLabel>>), ProfileError> {
+        let plan = self.series_exemplar_scan(query)?;
+        let QueryTarget { tenant, .. } = query.target;
+        let groups = if empty_group_for_ungrouped && query.group_by.is_empty() {
             vec![Vec::new()]
         } else {
             self.store
                 .series(
                     tenant.as_str(),
-                    &base_matchers,
+                    &plan.base_matchers,
                     group_by,
-                    scan_start,
-                    end_ms,
+                    plan.scan_start,
+                    query.range.end_ms,
                 )
                 .await?
         };
+        Ok((plan, groups))
+    }
+
+    pub(crate) async fn select_series_span_exemplars(
+        &self,
+        query: SeriesExemplarQuery<'_>,
+    ) -> Result<SpanExemplarsBySeries, ProfileError> {
+        let (plan, groups) = self
+            .series_exemplar_groups(&query, query.group_by, true)
+            .await?;
+        let QueryTarget {
+            tenant,
+            profile_type,
+            ..
+        } = query.target;
+        let end_ms = query.range.end_ms;
         let mut out = BTreeMap::new();
         for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let matchers = series_matchers(&plan.base_matchers, &labels);
             let scan = self
                 .store
-                .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
+                .select(
+                    tenant.as_str(),
+                    profile_type,
+                    &matchers,
+                    plan.scan_start,
+                    end_ms,
+                )
                 .await?;
             let exemplars =
-                span_exemplars_from_scan(&scan, krabka_units::millis(1), &labels, call_sites)
+                span_exemplars_from_scan(&scan, krabka_units::millis(1), &labels, query.call_sites)
                     .await?;
             let mut buckets = BTreeMap::<i64, Vec<_>>::new();
-            for (timestamp, mut exemplars) in exemplars {
-                if let Some(endpoint) = krabka_pprof::series_bucket_ms(timestamp, step, range) {
+            for entry in exemplars {
+                let timestamp = entry.0;
+                let mut exemplars = entry.1;
+                if let Some(endpoint) =
+                    krabka_pprof::series_bucket_ms(timestamp, query.step, query.range)
+                {
                     buckets.entry(endpoint).or_default().append(&mut exemplars);
                 }
             }
@@ -467,61 +606,52 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) async fn select_series_individual_exemplars(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        step: Time,
-        range: QueryRange,
-        call_sites: &[String],
+        query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let scan_start = start_ms.saturating_sub(step.millis_i64());
-        let base_matchers = parse_label_selector(label_selector)?;
-        let groups = self
-            .store
-            .series(tenant.as_str(), &base_matchers, &[], scan_start, end_ms)
-            .await?;
+        let (plan, groups) = self.series_exemplar_groups(&query, &[], false).await?;
+        let QueryTarget {
+            tenant,
+            profile_type,
+            ..
+        } = query.target;
+        let end_ms = query.range.end_ms;
         let mut out: SpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
-            let Some(profile_id) = labels
-                .iter()
-                .find(|(name, _)| name == PROFILE_ID_LABEL)
-                .map(|(_, value)| value.clone())
-            else {
+            let Some(profile_id) = profile_id_of(&labels) else {
                 continue;
             };
-            let series_labels: Vec<_> = labels
-                .iter()
-                .filter(|(name, _)| group_by.contains(name))
-                .cloned()
-                .collect();
+            let series_labels = labels_grouped_by(&labels, query.group_by);
             let exemplar_labels = labels
                 .iter()
-                .filter(|(name, _)| name != PROFILE_ID_LABEL)
+                .filter(|label| label.name != PROFILE_ID_LABEL)
                 .cloned()
                 .collect::<Vec<_>>();
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let matchers = series_matchers(&plan.base_matchers, &labels);
             let scan = self
                 .store
-                .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
+                .select(
+                    tenant.as_str(),
+                    profile_type,
+                    &matchers,
+                    plan.scan_start,
+                    end_ms,
+                )
                 .await?;
             let exemplars = individual_exemplars_from_scan(
                 &scan,
                 krabka_units::millis(1),
                 &exemplar_labels,
                 &profile_id,
-                call_sites,
+                query.call_sites,
             )
             .await?;
             let points = out.entry(series_labels).or_default();
-            for (timestamp, mut exemplars) in exemplars {
-                if let Some(endpoint) = krabka_pprof::series_bucket_ms(timestamp, step, range) {
+            for entry in exemplars {
+                let timestamp = entry.0;
+                let mut exemplars = entry.1;
+                if let Some(endpoint) =
+                    krabka_pprof::series_bucket_ms(timestamp, query.step, query.range)
+                {
                     points.entry(endpoint).or_default().append(&mut exemplars);
                 }
             }
@@ -529,54 +659,74 @@ impl<S: ProfileStore> QuerierState<S> {
         Ok(out)
     }
 
-    pub(crate) async fn select_heatmap_span_exemplars(
+    /// Validates a heatmap exemplar query and lists every series its
+    /// selector matches, with the selector's matchers.
+    async fn heatmap_exemplar_series(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        range: QueryRange,
-        step_ms: i64,
-    ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let base_matchers = parse_label_selector(label_selector)?;
+        request: &HeatmapExemplarRequest<'_>,
+    ) -> Result<HeatmapExemplarSeries, ProfileError> {
+        let HeatmapSlotsMillis {
+            start: start_ms,
+            end: end_ms,
+            ..
+        } = request.slots;
+        self.validate_query_range(request.tenant, start_ms, end_ms)?;
+        let base_matchers = parse_label_selector(request.label_selector)?;
         let groups = self
             .store
-            .series(tenant.as_str(), &base_matchers, &[], start_ms, end_ms)
-            .await?;
-        let mut out = BTreeMap::new();
-        for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
-            let scan = self
-                .store
-                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
-                .await?;
-            let exemplar_labels = labels
-                .iter()
-                .filter(|(name, _)| name != PROFILE_ID_LABEL && !group_by.contains(name))
-                .cloned()
-                .collect::<Vec<_>>();
-            let series_labels = labels
-                .iter()
-                .filter(|(name, _)| group_by.contains(name))
-                .cloned()
-                .collect::<Vec<_>>();
-            let exemplars = heatmap_span_exemplars_from_scan(
-                &scan,
+            .series(
+                request.tenant.as_str(),
+                &base_matchers,
+                &[],
                 start_ms,
                 end_ms,
-                step_ms,
-                &exemplar_labels,
             )
             .await?;
+        Ok(HeatmapExemplarSeries {
+            base_matchers,
+            groups,
+        })
+    }
+
+    /// The scan of one series of a heatmap exemplar query, which `matchers`
+    /// select.
+    async fn heatmap_exemplar_scan(
+        &self,
+        request: &HeatmapExemplarRequest<'_>,
+        matchers: &[LabelMatcher],
+    ) -> Result<krabka_pprof::ProfileScan, ProfileError> {
+        self.store
+            .select(
+                request.tenant.as_str(),
+                request.profile_type,
+                matchers,
+                request.slots.start,
+                request.slots.end,
+            )
+            .await
+    }
+
+    pub(crate) async fn select_heatmap_span_exemplars(
+        &self,
+        request: HeatmapExemplarRequest<'_>,
+    ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
+        let HeatmapExemplarSeries {
+            base_matchers,
+            groups,
+        } = self.heatmap_exemplar_series(&request).await?;
+        let mut out = BTreeMap::new();
+        for labels in groups {
+            let matchers = series_matchers(&base_matchers, &labels);
+            let scan = self.heatmap_exemplar_scan(&request, &matchers).await?;
+            let exemplar_labels = heatmap_exemplar_labels(&labels, request.group_by);
+            let series_labels = labels_grouped_by(&labels, request.group_by);
+            let exemplars =
+                heatmap_span_exemplars_from_scan(&scan, request.slots, &exemplar_labels).await?;
             if !exemplars.is_empty() {
                 let slots = out.entry(series_labels).or_insert_with(BTreeMap::new);
-                for (timestamp, mut exemplars) in exemplars {
+                for entry in exemplars {
+                    let timestamp = entry.0;
+                    let mut exemplars = entry.1;
                     slots
                         .entry(timestamp)
                         .or_insert_with(Vec::new)
@@ -589,59 +739,34 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) async fn select_heatmap_individual_exemplars(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        range: QueryRange,
-        step_ms: i64,
+        request: HeatmapExemplarRequest<'_>,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let base_matchers = parse_label_selector(label_selector)?;
-        let groups = self
-            .store
-            .series(tenant.as_str(), &base_matchers, &[], start_ms, end_ms)
-            .await?;
+        let HeatmapExemplarSeries {
+            base_matchers,
+            groups,
+        } = self.heatmap_exemplar_series(&request).await?;
         let mut out: HeatmapSpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
-            let Some(profile_id) = labels
-                .iter()
-                .find(|(name, _)| name == PROFILE_ID_LABEL)
-                .map(|(_, value)| value.clone())
-            else {
+            let Some(profile_id) = profile_id_of(&labels) else {
                 continue;
             };
-            let series_labels: Vec<_> = labels
-                .iter()
-                .filter(|(name, _)| group_by.contains(name))
-                .cloned()
-                .collect();
-            let exemplar_labels = labels
-                .iter()
-                .filter(|(name, _)| name != PROFILE_ID_LABEL && !group_by.contains(name))
-                .cloned()
-                .collect::<Vec<_>>();
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
-            let scan = self
-                .store
-                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
-                .await?;
+            let series_labels = labels_grouped_by(&labels, request.group_by);
+            let exemplar_labels = heatmap_exemplar_labels(&labels, request.group_by);
+            let matchers = series_matchers(&base_matchers, &labels);
+            let scan = self.heatmap_exemplar_scan(&request, &matchers).await?;
             let exemplars = heatmap_individual_exemplars_from_scan(
                 &scan,
-                start_ms,
-                end_ms,
-                step_ms,
-                &exemplar_labels,
-                &profile_id,
+                request.slots,
+                IndividualProfile {
+                    profile_id: &profile_id,
+                    labels: &exemplar_labels,
+                },
             )
             .await?;
             let slots = out.entry(series_labels).or_default();
-            for (timestamp, mut exemplars) in exemplars {
+            for entry in exemplars {
+                let timestamp = entry.0;
+                let mut exemplars = entry.1;
                 slots.entry(timestamp).or_default().append(&mut exemplars);
             }
         }
@@ -650,12 +775,15 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) async fn select_span_heatmap_points(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        range: QueryRange,
+        request: SpanHeatmapRequest<'_>,
     ) -> Result<Vec<krabka_pprof::LabeledHeatmapPoints>, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        let SpanHeatmapRequest {
+            tenant,
+            profile_type,
+            label_selector,
+            group_by,
+            range: MillisRange { start_ms, end_ms },
+        } = request;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let base_matchers = parse_label_selector(label_selector)?;
         let groups = if group_by.is_empty() {
@@ -667,12 +795,7 @@ impl<S: ProfileStore> QuerierState<S> {
         };
         let mut out = Vec::new();
         for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+            let matchers = series_matchers(&base_matchers, &labels);
             let scan = self
                 .store
                 .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
@@ -681,7 +804,7 @@ impl<S: ProfileStore> QuerierState<S> {
             if points.is_empty() && !group_by.is_empty() {
                 continue;
             }
-            out.push((labels, points));
+            out.push(krabka_pprof::LabeledHeatmapPoints { labels, points });
         }
         Ok(out)
     }
@@ -693,34 +816,12 @@ impl<S: ProfileStore> QuerierState<S> {
         range: QueryRange,
         max_nodes: i64,
     ) -> Result<FlameGraph, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
-                self.engine
-                    .select_merge_span_profile(
-                        (tenant.as_str(), profile_type, label_selector),
-                        span_ids,
-                        (start_ms, end_ms),
-                        max_nodes,
-                    )
-                    .await
-            }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
-                self.engine
-                    .select_merge_span_profile_sharded(
-                        tenant.as_str(),
-                        profile_type,
-                        label_selector,
-                        span_ids,
-                        &shards,
-                        max_nodes,
-                    )
-                    .await
-            }
+        match self
+            .select_merge_span_profile_output(target, span_ids, range, max_nodes, false)
+            .await?
+        {
+            SpanProfileOutput::Graph(graph) => Ok(graph),
+            SpanProfileOutput::Tree(_) => unreachable!("graph query returned a tree"),
         }
     }
 
@@ -731,34 +832,111 @@ impl<S: ProfileStore> QuerierState<S> {
         range: QueryRange,
         max_nodes: i64,
     ) -> Result<Vec<u8>, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let max_nodes = self.effective_max_nodes(tenant, max_nodes);
-        match &self.execution {
-            QueryExecution::Direct => {
-                self.engine
-                    .select_merge_span_profile_tree(
-                        (tenant.as_str(), profile_type, label_selector),
-                        span_ids,
-                        (start_ms, end_ms),
-                        max_nodes,
-                    )
-                    .await
+        match self
+            .select_merge_span_profile_output(target, span_ids, range, max_nodes, true)
+            .await?
+        {
+            SpanProfileOutput::Tree(tree) => Ok(tree),
+            SpanProfileOutput::Graph(_) => unreachable!("tree query returned a graph"),
+        }
+    }
+
+    async fn select_merge_span_profile_output(
+        &self,
+        target: QueryTarget<'_>,
+        span_ids: &[u64],
+        range: QueryRange,
+        max_nodes: i64,
+        tree: bool,
+    ) -> Result<SpanProfileOutput, ProfileError> {
+        let QueryTarget {
+            tenant,
+            profile_type,
+            label_selector,
+        } = target;
+        let AdmittedMerge { max_nodes, ranges } = self.admit_merge(tenant, range, max_nodes)?;
+        match ranges {
+            MergeRanges::Whole(whole) => {
+                let selection =
+                    ProfileSelection::new(tenant.as_str(), profile_type, label_selector);
+                if tree {
+                    self.engine
+                        .select_merge_span_profile_tree(selection, span_ids, whole, max_nodes)
+                        .await
+                        .map(SpanProfileOutput::Tree)
+                } else {
+                    self.engine
+                        .select_merge_span_profile(selection, span_ids, whole, max_nodes)
+                        .await
+                        .map(SpanProfileOutput::Graph)
+                }
             }
-            QueryExecution::Sharded(config) => {
-                let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
-                self.engine
-                    .select_merge_span_profile_tree_sharded(
-                        tenant.as_str(),
+            MergeRanges::Shards(shards) => {
+                let request = SpanProfileShards {
+                    selection: ProfileSelection {
+                        tenant: tenant.as_str(),
                         profile_type,
                         label_selector,
-                        span_ids,
-                        &shards,
-                        max_nodes,
-                    )
-                    .await
+                    },
+                    span_selector: span_ids,
+                    ranges: &shards,
+                    max_nodes,
+                };
+                if tree {
+                    self.engine
+                        .select_merge_span_profile_tree_sharded(request)
+                        .await
+                        .map(SpanProfileOutput::Tree)
+                } else {
+                    self.engine
+                        .select_merge_span_profile_sharded(request)
+                        .await
+                        .map(SpanProfileOutput::Graph)
+                }
             }
         }
     }
+}
+
+/// The series a heatmap exemplar query reads, with the selector's matchers
+/// they all share.
+struct HeatmapExemplarSeries {
+    base_matchers: Vec<LabelMatcher>,
+    groups: Vec<Vec<ProfileLabel>>,
+}
+
+/// The selector's matchers narrowed to the one series that `labels` names.
+fn series_matchers(base: &[LabelMatcher], labels: &[ProfileLabel]) -> Vec<LabelMatcher> {
+    let mut matchers = base.to_vec();
+    matchers.extend(
+        labels
+            .iter()
+            .map(|label| LabelMatcher::new(label.name.clone(), MatchOp::Eq, label.value.clone())),
+    );
+    matchers
+}
+
+fn profile_id_of(labels: &[ProfileLabel]) -> Option<String> {
+    labels
+        .iter()
+        .find(|label| label.name == PROFILE_ID_LABEL)
+        .map(|label| label.value.clone())
+}
+
+fn labels_grouped_by(labels: &[ProfileLabel], group_by: &[String]) -> Vec<ProfileLabel> {
+    labels
+        .iter()
+        .filter(|label| group_by.contains(&label.name))
+        .cloned()
+        .collect()
+}
+
+/// The labels a heatmap exemplar carries: those its series is not grouped
+/// by, less the profile id.
+fn heatmap_exemplar_labels(labels: &[ProfileLabel], group_by: &[String]) -> Vec<ProfileLabel> {
+    labels
+        .iter()
+        .filter(|label| label.name != PROFILE_ID_LABEL && !group_by.contains(&label.name))
+        .cloned()
+        .collect()
 }

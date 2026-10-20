@@ -18,7 +18,6 @@
 //! tenant.
 
 use std::{
-    collections::BTreeMap,
     future::IntoFuture as _,
     iter,
     net::SocketAddr,
@@ -41,12 +40,10 @@ use krabka_observability::{
         ServerSecurityArgs, authenticate_requests, install_crypto_provider, serve_router,
     },
 };
-use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
-};
+use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    AttrValue, Limits, Span, SpanRecord, TracesError,
-    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, WalSink},
+    Limits, SpanRecord,
+    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, ReceiverEndpoint},
     frontend::{
         FrontendConfig, HttpQuerier, MembershipView, MockCatalog, MockQuerier, QuerierScheme,
         QueryFrontend, router_with_backend,
@@ -55,20 +52,18 @@ use krabka_traces::{
     querier::http::HttpConfig,
     wire::{
         jaeger_grpc::api_v2::{
-            Batch as JaegerBatch, PostSpansRequest, Process as JaegerProcess, Span as JaegerSpan,
-            collector_service_client::CollectorServiceClient,
+            self as api_v2, PostSpansRequest, collector_service_client::CollectorServiceClient,
             collector_service_server::CollectorService as _,
         },
         otlp::decode_otlp,
     },
 };
-use krabka_units::{Time, convert::TimeExt as _};
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{
         ExportTraceServiceRequest, trace_service_client::TraceServiceClient,
         trace_service_server::TraceService as _,
     },
-    common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
+    common::v1::InstrumentationScope,
     resource::v1::Resource,
     trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, TracesData},
 };
@@ -87,6 +82,17 @@ use tonic::{
 };
 use tower::ServiceExt as _;
 
+mod ingest_capture;
+#[path = "../src/wire/jaeger_grpc/post_spans_fixture.rs"]
+mod post_spans_fixture;
+mod span_store;
+
+use self::{
+    ingest_capture::{CapturingSink, DoorPush, push_to_door, serve_until_shutdown, string_kv},
+    post_spans_fixture::{checkout_grpc_span, checkout_post_spans_request},
+    span_store::span_store_from_records,
+};
+
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The colliding trace identity both tenants ingest under the *same* bytes.
@@ -97,11 +103,6 @@ const COLLIDING_TRACE_ID_HEX: &str = "abababababababababababababababab";
 const TENANT_A_ONLY_KEY: &str = "tenant_only";
 const TENANT_A_ONLY_VALUE: &str = "A";
 
-#[derive(Clone, Default)]
-struct CapturingSink {
-    records: Arc<Mutex<Vec<SpanRecord>>>,
-}
-
 impl CapturingSink {
     /// The tenant of every record appended so far, in order.
     fn tenants(&self) -> Vec<String> {
@@ -111,17 +112,6 @@ impl CapturingSink {
             .iter()
             .map(|record| record.tenant.clone())
             .collect()
-    }
-}
-
-#[async_trait::async_trait]
-impl WalSink for CapturingSink {
-    async fn append(&self, rec: SpanRecord) -> Result<(), TracesError> {
-        self.records
-            .lock()
-            .map_err(|_| TracesError::Wal("capturing sink lock poisoned".into()))?
-            .push(rec);
-        Ok(())
     }
 }
 
@@ -142,24 +132,18 @@ impl TestServer {
 async fn ingest(tenant: &str, otlp_body: &[u8]) -> TestResult<Vec<SpanRecord>> {
     let sink = CapturingSink::default();
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
-    let resp = authenticated(distributor::router(state))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/traces")
-                .header("content-type", "application/x-protobuf")
-                .header(TENANT_HEADER, tenant)
-                .body(Body::from(otlp_body.to_vec()))?,
-        )
-        .await?;
-    assert2::assert!(resp.status() == StatusCode::OK);
-    let _ = resp.into_body().collect().await?;
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    Ok(records)
+    push_to_door(
+        authenticated(distributor::router(state)),
+        DoorPush {
+            uri: "/v1/traces",
+            content_type: "application/x-protobuf",
+            tenant,
+            body: Body::from(otlp_body.to_vec()),
+            expected_status: StatusCode::OK,
+        },
+    )
+    .await?;
+    sink.snapshot()
 }
 
 /// Boot the querier over a real socket, atop a tenant-keyed store seeded from
@@ -183,119 +167,31 @@ async fn start_querier(
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, app);
     Ok(TestServer {
         base_url: format!("http://127.0.0.1:{port}"),
         shutdown: tx,
     })
 }
 
-fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
-    let mut grouped: BTreeMap<(String, [u8; 16]), Vec<Span>> = BTreeMap::new();
-    for record in records {
-        grouped
-            .entry((record.tenant.clone(), record.span.trace_id))
-            .or_default()
-            .push(record.span.clone());
-    }
-
-    let mut store = InMemorySpanStore::new();
-    for ((tenant, _), spans) in grouped {
-        let root = spans
-            .iter()
-            .find(|span| span.parent_span_id.is_none())
-            .unwrap_or(&spans[0]);
-        let root_service = resource_attr(root, "service.name")
-            .unwrap_or("unknown")
-            .to_string();
-        let root_name = root.name.clone();
-        store.push_trace(
-            &tenant,
-            &root_service,
-            &root_name,
-            spans.into_iter().map(input_span).collect(),
-        );
-    }
-    store
-}
-
-fn input_span(span: Span) -> InputSpan {
-    let mut attrs = span.resource_attrs;
-    attrs.extend(span.span_attrs);
-    InputSpan {
-        trace_id: span.trace_id,
-        span_id: span.span_id,
-        parent_span_id: span.parent_span_id,
-        name: span.name,
-        kind: span.kind.as_i32(),
-        start_unix_nano: span.start_ns,
-        duration: Time::from_nanos(span.duration_ns),
-        status_code: span.status.as_i32(),
-        status_message: span.status_message,
-        instrumentation_name: span.instrumentation_scope,
-        instrumentation_version: span.instrumentation_version,
-        attrs: attrs
-            .into_iter()
-            .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
-            .collect(),
-        events: Vec::new(),
-        links: Vec::new(),
-    }
-}
-
-fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
-    if let AttrValue::Array(values) = &value
-        && values.iter().any(|element| {
-            matches!(
-                element,
-                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
-            ) || values.first().is_some_and(|first| {
-                std::mem::discriminant(first) != std::mem::discriminant(element)
-            })
-        })
-    {
-        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
-    }
-    match value {
-        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
-        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
-            values
-                .into_iter()
-                .map(traceql_attr)
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
-        AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
-        AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
-        AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        AttrValue::Bytes(_) => None,
-    }
-}
-
-fn resource_attr<'a>(span: &'a Span, key: &str) -> Option<&'a str> {
-    span.resource_attrs
-        .iter()
-        .find_map(|attr| match &attr.value {
-            AttrValue::Str(value) if attr.key == key => Some(value.as_str()),
-            _ => None,
-        })
-}
-
 /// Build a one-span OTLP trace under the colliding `trace_id`.
 ///
 /// `extra_attrs` lets the caller attach a tenant-unique span attribute so the
 /// two tenants' traces are distinguishable in content while sharing identity.
-fn colliding_trace(service: &str, root_name: &str, extra_attrs: &[(&str, &str)]) -> Vec<u8> {
+#[derive(bon::Builder, Clone, Copy)]
+struct TenantAttribute<'a> {
+    key: &'a str,
+    value: &'a str,
+}
+
+fn tenant_attribute<'a>(key: &'a str, value: &'a str) -> TenantAttribute<'a> {
+    TenantAttribute::builder().key(key).value(value).build()
+}
+
+fn colliding_trace(service: &str, root_name: &str, extra_attrs: &[TenantAttribute<'_>]) -> Vec<u8> {
     let mut span_attrs = vec![string_kv("http.method", "POST")];
-    for (key, value) in extra_attrs {
-        span_attrs.push(string_kv(key, value));
+    for attribute in extra_attrs {
+        span_attrs.push(string_kv(attribute.key, attribute.value));
     }
     TracesData {
         resource_spans: vec![ResourceSpans {
@@ -355,21 +251,12 @@ fn trace_with_n_spans(trace_seed: u8, n: usize) -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
-    OtlpKeyValue {
-        key: key.into(),
-        value: Some(AnyValue {
-            value: Some(Value::StringValue(value.into())),
-        }),
-        ..OtlpKeyValue::default()
-    }
+struct JsonResponse {
+    status: ReqwestStatusCode,
+    body: JsonValue,
 }
 
-async fn get_json(
-    client: &reqwest::Client,
-    url: &str,
-    tenant: &str,
-) -> TestResult<(ReqwestStatusCode, JsonValue)> {
+async fn get_json(client: &reqwest::Client, url: &str, tenant: &str) -> TestResult<JsonResponse> {
     let resp = client.get(url).header(TENANT_HEADER, tenant).send().await?;
     let status = resp.status();
     let body = resp.bytes().await?;
@@ -378,7 +265,7 @@ async fn get_json(
     } else {
         serde_json::from_slice(&body).unwrap_or(JsonValue::Null)
     };
-    Ok((status, json))
+    Ok(JsonResponse { status, body: json })
 }
 
 /// Collect the span names contained in a `/api/v2/traces/{id}` response.
@@ -433,13 +320,13 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         &colliding_trace(
             "checkout",
             "POST /a",
-            &[(TENANT_A_ONLY_KEY, TENANT_A_ONLY_VALUE)],
+            &[tenant_attribute(TENANT_A_ONLY_KEY, TENANT_A_ONLY_VALUE)],
         ),
     )
     .await?;
     let b_records = ingest(
         "tenant-b",
-        &colliding_trace("checkout", "POST /b", &[("plain", "x")]),
+        &colliding_trace("checkout", "POST /b", &[tenant_attribute("plain", "x")]),
     )
     .await?;
     let mut records = a_records;
@@ -454,7 +341,7 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
 
     // 1) trace_by_id: tenant-a sees "POST /a", tenant-b sees "POST /b" — neither
     //    sees the other's span, even though the trace_id bytes are identical.
-    let (sa, ta) = get_json(
+    let response_a = get_json(
         &client,
         &format!(
             "{}/api/v2/traces/{COLLIDING_TRACE_ID_HEX}?{full_range}",
@@ -463,7 +350,7 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-a",
     )
     .await?;
-    let (sb, tb) = get_json(
+    let response_b = get_json(
         &client,
         &format!(
             "{}/api/v2/traces/{COLLIDING_TRACE_ID_HEX}?{full_range}",
@@ -472,10 +359,10 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-b",
     )
     .await?;
-    check!(sa == ReqwestStatusCode::OK);
-    check!(sb == ReqwestStatusCode::OK);
-    let a_names = trace_span_names(&ta);
-    let b_names = trace_span_names(&tb);
+    check!(response_a.status == ReqwestStatusCode::OK);
+    check!(response_b.status == ReqwestStatusCode::OK);
+    let a_names = trace_span_names(&response_a.body);
+    let b_names = trace_span_names(&response_b.body);
     check!(a_names == vec!["POST /a".to_string()]);
     check!(b_names == vec!["POST /b".to_string()]);
     check!(!a_names.contains(&"POST /b".to_string()));
@@ -483,23 +370,23 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
 
     // 2) search: each tenant's result set contains only its own root name.
     let select_all = "%7B%20.http.method%20%3D%20%22POST%22%20%7D";
-    let (_, search_a) = get_json(
+    let search_a = get_json(
         &client,
         &format!("{}/api/search?q={select_all}&{full_range}", server.base_url),
         "tenant-a",
     )
     .await?;
-    let (_, search_b) = get_json(
+    let search_b = get_json(
         &client,
         &format!("{}/api/search?q={select_all}&{full_range}", server.base_url),
         "tenant-b",
     )
     .await?;
-    check!(root_trace_names(&search_a) == vec!["POST /a".to_string()]);
-    check!(root_trace_names(&search_b) == vec!["POST /b".to_string()]);
+    check!(root_trace_names(&search_a.body) == vec!["POST /a".to_string()]);
+    check!(root_trace_names(&search_b.body) == vec!["POST /b".to_string()]);
 
     // 3) /api/v2/search/tags: tenant-a has the `tenant_only` tag, tenant-b does not.
-    let (_, tags_a) = get_json(
+    let tags_a = get_json(
         &client,
         &format!(
             "{}/api/v2/search/tags?scope=span&{full_range}",
@@ -508,7 +395,7 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-a",
     )
     .await?;
-    let (_, tags_b) = get_json(
+    let tags_b = get_json(
         &client,
         &format!(
             "{}/api/v2/search/tags?scope=span&{full_range}",
@@ -517,11 +404,11 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-b",
     )
     .await?;
-    check!(tag_names(&tags_a).contains(&TENANT_A_ONLY_KEY.to_string()));
-    check!(!tag_names(&tags_b).contains(&TENANT_A_ONLY_KEY.to_string()));
+    check!(tag_names(&tags_a.body).contains(&TENANT_A_ONLY_KEY.to_string()));
+    check!(!tag_names(&tags_b.body).contains(&TENANT_A_ONLY_KEY.to_string()));
 
     // 4) tag/{tag}/values: tenant-a sees `tenant_only=A`; tenant-b sees nothing.
-    let (_, values_a) = get_json(
+    let values_a = get_json(
         &client,
         &format!(
             "{}/api/search/tag/{TENANT_A_ONLY_KEY}/values?{full_range}",
@@ -530,7 +417,7 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-a",
     )
     .await?;
-    let (_, values_b) = get_json(
+    let values_b = get_json(
         &client,
         &format!(
             "{}/api/search/tag/{TENANT_A_ONLY_KEY}/values?{full_range}",
@@ -539,12 +426,12 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-b",
     )
     .await?;
-    check!(tag_values(&values_a).contains(&TENANT_A_ONLY_VALUE.to_string()));
-    check!(tag_values(&values_b).is_empty());
+    check!(tag_values(&values_a.body).contains(&TENANT_A_ONLY_VALUE.to_string()));
+    check!(tag_values(&values_b.body).is_empty());
 
     // 5) TraceQL select on the tenant-a-only attribute returns nothing for tenant-b.
     let select_a_only = "%7B%20.tenant_only%20%3D%20%22A%22%20%7D";
-    let (_, q_a) = get_json(
+    let q_a = get_json(
         &client,
         &format!(
             "{}/api/search?q={select_a_only}&{full_range}",
@@ -553,7 +440,7 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-a",
     )
     .await?;
-    let (_, q_b) = get_json(
+    let q_b = get_json(
         &client,
         &format!(
             "{}/api/search?q={select_a_only}&{full_range}",
@@ -562,8 +449,8 @@ async fn tenants_are_fully_isolated_across_all_read_surfaces() -> TestResult {
         "tenant-b",
     )
     .await?;
-    check!(root_trace_names(&q_a) == vec!["POST /a".to_string()]);
-    assert2::assert!(root_trace_names(&q_b).is_empty());
+    check!(root_trace_names(&q_a.body) == vec!["POST /a".to_string()]);
+    assert2::assert!(root_trace_names(&q_b.body).is_empty());
 
     server.shutdown();
     Ok(())
@@ -618,12 +505,7 @@ overrides:
 
     // The read door, from the same provider: a `limit=2` search is over
     // tenant-tight's search cap and within every other tenant's.
-    let records = sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone();
-    let server = start_querier(records, overrides).await?;
+    let server = start_querier(sink.snapshot()?, overrides).await?;
     let client = reqwest::Client::new();
     let search = |tenant: &'static str| {
         let url = format!(
@@ -634,15 +516,15 @@ overrides:
         async move { get_json(&client, &url, tenant).await }
     };
 
-    let (tight, body) = search("tenant-tight").await?;
-    check!(tight == ReqwestStatusCode::BAD_REQUEST);
+    let tight = search("tenant-tight").await?;
+    check!(tight.status == ReqwestStatusCode::BAD_REQUEST);
     check!(
-        body["error"]
+        tight.body["error"]
             .as_str()
             .is_some_and(|message| message.contains("max traces per search"))
     );
-    let (loose, _) = search("tenant-loose").await?;
-    check!(loose == ReqwestStatusCode::OK);
+    let loose = search("tenant-loose").await?;
+    check!(loose.status == ReqwestStatusCode::OK);
 
     server.shutdown();
     Ok(())
@@ -673,14 +555,7 @@ overrides:
     // Bind a real socket for the distributor so X-Scope-OrgID flows through HTTP.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = rx.await;
-            })
-            .await;
-    });
+    let tx = serve_until_shutdown(listener, router);
     let base_url = format!("http://127.0.0.1:{port}");
 
     // tenant-a: first single-span push consumes the burst; second is over-rate.
@@ -734,14 +609,103 @@ enum Answer {
 /// The three malformed rows are the regression guard for a resolver that
 /// reads a value it cannot use as absent: a non-UTF-8 value once became the
 /// anonymous tenant, and `a/b` and `..` once passed through as tenants.
-const TENANT_CASES: [(&str, Option<&[u8]>, Answer); 6] = [
-    ("absent", None, Answer::Served("anonymous")),
-    ("empty", Some(b""), Answer::Served("anonymous")),
-    ("named", Some(b"tenant-a"), Answer::Served("tenant-a")),
-    ("separator", Some(b"a/b"), Answer::Rejected),
-    ("parent segment", Some(b".."), Answer::Rejected),
-    ("not UTF-8", Some(b"\xff"), Answer::Rejected),
-];
+#[derive(bon::Builder, Clone, Copy)]
+struct TenantCase<'a> {
+    name: &'a str,
+    value: Option<&'a [u8]>,
+    answer: Answer,
+}
+
+fn tenant_case<'a>(name: &'a str, value: Option<&'a [u8]>, answer: Answer) -> TenantCase<'a> {
+    TenantCase::builder()
+        .name(name)
+        .maybe_value(value)
+        .answer(answer)
+        .build()
+}
+
+fn tenant_cases() -> [TenantCase<'static>; 6] {
+    [
+        tenant_case("absent", None, Answer::Served("anonymous")),
+        tenant_case("empty", Some(b""), Answer::Served("anonymous")),
+        tenant_case("named", Some(b"tenant-a"), Answer::Served("tenant-a")),
+        tenant_case("separator", Some(b"a/b"), Answer::Rejected),
+        tenant_case("parent segment", Some(b".."), Answer::Rejected),
+        tenant_case("not UTF-8", Some(b"\xff"), Answer::Rejected),
+    ]
+}
+
+#[derive(bon::Builder)]
+struct HttpDoor {
+    uri: &'static str,
+    content_type: &'static str,
+    body: Vec<u8>,
+    success: StatusCode,
+}
+
+fn http_door(
+    uri: &'static str,
+    content_type: &'static str,
+    body: Vec<u8>,
+    success: StatusCode,
+) -> HttpDoor {
+    HttpDoor::builder()
+        .uri(uri)
+        .content_type(content_type)
+        .body(body)
+        .success(success)
+        .build()
+}
+
+#[derive(bon::Builder, Clone, Copy)]
+struct HttpCredentialCase<'a> {
+    name: &'a str,
+    token: Option<&'a str>,
+    status: ReqwestStatusCode,
+    stored: usize,
+}
+
+fn http_credential_case<'a>(
+    name: &'a str,
+    token: Option<&'a str>,
+    status: ReqwestStatusCode,
+    stored: usize,
+) -> HttpCredentialCase<'a> {
+    HttpCredentialCase::builder()
+        .name(name)
+        .maybe_token(token)
+        .status(status)
+        .stored(stored)
+        .build()
+}
+
+#[derive(bon::Builder, Clone, Copy)]
+struct GrpcCredentialCase<'a> {
+    name: &'a str,
+    token: Option<&'a str>,
+    code: Option<GrpcCode>,
+    stored: usize,
+}
+
+fn grpc_credential_case<'a>(
+    name: &'a str,
+    token: Option<&'a str>,
+    code: Option<GrpcCode>,
+    stored: usize,
+) -> GrpcCredentialCase<'a> {
+    GrpcCredentialCase::builder()
+        .name(name)
+        .maybe_token(token)
+        .maybe_code(code)
+        .stored(stored)
+        .build()
+}
+
+struct GrpcDoorResult {
+    name: &'static str,
+    result: Result<(), tonic::Status>,
+    sink: CapturingSink,
+}
 
 /// The body a boundary sends when it rejects `value`: the resolver's message,
 /// which `krabka-blockstore` matches to the Mimir and Loki text.
@@ -772,28 +736,7 @@ fn otlp_request(value: Option<&[u8]>) -> TestResult<GrpcRequest<ExportTraceServi
 }
 
 fn jaeger_request(value: Option<&[u8]>) -> TestResult<GrpcRequest<PostSpansRequest>> {
-    let mut request = GrpcRequest::new(PostSpansRequest {
-        batch: Some(JaegerBatch {
-            process: Some(JaegerProcess {
-                service_name: "checkout".into(),
-                tags: Vec::new(),
-            }),
-            spans: vec![JaegerSpan {
-                trace_id: vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2],
-                span_id: vec![0, 0, 0, 0, 0, 0, 0, 3],
-                operation_name: "GET /grpc".into(),
-                start_time: Some(prost_types::Timestamp {
-                    seconds: 1,
-                    nanos: 0,
-                }),
-                duration: Some(prost_types::Duration {
-                    seconds: 0,
-                    nanos: 25_000,
-                }),
-                ..JaegerSpan::default()
-            }],
-        }),
-    });
+    let mut request = GrpcRequest::new(checkout_post_spans_request(checkout_grpc_span()));
     *request.metadata_mut() = tenant_metadata(value)?;
     request
         .extensions_mut()
@@ -817,19 +760,19 @@ fn tenant_metadata(value: Option<&[u8]>) -> TestResult<MetadataMap> {
 async fn every_distributor_http_door_resolves_a_tenant_the_same_way() -> TestResult {
     let zipkin = br#"[{"traceId":"0000000000000001","id":"0000000000000002","name":"x","timestamp":1,"duration":1}]"#;
     let doors = [
-        (
+        http_door(
             "/v1/traces",
             "application/x-protobuf",
             trace_with_n_spans(1, 1),
             StatusCode::OK,
         ),
-        (
+        http_door(
             "/api/push",
             "application/x-protobuf",
             trace_with_n_spans(1, 1),
             StatusCode::OK,
         ),
-        (
+        http_door(
             "/api/v2/spans",
             "application/json",
             zipkin.to_vec(),
@@ -837,37 +780,45 @@ async fn every_distributor_http_door_resolves_a_tenant_the_same_way() -> TestRes
         ),
     ];
 
-    for (uri, content_type, body, success) in doors {
-        for (case, value, answer) in TENANT_CASES {
+    for door in doors {
+        for tenant_case in tenant_cases() {
+            let case = tenant_case.name;
+            let value = tenant_case.value;
+            let answer = tenant_case.answer;
             let sink = CapturingSink::default();
-            let door = authenticated(distributor::router(Arc::new(DistributorState::new(
+            let app = authenticated(distributor::router(Arc::new(DistributorState::new(
                 Arc::new(sink.clone()),
             ))));
             let mut request = Request::builder()
                 .method("POST")
-                .uri(uri)
-                .header("content-type", content_type);
+                .uri(door.uri)
+                .header("content-type", door.content_type);
             if let Some(value) = value {
                 request = request.header(TENANT_HEADER, HeaderValue::from_bytes(value)?);
             }
-            let resp = door
-                .oneshot(request.body(Body::from(body.clone()))?)
+            let resp = app
+                .oneshot(request.body(Body::from(door.body.clone()))?)
                 .await?;
             let status = resp.status();
             let text = resp.into_body().collect().await?.to_bytes();
 
             match answer {
                 Answer::Served(tenant) => {
-                    check!(status == success, "{uri} {case}");
-                    check!(sink.tenants() == vec![tenant.to_string()], "{uri} {case}");
+                    check!(status == door.success, "{} {case}", door.uri);
+                    check!(
+                        sink.tenants() == vec![tenant.to_string()],
+                        "{} {case}",
+                        door.uri
+                    );
                 }
                 Answer::Rejected => {
-                    check!(status == StatusCode::BAD_REQUEST, "{uri} {case}");
+                    check!(status == StatusCode::BAD_REQUEST, "{} {case}", door.uri);
                     check!(
                         text.as_ref() == rejection_message(value).as_bytes(),
-                        "{uri} {case}"
+                        "{} {case}",
+                        door.uri
                     );
-                    check!(sink.tenants().is_empty(), "{uri} {case}");
+                    check!(sink.tenants().is_empty(), "{} {case}", door.uri);
                 }
             }
         }
@@ -880,7 +831,10 @@ async fn every_distributor_http_door_resolves_a_tenant_the_same_way() -> TestRes
 /// a 400.
 #[tokio::test]
 async fn both_distributor_grpc_doors_resolve_a_tenant_the_same_way() -> TestResult {
-    for (case, value, answer) in TENANT_CASES {
+    for tenant_case in tenant_cases() {
+        let case = tenant_case.name;
+        let value = tenant_case.value;
+        let answer = tenant_case.answer;
         let otlp_sink = CapturingSink::default();
         let otlp =
             OtlpGrpcService::new(Arc::new(DistributorState::new(Arc::new(otlp_sink.clone()))))
@@ -895,20 +849,40 @@ async fn both_distributor_grpc_doors_resolve_a_tenant_the_same_way() -> TestResu
         .await
         .map(|_| ());
 
-        for (door, result, sink) in [("otlp", otlp, otlp_sink), ("jaeger", jaeger, jaeger_sink)] {
+        for door in [
+            GrpcDoorResult {
+                name: "otlp",
+                result: otlp,
+                sink: otlp_sink,
+            },
+            GrpcDoorResult {
+                name: "jaeger",
+                result: jaeger,
+                sink: jaeger_sink,
+            },
+        ] {
             match answer {
                 Answer::Served(tenant) => {
-                    check!(result.is_ok(), "{door} {case}");
-                    check!(sink.tenants() == vec![tenant.to_string()], "{door} {case}");
+                    check!(door.result.is_ok(), "{} {case}", door.name);
+                    check!(
+                        door.sink.tenants() == vec![tenant.to_string()],
+                        "{} {case}",
+                        door.name
+                    );
                 }
                 Answer::Rejected => {
-                    let status = result.expect_err("a malformed tenant is refused");
-                    check!(status.code() == GrpcCode::InvalidArgument, "{door} {case}");
+                    let status = door.result.expect_err("a malformed tenant is refused");
+                    check!(
+                        status.code() == GrpcCode::InvalidArgument,
+                        "{} {case}",
+                        door.name
+                    );
                     check!(
                         status.message() == rejection_message(value),
-                        "{door} {case}"
+                        "{} {case}",
+                        door.name
                     );
-                    check!(sink.tenants().is_empty(), "{door} {case}");
+                    check!(door.sink.tenants().is_empty(), "{} {case}", door.name);
                 }
             }
         }
@@ -967,7 +941,10 @@ async fn every_querier_route_resolves_a_tenant_the_same_way() -> TestResult {
     ];
 
     for route in &routes {
-        for (case, value, answer) in TENANT_CASES {
+        for tenant_case in tenant_cases() {
+            let case = tenant_case.name;
+            let value = tenant_case.value;
+            let answer = tenant_case.answer;
             let resp = querier.clone().oneshot(get_request(route, value)?).await?;
             let status = resp.status();
             let body = resp.into_body().collect().await?.to_bytes();
@@ -986,7 +963,10 @@ async fn every_querier_route_resolves_a_tenant_the_same_way() -> TestResult {
         }
     }
 
-    for (case, value, answer) in TENANT_CASES {
+    for tenant_case in tenant_cases() {
+        let case = tenant_case.name;
+        let value = tenant_case.value;
+        let answer = tenant_case.answer;
         let Answer::Served(tenant) = answer else {
             continue;
         };
@@ -1051,7 +1031,10 @@ async fn every_frontend_route_resolves_a_tenant_the_same_way() -> TestResult {
     ];
 
     for route in routes {
-        for (case, value, answer) in TENANT_CASES {
+        for tenant_case in tenant_cases() {
+            let case = tenant_case.name;
+            let value = tenant_case.value;
+            let answer = tenant_case.answer;
             let frontend = Arc::new(QueryFrontend::new(
                 Arc::new(MockQuerier::new()),
                 Arc::new(MockCatalog::new(Vec::new())),
@@ -1115,7 +1098,10 @@ async fn the_frontend_forwards_the_resolved_tenant_to_the_querier() -> TestResul
     ));
     let router = authenticated(router_with_backend(frontend, RoleReadiness::new()));
 
-    for (case, value, answer) in TENANT_CASES {
+    for tenant_case in tenant_cases() {
+        let case = tenant_case.name;
+        let value = tenant_case.value;
+        let answer = tenant_case.answer;
         let Answer::Served(tenant) = answer else {
             continue;
         };
@@ -1365,31 +1351,32 @@ async fn a_secured_otlp_http_push_reaches_the_wal_only_for_a_granted_principal()
     let security = load_security(&pki.listener_flags()?)?.with_security_events(events.clone());
     let sink = CapturingSink::default();
     let stop = CancellationToken::new();
-    let (addr, _server) = distributor::serve(
-        "127.0.0.1:0".parse()?,
-        Arc::new(DistributorState::new(Arc::new(sink.clone()))),
-        &security,
-        stop.clone(),
-    )
+    let server = distributor::serve(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state: Arc::new(DistributorState::new(Arc::new(sink.clone()))),
+        security: &security,
+        shutdown: stop.clone(),
+    })
     .await?;
+    let addr = server.bound_addr;
     let client = pki.https_client()?;
     let url = format!("https://{addr}/v1/traces");
 
-    for (case, token, status, stored) in [
-        ("no credential", None, ReqwestStatusCode::UNAUTHORIZED, 0),
-        (
+    for case in [
+        http_credential_case("no credential", None, ReqwestStatusCode::UNAUTHORIZED, 0),
+        http_credential_case(
             "an unknown token",
             Some("not-a-configured-token"),
             ReqwestStatusCode::UNAUTHORIZED,
             0,
         ),
-        (
+        http_credential_case(
             "a principal without tenant-a",
             Some(STRANGER_TOKEN),
             ReqwestStatusCode::FORBIDDEN,
             0,
         ),
-        (
+        http_credential_case(
             "a principal granted tenant-a",
             Some(GRAFANA_TOKEN),
             ReqwestStatusCode::OK,
@@ -1401,13 +1388,18 @@ async fn a_secured_otlp_http_push_reaches_the_wal_only_for_a_granted_principal()
             .header("content-type", "application/x-protobuf")
             .header(TENANT_HEADER, "tenant-a")
             .body(trace_with_n_spans(7, 1));
-        if let Some(token) = token {
+        if let Some(token) = case.token {
             request = request.bearer_auth(token);
         }
-        check!(request.send().await?.status() == status, "{case}");
         check!(
-            sink.tenants() == vec!["tenant-a".to_string(); stored],
-            "{case}"
+            request.send().await?.status() == case.status,
+            "{}",
+            case.name
+        );
+        check!(
+            sink.tenants() == vec!["tenant-a".to_string(); case.stored],
+            "{}",
+            case.name
         );
     }
     check!(
@@ -1434,27 +1426,27 @@ async fn a_secured_querier_answers_search_only_for_a_granted_principal() -> Test
     let client = pki.https_client()?;
     let search = format!("https://{addr}/api/search?q=%7B%7D&start=0&end=2000000000");
 
-    for (case, token, status, body) in [
-        (
-            "no credential",
-            None,
-            ReqwestStatusCode::UNAUTHORIZED,
-            "unauthorized\n",
-        ),
-        (
+    for case in [
+        http_credential_case("no credential", None, ReqwestStatusCode::UNAUTHORIZED, 0),
+        http_credential_case(
             "a principal without tenant-a",
             Some(STRANGER_TOKEN),
             ReqwestStatusCode::FORBIDDEN,
-            "principal \"stranger\" is not allowed to access tenant \"tenant-a\"\n",
+            0,
         ),
     ] {
         let mut request = client.get(&search).header(TENANT_HEADER, "tenant-a");
-        if let Some(token) = token {
+        if let Some(token) = case.token {
             request = request.bearer_auth(token);
         }
         let response = request.send().await?;
-        check!(response.status() == status, "{case}");
-        check!(response.text().await? == body, "{case}");
+        check!(response.status() == case.status, "{}", case.name);
+        let expected_body = if case.name == "no credential" {
+            "unauthorized\n"
+        } else {
+            "principal \"stranger\" is not allowed to access tenant \"tenant-a\"\n"
+        };
+        check!(response.text().await? == expected_body, "{}", case.name);
     }
 
     let granted = client
@@ -1483,51 +1475,59 @@ async fn secured_grpc_doors_authenticate_and_authorize_before_the_wal() -> TestR
     let sink = CapturingSink::default();
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
     let stop = CancellationToken::new();
-    let (otlp_addr, _otlp) = distributor::serve_otlp_grpc(
-        "127.0.0.1:0".parse()?,
-        Arc::clone(&state),
-        &security,
-        stop.clone(),
-    )
+    let otlp_server = distributor::serve_otlp_grpc(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state: Arc::clone(&state),
+        security: &security,
+        shutdown: stop.clone(),
+    })
     .await?;
-    let (jaeger_addr, _jaeger) =
-        distributor::serve_jaeger_grpc("127.0.0.1:0".parse()?, state, &security, stop.clone())
-            .await?;
+    let otlp_addr = otlp_server.bound_addr;
+    let jaeger_server = distributor::serve_jaeger_grpc(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
+        state,
+        security: &security,
+        shutdown: stop.clone(),
+    })
+    .await?;
+    let jaeger_addr = jaeger_server.bound_addr;
     let mut otlp = TraceServiceClient::new(pki.grpc_endpoint(otlp_addr)?.connect().await?);
     let mut jaeger = CollectorServiceClient::new(pki.grpc_endpoint(jaeger_addr)?.connect().await?);
 
-    for (case, token, code, stored) in [
-        ("no credential", None, Some(GrpcCode::Unauthenticated), 0),
-        (
+    for case in [
+        grpc_credential_case("no credential", None, Some(GrpcCode::Unauthenticated), 0),
+        grpc_credential_case(
             "a principal without tenant-a",
             Some(STRANGER_TOKEN),
             Some(GrpcCode::PermissionDenied),
             0,
         ),
-        ("a principal granted tenant-a", Some(GRAFANA_TOKEN), None, 1),
+        grpc_credential_case("a principal granted tenant-a", Some(GRAFANA_TOKEN), None, 1),
     ] {
-        let request = with_bearer(otlp_request(Some(b"tenant-a"))?, token)?;
+        let request = with_bearer(otlp_request(Some(b"tenant-a"))?, case.token)?;
         let outcome = otlp.export(request).await.map_err(|status| status.code());
-        check!(outcome.err() == code, "otlp {case}");
+        check!(outcome.err() == case.code, "otlp {}", case.name);
         check!(
-            sink.tenants() == vec!["tenant-a".to_string(); stored],
-            "otlp {case}"
+            sink.tenants() == vec!["tenant-a".to_string(); case.stored],
+            "otlp {}",
+            case.name
         );
     }
 
-    for (case, token, code, stored) in [
-        ("no credential", None, Some(GrpcCode::Unauthenticated), 1),
-        ("a principal granted tenant-a", Some(GRAFANA_TOKEN), None, 2),
+    for case in [
+        grpc_credential_case("no credential", None, Some(GrpcCode::Unauthenticated), 1),
+        grpc_credential_case("a principal granted tenant-a", Some(GRAFANA_TOKEN), None, 2),
     ] {
-        let request = with_bearer(jaeger_request(Some(b"tenant-a"))?, token)?;
+        let request = with_bearer(jaeger_request(Some(b"tenant-a"))?, case.token)?;
         let outcome = jaeger
             .post_spans(request)
             .await
             .map_err(|status| status.code());
-        check!(outcome.err() == code, "jaeger {case}");
+        check!(outcome.err() == case.code, "jaeger {}", case.name);
         check!(
-            sink.tenants() == vec!["tenant-a".to_string(); stored],
-            "jaeger {case}"
+            sink.tenants() == vec!["tenant-a".to_string(); case.stored],
+            "jaeger {}",
+            case.name
         );
     }
     stop.cancel();
@@ -1602,19 +1602,19 @@ async fn the_jaeger_compact_receiver_starts_only_without_authentication() -> Tes
     let state = Arc::new(DistributorState::new(Arc::new(CapturingSink::default())));
     let stop = CancellationToken::new();
 
-    let with_authentication = distributor::serve_jaeger_compact_udp(
-        held.local_addr()?,
-        Arc::clone(&state),
-        &load_security(&pki.credentials_flags()?)?,
-        stop.clone(),
-    )
+    let with_authentication = distributor::serve_jaeger_compact_udp(ReceiverEndpoint {
+        addr: held.local_addr()?,
+        state: Arc::clone(&state),
+        security: &load_security(&pki.credentials_flags()?)?,
+        shutdown: stop.clone(),
+    })
     .await?;
-    let without_authentication = distributor::serve_jaeger_compact_udp(
-        "127.0.0.1:0".parse()?,
+    let without_authentication = distributor::serve_jaeger_compact_udp(ReceiverEndpoint {
+        addr: "127.0.0.1:0".parse()?,
         state,
-        &ServerSecurity::default(),
-        stop.clone(),
-    )
+        security: &ServerSecurity::default(),
+        shutdown: stop.clone(),
+    })
     .await?;
 
     check!(with_authentication.is_none());

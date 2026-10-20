@@ -20,38 +20,19 @@
 //!
 //! `cargo test -p krabka-observability --test grafana_integration -- --ignored --nocapture`
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[path = "support/grafana_loki.rs"]
+mod grafana_loki;
+
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use assert2::{assert, check};
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
-use krabka_blockstore::{LabelIndex, LogBlockIndex as BlockIndex};
-use krabka_observability::{InMemoryWalSink, QuerierState, distributor_router, loki_router};
 use serde_json::{Value, json};
-use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt,
-    core::{Host, IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
+use testcontainers::{ContainerAsync, GenericImage, core::IntoContainerPort};
+
+use self::grafana_loki::{
+    GRAFANA_PORT, HttpBase, QueryPair, ServedQuerier, TestResult, query_string, serve_pushed,
+    start_grafana,
 };
-use tokio::{net::TcpListener, sync::oneshot};
-use tower::ServiceExt as _;
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
-/// The deadline for a container to start, which includes the image pull.
-///
-/// `AsyncRunner::start` waits for the pull with no bound of its own. A stalled
-/// pull thus holds the test process open until the CI job wall stops it, and
-/// the job log then names no test as the cause.
-const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
-
-/// Grafana's default HTTP port.
-const GRAFANA_PORT: u16 = 3000;
-
-/// The tenant the provisioned datasource sends on every request.
-const TENANT: &str = "tenant-a";
 
 /// The datasource UID the proxy and `/api/ds/query` calls name.
 const DATASOURCE_UID: &str = "krabka-loki";
@@ -82,8 +63,8 @@ struct MetadataCase {
     name: &'static str,
     /// The path below `/loki/api/v1/`.
     path: &'static str,
-    /// Query parameters beyond the window, which every case gets.
-    params: &'static [(&'static str, &'static str)],
+    /// Query pairs beyond the window, which every case gets.
+    extra_query_pairs: Vec<QueryPair>,
     /// The whole `data` member of the answer.
     expected: Value,
 }
@@ -95,11 +76,20 @@ async fn a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_back
     let krabka = start_krabka().await?;
     let client = reqwest::Client::new();
 
-    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &krabka.host_port.to_string());
+    let datasource_yaml =
+        DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &krabka.server.host_port.to_string());
     let grafana = start_grafana(&datasource_yaml).await?;
     let base = mapped_base_url(&grafana, GRAFANA_PORT).await?;
-    wait_for_http_ok(&client, &base, "/api/health").await?;
-    wait_for_datasource(&client, &base, DATASOURCE_UID).await?;
+    let grafana_api = HttpBase {
+        client: &client,
+        base: &base,
+    };
+    grafana_api
+        .wait_for_ok("/api/health", Duration::from_mins(1))
+        .await?;
+    grafana_api
+        .wait_for_datasource(DATASOURCE_UID, Duration::from_mins(1))
+        .await?;
 
     // Grafana's own verdict on the datasource. It runs the same probe the
     // "Save & test" button runs, so a Krabka answer the plugin cannot read
@@ -113,19 +103,28 @@ async fn a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_back
     assert!(health.status().is_success());
 
     for case in metadata_cases() {
-        let answer = proxy_get(&client, &base, case.path, case.params, &krabka).await?;
+        let answer = proxy_get(
+            grafana_api,
+            &krabka,
+            LokiRead {
+                path: case.path,
+                extra_query_pairs: &case.extra_query_pairs,
+            },
+        )
+        .await?;
         check!(answer["data"] == case.expected, "{}", case.name);
     }
 
     let proxied = proxy_get(
-        &client,
-        &base,
-        "query_range",
-        &[
-            ("query", r#"{app="api",env="prod"} |= "error""#),
-            ("direction", "forward"),
-        ],
+        grafana_api,
         &krabka,
+        LokiRead {
+            path: "query_range",
+            extra_query_pairs: &[
+                QueryPair::new("query", r#"{app="api",env="prod"} |= "error""#),
+                QueryPair::new("direction", "forward"),
+            ],
+        },
     )
     .await?;
     assert!(proxied["data"]["result"] == expected_error_stream(krabka.base_ns));
@@ -133,13 +132,8 @@ async fn a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_back
     // The backend path. Grafana parses the answer into frames and hands back
     // its own shape, so the check is that the line survived the round trip
     // rather than that the shape matches Loki's.
-    let frames = backend_query(
-        &client,
-        &base,
-        r#"{app="api",env="prod"} |= "error""#,
-        &krabka,
-    )
-    .await?;
+    let frames =
+        backend_query(grafana_api, r#"{app="api",env="prod"} |= "error""#, &krabka).await?;
     assert!(json_holds(&frames, "api grafana datasource error"));
 
     krabka.shutdown();
@@ -152,7 +146,7 @@ fn metadata_cases() -> Vec<MetadataCase> {
         MetadataCase {
             name: "labels",
             path: "labels",
-            params: &[],
+            extra_query_pairs: Vec::new(),
             // `service_name` is not pushed. The distributor derives it from
             // the stream's `app` label, the way Loki's own discovery does.
             expected: json!(["app", "env", "service_name"]),
@@ -160,19 +154,19 @@ fn metadata_cases() -> Vec<MetadataCase> {
         MetadataCase {
             name: "label_values_app",
             path: "label/app/values",
-            params: &[],
+            extra_query_pairs: Vec::new(),
             expected: json!(["api"]),
         },
         MetadataCase {
             name: "label_values_env",
             path: "label/env/values",
-            params: &[],
+            extra_query_pairs: Vec::new(),
             expected: json!(["prod"]),
         },
         MetadataCase {
             name: "series",
             path: "series",
-            params: &[("match[]", r#"{app="api"}"#)],
+            extra_query_pairs: vec![QueryPair::new("match[]", r#"{app="api"}"#)],
             // One label set, not two. `detected_level` reaches the query
             // answer as structured metadata, and the metadata endpoints strip
             // structured metadata out, so it is not a series of its own here.
@@ -212,21 +206,30 @@ fn expected_error_stream(base_ns: i64) -> Value {
 // Grafana.
 // ---------------------------------------------------------------------------
 
-/// Reads a Loki path through Grafana's datasource proxy.
+/// One read of a path below `/loki/api/v1/`.
+struct LokiRead<'a> {
+    path: &'a str,
+    /// Query pairs beyond the window, which every read gets.
+    extra_query_pairs: &'a [QueryPair],
+}
+
+/// Reads a Loki path through Grafana's datasource proxy, over the window
+/// `krabka` was seeded in.
 async fn proxy_get(
-    client: &reqwest::Client,
-    base: &str,
-    path: &str,
-    params: &[(&str, &str)],
+    grafana: HttpBase<'_>,
     krabka: &KrabkaServer,
+    read: LokiRead<'_>,
 ) -> TestResult<Value> {
-    let mut pairs: Vec<(&str, String)> = vec![
-        ("start", krabka.base_ns.to_string()),
-        ("end", krabka.end_ns().to_string()),
+    let HttpBase { client, base } = grafana;
+    let LokiRead {
+        path,
+        extra_query_pairs,
+    } = read;
+    let mut pairs = vec![
+        QueryPair::new("start", krabka.base_ns),
+        QueryPair::new("end", krabka.end_ns()),
     ];
-    for (name, value) in params {
-        pairs.push((*name, (*value).to_string()));
-    }
+    pairs.extend_from_slice(extra_query_pairs);
     let url = format!(
         "{base}/api/datasources/proxy/uid/{DATASOURCE_UID}/loki/api/v1/{path}?{}",
         query_string(&pairs)
@@ -235,30 +238,13 @@ async fn proxy_get(
     Ok(response.json().await?)
 }
 
-/// Encodes one query string from its pairs.
-///
-/// `reqwest` is built here without its `query` feature, which is what
-/// `RequestBuilder::query` needs, so the pairs are encoded the way
-/// `krabka-metrics-service`'s Grafana suite encodes its own.
-fn query_string(pairs: &[(&str, String)]) -> String {
-    pairs
-        .iter()
-        .map(|(name, value)| format!("{}={}", form_encode(name), form_encode(value)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn form_encode(value: &str) -> String {
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
-}
-
 /// Runs one query through the backend datasource path a dashboard panel uses.
 async fn backend_query(
-    client: &reqwest::Client,
-    base: &str,
+    grafana: HttpBase<'_>,
     expr: &str,
     krabka: &KrabkaServer,
 ) -> TestResult<Value> {
+    let HttpBase { client, base } = grafana;
     let body = json!({
         "from": (krabka.base_ns / 1_000_000).to_string(),
         "to": (krabka.end_ns() / 1_000_000).to_string(),
@@ -289,36 +275,6 @@ async fn backend_query(
     Ok(serde_json::from_str(&text)?)
 }
 
-async fn start_grafana(datasource_yaml: &str) -> TestResult<ContainerAsync<GenericImage>> {
-    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
-    // the same map that decides what `docker load` tags. A default here would
-    // be a second copy of that decision, and when the two disagreed
-    // testcontainers pulled the image over the network and the suite ran
-    // against whatever it got rather than against the pinned bytes.
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
-        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
-         which loads the digest-pinned image and sets this. To run one under cargo, set it to \
-         that image's tag in //bazel/images/images.bzl.",
-    );
-    Ok(tokio::time::timeout(
-        CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
-            .with_exposed_port(GRAFANA_PORT.tcp())
-            .with_wait_for(WaitFor::message_on_stdout("HTTP Server Listen"))
-            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
-            .with_copy_to(
-                "/etc/grafana/provisioning/datasources/krabka.yaml",
-                datasource_yaml.as_bytes().to_vec(),
-            )
-            .with_host("host.docker.internal", Host::HostGateway)
-            .with_env_var("GF_AUTH_ANONYMOUS_ENABLED", "true")
-            .with_env_var("GF_AUTH_ANONYMOUS_ORG_ROLE", "Admin")
-            .with_env_var("GF_AUTH_BASIC_ENABLED", "false")
-            .start(),
-    )
-    .await??)
-}
-
 async fn mapped_base_url(
     container: &ContainerAsync<GenericImage>,
     port: u16,
@@ -327,48 +283,14 @@ async fn mapped_base_url(
     Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
-async fn wait_for_http_ok(client: &reqwest::Client, base: &str, path: &str) -> TestResult {
-    let deadline = Instant::now() + Duration::from_mins(1);
-    while Instant::now() < deadline {
-        if client
-            .get(format!("{base}{path}"))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    Err(format!("{base}{path} did not become ready").into())
-}
-
-async fn wait_for_datasource(client: &reqwest::Client, base: &str, uid: &str) -> TestResult {
-    let deadline = Instant::now() + Duration::from_mins(1);
-    while Instant::now() < deadline {
-        if client
-            .get(format!("{base}/api/datasources/uid/{uid}"))
-            .send()
-            .await
-            .is_ok_and(|response| response.status().is_success())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    Err(format!("datasource {uid} was not provisioned on {base}").into())
-}
-
 // ---------------------------------------------------------------------------
 // Krabka.
 // ---------------------------------------------------------------------------
 
 struct KrabkaServer {
-    /// The host port the container dials through `host.docker.internal`.
-    host_port: u16,
+    server: ServedQuerier,
     /// The timestamp of the first seeded entry.
     base_ns: i64,
-    shutdown: oneshot::Sender<()>,
 }
 
 impl KrabkaServer {
@@ -378,7 +300,7 @@ impl KrabkaServer {
     }
 
     fn shutdown(self) {
-        let _ = self.shutdown.send(());
+        self.server.shutdown();
     }
 }
 
@@ -389,42 +311,8 @@ impl KrabkaServer {
 /// connection.
 async fn start_krabka() -> TestResult<KrabkaServer> {
     let base_ns = current_unix_second_ns() - 60_000_000_000;
-    let sink = InMemoryWalSink::default();
-
-    let response = distributor_router(sink.clone())
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("content-type", "application/json")
-                .header("X-Scope-OrgID", TENANT)
-                .body(Body::from(push_body(base_ns).to_string()))?,
-        )
-        .await?;
-    assert!(response.status() == StatusCode::NO_CONTENT);
-
-    // `i64::MIN`: nothing has been compacted, so every record the distributor
-    // wrote is in the querier's hot tail.
-    let root = tempfile::tempdir()?.keep();
-    let state = QuerierState::new(root, LabelIndex::default(), BlockIndex::default())
-        .with_hot_tail(sink, i64::MIN);
-
-    let listener = TcpListener::bind(("0.0.0.0", 0)).await?;
-    let host_port = listener.local_addr()?.port();
-    let (shutdown, stop) = oneshot::channel();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, loki_router(state))
-            .with_graceful_shutdown(async move {
-                let _ = stop.await;
-            })
-            .await;
-    });
-
-    Ok(KrabkaServer {
-        host_port,
-        base_ns,
-        shutdown,
-    })
+    let server = serve_pushed(&push_body(base_ns)).await?;
+    Ok(KrabkaServer { server, base_ns })
 }
 
 /// Two entries one second apart, one of which says "error".

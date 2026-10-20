@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use arrow::{
     array::{Array, AsArray, BooleanArray},
@@ -78,16 +78,9 @@ pub(crate) async fn collect_and_remap(
     symbols: &mut UnionSymbols,
 ) -> Result<Vec<RecordBatch>, ProfileError> {
     let partition_base = source_id << 56;
-    symbols.insert(partition_base, scan.symbols);
+    symbols.insert(partition_base, Arc::clone(&scan.symbols));
     let sql = format!("SELECT * FROM {}", scan.samples_table);
-    let batches = scan
-        .ctx
-        .sql(&sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(&sql).await?;
     batches
         .into_iter()
         .map(|batch| remap_partitions(&batch, partition_base))
@@ -150,9 +143,15 @@ mod tests {
     ) -> RecordBatch {
         let mut types = StringDictionaryBuilder::<Int32Type>::new();
         let mut identities = ListBuilder::new(BinaryBuilder::new());
-        for (&number, row) in row_numbers.iter().zip(rows) {
+        for index in 0..row_numbers.len() {
+            let number = row_numbers[index];
+            let row = &rows[index];
             types
-                .append(if number % 2 == 0 { "cpu" } else { "memory" })
+                .append(if number.is_multiple_of(2) {
+                    "cpu"
+                } else {
+                    "memory"
+                })
                 .unwrap();
             for identity in row {
                 identities.values().append_option(identity.as_deref());
@@ -242,13 +241,16 @@ mod tests {
         assert!(concat_batches(&profile_samples_schema(), &actual).unwrap() == expected);
 
         let ctx = profile_session_context();
-        for (name, batches) in [("hot_samples", vec![hot]), ("cold_samples", cold_batches)] {
-            ctx.register_table(
-                name,
-                Arc::new(MemTable::try_new(profile_samples_schema(), vec![batches]).unwrap()),
-            )
-            .unwrap();
-        }
+        ctx.register_table(
+            "hot_samples",
+            Arc::new(MemTable::try_new(profile_samples_schema(), vec![vec![hot]]).unwrap()),
+        )
+        .unwrap();
+        ctx.register_table(
+            "cold_samples",
+            Arc::new(MemTable::try_new(profile_samples_schema(), vec![cold_batches]).unwrap()),
+        )
+        .unwrap();
         let reference = ctx
             .sql(
                 "SELECT * FROM (SELECT hot.* FROM hot_samples hot WHERE NOT EXISTS (
@@ -314,46 +316,54 @@ mod tests {
 
     #[tokio::test]
     async fn complete_batches_keep_order_nulls_duplicates_and_the_source_namespace() {
-        for (table, source_id, expected_partitions) in [
-            (
-                "samples",
-                1,
-                [
+        struct CompleteBatchExpectation {
+            table: &'static str,
+            source_id: u64,
+            expected_partitions: [u64; 3],
+        }
+        for expected in [
+            CompleteBatchExpectation {
+                table: "samples",
+                source_id: 1,
+                expected_partitions: [
                     0x0100_0000_0000_0000,
                     0x0100_0000_0000_0007,
                     0x01ff_0000_0000_0001,
                 ],
-            ),
-            (
-                "datafusion.public.samples",
-                2,
-                [
+            },
+            CompleteBatchExpectation {
+                table: "datafusion.public.samples",
+                source_id: 2,
+                expected_partitions: [
                     0x0200_0000_0000_0000,
                     0x0200_0000_0000_0007,
                     0x02ff_0000_0000_0001,
                 ],
-            ),
+            },
         ] {
             let input = batch([0, 7, 0x00ff_0000_0000_0001]);
             let ctx = profile_session_context();
             ctx.register_table(
-                table,
+                expected.table,
                 Arc::new(MemTable::try_new(input.schema(), vec![vec![input]]).unwrap()),
             )
             .unwrap();
             let source: Arc<dyn SymbolSource> = Arc::new(SymbolDb::new());
             let scan = ProfileScan {
                 ctx,
-                samples_table: table.into(),
+                samples_table: expected.table.into(),
                 symbols: Arc::clone(&source),
             };
             let mut symbols = UnionSymbols::default();
-            let actual = collect_and_remap(scan, source_id, &mut symbols)
+            let actual = collect_and_remap(scan, expected.source_id, &mut symbols)
                 .await
                 .unwrap();
-            assert!(actual == vec![batch(expected_partitions)]);
+            assert!(actual == vec![batch(expected.expected_partitions)]);
             assert!(symbols.sources.len() == 1);
-            assert!(Arc::ptr_eq(&symbols.sources[&(source_id << 56)], &source));
+            assert!(Arc::ptr_eq(
+                &symbols.sources[&(expected.source_id << 56)],
+                &source
+            ));
         }
     }
 }

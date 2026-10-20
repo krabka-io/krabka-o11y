@@ -5,10 +5,38 @@
 //! append, and compactor block and index writes. Query execution lives in
 //! `krabka-promql`.
 
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+
+/// Adds the registry-backed constructors shared by metric service bundles.
+#[macro_export]
+macro_rules! impl_service_metrics_registry_constructors {
+    ($shared_registry:ty, $role:ty, $register_bundle:path, $register_role:path) => {
+        /// Builds a fresh registry, registers every metric, and returns the bundle.
+        #[must_use]
+        pub fn new() -> Self {
+            $register_bundle(Self::register)
+        }
+
+        /// Registers this role's instruments in the process registry.
+        pub async fn for_role(shared: $shared_registry, role: $role) -> Self {
+            $register_role(shared, role, Self::register).await
+        }
+    };
+}
+
+fn append_optional_i64(builder: &mut arrow::array::Int64Builder, value: Option<i64>) {
+    if let Some(value) = value {
+        builder.append_value(value);
+    } else {
+        builder.append_null();
+    }
+}
+
 mod arrow_codec;
+mod least_recently_touched;
 mod metric_labels;
 mod metric_string;
-pub use metric_labels::{IntoMetricLabelsArc, MetricLabels};
+pub use metric_labels::{IntoMetricLabelsArc, MetricLabelPair, MetricLabelRef, MetricLabels};
 pub use metric_string::MetricString;
 
 pub mod compactor;
@@ -17,12 +45,15 @@ pub mod histogram;
 pub mod limits;
 pub mod metadata;
 pub mod metrics;
+mod numeric_sample_columns;
 pub mod otlp;
 pub mod request_tenant;
 pub mod runtime;
 pub mod sample;
 pub mod schema;
 pub mod symbols;
+#[cfg(test)]
+mod test_support;
 pub mod tsdb_import;
 pub mod wal;
 pub mod wire;
@@ -45,16 +76,17 @@ pub use compactor::{
     TenantCompactionRows, compact_metric_blocks_once, compact_wal_records, compaction_object_key,
     compaction_object_plan, compaction_object_plan_for_rows, compaction_partition_object_key,
     compaction_partition_object_plan, compaction_wal_records_from_consumer_records,
-    encode_tenant_batches, enforce_compaction_retention, list_compaction_index,
-    list_compaction_manifests, plan_metric_compactions, poll_compactor_consumer_once,
-    poll_compactor_once, process_compaction_partition_window, process_compaction_record_batch,
+    encode_exemplar_rows, encode_metadata_rows, encode_tenant_batches,
+    enforce_compaction_retention, list_compaction_index, list_compaction_manifests,
+    plan_metric_compactions, poll_compactor_consumer_once, poll_compactor_once,
+    process_compaction_partition_window, process_compaction_record_batch,
     run_compactor_consumer_loop, run_compactor_consumer_loop_with_clock, run_compactor_loop,
     run_compactor_loop_with_clock, write_compacted_tenant_blocks,
     write_compacted_tenant_partition_blocks,
 };
 pub use histogram::{
-    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, decode_native_histograms,
-    encode_native_histograms,
+    BucketSpan, HistogramCodecError, NativeHistogram, ResetHint, SpannedHistogramCounts,
+    compact_spanned_histogram_counts, decode_native_histograms, encode_native_histograms,
 };
 pub use limits::{
     DEFAULT_MAX_RATE_BUCKETS, IngestEnforcer, LimitError, Limits, OverridesError,
@@ -78,7 +110,7 @@ pub use schema::{
     clock_reading_decl, clock_reading_schema, exemplar_schema, float_sample_schema,
     metadata_schema, native_histogram_schema,
 };
-pub use symbols::{SymbolError, SymbolTable};
+pub use symbols::{ResolvedLabel, SymbolError, SymbolTable};
 pub use tsdb_import::{
     DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportBinding, TsdbImportError,
     TsdbImportLimits, TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportStats,

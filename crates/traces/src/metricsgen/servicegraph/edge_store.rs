@@ -137,10 +137,10 @@ impl EdgeStore {
         let expired: Vec<_> = self
             .edges
             .iter()
-            .filter(|(_, edge)| {
-                Time::from_nanos(now_ns.saturating_sub(edge.first_seen_ns)) >= self.ttl
+            .filter(|entry| {
+                Time::from_nanos(now_ns.saturating_sub(entry.1.first_seen_ns)) >= self.ttl
             })
-            .map(|(key, _)| *key)
+            .map(|entry| *entry.0)
             .collect();
 
         for key in &expired {
@@ -155,18 +155,19 @@ impl EdgeStore {
     }
 
     #[must_use]
-    pub fn checkpoint_entries(&self, tenant: &str) -> Vec<(Vec<u8>, Vec<u8>)> {
+    pub fn checkpoint_entries(
+        &self,
+        tenant: &str,
+    ) -> Vec<crate::metricsgen::processor::EdgeCheckpointEntry> {
         let mut entries: Vec<_> = self
             .edges
             .iter()
-            .map(|((trace_id, edge_id), edge)| {
-                (
-                    encode_checkpoint_key(tenant, trace_id, edge_id).to_vec(),
-                    encode_checkpoint_value(edge),
-                )
+            .map(|entry| crate::metricsgen::processor::EdgeCheckpointEntry {
+                key: encode_checkpoint_key(tenant, &entry.0.trace_id, &entry.0.span_id).to_vec(),
+                value: encode_checkpoint_value(entry.1),
             })
             .collect();
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries.sort_by(|a, b| a.key.cmp(&b.key));
         entries
     }
 
@@ -179,15 +180,22 @@ impl EdgeStore {
         key: &[u8],
         value: &[u8],
     ) -> Result<(), CheckpointCodecError> {
-        let (encoded_tenant, trace_id, edge_id) = parse_checkpoint_key(key)?;
-        if encoded_tenant != tenant {
+        let parsed = parse_checkpoint_key(key)?;
+        if parsed.tenant != tenant {
             return Ok(());
         }
-        let edge_id: [u8; 8] = edge_id
+        let edge_id: [u8; 8] = parsed
+            .edge_id
             .try_into()
             .map_err(|_| CheckpointCodecError::BadEdgeId)?;
         let edge = decode_checkpoint_value(value)?;
-        self.edges.insert((trace_id, edge_id), edge);
+        self.edges.insert(
+            EdgeKey {
+                trace_id: parsed.trace_id,
+                span_id: edge_id,
+            },
+            edge,
+        );
         Ok(())
     }
 
@@ -195,7 +203,9 @@ impl EdgeStore {
     pub fn drain(&mut self, timestamp_ms: i64) -> Vec<Series> {
         let mut out = Vec::new();
 
-        for (label_key, agg) in self.aggregates.drain() {
+        for entry in self.aggregates.drain() {
+            let label_key = entry.0;
+            let agg = entry.1;
             let labels = service_graph_labels(label_key);
             out.push(counter(
                 "traces_service_graph_request_total",
@@ -249,7 +259,9 @@ impl EdgeStore {
             }
         }
 
-        for (label_key, value) in self.unpaired.drain() {
+        for entry in self.unpaired.drain() {
+            let label_key = entry.0;
+            let value = entry.1;
             let labels = service_graph_labels(label_key);
             out.push(counter(
                 "traces_service_graph_unpaired_spans_total",
@@ -259,7 +271,9 @@ impl EdgeStore {
             ));
         }
 
-        for (label_key, value) in self.dropped.drain() {
+        for entry in self.dropped.drain() {
+            let label_key = entry.0;
+            let value = entry.1;
             let labels = service_graph_labels(label_key);
             out.push(counter(
                 "traces_service_graph_dropped_spans_total",
@@ -322,7 +336,7 @@ fn dimensions(
     span: &SpanRecord,
     is_client: bool,
     config: &ServiceGraphsConfig,
-) -> Vec<(String, String)> {
+) -> Vec<krabka_traceql::MetricLabel> {
     config
         .dimensions
         .iter()
@@ -334,7 +348,7 @@ fn dimensions(
             } else {
                 name
             };
-            Some((name, value.to_string()))
+            Some(krabka_traceql::MetricLabel::new(name, value))
         })
         .collect()
 }
@@ -345,11 +359,15 @@ fn merge_dimensions(
     is_client: bool,
     config: &ServiceGraphsConfig,
 ) {
-    for (name, value) in dimensions(span, is_client, config) {
-        if let Some(existing) = edge.labels.iter_mut().find(|(key, _)| key == &name) {
-            existing.1 = value;
+    for label in dimensions(span, is_client, config) {
+        if let Some(existing) = edge
+            .labels
+            .iter_mut()
+            .find(|existing| existing.key == label.key)
+        {
+            existing.value = label.value;
         } else {
-            edge.labels.push((name, value));
+            edge.labels.push(label);
         }
     }
     edge.labels.sort();

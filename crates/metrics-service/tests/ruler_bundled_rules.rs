@@ -212,37 +212,50 @@ async fn a_file_with_no_group_stops_the_start() {
 
 #[tokio::test]
 async fn a_group_the_config_api_rejects_stops_the_start() {
+    struct RejectedRuleCase {
+        name: &'static str,
+        body: &'static str,
+    }
+
     let cases = [
-        (
-            "no name",
-            "groups:\n  - rules:\n      - record: a:b\n        expr: up\n",
-        ),
-        ("no rule", "groups:\n  - name: empty\n    rules: []\n"),
-        (
-            "a rule that is neither a record nor an alert",
-            "groups:\n  - name: neither\n    rules:\n      - expr: up\n",
-        ),
-        (
-            "a rule that is both a record and an alert",
-            "groups:\n  - name: both\n    rules:\n      - record: a:b\n        alert: A\n        expr: up\n",
-        ),
-        (
-            "an expression the engine cannot parse",
-            "groups:\n  - name: unparseable\n    rules:\n      - record: a:b\n        expr: sum(\n",
-        ),
+        RejectedRuleCase {
+            name: "no name",
+            body: "groups:\n  - rules:\n      - record: a:b\n        expr: up\n",
+        },
+        RejectedRuleCase {
+            name: "no rule",
+            body: "groups:\n  - name: empty\n    rules: []\n",
+        },
+        RejectedRuleCase {
+            name: "a rule that is neither a record nor an alert",
+            body: "groups:\n  - name: neither\n    rules:\n      - expr: up\n",
+        },
+        RejectedRuleCase {
+            name: "a rule that is both a record and an alert",
+            body: "groups:\n  - name: both\n    rules:\n      - record: a:b\n        alert: A\n        expr: up\n",
+        },
+        RejectedRuleCase {
+            name: "an expression the engine cannot parse",
+            body: "groups:\n  - name: unparseable\n    rules:\n      - record: a:b\n        expr: sum(\n",
+        },
     ];
 
-    for (name, body) in cases {
+    for case in cases {
         let fixture = Fixture::new().await;
-        let path = fixture.write("rejected.yaml", body);
+        let path = fixture.write("rejected.yaml", case.body);
 
         let error = fixture.install(&path).await.expect_err("rejected group");
 
         check!(
             matches!(error, BundledRulesError::Rejected { .. }),
-            "{name}"
+            "{}",
+            case.name
         );
-        check!(fixture.state.ruler_rule_set(&tenant()).is_empty(), "{name}");
+        check!(
+            fixture.state.ruler_rule_set(&tenant()).is_empty(),
+            "{}",
+            case.name
+        );
     }
 }
 

@@ -1,5 +1,11 @@
 use super::decode_quoted_escape;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogfmtField {
+    pub key: String,
+    pub value: String,
+}
+
 /// Incrementally decodes logfmt fields without sanitizing their names.
 pub struct LogfmtParser<'a> {
     pub(crate) input: &'a str,
@@ -21,7 +27,7 @@ impl<'a> LogfmtParser<'a> {
         &mut self,
         keep_standalone: bool,
         strict: bool,
-    ) -> Result<Option<(String, String)>, String> {
+    ) -> Result<Option<LogfmtField>, String> {
         loop {
             let remaining = &self.input[self.pos..];
             let trimmed = remaining.trim_start_matches(char::is_whitespace);
@@ -34,7 +40,10 @@ impl<'a> LogfmtParser<'a> {
             let key = self.parse_key();
             if key.is_empty() || !self.input[self.pos..].starts_with('=') {
                 if keep_standalone && !key.is_empty() {
-                    return Ok(Some((key, String::new())));
+                    return Ok(Some(LogfmtField {
+                        key,
+                        value: String::new(),
+                    }));
                 }
                 if strict && key.is_empty() {
                     return Err(format!("invalid logfmt token at byte {token_start}"));
@@ -48,7 +57,7 @@ impl<'a> LogfmtParser<'a> {
             }
             self.pos = self.pos.saturating_add('='.len_utf8());
             match self.parse_value(strict) {
-                Ok(value) => return Ok(Some((key, value))),
+                Ok(value) => return Ok(Some(LogfmtField { key, value })),
                 Err(details) if strict => return Err(details),
                 Err(_) => {}
             }
@@ -93,7 +102,9 @@ impl<'a> LogfmtParser<'a> {
         let mut out = String::new();
         let start = self.pos;
         let mut chars = self.input[start..].char_indices();
-        while let Some((offset, ch)) = chars.next() {
+        while let Some(positioned_char) = chars.next() {
+            let offset = positioned_char.0;
+            let ch = positioned_char.1;
             let ch_end = start.saturating_add(offset).saturating_add(ch.len_utf8());
             match ch {
                 '"' => {
@@ -101,7 +112,9 @@ impl<'a> LogfmtParser<'a> {
                     return Some(out);
                 }
                 '\\' => {
-                    if let Some((escaped_offset, escaped)) = chars.next() {
+                    if let Some(escaped_char) = chars.next() {
+                        let escaped_offset = escaped_char.0;
+                        let escaped = escaped_char.1;
                         self.pos = start
                             .saturating_add(escaped_offset)
                             .saturating_add(escaped.len_utf8());

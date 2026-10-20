@@ -77,9 +77,9 @@ impl TemplateTime {
             "UnixNano" => V::Integer64(self.unix_nanos()),
             "IsZero" => boolean(self.seconds == -62_135_596_800 && self.nanos == 0),
             "IsDST" => boolean(match &self.location {
-                Location::Named(zone, _) => zone.lookup_full(self.seconds).2,
+                Location::Named(zone, _) => zone.lookup_full(self.seconds).daylight,
                 Location::Local => {
-                    super::local_zone().is_some_and(|zone| zone.lookup_full(self.seconds).2)
+                    super::local_zone().is_some_and(|zone| zone.lookup_full(self.seconds).daylight)
                 }
                 _ => false,
             }),
@@ -123,8 +123,11 @@ impl TemplateTime {
                     parts.minute,
                     parts.second,
                 );
-                let (_, offset) = self.location.zone(seconds);
-                let (_, adjusted) = self.location.zone(seconds.wrapping_sub(i64::from(offset)));
+                let offset = self.location.zone(seconds).offset;
+                let adjusted = self
+                    .location
+                    .zone(seconds.wrapping_sub(i64::from(offset)))
+                    .offset;
                 V::Time(Self {
                     seconds: seconds.wrapping_sub(i64::from(adjusted)),
                     monotonic: None,
@@ -135,26 +138,26 @@ impl TemplateTime {
                 let V::Time(other) = &args[0] else {
                     return Err(format!("{name} requires time.Time"));
                 };
-                let compare = if let (Some(left), Some(right)) = (self.monotonic, other.monotonic) {
-                    left.cmp(&right)
+                let compare = if let Some(left) = self.monotonic {
+                    if let Some(right) = other.monotonic {
+                        left.cmp(&right)
+                    } else {
+                        self.wall_clock_cmp(other)
+                    }
                 } else {
-                    self.seconds
-                        .wrapping_add(62_135_596_800)
-                        .cmp(&other.seconds.wrapping_add(62_135_596_800))
-                        .then(self.nanos.cmp(&other.nanos))
+                    self.wall_clock_cmp(other)
                 };
                 match name {
                     "Sub" => {
-                        let delta =
-                            if let (Some(left), Some(right)) = (self.monotonic, other.monotonic) {
+                        let delta = if let Some(left) = self.monotonic {
+                            if let Some(right) = other.monotonic {
                                 i128::from(left) - i128::from(right)
                             } else {
-                                (i128::from(self.seconds.wrapping_add(62_135_596_800))
-                                    - i128::from(other.seconds.wrapping_add(62_135_596_800)))
-                                    * 1_000_000_000
-                                    + i128::from(self.nanos)
-                                    - i128::from(other.nanos)
-                            };
+                                self.wall_clock_delta(other)
+                            }
+                        } else {
+                            self.wall_clock_delta(other)
+                        };
                         V::Duration(
                             i64::try_from(delta.clamp(i128::from(i64::MIN), i128::from(i64::MAX)))
                                 .expect("clamped duration fits i64"),
@@ -225,6 +228,22 @@ impl TemplateTime {
         };
         Ok(result)
     }
+
+    fn wall_clock_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.seconds
+            .wrapping_add(62_135_596_800)
+            .cmp(&other.seconds.wrapping_add(62_135_596_800))
+            .then(self.nanos.cmp(&other.nanos))
+    }
+
+    fn wall_clock_delta(&self, other: &Self) -> i128 {
+        (i128::from(self.seconds.wrapping_add(62_135_596_800))
+            - i128::from(other.seconds.wrapping_add(62_135_596_800)))
+            * 1_000_000_000
+            + i128::from(self.nanos)
+            - i128::from(other.nanos)
+    }
+
     fn add(&self, span: i64) -> Self {
         let nanos = i64::from(self.nanos) + span % 1_000_000_000;
         let delta = span / 1_000_000_000 + nanos.div_euclid(1_000_000_000);
@@ -241,7 +260,7 @@ impl TemplateTime {
         }
     }
     fn binary(&self) -> Result<Vec<u8>, String> {
-        let (_, offset) = self.zone();
+        let offset = self.zone().offset;
         let minutes = if matches!(self.location, Location::Utc) {
             -1
         } else {
@@ -267,7 +286,9 @@ impl TemplateTime {
         Ok(bytes)
     }
     fn rfc3339(&self) -> Result<String, String> {
-        if !(0..=9999).contains(&self.parts().year) || self.zone().1.unsigned_abs() / 3600 >= 24 {
+        if !(0..=9999).contains(&self.parts().year)
+            || self.zone().offset.unsigned_abs() / 3600 >= 24
+        {
             return Err("Time.MarshalText: date or zone outside RFC3339 range".into());
         }
         Ok(self.format("2006-01-02T15:04:05.999999999Z07:00"))

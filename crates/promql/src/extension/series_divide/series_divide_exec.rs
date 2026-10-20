@@ -1,11 +1,11 @@
 use arrow::array::BinaryArray;
-use datafusion::{common::tree_node::TreeNodeRecursion, physical_expr::PhysicalExpr};
 
 use super::{
     Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
     RecordBatch, RecordBatchStreamAdapter, SendableRecordBatchStream, StreamExt, TaskContext,
     array_value_to_string, fmt,
 };
+use crate::extension::only_child;
 
 /// Physical node that emits one batch per contiguous series run.
 #[derive(Debug)]
@@ -105,38 +105,18 @@ impl ExecutionPlan for SeriesDivideExec {
         "SeriesDivideExec"
     }
 
-    fn properties(&self) -> &Arc<PlanProperties> {
-        &self.properties
-    }
-
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.input]
-    }
+    single_input_exec_plumbing!();
 
     fn maintains_input_order(&self) -> Vec<bool> {
         vec![true]
     }
 
-    fn apply_expressions(
-        &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DfResult<TreeNodeRecursion>,
-    ) -> DfResult<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
-    }
-
     fn with_new_children(
         self: Arc<Self>,
-        mut children: Vec<Arc<dyn ExecutionPlan>>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "SeriesDivideExec expects one child".to_string(),
-            ));
-        }
-        Ok(Arc::new(Self::new(
-            self.tag_columns.clone(),
-            children.swap_remove(0),
-        )))
+        let input = only_child(children, self.name())?;
+        Ok(Arc::new(Self::new(self.tag_columns.clone(), input)))
     }
 
     fn execute(

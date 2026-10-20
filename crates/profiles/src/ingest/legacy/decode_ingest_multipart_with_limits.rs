@@ -69,7 +69,7 @@ pub async fn decode_ingest_multipart_with_limits(
         .unwrap_or(false);
     // As on the plain-body path: a pprof or a JFR recording carries its own
     // sample types, and the stack formats are all read as CPU profiles.
-    let (profile, metric_name) = match query.format {
+    let decoded = match query.format {
         IngestFormat::Pprof => {
             let raw = pprof_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart `profile` part".to_string())
@@ -83,7 +83,10 @@ pub async fn decode_ingest_multipart_with_limits(
             let metric_name = pprof_metric_name(&profile).ok_or_else(|| {
                 ProfilesError::Decode("pprof profile declares no sample_type".to_string())
             })?;
-            (profile, metric_name)
+            LegacyCpuProfile {
+                profile,
+                metric_name,
+            }
         }
         IngestFormat::Groups => {
             let raw = folded_bytes.ok_or_else(|| {
@@ -135,13 +138,16 @@ pub async fn decode_ingest_multipart_with_limits(
             let metric_name = pprof_metric_name(&profile).ok_or_else(|| {
                 ProfilesError::Decode("JFR profile declares no sample_type".to_string())
             })?;
-            (profile, metric_name)
+            LegacyCpuProfile {
+                profile,
+                metric_name,
+            }
         }
     };
-    let profile = apply_query_time(profile, query)?;
+    let profile = apply_query_time(decoded.profile, query)?;
 
     Ok(RawProfile {
-        labels: query_labels(query, &metric_name, multipart_labels.global),
+        labels: query_labels(query, &decoded.metric_name, multipart_labels.global),
         profile,
         delta,
         sample_timestamps_ns: Vec::new(),

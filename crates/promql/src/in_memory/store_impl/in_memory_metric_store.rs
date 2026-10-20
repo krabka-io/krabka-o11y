@@ -1,10 +1,14 @@
+use krabka_metrics::{FloatSampleRow, NativeHistogramRow};
+
 use super::{
-    Arc, BTreeMap, BTreeSet, ExemplarRecord, ExemplarScan, InMemoryMetricStore, LabelMatcher,
+    Arc, BTreeMap, ExemplarRecord, ExemplarScan, InMemoryMetricStore, LabelMatcher,
     LabelNameCardinality, LabelValueCardinality, Labels, MemTable, MetadataScan, MetricStore,
     PromqlError, Result, RowChunks, ScanResult, SeriesFingerprint, SessionContext, TsdbBlock,
     TsdbHeadStats, TsdbStats, all_match, encode_float_samples, encode_native_histograms,
-    float_sample_schema, named_stats, native_histogram_schema, prepare_matchers, row_matches,
+    float_sample_schema, label_name_cardinality, label_value_cardinality, native_histogram_schema,
+    prepare_matchers, row_matches, tsdb_stats,
 };
+use crate::store::{distinct_label_names, distinct_label_values, sort_tsdb_blocks};
 
 #[async_trait::async_trait]
 impl MetricStore for InMemoryMetricStore {
@@ -22,7 +26,12 @@ impl MetricStore for InMemoryMetricStore {
         if let Some(rows) = self.floats.get(tenant) {
             for row in rows.iter() {
                 if row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms) {
-                    float_rows.push((row.fp, row.ts_ms, row.value, row.start_timestamp_ms));
+                    float_rows.push(FloatSampleRow {
+                        fingerprint: row.fp,
+                        timestamp_ms: row.ts_ms,
+                        value: row.value,
+                        start_timestamp_ms: row.start_timestamp_ms,
+                    });
                 }
             }
         }
@@ -42,11 +51,19 @@ impl MetricStore for InMemoryMetricStore {
         if let Some(rows) = self.hists.get(tenant) {
             for row in rows.iter() {
                 if row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms) {
-                    hist_rows.push((row.fp, row.ts_ms, row.hist.as_ref().clone()));
+                    hist_rows.push(NativeHistogramRow {
+                        fingerprint: row.fp,
+                        timestamp_ms: row.ts_ms,
+                        hist: row.hist.as_ref().clone(),
+                    });
                 }
             }
         }
-        hist_rows.sort_by_key(|(fp, ts, _)| (*fp, *ts));
+        hist_rows.sort_by(|left, right| {
+            left.fingerprint
+                .cmp(&right.fingerprint)
+                .then(left.timestamp_ms.cmp(&right.timestamp_ms))
+        });
         let histogram_table = if hist_rows.is_empty() {
             None
         } else {
@@ -90,13 +107,9 @@ impl MetricStore for InMemoryMetricStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<String>> {
-        let mut names = BTreeSet::new();
-        for labels in self.matched_series(tenant, matchers, start_ms, end_ms)? {
-            for (name, _) in labels.iter() {
-                names.insert(name.clone());
-            }
-        }
-        Ok(names.into_iter().collect())
+        Ok(distinct_label_names(
+            self.matched_series(tenant, matchers, start_ms, end_ms)?,
+        ))
     }
 
     async fn label_values(
@@ -107,13 +120,10 @@ impl MetricStore for InMemoryMetricStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<krabka_metrics::MetricString>> {
-        let mut values = BTreeSet::new();
-        for labels in self.matched_series(tenant, matchers, start_ms, end_ms)? {
-            if let Some(value) = labels.get_value(name) {
-                values.insert(value.clone());
-            }
-        }
-        Ok(values.into_iter().collect())
+        Ok(distinct_label_values(
+            self.matched_series(tenant, matchers, start_ms, end_ms)?,
+            name,
+        ))
     }
 
     async fn series(
@@ -164,7 +174,12 @@ impl MetricStore for InMemoryMetricStore {
                 }
             }
         }
-        exemplars.sort_by_key(|row| (row.series_labels.fingerprint(), row.ts_ms));
+        exemplars.sort_by(|left, right| {
+            left.series_labels
+                .fingerprint()
+                .cmp(&right.series_labels.fingerprint())
+                .then(left.ts_ms.cmp(&right.ts_ms))
+        });
         // The hot head holds its rows in memory, so it never answers without a
         // block and never raises a warning.
         Ok(ExemplarScan {
@@ -184,13 +199,7 @@ impl MetricStore for InMemoryMetricStore {
             })
             .cloned()
             .collect::<Vec<_>>();
-        metadata.sort_by(|left, right| {
-            left.metric_family_name
-                .cmp(&right.metric_family_name)
-                .then_with(|| left.metric_type.cmp(&right.metric_type))
-                .then_with(|| left.help.cmp(&right.help))
-                .then_with(|| left.unit.cmp(&right.unit))
-        });
+        metadata.sort();
         Ok(MetadataScan {
             metadata,
             warnings: Vec::new(),
@@ -198,80 +207,11 @@ impl MetricStore for InMemoryMetricStore {
     }
 
     async fn cardinality_label_names(&self, tenant: &str) -> Result<Vec<LabelNameCardinality>> {
-        let mut by_name = BTreeMap::<String, BTreeSet<SeriesFingerprint>>::new();
-        if let Some(rows) = self.floats.get(tenant) {
-            for row in rows.iter() {
-                for (name, _) in row.labels.iter() {
-                    by_name.entry(name.clone()).or_default().insert(row.fp);
-                }
-            }
-        }
-        if let Some(rows) = self.hists.get(tenant) {
-            for row in rows.iter() {
-                for (name, _) in row.labels.iter() {
-                    by_name.entry(name.clone()).or_default().insert(row.fp);
-                }
-            }
-        }
-
-        let mut cardinality = by_name
-            .into_iter()
-            .map(|(name, fingerprints)| LabelNameCardinality {
-                name,
-                series_count: fingerprints.len(),
-            })
-            .collect::<Vec<_>>();
-        cardinality.sort_by(|left, right| {
-            right
-                .series_count
-                .cmp(&left.series_count)
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        Ok(cardinality)
+        Ok(label_name_cardinality(self.tenant_series_rows(tenant)))
     }
 
     async fn cardinality_label_values(&self, tenant: &str) -> Result<Vec<LabelValueCardinality>> {
-        let mut by_value =
-            BTreeMap::<(String, crate::PromqlString), BTreeSet<SeriesFingerprint>>::new();
-        if let Some(rows) = self.floats.get(tenant) {
-            for row in rows.iter() {
-                for (name, value) in row.labels.iter() {
-                    by_value
-                        .entry((name.clone(), value.clone()))
-                        .or_default()
-                        .insert(row.fp);
-                }
-            }
-        }
-        if let Some(rows) = self.hists.get(tenant) {
-            for row in rows.iter() {
-                for (name, value) in row.labels.iter() {
-                    by_value
-                        .entry((name.clone(), value.clone()))
-                        .or_default()
-                        .insert(row.fp);
-                }
-            }
-        }
-
-        let mut cardinality = by_value
-            .into_iter()
-            .map(
-                |((label_name, label_value), fingerprints)| LabelValueCardinality {
-                    label_name,
-                    label_value: label_value.as_str().to_owned(),
-                    series_count: fingerprints.len(),
-                },
-            )
-            .collect::<Vec<_>>();
-        cardinality.sort_by(|left, right| {
-            right
-                .series_count
-                .cmp(&left.series_count)
-                .then_with(|| left.label_name.cmp(&right.label_name))
-                .then_with(|| left.label_value.cmp(&right.label_value))
-        });
-        Ok(cardinality)
+        Ok(label_value_cardinality(self.tenant_series_rows(tenant)))
     }
 
     async fn cardinality_active_series(&self, tenant: &str) -> Result<Vec<Labels>> {
@@ -293,10 +233,10 @@ impl MetricStore for InMemoryMetricStore {
 
         let mut series = by_fp.into_values().collect::<Vec<_>>();
         series.sort_by_key(|labels| {
-            labels.iter().fold(String::new(), |mut out, (name, value)| {
-                out.push_str(name);
+            labels.iter().fold(String::new(), |mut out, pair| {
+                out.push_str(pair.name);
                 out.push('=');
-                out.push_str(value);
+                out.push_str(pair.value.as_str());
                 out.push('\n');
                 out
             })
@@ -310,77 +250,34 @@ impl MetricStore for InMemoryMetricStore {
         let mut min_time = i64::MAX;
         let mut max_time = i64::MIN;
 
-        if let Some(rows) = self.floats.get(tenant) {
-            for row in rows.iter() {
-                sample_count += 1;
-                min_time = min_time.min(row.ts_ms);
-                max_time = max_time.max(row.ts_ms);
-                series
-                    .entry(row.fp)
-                    .or_insert_with(|| row.labels.as_ref().clone());
-            }
-        }
-        if let Some(rows) = self.hists.get(tenant) {
-            for row in rows.iter() {
-                sample_count += 1;
-                min_time = min_time.min(row.ts_ms);
-                max_time = max_time.max(row.ts_ms);
-                series
-                    .entry(row.fp)
-                    .or_insert_with(|| row.labels.as_ref().clone());
-            }
+        for row in self.tenant_sample_refs(tenant) {
+            sample_count += 1;
+            min_time = min_time.min(row.ts_ms);
+            max_time = max_time.max(row.ts_ms);
+            series
+                .entry(row.fp)
+                .or_insert_with(|| row.labels.as_ref().clone());
         }
         if series.is_empty() {
             min_time = 0;
             max_time = 0;
         }
 
-        let mut by_metric = BTreeMap::<String, usize>::new();
-        let mut label_values_by_name = BTreeMap::<String, BTreeSet<String>>::new();
-        let mut memory_by_name = BTreeMap::<String, usize>::new();
-        let mut by_label_pair = BTreeMap::<String, usize>::new();
-        for labels in series.values() {
-            if let Some(metric) = labels.get("__name__") {
-                *by_metric.entry(metric.to_string()).or_default() += 1;
-            }
-            for (name, value) in labels.iter() {
-                label_values_by_name
-                    .entry(name.clone())
-                    .or_default()
-                    .insert(value.as_str().to_owned());
-                *memory_by_name.entry(name.clone()).or_default() += name.len() + value.len();
-                *by_label_pair.entry(format!("{name}={value}")).or_default() += 1;
-            }
-        }
-
-        Ok(TsdbStats {
-            head_stats: TsdbHeadStats {
+        Ok(tsdb_stats(
+            series.values(),
+            TsdbHeadStats {
                 num_series: series.len(),
                 num_samples: sample_count,
                 num_chunks: series.len(),
                 min_time,
                 max_time,
             },
-            series_count_by_metric_name: named_stats(by_metric),
-            label_value_count_by_label_name: named_stats(
-                label_values_by_name
-                    .into_iter()
-                    .map(|(name, values)| (name, values.len()))
-                    .collect(),
-            ),
-            memory_in_bytes_by_label_name: named_stats(memory_by_name),
-            series_count_by_label_value_pair: named_stats(by_label_pair),
-        })
+        ))
     }
 
     async fn tsdb_blocks(&self, tenant: &str) -> Result<Vec<TsdbBlock>> {
         let mut blocks = self.blocks.get(tenant).cloned().unwrap_or_default();
-        blocks.sort_by(|left, right| {
-            left.min_time
-                .cmp(&right.min_time)
-                .then_with(|| left.max_time.cmp(&right.max_time))
-                .then_with(|| left.id.cmp(&right.id))
-        });
+        sort_tsdb_blocks(&mut blocks);
         Ok(blocks)
     }
 }

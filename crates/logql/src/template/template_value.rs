@@ -3,6 +3,11 @@ use num_traits::ToPrimitive;
 use super::*;
 pub(super) mod number;
 
+struct EvaluatedTemplatePath {
+    value: TemplateRuntimeValue,
+    path: Vec<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TemplateValue {
     Current,
@@ -34,9 +39,11 @@ pub(crate) enum TemplateValue {
 impl TemplateValue {
     pub(crate) fn parse(token: &str) -> Result<Self, ParseError> {
         if token.starts_with('(') {
-            let (inner, next) = parse_template_parenthesized_token(token, 0)?;
-            let expression = Box::new(TemplateExpression::parse(inner[1..inner.len() - 1].trim())?);
-            let suffix = &token[next..];
+            let parsed = parse_template_parenthesized_token(token, 0)?;
+            let expression = Box::new(TemplateExpression::parse(
+                parsed.token[1..parsed.token.len() - 1].trim(),
+            )?);
+            let suffix = &token[parsed.next_position..];
             if suffix.is_empty() {
                 return Ok(Self::Expression(expression));
             }
@@ -65,7 +72,10 @@ impl TemplateValue {
                     number::Literal::Signed(value) => Self::Integer(value),
                     number::Literal::Unsigned(value) => Self::Unsigned(value),
                     number::Literal::Float(value) => Self::Float(value),
-                    number::Literal::Complex(real, imaginary) => Self::Complex(real, imaginary),
+                    number::Literal::Complex {
+                        real_bits,
+                        imaginary_bits,
+                    } => Self::Complex(real_bits, imaginary_bits),
                 })
                 .ok_or_else(|| template_parse_error("invalid or overflowing numeric constant"));
         }
@@ -205,6 +215,7 @@ impl TemplateValue {
             Self::Function(name) => TemplateCommand::Function {
                 name: name.clone(),
                 args: Vec::new(),
+                regex_cache: None,
             }
             .evaluate(context, None),
         }
@@ -214,41 +225,47 @@ impl TemplateValue {
         context: &TemplateRenderContext<'_>,
         args: &[TemplateRuntimeValue],
     ) -> TemplateRuntimeValue {
-        let (mut value, path) = match self {
-            Self::Field(name) => (
-                context
+        let mut evaluated = match self {
+            Self::Field(name) => EvaluatedTemplatePath {
+                value: context
                     .current_dot
                     .clone()
                     .unwrap_or_else(|| TemplateRuntimeValue::Labels(context.fields.clone())),
-                name.split('.').map(ToString::to_string).collect::<Vec<_>>(),
-            ),
-            Self::Root { path } => (
-                context
+                path: name.split('.').map(ToString::to_string).collect::<Vec<_>>(),
+            },
+            Self::Root { path } => EvaluatedTemplatePath {
+                value: context
                     .root_dot
                     .clone()
                     .unwrap_or_else(|| TemplateRuntimeValue::Labels(context.fields.clone())),
-                path.clone(),
-            ),
-            Self::Variable { name, path } => (
-                context.variables.get(name).map_or_else(
+                path: path.clone(),
+            },
+            Self::Variable { name, path } => EvaluatedTemplatePath {
+                value: context.variables.get(name).map_or_else(
                     || TemplateRuntimeValue::String(String::new()),
                     |value| value.borrow().clone(),
                 ),
-                path.clone(),
-            ),
-            Self::ExpressionPath { expression, path } => {
-                (expression.evaluate(context), path.clone())
-            }
+                path: path.clone(),
+            },
+            Self::ExpressionPath { expression, path } => EvaluatedTemplatePath {
+                value: expression.evaluate(context),
+                path: path.clone(),
+            },
             _ if args.is_empty() => return self.evaluate(context),
             _ => {
                 *context.error.borrow_mut() = Some("value is not a function".into());
                 return TemplateRuntimeValue::String(String::new());
             }
         };
-        for (index, name) in path.iter().enumerate() {
-            let arguments = if index + 1 == path.len() { args } else { &[] };
+        for index in 0..evaluated.path.len() {
+            let name = &evaluated.path[index];
+            let arguments = if index + 1 == evaluated.path.len() {
+                args
+            } else {
+                &[]
+            };
             let result = if matches!(
-                value,
+                evaluated.value,
                 TemplateRuntimeValue::Time(_)
                     | TemplateRuntimeValue::TimePointer(_)
                     | TemplateRuntimeValue::DurationPointer(_)
@@ -257,32 +274,32 @@ impl TemplateValue {
                     | TemplateRuntimeValue::Weekday(_)
                     | TemplateRuntimeValue::TimeLocation(_)
             ) {
-                super::template_time::methods::call(&value, name, arguments)
-            } else if let TemplateRuntimeValue::FloatHistogram(histogram) = &value {
+                super::template_time::methods::call(&evaluated.value, name, arguments)
+            } else if let TemplateRuntimeValue::FloatHistogram(histogram) = &evaluated.value {
                 histogram
                     .field(name)
                     .filter(|_| arguments.is_empty())
                     .map_or_else(|| histogram.call(name, arguments), Ok)
-            } else if let TemplateRuntimeValue::HistogramIterator(iterator) = &value {
+            } else if let TemplateRuntimeValue::HistogramIterator(iterator) = &evaluated.value {
                 iterator.call(name, arguments)
             } else if arguments.is_empty() {
-                template_variable_path_value(&value, std::slice::from_ref(name))
+                template_variable_path_value(&evaluated.value, std::slice::from_ref(name))
                     .ok_or_else(|| format!("cannot evaluate field {name}"))
             } else {
                 Err(format!("{name} is not a method"))
             };
             match result {
-                Ok(next) => value = next,
+                Ok(next) => evaluated.value = next,
                 Err(error) => {
                     *context.error.borrow_mut() = Some(error);
                     return TemplateRuntimeValue::String(String::new());
                 }
             }
         }
-        if path.is_empty() && !args.is_empty() {
+        if evaluated.path.is_empty() && !args.is_empty() {
             *context.error.borrow_mut() = Some("value is not a function".into());
         }
-        value
+        evaluated.value
     }
     pub(crate) fn method_name(&self) -> Option<&str> {
         match self {
@@ -316,14 +333,24 @@ impl TemplateValue {
             }
             _ => None,
         };
-        match (parameter, number) {
-            (Some("time.Duration"), Some(value)) => TemplateRuntimeValue::Duration(value),
-            (Some("int"), Some(value)) => TemplateRuntimeValue::Integer(value),
-            (Some("int32"), Some(value)) => i32::try_from(value)
-                .map_or_else(|_| self.evaluate(context), TemplateRuntimeValue::Integer32),
-            (Some("float64"), Some(value)) => {
-                TemplateRuntimeValue::Float(value.to_f64().expect("i64 fits finite f64"))
+        match parameter {
+            Some("time.Duration") => {
+                number.map_or_else(|| self.evaluate(context), TemplateRuntimeValue::Duration)
             }
+            Some("int") => {
+                number.map_or_else(|| self.evaluate(context), TemplateRuntimeValue::Integer)
+            }
+            Some("int32") => number.map_or_else(
+                || self.evaluate(context),
+                |value| {
+                    i32::try_from(value)
+                        .map_or_else(|_| self.evaluate(context), TemplateRuntimeValue::Integer32)
+                },
+            ),
+            Some("float64") => number.map_or_else(
+                || self.evaluate(context),
+                |value| TemplateRuntimeValue::Float(value.to_f64().expect("i64 fits finite f64")),
+            ),
             _ => self.evaluate(context),
         }
     }

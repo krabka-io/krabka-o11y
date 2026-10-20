@@ -66,6 +66,42 @@ impl AttrValue {
         Self::encode_otlp_json(&self.otlp_value())
     }
 
+    /// Converts the value to a typed `TraceQL` operand.
+    ///
+    /// A heterogeneous array, or one holding arrays, bytes, or opaque values,
+    /// becomes one opaque value of its lossless OTLP JSON, as do bytes.
+    #[must_use]
+    pub fn traceql_value(&self) -> Option<krabka_traceql::AttrValue> {
+        if let Self::Array(values) = self
+            && values.iter().any(|element| {
+                matches!(
+                    element,
+                    Self::Array(_) | Self::Bytes(_) | Self::Unsupported(_)
+                ) || values.first().is_some_and(|first| {
+                    std::mem::discriminant(first) != std::mem::discriminant(element)
+                })
+            })
+        {
+            return Some(krabka_traceql::AttrValue::Unsupported(
+                self.otlp_json().to_string(),
+            ));
+        }
+        Some(match self {
+            Self::Unsupported(value) => krabka_traceql::AttrValue::Unsupported(value.clone()),
+            Self::Array(values) => krabka_traceql::AttrValue::Array(
+                values
+                    .iter()
+                    .map(Self::traceql_value)
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            Self::Str(value) => krabka_traceql::AttrValue::Str(value.clone()),
+            Self::Int(value) => krabka_traceql::AttrValue::Int(*value),
+            Self::Double(value) => krabka_traceql::AttrValue::Float(*value),
+            Self::Bool(value) => krabka_traceql::AttrValue::Bool(*value),
+            Self::Bytes(_) => krabka_traceql::AttrValue::Unsupported(self.otlp_json().to_string()),
+        })
+    }
+
     /// Serializes an OTLP wire value using the protobuf JSON double convention.
     #[must_use]
     pub fn encode_otlp_json(value: &AnyValue) -> serde_json::Value {
@@ -115,11 +151,12 @@ mod tests {
         let AttrValue::Array(values) = decoded else {
             panic!("expected array")
         };
-        for (value, expected) in
-            values
-                .iter()
-                .zip([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0])
+        for entry in values
+            .iter()
+            .zip([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0])
         {
+            let value = entry.0;
+            let expected = entry.1;
             let AttrValue::Double(actual) = value else {
                 panic!("expected double")
             };

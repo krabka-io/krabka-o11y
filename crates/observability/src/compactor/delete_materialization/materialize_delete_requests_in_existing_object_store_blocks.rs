@@ -20,25 +20,24 @@ pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
         let mut materialized_blocks: BTreeMap<String, Option<BlockDescriptor>> = BTreeMap::new();
 
         match read_tenant_log_index_manifest_from_object_store(store, prefix, &tenant).await {
-            Ok((label_index, block_index)) => {
-                if let Some((next_label_index, next_block_index)) =
-                    materialize_delete_requests_in_object_store_block_index(
-                        store,
-                        prefix,
-                        &tenant,
-                        &label_index,
-                        &block_index,
-                        delete_requests,
-                        &mut materialized_blocks,
-                    )
-                    .await?
+            Ok(indexes) => {
+                if let Some(next_indexes) = materialize_delete_requests_in_object_store_block_index(
+                    store,
+                    prefix,
+                    &tenant,
+                    &indexes.labels,
+                    &indexes.blocks,
+                    delete_requests,
+                    &mut materialized_blocks,
+                )
+                .await?
                 {
                     write_tenant_log_index_manifest_to_object_store(
                         store,
                         prefix,
                         &tenant,
-                        &next_label_index,
-                        &next_block_index,
+                        &next_indexes.label_index,
+                        &next_indexes.block_index,
                     )
                     .await?;
                 }
@@ -50,29 +49,28 @@ pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
         let shard_ranges = tenant_log_index_shard_ranges(store, prefix, &tenant).await?;
 
         for shard_range in shard_ranges {
-            let (label_index, block_index) =
+            let indexes =
                 read_tenant_log_index_shard_from_object_store(store, prefix, &tenant, shard_range)
                     .await?;
-            if let Some((next_label_index, next_block_index)) =
-                materialize_delete_requests_in_object_store_block_index(
-                    store,
-                    prefix,
-                    &tenant,
-                    &label_index,
-                    &block_index,
-                    delete_requests,
-                    &mut materialized_blocks,
-                )
-                .await?
+            if let Some(next_indexes) = materialize_delete_requests_in_object_store_block_index(
+                store,
+                prefix,
+                &tenant,
+                &indexes.labels,
+                &indexes.blocks,
+                delete_requests,
+                &mut materialized_blocks,
+            )
+            .await?
             {
                 update_tenant_log_index_shard_to_object_store(
                     store,
                     prefix,
                     &tenant,
                     shard_range,
-                    &block_index,
-                    &next_label_index,
-                    &next_block_index,
+                    &indexes.blocks,
+                    &next_indexes.label_index,
+                    &next_indexes.block_index,
                 )
                 .await?;
             }
@@ -101,8 +99,8 @@ async fn delete_emptied_block_objects(
 ) {
     let deletions: Vec<BlockDeletion> = materialized_blocks
         .iter()
-        .filter(|(_, descriptor)| descriptor.is_none())
-        .map(|(object_key, _)| log_block_deletion(prefix, object_key))
+        .filter(|entry| entry.1.is_none())
+        .map(|entry| log_block_deletion(prefix, entry.0))
         .collect();
     if deletions.is_empty() {
         return;
@@ -140,8 +138,8 @@ mod tests {
             .put(&object_path, PutPayload::from_static(b"block"))
             .await
             .expect("write block");
-        let materialized: BTreeMap<String, Option<BlockDescriptor>> =
-            BTreeMap::from([(object_key.to_string(), None)]);
+        let mut materialized = BTreeMap::new();
+        materialized.insert(object_key.to_string(), None::<BlockDescriptor>);
 
         delete_emptied_block_objects(
             &store,

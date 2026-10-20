@@ -4,8 +4,8 @@ use futures::TryStreamExt as _;
 use tokio::sync::OnceCell;
 
 use super::{
-    Arc, Array, AsArray, Float64Type, FloatRow, FloatWindow, HistogramRow, Int64Type, Result,
-    ScanResult, SessionContext, UInt64Type, collect_float_rows, collect_histogram_rows,
+    Arc, FLOAT_ROW_COLUMNS, FloatRow, FloatRowColumns, FloatRowsWithCount, FloatWindow,
+    HistogramRow, Result, ScanResult, SessionContext, collect_float_rows, collect_histogram_rows,
     samples_per_query_exceeded,
 };
 
@@ -63,18 +63,19 @@ impl ScannedRows {
         max_samples: usize,
         from_ms: i64,
         to_ms: i64,
-    ) -> Result<Option<(usize, Vec<FloatRow>)>> {
+    ) -> Result<Option<FloatRowsWithCount>> {
         if self.floats.get().is_some() {
             return Ok(None);
         }
         let Some(table) = &self.float_table else {
-            return Ok(Some((0, Vec::new())));
+            return Ok(Some(FloatRowsWithCount {
+                total: 0,
+                rows: Vec::new(),
+            }));
         };
         let dataframe = self
             .ctx
-            .sql(&format!(
-                "SELECT series_fingerprint, timestamp, value, start_timestamp_ms FROM {table}"
-            ))
+            .sql(&format!("SELECT {FLOAT_ROW_COLUMNS} FROM {table}"))
             .await?;
         let mut stream = dataframe.execute_stream().await?;
         let mut last = HashMap::<_, FloatRow, ahash::RandomState>::default();
@@ -86,39 +87,25 @@ impl ScannedRows {
             if scanned > max_samples {
                 continue;
             }
-            let fps = batch.column(0).as_primitive::<UInt64Type>();
-            let timestamps = batch.column(1).as_primitive::<Int64Type>();
-            let values = batch.column(2).as_primitive::<Float64Type>();
-            let start_timestamps = batch.column(3).as_primitive::<Int64Type>();
+            let columns = FloatRowColumns::from_batch(&batch);
             for row in 0..batch.num_rows() {
                 scanned = scanned.saturating_add(1);
                 if scanned > max_samples {
                     break;
                 }
-                let timestamp_ms = timestamps.value(row);
-                if timestamp_ms < from_ms || timestamp_ms > to_ms {
+                let float_row = columns.row(row);
+                if float_row.ts_ms < from_ms || float_row.ts_ms > to_ms {
                     continue;
                 }
                 total += 1;
-                let value = values.value(row);
-                if crate::extension::is_stale_nan(value) {
+                if crate::extension::is_stale_nan(float_row.value) {
                     continue;
                 }
-                let fp = fps.value(row);
                 if last
-                    .get(&fp)
-                    .is_none_or(|previous| timestamp_ms > previous.ts_ms)
+                    .get(&float_row.fp)
+                    .is_none_or(|previous| float_row.ts_ms > previous.ts_ms)
                 {
-                    last.insert(
-                        fp,
-                        FloatRow {
-                            fp,
-                            ts_ms: timestamp_ms,
-                            value,
-                            start_timestamp_ms: (!start_timestamps.is_null(row))
-                                .then(|| start_timestamps.value(row)),
-                        },
-                    );
+                    last.insert(float_row.fp, float_row);
                 }
             }
         }
@@ -127,7 +114,7 @@ impl ScannedRows {
         }
         let mut rows = last.into_values().collect::<Vec<_>>();
         rows.sort_unstable_by_key(|row| row.fp);
-        Ok(Some((total, rows)))
+        Ok(Some(FloatRowsWithCount { total, rows }))
     }
 
     /// The histogram rows of the scan, in `(fingerprint, timestamp)` order.
@@ -142,9 +129,13 @@ impl ScannedRows {
                     }
                     None => Vec::new(),
                 };
-                rows.sort_by_key(|row| (row.fp, row.ts_ms));
+                rows.sort_by(|left, right| {
+                    left.fp
+                        .cmp(&right.fp)
+                        .then_with(|| left.ts_ms.cmp(&right.ts_ms))
+                });
                 rows.dedup_by(|later, earlier| {
-                    if (later.fp, later.ts_ms) == (earlier.fp, earlier.ts_ms) {
+                    if later.fp == earlier.fp && later.ts_ms == earlier.ts_ms {
                         earlier.clone_from(later);
                         true
                     } else {

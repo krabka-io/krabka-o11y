@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::BTreeMap, sync::Arc, time::SystemTime};
 use axum::{
     body::Bytes,
     extract::{RawQuery, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use num_traits::ToPrimitive;
@@ -11,8 +11,8 @@ use serde_json::{Map, Value, json};
 use url::form_urlencoded;
 
 use super::{
-    ApiError, Extension, Principal, PrometheusApiState, authorized_tenant_from_headers,
-    selector_matchers, timestamp_ms,
+    ApiError, PrometheusApiState, RequestCaller, authorized_tenant_from_headers, selector_matchers,
+    timestamp_ms,
 };
 use crate::{MetricStore, PromqlMatcher as LabelMatcher};
 
@@ -68,132 +68,95 @@ struct SearchResult {
     score: f64,
 }
 
-pub(super) async fn search_metric_names<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-) -> Response {
-    search(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        SearchKind::MetricNames,
-    )
-    .await
+macro_rules! search_get_handler {
+    ($name:ident, $kind:ident) => {
+        pub(super) async fn $name<S: MetricStore>(
+            State(state): State<Arc<PrometheusApiState<S>>>,
+            caller: RequestCaller,
+            RawQuery(query): RawQuery,
+        ) -> Response {
+            let request = search_request(caller, query.as_deref(), SearchKind::$kind);
+            search(state, request).await
+        }
+    };
 }
 
-pub(super) async fn search_metric_names_post<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-    body: Bytes,
-) -> Response {
-    search_post(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        &body,
-        SearchKind::MetricNames,
-    )
-    .await
+search_get_handler!(search_metric_names, MetricNames);
+
+macro_rules! search_post_handler {
+    ($name:ident, $kind:ident) => {
+        pub(super) async fn $name<S: MetricStore>(
+            State(state): State<Arc<PrometheusApiState<S>>>,
+            caller: RequestCaller,
+            RawQuery(query): RawQuery,
+            body: Bytes,
+        ) -> Response {
+            let request = search_request(caller, query.as_deref(), SearchKind::$kind);
+            search_post(state, request, &body).await
+        }
+    };
 }
 
-pub(super) async fn search_label_names<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-) -> Response {
-    search(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        SearchKind::LabelNames,
-    )
-    .await
+search_post_handler!(search_metric_names_post, MetricNames);
+
+search_get_handler!(search_label_names, LabelNames);
+
+search_post_handler!(search_label_names_post, LabelNames);
+
+search_get_handler!(search_label_values, LabelValues);
+
+search_post_handler!(search_label_values_post, LabelValues);
+
+/// One search request: who asks, the raw query string, and what it searches.
+struct SearchRequest<'a> {
+    caller: RequestCaller,
+    raw_query: Option<&'a str>,
+    kind: SearchKind,
 }
 
-pub(super) async fn search_label_names_post<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-    body: Bytes,
-) -> Response {
-    search_post(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        &body,
-        SearchKind::LabelNames,
-    )
-    .await
+fn search_request(
+    caller: RequestCaller,
+    raw_query: Option<&str>,
+    kind: SearchKind,
+) -> SearchRequest<'_> {
+    SearchRequest {
+        caller,
+        raw_query,
+        kind,
+    }
 }
 
-pub(super) async fn search_label_values<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-) -> Response {
-    search(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        SearchKind::LabelValues,
-    )
-    .await
-}
-
-pub(super) async fn search_label_values_post<S: MetricStore>(
-    State(state): State<Arc<PrometheusApiState<S>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-    body: Bytes,
-) -> Response {
-    search_post(
-        state,
-        principal,
-        headers,
-        query.as_deref(),
-        &body,
-        SearchKind::LabelValues,
-    )
-    .await
-}
-
+/// Searches with the form `body` appended to the request's query string.
 async fn search_post<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,
-    principal: Principal,
-    headers: HeaderMap,
-    query: Option<&str>,
+    request: SearchRequest<'_>,
     body: &[u8],
-    kind: SearchKind,
 ) -> Response {
-    let mut encoded = query.unwrap_or_default().to_owned();
+    let mut encoded = request.raw_query.unwrap_or_default().to_owned();
     if !encoded.is_empty() && !body.is_empty() {
         encoded.push('&');
     }
     encoded.push_str(&String::from_utf8_lossy(body));
-    search(state, principal, headers, Some(&encoded), kind).await
+    search(
+        state,
+        SearchRequest {
+            raw_query: Some(&encoded),
+            ..request
+        },
+    )
+    .await
 }
 
 async fn search<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,
-    principal: Principal,
-    headers: HeaderMap,
-    query: Option<&str>,
-    kind: SearchKind,
+    request: SearchRequest<'_>,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
+    let SearchRequest {
+        caller,
+        raw_query: query,
+        kind,
+    } = request;
+    let tenant = match authorized_tenant_from_headers(&caller.headers, &caller.principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };
@@ -254,10 +217,13 @@ async fn search<S: MetricStore>(
         }
     }
 
-    let mut results = values
-        .into_iter()
-        .map(|(value, score)| SearchResult { value, score })
-        .collect::<Vec<_>>();
+    let mut results = Vec::with_capacity(values.len());
+    for entry in values {
+        results.push(SearchResult {
+            value: entry.0,
+            score: entry.1,
+        });
+    }
     results.sort_by(|left, right| match params.sort_by {
         SortBy::Alpha => left.value.cmp(&right.value),
         SortBy::Score => right
@@ -279,8 +245,10 @@ async fn search<S: MetricStore>(
             Ok(scan) => scan
                 .metadata
                 .into_iter()
-                .map(|record| (record.metric_family_name.clone(), record))
-                .collect(),
+                .fold(BTreeMap::new(), |mut metadata, record| {
+                    metadata.insert(record.metric_family_name.clone(), record);
+                    metadata
+                }),
             Err(error) => return ApiError::from(error).into_response(),
         }
     } else {
@@ -299,18 +267,17 @@ async fn search<S: MetricStore>(
     output.push_str(&json!({ "status": "success", "has_more": has_more }).to_string());
     output.push('\n');
 
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8"),
-            (
-                header::HeaderName::from_static("x-mimir-response-streaming-enabled"),
-                "true",
-            ),
-        ],
-        output,
-    )
-        .into_response()
+    let mut response = axum::response::Response::new(output.into());
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/x-ndjson; charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        header::HeaderName::from_static("x-mimir-response-streaming-enabled"),
+        axum::http::HeaderValue::from_static("true"),
+    );
+    response
 }
 
 fn search_record(
@@ -369,7 +336,9 @@ fn parse_search_params(raw: Option<&str>) -> Result<SearchParams, ApiError> {
         end_ms: now_ms,
     };
     let mut explicit_sort_direction = false;
-    for (name, value) in form_urlencoded::parse(raw.unwrap_or_default().as_bytes()) {
+    for pair in form_urlencoded::parse(raw.unwrap_or_default().as_bytes()) {
+        let name = pair.0;
+        let value = pair.1;
         match name.as_ref() {
             "search[]" => params.searches.push(value.into_owned()),
             "match[]" => params.matches.push(value.into_owned()),
@@ -479,10 +448,15 @@ fn search_score(value: &str, params: &SearchParams) -> Option<f64> {
 }
 
 fn score_one(value: &str, term: &str, params: &SearchParams) -> Option<f64> {
-    let (value, term) = if params.case_sensitive {
-        (value.to_owned(), term.to_owned())
+    let value = if params.case_sensitive {
+        value.to_owned()
     } else {
-        (value.to_lowercase(), term.to_lowercase())
+        value.to_lowercase()
+    };
+    let term = if params.case_sensitive {
+        term.to_owned()
+    } else {
+        term.to_lowercase()
     };
     if term.is_empty() {
         return Some(1.0);
@@ -543,11 +517,11 @@ fn jaro_winkler(left: &str, right: &str) -> f64 {
     let mut left_match = vec![false; left.len()];
     let mut right_match = vec![false; right.len()];
     let mut matches = 0;
-    for (index, character) in left.iter().enumerate() {
+    for index in 0..left.len() {
         let start = index.saturating_sub(distance);
         let end = (index + distance + 1).min(right.len());
         if let Some(other) =
-            (start..end).find(|other| !right_match[*other] && right[*other] == *character)
+            (start..end).find(|other| !right_match[*other] && right[*other] == left[index])
         {
             left_match[index] = true;
             right_match[other] = true;
@@ -557,30 +531,31 @@ fn jaro_winkler(left: &str, right: &str) -> f64 {
     if matches == 0 {
         return 0.0;
     }
-    let transpositions = left
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| left_match[*index])
-        .zip(
-            right
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| right_match[*index]),
-        )
-        .filter(|((_, left), (_, right))| left != right)
-        .count()
-        / 2;
+    let mut transpositions = 0;
+    let mut right_index = 0;
+    for left_index in 0..left.len() {
+        if !left_match[left_index] {
+            continue;
+        }
+        while right_index < right.len() && !right_match[right_index] {
+            right_index += 1;
+        }
+        if right_index < right.len() && left[left_index] != right[right_index] {
+            transpositions += 1;
+        }
+        right_index += 1;
+    }
+    transpositions /= 2;
     let matches = as_f64(matches);
     let jaro = (matches / as_f64(left.len())
         + matches / as_f64(right.len())
         + (matches - as_f64(transpositions)) / matches)
         / 3.0;
-    let prefix = left
-        .iter()
-        .zip(&right)
-        .take_while(|(left, right)| left == right)
-        .count()
-        .min(4);
+    let mut prefix = 0;
+    while prefix < left.len().min(right.len()) && left[prefix] == right[prefix] {
+        prefix += 1;
+    }
+    let prefix = prefix.min(4);
     let prefix = as_f64(prefix);
     jaro + prefix * 0.1 * (1.0 - jaro)
 }

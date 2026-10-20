@@ -2,11 +2,10 @@
 //! and appends to the WAL.
 
 pub mod ha;
-
+mod ha_election_types;
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
-    net::SocketAddr,
     sync::{Arc, Mutex, MutexGuard},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -24,14 +23,16 @@ pub use ha::{
     DEFAULT_HA_FAILOVER_TIMEOUT, HA_TRACKER_TOPIC, HaDecision, HaElection, HaElectionRecord,
     HaTracker, ha_decision, ha_election, strip_replica_label,
 };
+pub use ha_election_types::*;
 use krabka_blockstore::{SeriesFingerprint, TenantId};
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
 use krabka_ids::{Offset, PartitionIndex};
+#[cfg(test)]
+use krabka_observability::server_security::ServerSecurity;
 use krabka_observability::{
-    server_security::{
-        Principal, ServerListener, ServerSecurity, TenantDenied, authorize_tenant, serve_router,
-    },
+    server_security::{Principal, TenantDenied, authorize_tenant},
+    service_metrics::{IngestRequest, RequestOutcome},
     wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
 };
 use krabka_telemetry::propagation::current_trace_headers;
@@ -43,7 +44,6 @@ use opentelemetry_proto::tonic::{
     },
     metrics::v1::MetricsData,
 };
-use tokio::net::TcpListener;
 use tonic::{Request as TonicRequest, Response as TonicResponse, Status};
 use tracing::Instrument as _;
 
@@ -51,8 +51,8 @@ use crate::{
     IngestEnforcer, LimitError, Limits, OverridesProvider,
     metrics::ServiceMetrics,
     otlp::{
-        OtlpError, PartialOtlpDecode, TenantDeltaAccumulators, TranslationStrategy,
-        decode_otlp_stateful_bytes_partial, decode_otlp_stateful_with_promoted_resource_attributes,
+        OtlpDecodeOptions, OtlpError, TenantDeltaAccumulators, TranslationStrategy,
+        decode_otlp_inner, decode_otlp_stateful_bytes_partial,
     },
     request_tenant::{
         RequestTenantError, TenantAccessError, authorized_tenant_from_headers, tenant_from_metadata,
@@ -65,51 +65,77 @@ use crate::{
     },
 };
 
+macro_rules! ingest_push_handler {
+    ($name:ident, $inner:ident, $respond:path) => {
+        pub(crate) async fn $name(
+            State(state): State<Arc<DistributorState>>,
+            Extension(principal): Extension<Principal>,
+            headers: HeaderMap,
+            body: BodyBytes,
+        ) -> Response {
+            let ingest = IngestRequestStart::begin(&headers, &principal, &body);
+            let result = ingest.run(&state, &headers, &body, $inner).await;
+            $respond(&state, &ingest, result)
+        }
+    };
+}
+
+pub(crate) use ingest_push_handler;
+
+fn respond_ingest_request(
+    state: &DistributorState,
+    ingest: &IngestRequestStart,
+    result: Result<PushOutcome, PushError>,
+) -> Response {
+    ingest.respond(state, result)
+}
+
 #[cfg(test)]
 mod tests {
-    fn format_headers() -> Vec<krabka_client_consumer::Header> {
-        vec![krabka_client_consumer::Header {
-            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
-            value: Some(Bytes::from_static(
-                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
-            )),
-        }]
-    }
-
+    use crate::test_support::DeliveredRecord;
     /// A monotonic clock the test drives, so an idle timeout can be reached
     /// without a real wait.
     #[derive(Debug)]
+    struct FixedClockState {
+        instant: std::time::Instant,
+        unix_ms: i64,
+    }
+
+    #[derive(Debug)]
     struct FixedClock {
-        now: Mutex<(std::time::Instant, i64)>,
+        now: Mutex<FixedClockState>,
     }
 
     impl FixedClock {
         fn new() -> Arc<Self> {
             Arc::new(Self {
-                now: Mutex::new((std::time::Instant::now(), 0)),
+                now: Mutex::new(FixedClockState {
+                    instant: std::time::Instant::now(),
+                    unix_ms: 0,
+                }),
             })
         }
 
         fn advance(&self, delta: std::time::Duration) {
             let mut guard = self.now.lock().expect("clock lock");
-            guard.0 += delta;
-            guard.1 = guard
-                .1
+            guard.instant += delta;
+            guard.unix_ms = guard
+                .unix_ms
                 .saturating_add(i64::try_from(delta.as_millis()).unwrap_or(i64::MAX));
         }
 
         fn set_unix_ms(&self, now_ms: i64) {
-            self.now.lock().expect("clock lock").1 = now_ms;
+            self.now.lock().expect("clock lock").unix_ms = now_ms;
         }
     }
 
     impl super::IngestClock for FixedClock {
         fn now(&self) -> std::time::Instant {
-            self.now.lock().expect("clock lock").0
+            self.now.lock().expect("clock lock").instant
         }
 
         fn now_unix_ms(&self) -> i64 {
-            self.now.lock().expect("clock lock").1
+            self.now.lock().expect("clock lock").unix_ms
         }
     }
 
@@ -217,7 +243,10 @@ overrides:
             max_label_value_length: krabka_units::bytes(2),
             ..Limits::default()
         };
-        let series = [decoded_series(&[("__name__", "up"), ("job", "api")], 1)];
+        let series = [decoded_series(
+            &[test_label("__name__", "up"), test_label("job", "api")],
+            1,
+        )];
 
         check!(
             validate(&series, &limits).is_ok(),
@@ -236,15 +265,18 @@ overrides:
         );
     }
 
-    /// `max_global_series_per_user` is an *active* series cap. It used to
-    /// count every fingerprint seen since boot, so a tenant that rotates
-    /// series names hit the cap while its live series count was far below it.
-    #[tokio::test]
-    async fn an_idle_series_stops_counting_against_the_active_series_cap() {
+    // A distributor on a fixed clock whose tenants may hold one active series,
+    // and a series goes idle after five minutes without a write.
+    struct FixedClockDistributor {
+        clock: Arc<FixedClock>,
+        state: Arc<DistributorState>,
+        router: Router,
+    }
+
+    fn one_active_series_with_five_minute_idle() -> FixedClockDistributor {
         let clock = FixedClock::new();
-        let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(
-            DistributorState::new(sink.clone())
+            DistributorState::new(Arc::new(RecordingSink::default()))
                 .with_clock(Arc::clone(&clock) as Arc<dyn super::IngestClock>)
                 .with_overrides(
                     crate::OverridesProvider::from_yaml(
@@ -255,19 +287,42 @@ overrides:
                 ),
         );
         let app = router(Arc::clone(&state));
+        FixedClockDistributor {
+            clock,
+            state,
+            router: app,
+        }
+    }
+
+    /// `max_global_series_per_user` is an *active* series cap. It used to
+    /// count every fingerprint seen since boot, so a tenant that rotates
+    /// series names hit the cap while its live series count was far below it.
+    #[tokio::test]
+    async fn an_idle_series_stops_counting_against_the_active_series_cap() {
+        let fixture = one_active_series_with_five_minute_idle();
 
         check!(
-            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "first")])).await
+            push_v1(
+                &fixture.router,
+                "tenant-a",
+                v1_body(vec![label("__name__", "first")])
+            )
+            .await
                 == StatusCode::OK
         );
-        clock.advance(std::time::Duration::from_mins(21));
+        fixture.clock.advance(std::time::Duration::from_mins(21));
         check!(
-            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "second")])).await
+            push_v1(
+                &fixture.router,
+                "tenant-a",
+                v1_body(vec![label("__name__", "second")])
+            )
+            .await
                 == StatusCode::OK,
             "the first series went idle, so the second fits the cap of one"
         );
         check!(
-            state.series_tracker.active_series("tenant-a") == 1,
+            fixture.state.series_tracker.active_series("tenant-a") == 1,
             "the idle series is gone rather than merely uncounted"
         );
     }
@@ -277,34 +332,31 @@ overrides:
     /// the test above and let a tenant exceed its cap without limit.
     #[tokio::test]
     async fn a_series_written_inside_the_idle_window_still_counts() {
-        let clock = FixedClock::new();
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(
-            DistributorState::new(sink.clone())
-                .with_clock(Arc::clone(&clock) as Arc<dyn super::IngestClock>)
-                .with_overrides(
-                    crate::OverridesProvider::from_yaml(
-                        "defaults:\n  max_global_series_per_user: 1\n  \
-                         active_series_idle_timeout: \"5m\"\n",
-                    )
-                    .unwrap(),
-                ),
-        );
-        let app = router(Arc::clone(&state));
+        let fixture = one_active_series_with_five_minute_idle();
 
         check!(
-            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "first")])).await
+            push_v1(
+                &fixture.router,
+                "tenant-a",
+                v1_body(vec![label("__name__", "first")])
+            )
+            .await
                 == StatusCode::OK
         );
         // Past the sweep interval, so a sweep does run, but well inside the
         // five-minute idle window.
-        clock.advance(std::time::Duration::from_secs(90));
+        fixture.clock.advance(std::time::Duration::from_secs(90));
         check!(
-            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "second")])).await
+            push_v1(
+                &fixture.router,
+                "tenant-a",
+                v1_body(vec![label("__name__", "second")])
+            )
+            .await
                 == StatusCode::BAD_REQUEST,
             "the first series is still active, so the second is over the cap"
         );
-        check!(state.series_tracker.active_series("tenant-a") == 1);
+        check!(fixture.state.series_tracker.active_series("tenant-a") == 1);
     }
 
     /// A tenant that stops writing must not keep an empty map alive. The
@@ -371,7 +423,9 @@ overrides:
     /// both sides.
     #[tokio::test]
     async fn a_delta_counter_accumulates_per_tenant_and_does_not_leak() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
         let delta = |value: f64, timestamp: u64| {
             otlp_sum_body(value, timestamp, true, AggregationTemporality::Delta as i32)
@@ -527,7 +581,7 @@ overrides:
     fn a_zero_out_of_order_window_still_rejects_older_samples() {
         use crate::wire::DecodedSample;
 
-        let (state, _sink) = test_state();
+        let state = test_state().state;
         let series = |timestamp_ms: i64| {
             let mut labels = Labels::default();
             labels.insert("__name__", "requests");
@@ -588,7 +642,7 @@ overrides:
         );
 
         // A positive window admits samples within it and refuses those beyond.
-        let (state, _sink) = test_state();
+        let state = test_state().state;
         let ten = window(10_000);
         check!(
             super::enforce_out_of_order_window(
@@ -629,7 +683,7 @@ overrides:
         // A reported clock-confidence bound widens the configured window for
         // the tenant, so jitter the clock agent has measured is not rejected
         // as an out-of-order sample.
-        let (state, _sink) = test_state();
+        let state = test_state().state;
         check!(
             super::enforce_out_of_order_window(
                 &state,
@@ -666,7 +720,7 @@ overrides:
         );
 
         // A negative window disables the check entirely.
-        let (state, _sink) = test_state();
+        let state = test_state().state;
         let disabled = window(-1);
         check!(
             super::enforce_out_of_order_window(
@@ -693,19 +747,18 @@ overrides:
         );
     }
 
-    /// The per-series sample cap counts samples, histograms and exemplars
-    /// together. All three are populated here and the total is placed either
-    /// side of the limit, because a sum that subtracts one term instead of
-    /// adding it still produces a number -- just a smaller one that slips
-    /// under the cap.
-    #[test]
-    fn the_per_series_sample_cap_counts_all_three_collections() {
-        use crate::{
-            histogram::NativeHistogram,
-            wire::{DecodedExemplar, DecodedSample},
-        };
+    /// How many samples, histograms and exemplars a test series carries.
+    #[derive(Clone, Copy, Default)]
+    struct CollectionCounts {
+        samples: usize,
+        histograms: usize,
+        exemplars: usize,
+    }
 
-        let histogram = || NativeHistogram {
+    /// A `requests` series with `counts` of each collection, every entry at
+    /// its own index as its timestamp.
+    fn counted_series(counts: CollectionCounts) -> DecodedSeries {
+        let histogram = || crate::histogram::NativeHistogram {
             schema: 0,
             is_float: false,
             reset_hint: crate::ResetHint::Unknown,
@@ -720,27 +773,37 @@ overrides:
             custom_values: None,
             start_timestamp_ms: None,
         };
-        let series = |samples: usize, histograms: usize, exemplars: usize| {
-            let mut labels = Labels::default();
-            labels.insert("__name__", "requests");
-            DecodedSeries {
-                labels,
-                samples: (0..samples)
-                    .map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
-                    .collect(),
-                histograms: (0..histograms)
-                    .map(|i| (i64::try_from(i).expect("small"), histogram()))
-                    .collect(),
-                exemplars: (0..exemplars)
-                    .map(|i| DecodedExemplar {
-                        labels: Labels::default(),
-                        timestamp_ms: i64::try_from(i).expect("small"),
-                        value: 1.0,
-                    })
-                    .collect(),
-                metadata: None,
-            }
-        };
+        let mut labels = Labels::default();
+        labels.insert("__name__", "requests");
+        DecodedSeries {
+            labels,
+            samples: (0..counts.samples)
+                .map(|i| crate::wire::DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
+                .collect(),
+            histograms: (0..counts.histograms)
+                .map(|i| crate::wire::DecodedHistogramSample {
+                    timestamp_ms: i64::try_from(i).expect("small"),
+                    histogram: histogram(),
+                })
+                .collect(),
+            exemplars: (0..counts.exemplars)
+                .map(|i| crate::wire::DecodedExemplar {
+                    labels: Labels::default(),
+                    timestamp_ms: i64::try_from(i).expect("small"),
+                    value: 1.0,
+                })
+                .collect(),
+            metadata: None,
+        }
+    }
+
+    /// The per-series sample cap counts samples, histograms and exemplars
+    /// together. All three are populated here and the total is placed either
+    /// side of the limit, because a sum that subtracts one term instead of
+    /// adding it still produces a number -- just a smaller one that slips
+    /// under the cap.
+    #[test]
+    fn the_per_series_sample_cap_counts_all_three_collections() {
         let limits = super::Limits {
             max_samples_per_series: 6,
             max_series_per_request: 10,
@@ -749,37 +812,117 @@ overrides:
 
         // Three, two and one make exactly the cap, which is allowed.
         check!(
-            super::validate(&[series(3, 2, 1)], &limits).is_ok(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 3,
+                    histograms: 2,
+                    exemplars: 1
+                })],
+                &limits
+            )
+            .is_ok(),
             "exactly at the cap"
         );
 
         // One more of any kind is over it, whichever collection grows.
         check!(
-            super::validate(&[series(4, 2, 1)], &limits).is_err(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 4,
+                    histograms: 2,
+                    exemplars: 1
+                })],
+                &limits
+            )
+            .is_err(),
             "one more sample"
         );
         check!(
-            super::validate(&[series(3, 3, 1)], &limits).is_err(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 3,
+                    histograms: 3,
+                    exemplars: 1
+                })],
+                &limits
+            )
+            .is_err(),
             "one more histogram"
         );
         check!(
-            super::validate(&[series(3, 2, 2)], &limits).is_err(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 3,
+                    histograms: 2,
+                    exemplars: 2
+                })],
+                &limits
+            )
+            .is_err(),
             "one more exemplar"
         );
 
         // Each collection alone reaches the cap on its own terms.
-        check!(super::validate(&[series(6, 0, 0)], &limits).is_ok());
-        check!(super::validate(&[series(7, 0, 0)], &limits).is_err());
-        check!(super::validate(&[series(0, 7, 0)], &limits).is_err());
-        check!(super::validate(&[series(0, 0, 7)], &limits).is_err());
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 6,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_ok()
+        );
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 7,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_err()
+        );
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    histograms: 7,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_err()
+        );
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    exemplars: 7,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_err()
+        );
 
         // The series cap is separate and counts series, not samples.
-        let many = vec![series(1, 0, 0); 10];
+        let many = vec![
+            counted_series(CollectionCounts {
+                samples: 1,
+                ..CollectionCounts::default()
+            });
+            10
+        ];
         check!(
             super::validate(&many, &limits).is_ok(),
             "ten series is the cap"
         );
-        let too_many = vec![series(1, 0, 0); 11];
+        let too_many = vec![
+            counted_series(CollectionCounts {
+                samples: 1,
+                ..CollectionCounts::default()
+            });
+            11
+        ];
         check!(
             super::validate(&too_many, &limits).is_err(),
             "eleven is over it"
@@ -824,8 +967,14 @@ overrides:
             Bytes::from_static(b"series-key"),
             b"payload".to_vec(),
             vec![
-                ("traceparent".to_string(), "00-abc-def-01".into()),
-                ("tracestate".to_string(), "vendor=1".into()),
+                super::TraceHeader {
+                    key: "traceparent".to_string(),
+                    value: "00-abc-def-01".into(),
+                },
+                super::TraceHeader {
+                    key: "tracestate".to_string(),
+                    value: "vendor=1".into(),
+                },
             ],
         );
 
@@ -861,81 +1010,74 @@ overrides:
     /// counts, dropping any one of the three looks the same.
     #[test]
     fn a_decoded_batch_counts_samples_histograms_and_exemplars() {
-        use crate::{
-            histogram::NativeHistogram,
-            wire::{DecodedExemplar, DecodedSample},
-        };
-
-        let series = |samples: usize, histograms: usize, exemplars: usize| DecodedSeries {
-            labels: Labels::default(),
-            samples: (0..samples)
-                .map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
-                .collect(),
-            histograms: (0..histograms)
-                .map(|i| {
-                    (
-                        i64::try_from(i).expect("small"),
-                        NativeHistogram {
-                            schema: 0,
-                            is_float: false,
-                            reset_hint: crate::ResetHint::Unknown,
-                            zero_threshold: 0.0,
-                            zero_count: 0.0,
-                            count: 0.0,
-                            sum: 0.0,
-                            positive_spans: Vec::new(),
-                            positive_counts: Vec::new(),
-                            negative_spans: Vec::new(),
-                            negative_counts: Vec::new(),
-                            custom_values: None,
-                            start_timestamp_ms: None,
-                        },
-                    )
-                })
-                .collect(),
-            exemplars: (0..exemplars)
-                .map(|i| DecodedExemplar {
-                    labels: Labels::default(),
-                    timestamp_ms: i64::try_from(i).expect("small"),
-                    value: 1.0,
-                })
-                .collect(),
-            metadata: None,
-        };
-
         // Three different counts, so dropping any one term is distinguishable
         // from dropping either other.
-        check!(super::decoded_sample_count(&[series(3, 5, 7)]) == 15);
         check!(
-            super::decoded_sample_count(&[series(3, 0, 0)]) == 3,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                samples: 3,
+                histograms: 5,
+                exemplars: 7
+            })]) == 15
+        );
+        check!(
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                samples: 3,
+                ..CollectionCounts::default()
+            })]) == 3,
             "samples alone"
         );
         check!(
-            super::decoded_sample_count(&[series(0, 5, 0)]) == 5,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                histograms: 5,
+                ..CollectionCounts::default()
+            })]) == 5,
             "histograms alone"
         );
         check!(
-            super::decoded_sample_count(&[series(0, 0, 7)]) == 7,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                exemplars: 7,
+                ..CollectionCounts::default()
+            })]) == 7,
             "exemplars alone"
         );
 
         // Several series add up rather than the largest winning.
-        check!(super::decoded_sample_count(&[series(3, 0, 0), series(4, 0, 0)]) == 7);
+        check!(
+            super::decoded_sample_count(&[
+                counted_series(CollectionCounts {
+                    samples: 3,
+                    ..CollectionCounts::default()
+                }),
+                counted_series(CollectionCounts {
+                    samples: 4,
+                    ..CollectionCounts::default()
+                })
+            ]) == 7
+        );
 
         // Nothing at all is zero, not one.
         check!(super::decoded_sample_count(&[]) == 0);
         check!(
-            super::decoded_sample_count(&[series(0, 0, 0)]) == 0,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                ..CollectionCounts::default()
+            })]) == 0,
             "an empty series counts none"
         );
     }
 
     use std::sync::Mutex;
 
-    fn decoded_series(labels: &[(&str, &str)], samples: usize) -> crate::wire::DecodedSeries {
+    fn test_label<'a>(name: &'a str, value: &'a str) -> crate::MetricLabelPair<&'a str> {
+        crate::MetricLabelPair::new(name, value)
+    }
+
+    fn decoded_series(
+        labels: &[crate::MetricLabelPair<&str>],
+        samples: usize,
+    ) -> crate::wire::DecodedSeries {
         let mut set = krabka_blockstore::Labels::new();
-        for (name, value) in labels {
-            set.insert(*name, *value);
+        for pair in labels {
+            set.insert(pair.name.clone(), pair.value.to_string());
         }
         crate::wire::DecodedSeries {
             labels: set,
@@ -967,8 +1109,8 @@ overrides:
         };
 
         let two = [
-            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
-            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
+            decoded_series(&[test_label("__name__", "m"), test_label("ok", "v")], 1),
+            decoded_series(&[test_label("__name__", "m"), test_label("ok", "v")], 1),
         ];
         assert!(
             super::validate(&two, &limits).is_ok(),
@@ -976,9 +1118,9 @@ overrides:
         );
 
         let three = [
-            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
-            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
-            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
+            decoded_series(&[test_label("__name__", "m"), test_label("ok", "v")], 1),
+            decoded_series(&[test_label("__name__", "m"), test_label("ok", "v")], 1),
+            decoded_series(&[test_label("__name__", "m"), test_label("ok", "v")], 1),
         ];
         let err = super::validate(&three, &limits).unwrap_err().to_string();
         assert!(
@@ -986,12 +1128,18 @@ overrides:
             "got: {err}"
         );
 
-        let at_edge = [decoded_series(&[("__name__", "m"), ("ok", "v")], 3)];
+        let at_edge = [decoded_series(
+            &[test_label("__name__", "m"), test_label("ok", "v")],
+            3,
+        )];
         assert!(
             super::validate(&at_edge, &limits).is_ok(),
             "three samples fit a limit of three"
         );
-        let over = [decoded_series(&[("__name__", "m"), ("ok", "v")], 4)];
+        let over = [decoded_series(
+            &[test_label("__name__", "m"), test_label("ok", "v")],
+            4,
+        )];
         let err = super::validate(&over, &limits).unwrap_err().to_string();
         assert!(
             err.contains("samples per series 4 exceeds limit 3"),
@@ -1000,12 +1148,18 @@ overrides:
 
         // Label lengths are the label gate's business, from these same
         // limits, so the boundary is checked where the verdict is given.
-        let at_edge = [decoded_series(&[("__name__", "m"), ("abcdefgh", "v")], 1)];
+        let at_edge = [decoded_series(
+            &[test_label("__name__", "m"), test_label("abcdefgh", "v")],
+            1,
+        )];
         assert!(
             super::enforce_label_limits(&limits, &at_edge).is_ok(),
             "an eight-byte name fits"
         );
-        let over = [decoded_series(&[("__name__", "m"), ("abcdefghi", "v")], 1)];
+        let over = [decoded_series(
+            &[test_label("__name__", "m"), test_label("abcdefghi", "v")],
+            1,
+        )];
         let err = super::enforce_label_limits(&limits, &over).unwrap_err();
         assert!(
             matches!(
@@ -1018,12 +1172,18 @@ overrides:
             "got: {err:?}"
         );
 
-        let at_edge = [decoded_series(&[("__name__", "m"), ("ok", "vwxyz")], 1)];
+        let at_edge = [decoded_series(
+            &[test_label("__name__", "m"), test_label("ok", "vwxyz")],
+            1,
+        )];
         assert!(
             super::enforce_label_limits(&limits, &at_edge).is_ok(),
             "a five-byte value fits"
         );
-        let over = [decoded_series(&[("__name__", "m"), ("ok", "vwxyz!")], 1)];
+        let over = [decoded_series(
+            &[test_label("__name__", "m"), test_label("ok", "vwxyz!")],
+            1,
+        )];
         let err = super::enforce_label_limits(&limits, &over).unwrap_err();
         assert!(
             matches!(
@@ -1036,7 +1196,10 @@ overrides:
             "got: {err:?}"
         );
 
-        let bad = [decoded_series(&[("__name__", "m"), ("", "v")], 1)];
+        let bad = [decoded_series(
+            &[test_label("__name__", "m"), test_label("", "v")],
+            1,
+        )];
         let err = super::validate(&bad, &limits).unwrap_err().to_string();
         assert!(err.contains("invalid label name"), "got: {err}");
     }
@@ -1050,7 +1213,7 @@ overrides:
             ..Limits::default()
         };
 
-        let mut series = decoded_series(&[("__name__", "m"), ("ok", "v")], 2);
+        let mut series = decoded_series(&[test_label("__name__", "m"), test_label("ok", "v")], 2);
         series.exemplars = vec![crate::wire::DecodedExemplar {
             labels: krabka_blockstore::Labels::new(),
             value: 1.0,
@@ -1130,8 +1293,14 @@ overrides:
             Bytes::from_static(b"the-key"),
             b"the-value".to_vec(),
             vec![
-                ("traceparent".to_string(), "00-abc-def-01".into()),
-                ("tracestate".to_string(), "vendor=1".into()),
+                super::TraceHeader {
+                    key: "traceparent".to_string(),
+                    value: "00-abc-def-01".into(),
+                },
+                super::TraceHeader {
+                    key: "tracestate".to_string(),
+                    value: "vendor=1".into(),
+                },
             ],
         );
 
@@ -1201,82 +1370,94 @@ overrides:
     fn push_errors_reach_the_client_as_the_status_to_act_on() {
         use crate::{limits::LimitError, wire::WireError};
 
-        let cases: Vec<(super::PushError, tonic::Code, &str)> = vec![
-            (
-                LimitError::IngestionRateExceeded {
+        struct PushErrorCase {
+            error: super::PushError,
+            expected: tonic::Code,
+            reason: &'static str,
+        }
+
+        let cases = vec![
+            PushErrorCase {
+                error: LimitError::IngestionRateExceeded {
                     rate: 1.0,
                     observed: 2.0,
                 }
                 .into(),
-                tonic::Code::ResourceExhausted,
-                "a rate limit is a back-off",
-            ),
-            (
-                LimitError::MaxSeriesPerUser {
+                expected: tonic::Code::ResourceExhausted,
+                reason: "a rate limit is a back-off",
+            },
+            PushErrorCase {
+                error: LimitError::MaxSeriesPerUser {
                     limit: 1,
                     observed: 2,
                 }
                 .into(),
-                tonic::Code::InvalidArgument,
-                "a series limit is the request's fault",
-            ),
-            (
-                LimitError::QueryRangeTooLong {
+                expected: tonic::Code::InvalidArgument,
+                reason: "a series limit is the request's fault",
+            },
+            PushErrorCase {
+                error: LimitError::QueryRangeTooLong {
                     limit_secs: 1,
                     observed_secs: 2,
                 }
                 .into(),
-                tonic::Code::InvalidArgument,
-                "an unprocessable range is too",
-            ),
-            (
-                super::ProduceError::Append("wal down".into()).into(),
-                tonic::Code::Internal,
-                "a failed append is ours, not the client's",
-            ),
-            (
-                WireError::UnsupportedContentType("text/plain".into()).into(),
-                tonic::Code::InvalidArgument,
-                "an undecodable body is the request's fault",
-            ),
-            (
-                WireError::Invalid("bad".into()).into(),
-                tonic::Code::InvalidArgument,
-                "so is an invalid one",
-            ),
-            (
-                super::PushError::Tenant(TenantResolveError::Missing.into()),
-                tonic::Code::Unauthenticated,
-                "a missing tenant header",
-            ),
-            (
-                super::PushError::Tenant(
+                expected: tonic::Code::InvalidArgument,
+                reason: "an unprocessable range is too",
+            },
+            PushErrorCase {
+                error: super::ProduceError::Append("wal down".into()).into(),
+                expected: tonic::Code::Internal,
+                reason: "a failed append is ours, not the client's",
+            },
+            PushErrorCase {
+                error: WireError::UnsupportedContentType("text/plain".into()).into(),
+                expected: tonic::Code::InvalidArgument,
+                reason: "an undecodable body is the request's fault",
+            },
+            PushErrorCase {
+                error: WireError::Invalid("bad".into()).into(),
+                expected: tonic::Code::InvalidArgument,
+                reason: "so is an invalid one",
+            },
+            PushErrorCase {
+                error: super::PushError::Tenant(TenantResolveError::Missing.into()),
+                expected: tonic::Code::Unauthenticated,
+                reason: "a missing tenant header",
+            },
+            PushErrorCase {
+                error: super::PushError::Tenant(
                     TenantResolveError::Invalid(TenantIdError::RelativePathSegment).into(),
                 ),
-                tonic::Code::Unauthenticated,
-                "an unusable tenant header",
-            ),
-            (
-                super::PushError::Tenant(RequestTenantError::TooManyTenants { actual: 2 }),
-                tonic::Code::InvalidArgument,
-                "more than one tenant",
-            ),
-            (
-                super::PushError::TooOldSample {
+                expected: tonic::Code::Unauthenticated,
+                reason: "an unusable tenant header",
+            },
+            PushErrorCase {
+                error: super::PushError::Tenant(RequestTenantError::TooManyTenants { actual: 2 }),
+                expected: tonic::Code::InvalidArgument,
+                reason: "more than one tenant",
+            },
+            PushErrorCase {
+                error: super::PushError::TooOldSample {
                     timestamp_ms: 1,
                     oldest_allowed_ms: 2,
                 },
-                tonic::Code::InvalidArgument,
-                "a sample the store will not take",
-            ),
+                expected: tonic::Code::InvalidArgument,
+                reason: "a sample the store will not take",
+            },
         ];
 
-        for (error, expected, why) in cases {
-            let status = super::status_from_push_error(&error);
-            check!(status.code() == expected, "{why}: {error}");
+        for case in cases {
+            let status = super::status_from_push_error(&case.error);
+            check!(
+                status.code() == case.expected,
+                "{}: {}",
+                case.reason,
+                case.error
+            );
             check!(
                 !status.message().is_empty(),
-                "{why}: the reason is carried through"
+                "{}: the reason is carried through",
+                case.reason
             );
         }
     }
@@ -1292,10 +1473,10 @@ overrides:
     /// only misfires once an exemplar carries more than one label.
     #[test]
     fn exemplar_codepoints_are_summed_and_capped_at_the_limit() {
-        let exemplar = |pairs: &[(&str, &str)]| {
+        let exemplar = |pairs: &[crate::MetricLabelPair<&str>]| {
             let mut labels = krabka_blockstore::Labels::new();
-            for (name, value) in pairs {
-                labels.insert(*name, *value);
+            for pair in pairs {
+                labels.insert(pair.name.clone(), pair.value.to_string());
             }
             DecodedExemplar {
                 labels,
@@ -1305,16 +1486,16 @@ overrides:
         };
 
         // Eight labels of eight codepoints each side: 128, exactly the budget.
-        let owned: Vec<(String, String)> = (0..8)
-            .map(|i| (format!("name{i:04}"), format!("valu{i:04}")))
+        let owned: Vec<crate::MetricLabelPair<String>> = (0..8)
+            .map(|i| crate::MetricLabelPair::new(format!("name{i:04}"), format!("valu{i:04}")))
             .collect();
-        let at_limit: Vec<(&str, &str)> = owned
+        let at_limit: Vec<crate::MetricLabelPair<&str>> = owned
             .iter()
-            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .map(|pair| crate::MetricLabelPair::new(pair.name.as_str(), pair.value.as_str()))
             .collect();
         let total: usize = at_limit
             .iter()
-            .map(|(n, v)| n.chars().count() + v.chars().count())
+            .map(|pair| pair.name.chars().count() + pair.value.chars().count())
             .sum();
         check!(
             total == MAX_EXEMPLAR_LABEL_CODEPOINTS,
@@ -1328,7 +1509,7 @@ overrides:
 
         // One codepoint more, spread across the same number of labels, is not.
         let mut over = at_limit.clone();
-        over.push(("x", ""));
+        over.push(crate::MetricLabelPair::new("x", ""));
         check!(
             validate_exemplar_labels(&exemplar(&over)).is_err(),
             "one codepoint past the budget is refused"
@@ -1337,7 +1518,11 @@ overrides:
         // One label whose value alone exceeds the budget.
         let long = "v".repeat(MAX_EXEMPLAR_LABEL_CODEPOINTS + 1);
         check!(
-            validate_exemplar_labels(&exemplar(&[("trace_id", long.as_str())])).is_err(),
+            validate_exemplar_labels(&exemplar(&[crate::MetricLabelPair::new(
+                "trace_id",
+                long.as_str(),
+            )]))
+            .is_err(),
             "single label over the budget"
         );
     }
@@ -1418,7 +1603,9 @@ overrides:
     /// nothing.
     #[tokio::test]
     async fn an_otlp_grpc_export_without_a_principal_fails_closed() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
         let mut request = tonic::Request::new(ExportMetricsServiceRequest {
             resource_metrics: data.resource_metrics,
@@ -1450,15 +1637,30 @@ overrides:
             admin: false,
             events: krabka_observability::server_security::SecurityEventSink::default(),
         };
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = super::router(Arc::clone(&state));
+        struct PathBodyCase {
+            path: &'static str,
+            body: Vec<u8>,
+        }
         let paths = [
-            ("/api/v1/push", v1_body(vec![label("__name__", "up")])),
-            ("/api/v1/clocks", v1_body(vec![label("__name__", "up")])),
-            ("/otlp/v1/metrics", otlp_body()),
+            PathBodyCase {
+                path: "/api/v1/push",
+                body: v1_body(vec![label("__name__", "up")]),
+            },
+            PathBodyCase {
+                path: "/api/v1/clocks",
+                body: v1_body(vec![label("__name__", "up")]),
+            },
+            PathBodyCase {
+                path: "/otlp/v1/metrics",
+                body: otlp_body(),
+            },
         ];
 
-        for (path, body) in paths {
+        for PathBodyCase { path, body } in paths {
             let mut request = Request::builder()
                 .method("POST")
                 .uri(path)
@@ -1493,7 +1695,7 @@ overrides:
 
     #[derive(Default)]
     struct RecordingSink {
-        appends: Mutex<Vec<(Bytes, WalRecord)>>,
+        appends: Mutex<Vec<WalBatchRecord>>,
     }
 
     #[async_trait::async_trait]
@@ -1502,7 +1704,7 @@ overrides:
             self.appends
                 .lock()
                 .expect("recording sink poisoned")
-                .push((key, record));
+                .push(WalBatchRecord { key, record });
             Ok(())
         }
     }
@@ -1513,7 +1715,7 @@ overrides:
                 .lock()
                 .expect("recording sink poisoned")
                 .iter()
-                .map(|(_, record)| record.clone())
+                .map(|entry| entry.record.clone())
                 .collect()
         }
 
@@ -1522,7 +1724,7 @@ overrides:
                 .lock()
                 .expect("recording sink poisoned")
                 .iter()
-                .map(|(key, _)| key.clone())
+                .map(|entry| entry.key.clone())
                 .collect()
         }
     }
@@ -1552,6 +1754,34 @@ overrides:
         }
     }
 
+    /// Tenant `tenant-a` electing replica `r1` of cluster `c1` at 42s.
+    fn tenant_a_r1_election() -> HaElectionRecord {
+        HaElectionRecord {
+            tenant: "tenant-a".to_string(),
+            cluster: "c1".to_string(),
+            replica: "r1".to_string(),
+            lease_timestamp_ms: 42_000,
+        }
+    }
+
+    /// A consumer whose one batch is [`tenant_a_r1_election`] delivered on
+    /// `topic` at partition 1, offset 7.
+    fn tenant_a_r1_election_consumer(topic: &str) -> RecordingHaElectionConsumer {
+        RecordingHaElectionConsumer {
+            batches: vec![vec![
+                DeliveredRecord {
+                    topic,
+                    partition: 1,
+                    offset: 7,
+                    payload: Some(tenant_a_r1_election().encode().unwrap()),
+                    ..DeliveredRecord::default()
+                }
+                .build(),
+            ]],
+            commit_calls: 0,
+        }
+    }
+
     struct RecordingHaElectionConsumer {
         batches: Vec<Vec<ConsumerRecord>>,
         commit_calls: usize,
@@ -1575,25 +1805,6 @@ overrides:
         }
     }
 
-    fn consumer_record(
-        topic: &str,
-        partition: i32,
-        offset: i64,
-        value: Option<Vec<u8>>,
-    ) -> ConsumerRecord {
-        ConsumerRecord {
-            topic: topic.to_string(),
-            partition,
-            offset,
-            leader_epoch: -1,
-            timestamp: 0,
-            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-            key: None,
-            value: value.map(Bytes::from),
-            headers: format_headers(),
-        }
-    }
-
     struct FailingHaElectionSink;
 
     #[async_trait::async_trait]
@@ -1603,9 +1814,26 @@ overrides:
         }
     }
 
-    fn test_state() -> (Arc<DistributorState>, Arc<RecordingSink>) {
+    struct DistributorFixture {
+        state: Arc<DistributorState>,
+        sink: Arc<RecordingSink>,
+    }
+
+    fn test_state() -> DistributorFixture {
         let sink = Arc::new(RecordingSink::default());
-        (Arc::new(DistributorState::new(sink.clone())), sink)
+        DistributorFixture {
+            state: Arc::new(DistributorState::new(sink.clone())),
+            sink,
+        }
+    }
+
+    /// A distributor over a recording sink that enforces `limits`.
+    fn limited_state(limits: Limits) -> DistributorFixture {
+        let sink = Arc::new(RecordingSink::default());
+        DistributorFixture {
+            state: Arc::new(DistributorState::new(sink.clone()).with_limits(limits)),
+            sink,
+        }
     }
 
     #[test]
@@ -1678,16 +1906,21 @@ overrides:
         snappy(&req.encode_to_vec())
     }
 
+    /// One `http_requests_total` series with a single sample, 1 at 100ms.
+    fn http_requests_total_series() -> crate::wire::pb::v1::TimeSeries {
+        crate::wire::pb::v1::TimeSeries {
+            labels: vec![label("__name__", "http_requests_total")],
+            samples: vec![crate::wire::pb::v1::Sample {
+                value: 1.0,
+                timestamp: 100,
+            }],
+            ..Default::default()
+        }
+    }
+
     fn v1_body_with_metadata() -> Vec<u8> {
         let req = crate::wire::pb::v1::WriteRequest {
-            timeseries: vec![crate::wire::pb::v1::TimeSeries {
-                labels: vec![label("__name__", "http_requests_total")],
-                samples: vec![crate::wire::pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 100,
-                }],
-                ..Default::default()
-            }],
+            timeseries: vec![http_requests_total_series()],
             metadata: vec![crate::wire::pb::v1::MetricMetadata {
                 r#type: crate::wire::pb::v1::metric_metadata::MetricType::Counter as i32,
                 metric_family_name: "http_requests_total".into(),
@@ -1701,17 +1934,12 @@ overrides:
     fn v1_body_with_exemplar_label_value(value: &str) -> Vec<u8> {
         let req = crate::wire::pb::v1::WriteRequest {
             timeseries: vec![crate::wire::pb::v1::TimeSeries {
-                labels: vec![label("__name__", "http_requests_total")],
-                samples: vec![crate::wire::pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 100,
-                }],
                 exemplars: vec![crate::wire::pb::v1::Exemplar {
                     labels: vec![label("trace_id", value)],
                     value: 1.0,
                     timestamp: 100,
                 }],
-                ..Default::default()
+                ..http_requests_total_series()
             }],
             ..Default::default()
         };
@@ -1734,20 +1962,24 @@ overrides:
         snappy(&req.encode_to_vec())
     }
 
-    fn v2_body() -> Vec<u8> {
-        let req = crate::wire::pb::v2::Request {
+    // One `up` sample of 3.0 at 7ms, started at `start_timestamp`.
+    fn v2_up_request(start_timestamp: i64) -> crate::wire::pb::v2::Request {
+        crate::wire::pb::v2::Request {
             symbols: vec![String::new(), "__name__".into(), "up".into()],
             timeseries: vec![crate::wire::pb::v2::TimeSeries {
                 labels_refs: vec![1, 2],
                 samples: vec![crate::wire::pb::v2::Sample {
                     value: 3.0,
                     timestamp: 7,
-                    start_timestamp: 0,
+                    start_timestamp,
                 }],
                 ..Default::default()
             }],
-        };
-        snappy(&req.encode_to_vec())
+        }
+    }
+
+    fn v2_body() -> Vec<u8> {
+        snappy(&v2_up_request(0).encode_to_vec())
     }
 
     fn v2_body_with_metadata() -> Vec<u8> {
@@ -1805,6 +2037,16 @@ overrides:
         otlp_gauge_body()
     }
 
+    fn otlp_request(body: Vec<u8>) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/otlp/v1/metrics")
+            .header("Content-Type", "application/x-protobuf")
+            .header("X-Scope-OrgID", "tenant-a")
+            .body(Body::from(body))
+            .unwrap()
+    }
+
     fn otlp_sum_body(value: f64, timestamp: u64, monotonic: bool, temporality: i32) -> Vec<u8> {
         MetricsData {
             resource_metrics: vec![ResourceMetrics {
@@ -1838,102 +2080,96 @@ overrides:
         .encode_to_vec()
     }
 
-    fn otlp_gauge_body() -> Vec<u8> {
+    /// One OTLP export request carrying `metric` under `resource`.
+    fn encode_otlp_metric(resource: Option<Resource>, metric: Metric) -> Vec<u8> {
         MetricsData {
             resource_metrics: vec![ResourceMetrics {
-                resource: None,
+                resource,
                 scope_metrics: vec![ScopeMetrics {
-                    metrics: vec![Metric {
-                        name: "system.cpu.utilization".into(),
-                        description: "CPU utilization ratio.".into(),
-                        unit: "1".into(),
-                        data: Some(metric::Data::Gauge(Gauge {
-                            data_points: vec![NumberDataPoint {
-                                attributes: vec![KeyValue {
-                                    key: "host.name".into(),
-                                    value: Some(AnyValue {
-                                        value: Some(any_value::Value::StringValue("api-1".into())),
-                                    }),
-                                    key_strindex: 0,
-                                }],
-                                time_unix_nano: 1_000_000,
-                                value: Some(number_data_point::Value::AsDouble(0.5)),
-                                ..Default::default()
-                            }],
-                        })),
-                        ..Default::default()
-                    }],
+                    metrics: vec![metric],
                     ..Default::default()
                 }],
                 schema_url: String::new(),
             }],
         }
         .encode_to_vec()
+    }
+
+    fn otlp_gauge_body() -> Vec<u8> {
+        encode_otlp_metric(
+            None,
+            Metric {
+                name: "system.cpu.utilization".into(),
+                description: "CPU utilization ratio.".into(),
+                unit: "1".into(),
+                data: Some(metric::Data::Gauge(Gauge {
+                    data_points: vec![NumberDataPoint {
+                        attributes: vec![KeyValue {
+                            key: "host.name".into(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue("api-1".into())),
+                            }),
+                            key_strindex: 0,
+                        }],
+                        time_unix_nano: 1_000_000,
+                        value: Some(number_data_point::Value::AsDouble(0.5)),
+                        ..Default::default()
+                    }],
+                })),
+                ..Default::default()
+            },
+        )
     }
 
     fn otlp_mixed_gauge_body() -> Vec<u8> {
-        MetricsData {
-            resource_metrics: vec![ResourceMetrics {
-                resource: None,
-                scope_metrics: vec![ScopeMetrics {
-                    metrics: vec![Metric {
-                        name: "mixed.gauge".into(),
-                        data: Some(metric::Data::Gauge(Gauge {
-                            data_points: vec![
-                                NumberDataPoint {
-                                    time_unix_nano: 1_000_000,
-                                    value: Some(number_data_point::Value::AsDouble(2.0)),
-                                    ..Default::default()
-                                },
-                                NumberDataPoint {
-                                    time_unix_nano: 2_000_000,
-                                    value: None,
-                                    ..Default::default()
-                                },
-                            ],
-                        })),
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }],
-                schema_url: String::new(),
-            }],
-        }
-        .encode_to_vec()
+        encode_otlp_metric(
+            None,
+            Metric {
+                name: "mixed.gauge".into(),
+                data: Some(metric::Data::Gauge(Gauge {
+                    data_points: vec![
+                        NumberDataPoint {
+                            time_unix_nano: 1_000_000,
+                            value: Some(number_data_point::Value::AsDouble(2.0)),
+                            ..Default::default()
+                        },
+                        NumberDataPoint {
+                            time_unix_nano: 2_000_000,
+                            value: None,
+                            ..Default::default()
+                        },
+                    ],
+                })),
+                ..Default::default()
+            },
+        )
     }
 
     fn otlp_resource_body() -> Vec<u8> {
-        MetricsData {
-            resource_metrics: vec![ResourceMetrics {
-                resource: Some(Resource {
-                    attributes: vec![KeyValue {
-                        key: "service.name".into(),
-                        value: Some(AnyValue {
-                            value: Some(any_value::Value::StringValue("checkout".into())),
-                        }),
-                        key_strindex: 0,
-                    }],
-                    dropped_attributes_count: 0,
-                    entity_refs: Vec::new(),
-                }),
-                scope_metrics: vec![ScopeMetrics {
-                    metrics: vec![Metric {
-                        name: "system.cpu.utilization".into(),
-                        data: Some(metric::Data::Gauge(Gauge {
-                            data_points: vec![NumberDataPoint {
-                                time_unix_nano: 1_000_000,
-                                value: Some(number_data_point::Value::AsDouble(0.5)),
-                                ..Default::default()
-                            }],
-                        })),
+        encode_otlp_metric(
+            Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".into(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("checkout".into())),
+                    }),
+                    key_strindex: 0,
+                }],
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            }),
+            Metric {
+                name: "system.cpu.utilization".into(),
+                data: Some(metric::Data::Gauge(Gauge {
+                    data_points: vec![NumberDataPoint {
+                        time_unix_nano: 1_000_000,
+                        value: Some(number_data_point::Value::AsDouble(0.5)),
                         ..Default::default()
                     }],
-                    ..Default::default()
-                }],
-                schema_url: String::new(),
-            }],
-        }
-        .encode_to_vec()
+                })),
+                ..Default::default()
+            },
+        )
     }
 
     fn label(name: &str, value: &str) -> crate::wire::pb::v1::Label {
@@ -1945,28 +2181,23 @@ overrides:
 
     #[tokio::test]
     async fn push_v1_returns_200_and_appends() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
+        let response = push_v1(
+            &router(state),
+            "tenant-a",
+            v1_body(vec![label("__name__", "up")]),
+        )
+        .await;
 
         let records = sink.records();
-        assert!(response.status() == StatusCode::OK);
+        assert!(response == StatusCode::OK);
         assert_eq!(
             records,
             vec![WalRecord {
                 tenant: "tenant-a".to_string(),
-                labels: vec![("__name__".to_string(), "up".into())],
+                labels: vec![crate::MetricLabelPair::new("__name__", "up".into())],
                 payload: SamplePayload::Float {
                     timestamp_ms: 100,
                     value: 1.0,
@@ -1979,7 +2210,9 @@ overrides:
 
     #[tokio::test]
     async fn push_v1_accepts_listed_snappy_content_encoding() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -1998,44 +2231,63 @@ overrides:
         assert!(sink.records().len() == 1);
     }
 
+    /// The Prometheus receiver path, and a legacy content type on the push
+    /// path, are both accepted as `remote_write` v1.
     #[tokio::test]
-    async fn push_v1_accepts_prometheus_remote_write_receiver_path() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/write")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+    async fn push_v1_accepts_the_receiver_path_and_a_legacy_content_type() {
+        struct PushPathCase {
+            name: &'static str,
+            uri: &'static str,
+            content_type: &'static str,
+        }
+        for PushPathCase {
+            name,
+            uri,
+            content_type,
+        } in [
+            PushPathCase {
+                name: "prometheus remote write receiver path",
+                uri: "/api/v1/write",
+                content_type: "application/x-protobuf",
+            },
+            PushPathCase {
+                name: "legacy content type",
+                uri: "/api/v1/push",
+                content_type: "text/plain",
+            },
+        ] {
+            let fixture = test_state();
+            let state = fixture.state;
+            let sink = fixture.sink;
+            let response = router(state)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("Content-Type", content_type)
+                        .header("Content-Encoding", "snappy")
+                        .header("X-Scope-OrgID", "tenant-a")
+                        .body(Body::from(v1_body(vec![label("__name__", "up")])))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
 
-        assert!(response.status() == StatusCode::OK);
-        assert!(sink.records().len() == 1);
+            check!(response.status() == StatusCode::OK, "{name}");
+            check!(sink.records().len() == 1, "{name}");
+        }
     }
 
     #[tokio::test]
     async fn push_keys_wal_append_by_tenant_and_series_fingerprint() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![
-                        label("__name__", "up"),
-                        label("job", "api"),
-                    ])))
-                    .unwrap(),
-            )
+            .oneshot(tenant_a_push_request(v1_body(vec![
+                label("__name__", "up"),
+                label("job", "api"),
+            ])))
             .await
             .unwrap();
 
@@ -2053,7 +2305,9 @@ overrides:
 
     #[tokio::test]
     async fn push_v2_sets_written_headers() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -2084,19 +2338,10 @@ overrides:
 
     #[tokio::test]
     async fn push_v2_preserves_sample_start_timestamp_in_wal() {
-        let req = crate::wire::pb::v2::Request {
-            symbols: vec![String::new(), "__name__".into(), "up".into()],
-            timeseries: vec![crate::wire::pb::v2::TimeSeries {
-                labels_refs: vec![1, 2],
-                samples: vec![crate::wire::pb::v2::Sample {
-                    value: 3.0,
-                    timestamp: 7,
-                    start_timestamp: 5,
-                }],
-                ..Default::default()
-            }],
-        };
-        let (state, sink) = test_state();
+        let req = v2_up_request(5);
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
 
         let response = router(state)
             .oneshot(
@@ -2132,43 +2377,63 @@ overrides:
     }
 
     #[tokio::test]
-    async fn push_v1_appends_metric_metadata_record() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_metadata()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+    async fn push_appends_metric_metadata_record() {
+        struct MetadataRequestCase {
+            content_type: &'static str,
+            body: Vec<u8>,
+        }
+        for MetadataRequestCase { content_type, body } in [
+            MetadataRequestCase {
+                content_type: "application/x-protobuf",
+                body: v1_body_with_metadata(),
+            },
+            MetadataRequestCase {
+                content_type: "application/x-protobuf; proto=io.prometheus.write.v2.Request",
+                body: v2_body_with_metadata(),
+            },
+        ] {
+            let fixture = test_state();
+            let state = fixture.state;
+            let sink = fixture.sink;
+            let response = router(state)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/push")
+                        .header("Content-Type", content_type)
+                        .header("Content-Encoding", "snappy")
+                        .header("X-Scope-OrgID", "tenant-a")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
 
-        let records = sink.records();
-        assert!(response.status() == StatusCode::OK);
-        assert!(records.len() == 2);
-        let metadata = records
-            .iter()
-            .find(|record| matches!(record.payload, SamplePayload::Metadata { .. }))
-            .expect("metadata wal record");
-        assert!(
-            metadata.payload
-                == SamplePayload::Metadata {
-                    metric_family_name: "http_requests_total".to_string(),
-                    metric_type: "counter".to_string(),
-                    help: "Total HTTP requests.".to_string(),
-                    unit: "requests".to_string(),
-                }
-        );
+            let records = sink.records();
+            assert!(response.status() == StatusCode::OK, "{content_type}");
+            assert!(records.len() == 2, "{content_type}");
+            let metadata = records
+                .iter()
+                .find(|record| matches!(record.payload, SamplePayload::Metadata { .. }))
+                .expect("metadata wal record");
+            assert!(
+                metadata.payload
+                    == SamplePayload::Metadata {
+                        metric_family_name: "http_requests_total".to_string(),
+                        metric_type: "counter".to_string(),
+                        help: "Total HTTP requests.".to_string(),
+                        unit: "requests".to_string(),
+                    },
+                "{content_type}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn otlp_translation_strategy_header_controls_metric_and_label_names() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -2192,15 +2457,17 @@ overrides:
         assert!(
             sample.labels
                 == vec![
-                    ("__name__".to_string(), "system.cpu.utilization".into()),
-                    ("host.name".to_string(), "api-1".into())
+                    crate::MetricLabelPair::new("__name__", "system.cpu.utilization".into()),
+                    crate::MetricLabelPair::new("host.name", "api-1".into())
                 ]
         );
     }
 
     #[tokio::test]
     async fn influx_line_protocol_maps_to_the_shared_wal_and_path() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -2219,9 +2486,9 @@ overrides:
                 == vec![WalRecord {
                     tenant: "tenant-a".to_string(),
                     labels: vec![
-                        ("__name__".to_string(), "cpu".into()),
-                        ("__proxy_source__".to_string(), "influx".into()),
-                        ("host".to_string(), "api-1".into()),
+                        crate::MetricLabelPair::new("__name__", "cpu".into()),
+                        crate::MetricLabelPair::new("__proxy_source__", "influx".into()),
+                        crate::MetricLabelPair::new("host", "api-1".into()),
                     ],
                     payload: SamplePayload::Float {
                         timestamp_ms: 1_234,
@@ -2234,59 +2501,14 @@ overrides:
     }
 
     #[tokio::test]
-    async fn push_v2_appends_metric_metadata_record() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header(
-                        "Content-Type",
-                        "application/x-protobuf; proto=io.prometheus.write.v2.Request",
-                    )
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v2_body_with_metadata()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let records = sink.records();
-        assert!(response.status() == StatusCode::OK);
-        assert!(records.len() == 2);
-        let metadata = records
-            .iter()
-            .find(|record| matches!(record.payload, SamplePayload::Metadata { .. }))
-            .expect("metadata wal record");
-        assert!(
-            metadata.payload
-                == SamplePayload::Metadata {
-                    metric_family_name: "http_requests_total".to_string(),
-                    metric_type: "counter".to_string(),
-                    help: "Total HTTP requests.".to_string(),
-                    unit: "requests".to_string(),
-                }
-        );
-    }
-
-    #[tokio::test]
     async fn oversized_exemplar_labels_are_rejected() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_exemplar_label_value(
-                        &"x".repeat(129),
-                    )))
-                    .unwrap(),
-            )
+            .oneshot(tenant_a_push_request(v1_body_with_exemplar_label_value(
+                &"x".repeat(129),
+            )))
             .await
             .unwrap();
 
@@ -2296,26 +2518,20 @@ overrides:
 
     #[tokio::test]
     async fn oversized_label_names_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let fixture = limited_state(Limits {
             max_label_name_length: bytes(7),
             ..Limits::default()
-        }));
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        });
+        let state = fixture.state;
+        let sink = fixture.sink;
+        let response = push_v1(
+            &router(state),
+            "tenant-a",
+            v1_body(vec![label("__name__", "up")]),
+        )
+        .await;
 
-        assert!(response.status() == StatusCode::BAD_REQUEST);
+        assert!(response == StatusCode::BAD_REQUEST);
         assert!(sink.records().is_empty());
     }
 
@@ -2377,26 +2593,15 @@ overrides:
 
     #[tokio::test]
     async fn oversized_sample_sets_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let fixture = limited_state(Limits {
             max_samples_per_series: 1,
             ..Limits::default()
-        }));
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_samples(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        });
+        let state = fixture.state;
+        let sink = fixture.sink;
+        let response = push_v1(&router(state), "tenant-a", v1_body_with_samples(2)).await;
 
-        assert!(response.status() == StatusCode::BAD_REQUEST);
+        assert!(response == StatusCode::BAD_REQUEST);
         assert!(sink.records().is_empty());
     }
 
@@ -2508,44 +2713,22 @@ overrides:
 
     #[tokio::test]
     async fn ingestion_rate_limit_returns_429_without_append() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let fixture = limited_state(Limits {
             ingestion_rate: per_sec(1),
             ingestion_burst_size: 1,
             ..Limits::default()
-        }));
+        });
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
 
-        let first_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let second_response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let first_response =
+            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "up")])).await;
+        let second_response =
+            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "up")])).await;
 
-        check!(first_response.status() == StatusCode::OK);
-        check!(second_response.status() == StatusCode::TOO_MANY_REQUESTS);
+        check!(first_response == StatusCode::OK);
+        check!(second_response == StatusCode::TOO_MANY_REQUESTS);
         check!(sink.records().len() == 1);
     }
 
@@ -2569,19 +2752,13 @@ defaults:
         // single locked critical section, so exactly one is admitted and the
         // other is rejected rather than both passing the pre-insert count.
         let request = |name: &str| {
-            app.clone().oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", name)])))
-                    .unwrap(),
-            )
+            app.clone()
+                .oneshot(tenant_a_push_request(v1_body(vec![label(
+                    "__name__", name,
+                )])))
         };
-        let (first, second) = tokio::join!(request("series_a"), request("series_b"));
-        let statuses = [first.unwrap().status(), second.unwrap().status()];
+        let responses = tokio::join!(request("series_a"), request("series_b"));
+        let statuses = [responses.0.unwrap().status(), responses.1.unwrap().status()];
 
         let admitted = statuses
             .iter()
@@ -2598,101 +2775,42 @@ defaults:
 
     #[tokio::test]
     async fn ingestion_rate_limit_counts_exemplar_only_writes() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let fixture = limited_state(Limits {
             ingestion_rate: per_sec(1),
             ingestion_burst_size: 1,
             ..Limits::default()
-        }));
+        });
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
 
-        let exemplar_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_exemplar_timestamp(1_000)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let sample_response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_sample_timestamp(1_001)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let exemplar_response =
+            push_v1(&app, "tenant-a", v1_body_with_exemplar_timestamp(1_000)).await;
+        let sample_response = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_001)).await;
 
-        check!(exemplar_response.status() == StatusCode::OK);
-        check!(sample_response.status() == StatusCode::TOO_MANY_REQUESTS);
+        check!(exemplar_response == StatusCode::OK);
+        check!(sample_response == StatusCode::TOO_MANY_REQUESTS);
         check!(sink.records().len() == 1);
     }
 
     #[tokio::test]
     async fn too_old_samples_beyond_out_of_order_window_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let fixture = limited_state(Limits {
             out_of_order_time_window: millis(100),
             ..Limits::default()
-        }));
+        });
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
 
-        let newest_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_sample_timestamp(1_000)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let within_window_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_sample_timestamp(950)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let too_old_response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_sample_timestamp(899)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let newest_response = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_000)).await;
+        let within_window_response =
+            push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(950)).await;
+        let too_old_response = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(899)).await;
 
-        check!(newest_response.status() == StatusCode::OK);
-        check!(within_window_response.status() == StatusCode::OK);
-        check!(too_old_response.status() == StatusCode::BAD_REQUEST);
+        check!(newest_response == StatusCode::OK);
+        check!(within_window_response == StatusCode::OK);
+        check!(too_old_response == StatusCode::BAD_REQUEST);
         check!(sink.records().len() == 2);
     }
 
@@ -2715,78 +2833,32 @@ overrides:
         );
         let app = router(state);
 
-        let newest_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-loose")
-                    .body(Body::from(v1_body_with_sample_timestamp(1_000)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let overridden_window_response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-loose")
-                    .body(Body::from(v1_body_with_sample_timestamp(950)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let newest_response =
+            push_v1(&app, "tenant-loose", v1_body_with_sample_timestamp(1_000)).await;
+        let overridden_window_response =
+            push_v1(&app, "tenant-loose", v1_body_with_sample_timestamp(950)).await;
 
-        check!(newest_response.status() == StatusCode::OK);
-        check!(overridden_window_response.status() == StatusCode::OK);
+        check!(newest_response == StatusCode::OK);
+        check!(overridden_window_response == StatusCode::OK);
         check!(sink.records().len() == 2);
     }
 
     #[tokio::test]
     async fn too_old_exemplar_only_series_beyond_out_of_order_window_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let fixture = limited_state(Limits {
             out_of_order_time_window: millis(100),
             ..Limits::default()
-        }));
+        });
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
 
-        let newest_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_sample_timestamp(1_000)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let too_old_response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_exemplar_timestamp(899)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let newest_response = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_000)).await;
+        let too_old_response =
+            push_v1(&app, "tenant-a", v1_body_with_exemplar_timestamp(899)).await;
 
-        check!(newest_response.status() == StatusCode::OK);
-        check!(too_old_response.status() == StatusCode::BAD_REQUEST);
+        check!(newest_response == StatusCode::OK);
+        check!(too_old_response == StatusCode::BAD_REQUEST);
         check!(sink.records().len() == 1);
     }
 
@@ -2817,73 +2889,80 @@ overrides:
     /// body that the pinned Mimir 2.16.1 image sends for it on
     /// `POST /api/v1/push` and `POST /otlp/v1/metrics`. Every body is
     /// `text/plain; charset=utf-8` and ends in a line break.
-    fn mimir_tenant_rejections() -> Vec<(&'static str, Option<String>, StatusCode, String)> {
+    struct TenantRejection {
+        name: &'static str,
+        tenant: Option<String>,
+        status: StatusCode,
+        text: String,
+    }
+
+    fn mimir_tenant_rejections() -> Vec<TenantRejection> {
         let too_long = "x".repeat(151);
         let too_long_and_bad = format!("{too_long}/");
         let unsupported = |tenant: &str, character: char| {
             format!("tenant ID '{tenant}' contains unsupported character '{character}'\n")
         };
         vec![
-            (
-                "absent",
-                None,
-                StatusCode::UNAUTHORIZED,
-                "no org id\n".into(),
-            ),
-            (
-                "empty",
-                Some(String::new()),
-                StatusCode::UNAUTHORIZED,
-                "no org id\n".into(),
-            ),
-            (
-                "separator",
-                Some("a/b".into()),
-                StatusCode::UNAUTHORIZED,
-                unsupported("a/b", '/'),
-            ),
-            (
-                "space",
-                Some("a b".into()),
-                StatusCode::UNAUTHORIZED,
-                unsupported("a b", ' '),
-            ),
-            (
-                "too long",
-                Some(too_long),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID is too long: max 150 characters\n".into(),
-            ),
-            (
-                "too long and unsupported",
-                Some(too_long_and_bad.clone()),
-                StatusCode::UNAUTHORIZED,
-                unsupported(&too_long_and_bad, '/'),
-            ),
-            (
-                "dot dot",
-                Some("..".into()),
-                StatusCode::UNAUTHORIZED,
-                "tenant ID is '.' or '..'\n".into(),
-            ),
-            (
-                "two tenants",
-                Some("a|b".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "too many tenant IDs present in the request. max: 1 actual: 2\n".into(),
-            ),
-            (
-                "three tenants",
-                Some("a|b|c".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "too many tenant IDs present in the request. max: 1 actual: 3\n".into(),
-            ),
-            (
-                "an invalid second part",
-                Some("a|b/c".into()),
-                StatusCode::UNAUTHORIZED,
-                unsupported("b/c", '/'),
-            ),
+            TenantRejection {
+                name: "absent",
+                tenant: None,
+                status: StatusCode::UNAUTHORIZED,
+                text: "no org id\n".into(),
+            },
+            TenantRejection {
+                name: "empty",
+                tenant: Some(String::new()),
+                status: StatusCode::UNAUTHORIZED,
+                text: "no org id\n".into(),
+            },
+            TenantRejection {
+                name: "separator",
+                tenant: Some("a/b".into()),
+                status: StatusCode::UNAUTHORIZED,
+                text: unsupported("a/b", '/'),
+            },
+            TenantRejection {
+                name: "space",
+                tenant: Some("a b".into()),
+                status: StatusCode::UNAUTHORIZED,
+                text: unsupported("a b", ' '),
+            },
+            TenantRejection {
+                name: "too long",
+                tenant: Some(too_long),
+                status: StatusCode::UNAUTHORIZED,
+                text: "tenant ID is too long: max 150 characters\n".into(),
+            },
+            TenantRejection {
+                name: "too long and unsupported",
+                tenant: Some(too_long_and_bad.clone()),
+                status: StatusCode::UNAUTHORIZED,
+                text: unsupported(&too_long_and_bad, '/'),
+            },
+            TenantRejection {
+                name: "dot dot",
+                tenant: Some("..".into()),
+                status: StatusCode::UNAUTHORIZED,
+                text: "tenant ID is '.' or '..'\n".into(),
+            },
+            TenantRejection {
+                name: "two tenants",
+                tenant: Some("a|b".into()),
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                text: "too many tenant IDs present in the request. max: 1 actual: 2\n".into(),
+            },
+            TenantRejection {
+                name: "three tenants",
+                tenant: Some("a|b|c".into()),
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                text: "too many tenant IDs present in the request. max: 1 actual: 3\n".into(),
+            },
+            TenantRejection {
+                name: "an invalid second part",
+                tenant: Some("a|b/c".into()),
+                status: StatusCode::UNAUTHORIZED,
+                text: unsupported("b/c", '/'),
+            },
         ]
     }
 
@@ -2894,19 +2973,35 @@ overrides:
     /// prefix to go under.
     #[tokio::test]
     async fn a_push_without_a_usable_tenant_gets_mimirs_answer_and_appends_nothing() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
+        struct RejectedPathCase {
+            path: &'static str,
+            encoding: Option<&'static str>,
+            body: Vec<u8>,
+        }
         let paths = [
-            (
-                "/api/v1/push",
-                Some("snappy"),
-                v1_body(vec![label("__name__", "up")]),
-            ),
-            ("/otlp/v1/metrics", None, otlp_body()),
+            RejectedPathCase {
+                path: "/api/v1/push",
+                encoding: Some("snappy"),
+                body: v1_body(vec![label("__name__", "up")]),
+            },
+            RejectedPathCase {
+                path: "/otlp/v1/metrics",
+                encoding: None,
+                body: otlp_body(),
+            },
         ];
 
-        for (path, encoding, body) in paths {
-            for (name, tenant, status, text) in mimir_tenant_rejections() {
+        for RejectedPathCase {
+            path,
+            encoding,
+            body,
+        } in paths
+        {
+            for rejection in mimir_tenant_rejections() {
                 let mut request = Request::builder()
                     .method("POST")
                     .uri(path)
@@ -2914,7 +3009,7 @@ overrides:
                 if let Some(encoding) = encoding {
                     request = request.header("Content-Encoding", encoding);
                 }
-                if let Some(tenant) = tenant {
+                if let Some(tenant) = rejection.tenant {
                     request = request.header("X-Scope-OrgID", tenant);
                 }
                 let response = app
@@ -2923,19 +3018,28 @@ overrides:
                     .await
                     .unwrap();
 
-                check!(response.status() == status, "{path} {name}");
+                check!(
+                    response.status() == rejection.status,
+                    "{path} {}",
+                    rejection.name
+                );
                 check!(
                     response
                         .headers()
                         .get(axum::http::header::CONTENT_TYPE)
                         .map(HeaderValue::as_bytes)
                         == Some(&b"text/plain; charset=utf-8"[..]),
-                    "{path} {name}"
+                    "{path} {}",
+                    rejection.name
                 );
                 let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
                     .await
                     .unwrap();
-                check!(String::from_utf8_lossy(&bytes) == text, "{path} {name}");
+                check!(
+                    String::from_utf8_lossy(&bytes) == rejection.text,
+                    "{path} {}",
+                    rejection.name
+                );
             }
         }
         assert!(sink.records().is_empty());
@@ -2948,21 +3052,23 @@ overrides:
     /// document.
     #[tokio::test]
     async fn an_otlp_grpc_export_without_a_usable_tenant_is_refused_and_appends_nothing() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let service = otlp_metrics_service(state);
 
-        for (name, tenant, status, text) in mimir_tenant_rejections() {
+        for rejection in mimir_tenant_rejections() {
             let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
             let mut request = tonic::Request::new(ExportMetricsServiceRequest {
                 resource_metrics: data.resource_metrics,
             });
-            if let Some(tenant) = tenant {
+            if let Some(tenant) = rejection.tenant {
                 request
                     .metadata_mut()
                     .insert("x-scope-orgid", tenant.parse().unwrap());
             }
             request.extensions_mut().insert(Principal::Unauthenticated);
-            let expected_code = if status == StatusCode::UNAUTHORIZED {
+            let expected_code = if rejection.status == StatusCode::UNAUTHORIZED {
                 tonic::Code::Unauthenticated
             } else {
                 tonic::Code::InvalidArgument
@@ -2973,8 +3079,12 @@ overrides:
                 .await
                 .expect_err("an unusable tenant is refused");
 
-            check!(error.code() == expected_code, "{name}");
-            check!(error.message() == text.trim_end_matches('\n'), "{name}");
+            check!(error.code() == expected_code, "{}", rejection.name);
+            check!(
+                error.message() == rejection.text.trim_end_matches('\n'),
+                "{}",
+                rejection.name
+            );
         }
         assert!(sink.records().is_empty());
     }
@@ -2983,7 +3093,9 @@ overrides:
     /// accepted under that tenant rather than refused as two.
     #[tokio::test]
     async fn a_push_that_repeats_its_tenant_is_accepted_under_that_tenant() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -3006,79 +3118,43 @@ overrides:
 
     #[tokio::test]
     async fn push_requires_snappy_content_encoding() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        // No encoding at all, and an encoding other than snappy.
+        for content_encoding in [None, Some("gzip")] {
+            let fixture = test_state();
+            let state = fixture.state;
+            let sink = fixture.sink;
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/api/v1/push")
+                .header("Content-Type", "application/x-protobuf");
+            if let Some(encoding) = content_encoding {
+                request = request.header("Content-Encoding", encoding);
+            }
+            let response = router(state)
+                .oneshot(
+                    request
+                        .header("X-Scope-OrgID", "tenant-a")
+                        .body(Body::from(v1_body(vec![label("__name__", "up")])))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
 
-        assert!(response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        assert!(sink.records().is_empty());
-    }
-
-    #[tokio::test]
-    async fn push_rejects_non_snappy_content_encoding() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "gzip")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        assert!(sink.records().is_empty());
-    }
-
-    #[tokio::test]
-    async fn push_treats_a_legacy_content_type_as_v1() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "text/plain")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(sink.records().len() == 1);
+            check!(
+                response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "{content_encoding:?}"
+            );
+            check!(sink.records().is_empty(), "{content_encoding:?}");
+        }
     }
 
     #[tokio::test]
     async fn otlp_metrics_returns_200_and_appends() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/otlp/v1/metrics")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
+            .oneshot(otlp_request(otlp_body()))
             .await
             .unwrap();
 
@@ -3114,8 +3190,8 @@ overrides:
         check!(
             sample.labels
                 == vec![
-                    ("__name__".to_string(), "system_cpu_utilization".into()),
-                    ("host_name".to_string(), "api-1".into())
+                    crate::MetricLabelPair::new("__name__", "system_cpu_utilization".into()),
+                    crate::MetricLabelPair::new("host_name", "api-1".into())
                 ]
         );
         assert!(matches!(
@@ -3143,17 +3219,11 @@ overrides:
 
     #[tokio::test]
     async fn otlp_http_reports_partial_success_and_appends_valid_data_points() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/otlp/v1/metrics")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(otlp_mixed_gauge_body()))
-                    .unwrap(),
-            )
+            .oneshot(otlp_request(otlp_mixed_gauge_body()))
             .await
             .unwrap();
 
@@ -3192,8 +3262,64 @@ overrides:
     }
 
     #[tokio::test]
+    async fn otlp_http_preserves_rejection_counts_first_error_and_all_invalid_status() {
+        let mut data = MetricsData::decode(otlp_mixed_gauge_body().as_slice()).unwrap();
+        let Some(metric::Data::Gauge(gauge)) =
+            &mut data.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!("gauge fixture");
+        };
+        gauge.data_points.push(NumberDataPoint {
+            time_unix_nano: u64::MAX,
+            value: Some(number_data_point::Value::AsDouble(3.0)),
+            ..Default::default()
+        });
+        gauge.data_points.push(NumberDataPoint::default());
+        let fixture = test_state();
+        let app = router(fixture.state);
+        let response = app
+            .clone()
+            .oneshot(otlp_request(data.encode_to_vec()))
+            .await
+            .unwrap();
+        assert!(response.status() == StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let partial = ExportMetricsServiceResponse::decode(body)
+            .unwrap()
+            .partial_success
+            .unwrap();
+        check!(partial.rejected_data_points == 3);
+        check!(
+            partial
+                .error_message
+                .contains("missing number datapoint value")
+        );
+        check!(fixture.sink.records().len() == 2);
+
+        let Some(metric::Data::Gauge(gauge)) =
+            &mut data.resource_metrics[0].scope_metrics[0].metrics[0].data
+        else {
+            panic!("gauge fixture");
+        };
+        gauge.data_points.remove(0);
+        let response = app
+            .oneshot(otlp_request(data.encode_to_vec()))
+            .await
+            .unwrap();
+        check!(response.status() == StatusCode::BAD_REQUEST);
+        check!(
+            fixture.sink.records().len() == 2,
+            "all-invalid request appends nothing"
+        );
+    }
+
+    #[tokio::test]
     async fn otlp_http_accepts_gzip_and_both_standard_aliases() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
         for path in ["/v1/metrics", "/api/v1/otlp/v1/metrics"] {
             let response = app
@@ -3220,10 +3346,11 @@ overrides:
     fn otlp_http_decompression_enforces_the_decoded_limit() {
         let exact = vec![7; 64];
         let over = vec![7; 65];
-        let headers = HeaderMap::from_iter([(
+        let mut headers = HeaderMap::new();
+        headers.insert(
             axum::http::header::CONTENT_ENCODING,
             HeaderValue::from_static("gzip"),
-        )]);
+        );
 
         check!(decode_otlp_http_body(&headers, &gzip(&exact), bytes(64)).unwrap() == exact);
         check!(matches!(
@@ -3235,10 +3362,12 @@ overrides:
     #[test]
     fn otlp_http_rejects_unknown_and_malformed_compression() {
         let headers = |encoding| {
-            HeaderMap::from_iter([(
+            let mut headers = HeaderMap::new();
+            headers.insert(
                 axum::http::header::CONTENT_ENCODING,
                 HeaderValue::from_static(encoding),
-            )])
+            );
+            headers
         };
 
         check!(matches!(
@@ -3253,7 +3382,9 @@ overrides:
 
     #[tokio::test]
     async fn otlp_grpc_metrics_export_appends() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
         let service = otlp_metrics_service(state);
         let mut request = tonic::Request::new(ExportMetricsServiceRequest {
@@ -3277,16 +3408,20 @@ overrides:
         assert!(
             sample.labels
                 == vec![
-                    ("__name__".to_string(), "system_cpu_utilization".into()),
-                    ("host_name".to_string(), "api-1".into())
+                    crate::MetricLabelPair::new("__name__", "system_cpu_utilization".into()),
+                    crate::MetricLabelPair::new("host_name", "api-1".into())
                 ]
         );
     }
 
     #[tokio::test]
     async fn otlp_grpc_metrics_export_round_trips_over_bound_server() {
-        let (state, sink) = test_state();
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
+        let shutdown = tokio::sync::oneshot::channel();
+        let shutdown_tx = shutdown.0;
+        let shutdown_rx = shutdown.1;
         let bound = serve(
             "127.0.0.1:0".parse().unwrap(),
             state,
@@ -3320,7 +3455,9 @@ overrides:
 
     #[tokio::test]
     async fn otlp_metrics_rejects_non_protobuf_content_type() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -3340,7 +3477,9 @@ overrides:
 
     #[tokio::test]
     async fn otlp_delta_sum_accumulates_across_pushes() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let app = router(state);
 
         let first_response = app
@@ -3407,17 +3546,11 @@ overrides:
 
     #[tokio::test]
     async fn otlp_resource_attributes_append_target_info() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/otlp/v1/metrics")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(otlp_resource_body()))
-                    .unwrap(),
-            )
+            .oneshot(otlp_request(otlp_resource_body()))
             .await
             .unwrap();
 
@@ -3435,14 +3568,14 @@ overrides:
                     && record
                         .labels
                         .iter()
-                        .any(|(name, value)| name == "__name__" && value == "target_info")
+                        .any(|pair| pair.name == "__name__" && pair.value == "target_info")
             })
             .expect("target_info wal record");
         assert!(
             target.labels
                 == vec![
-                    ("__name__".to_string(), "target_info".into()),
-                    ("service_name".to_string(), "checkout".into()),
+                    crate::MetricLabelPair::new("__name__", "target_info".into()),
+                    crate::MetricLabelPair::new("service_name", "checkout".into()),
                 ]
         );
         assert!(matches!(
@@ -3457,8 +3590,8 @@ overrides:
             .iter()
             .find(|record| {
                 matches!(record.payload, SamplePayload::Float { .. })
-                    && record.labels.iter().any(|(name, value)| {
-                        name == "__name__" && value == "system_cpu_utilization"
+                    && record.labels.iter().any(|label| {
+                        label.name == "__name__" && label.value == "system_cpu_utilization"
                     })
             })
             .expect("metric wal record");
@@ -3466,30 +3599,28 @@ overrides:
             metric
                 .labels
                 .iter()
-                .any(|(name, value)| name == "job" && value == "checkout")
+                .any(|label| label.name == "job" && label.value == "checkout")
         );
-        check!(!metric.labels.iter().any(|(name, _)| name == "service_name"));
+        check!(
+            !metric
+                .labels
+                .iter()
+                .any(|label| label.name == "service_name")
+        );
     }
 
     #[tokio::test]
     async fn non_elected_replica_returns_202_without_append() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         state.tracker().set_elected("tenant-a", "c1", "r1");
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![
-                        label("__name__", "up"),
-                        label("cluster", "c1"),
-                        label("__replica__", "r2"),
-                    ])))
-                    .unwrap(),
-            )
+            .oneshot(tenant_a_push_request(v1_body(vec![
+                label("__name__", "up"),
+                label("cluster", "c1"),
+                label("__replica__", "r2"),
+            ])))
             .await
             .unwrap();
 
@@ -3499,7 +3630,9 @@ overrides:
 
     #[tokio::test]
     async fn non_elected_v2_replica_returns_zero_written_headers() {
-        let (state, sink) = test_state();
+        let fixture = test_state();
+        let state = fixture.state;
+        let sink = fixture.sink;
         state.tracker().set_elected("tenant-a", "c1", "r1");
         let response = router(state)
             .oneshot(
@@ -3544,25 +3677,18 @@ overrides:
             DistributorState::new(sink.clone()).with_ha_election_sink(election_sink.clone()),
         );
 
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![
-                        label("__name__", "up"),
-                        label("cluster", "c1"),
-                        label("__replica__", "r1"),
-                    ])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let status = push_v1(
+            &router(state),
+            "tenant-a",
+            v1_body(vec![
+                label("__name__", "up"),
+                label("cluster", "c1"),
+                label("__replica__", "r1"),
+            ]),
+        )
+        .await;
 
-        assert!(response.status() == StatusCode::OK);
+        assert!(status == StatusCode::OK);
         assert!(sink.records().len() == 1);
         let elections = election_sink.elections();
         assert!(elections.len() == 1);
@@ -3580,36 +3706,24 @@ overrides:
                 .with_ha_election_sink(Arc::new(FailingHaElectionSink)),
         );
 
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![
-                        label("__name__", "up"),
-                        label("cluster", "c1"),
-                        label("__replica__", "r1"),
-                    ])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let status = push_v1(
+            &router(state),
+            "tenant-a",
+            v1_body(vec![
+                label("__name__", "up"),
+                label("cluster", "c1"),
+                label("__replica__", "r1"),
+            ]),
+        )
+        .await;
 
-        assert!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(status == StatusCode::INTERNAL_SERVER_ERROR);
         assert!(sink.records().is_empty());
     }
 
     #[test]
     fn ha_election_records_round_trip_with_compacted_key() {
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
+        let record = tenant_a_r1_election();
 
         let encoded = record.encode().unwrap();
 
@@ -3620,12 +3734,7 @@ overrides:
     #[test]
     fn replay_ha_election_records_applies_tracker_and_reports_commit_offsets() {
         let tracker = HaTracker::default();
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
+        let record = tenant_a_r1_election();
         let records = vec![
             HaElectionConsumerRecord {
                 topic: "ignored".to_string(),
@@ -3685,21 +3794,7 @@ overrides:
         // Polled but not replayed: a record from another topic is seen and
         // applied to nothing. Committing here would advance this group's
         // offsets on the strength of someone else's records.
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
-        let mut consumer = RecordingHaElectionConsumer {
-            batches: vec![vec![consumer_record(
-                "some-other-topic",
-                1,
-                7,
-                Some(record.encode().unwrap()),
-            )]],
-            commit_calls: 0,
-        };
+        let mut consumer = tenant_a_r1_election_consumer("some-other-topic");
         let result =
             poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
                 .await
@@ -3734,10 +3829,33 @@ overrides:
         let mut consumer = RecordingHaElectionConsumer {
             batches: vec![
                 vec![
-                    consumer_record(HA_TRACKER_TOPIC, 0, 1, Some(record("c1"))),
-                    consumer_record(HA_TRACKER_TOPIC, 1, 5, Some(record("c2"))),
+                    DeliveredRecord {
+                        topic: HA_TRACKER_TOPIC,
+                        partition: 0,
+                        offset: 1,
+                        payload: Some(record("c1")),
+                        ..DeliveredRecord::default()
+                    }
+                    .build(),
+                    DeliveredRecord {
+                        topic: HA_TRACKER_TOPIC,
+                        partition: 1,
+                        offset: 5,
+                        payload: Some(record("c2")),
+                        ..DeliveredRecord::default()
+                    }
+                    .build(),
                 ],
-                vec![consumer_record(HA_TRACKER_TOPIC, 2, 9, Some(record("c3")))],
+                vec![
+                    DeliveredRecord {
+                        topic: HA_TRACKER_TOPIC,
+                        partition: 2,
+                        offset: 9,
+                        payload: Some(record("c3")),
+                        ..DeliveredRecord::default()
+                    }
+                    .build(),
+                ],
                 vec![],
             ],
             commit_calls: 0,
@@ -3813,21 +3931,7 @@ overrides:
     #[tokio::test]
     async fn poll_ha_election_consumer_once_replays_records_and_commits_on_progress() {
         let tracker = HaTracker::default();
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
-        let mut consumer = RecordingHaElectionConsumer {
-            batches: vec![vec![consumer_record(
-                HA_TRACKER_TOPIC,
-                1,
-                7,
-                Some(record.encode().unwrap()),
-            )]],
-            commit_calls: 0,
-        };
+        let mut consumer = tenant_a_r1_election_consumer(HA_TRACKER_TOPIC);
 
         let result =
             poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
@@ -3852,13 +3956,15 @@ overrides:
     #[tokio::test]
     async fn future_ha_format_is_rejected_before_state_or_offset_changes() {
         let tracker = HaTracker::default();
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
-        let mut future = consumer_record(HA_TRACKER_TOPIC, 1, 7, Some(record.encode().unwrap()));
+        let record = tenant_a_r1_election();
+        let mut future = DeliveredRecord {
+            topic: HA_TRACKER_TOPIC,
+            partition: 1,
+            offset: 7,
+            payload: Some(record.encode().unwrap()),
+            ..DeliveredRecord::default()
+        }
+        .build();
         future.headers.push(krabka_client_consumer::Header {
             key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
             value: Some(Bytes::from_static(b"2")),
@@ -3948,7 +4054,8 @@ overrides:
         }
     }
 
-    fn partial_push_request(body: Vec<u8>) -> Request<Body> {
+    /// A snappy protobuf remote-write v1 push of `body` as tenant `tenant-a`.
+    fn tenant_a_push_request(body: Vec<u8>) -> Request<Body> {
         Request::builder()
             .method("POST")
             .uri("/api/v1/push")
@@ -3970,7 +4077,7 @@ overrides:
         let state = Arc::new(DistributorState::new(sink));
 
         let response = router(state)
-            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .oneshot(tenant_a_push_request(v1_body_with_samples(10)))
             .await
             .unwrap();
 
@@ -3995,7 +4102,7 @@ overrides:
         let state = Arc::new(DistributorState::new(sink));
 
         let response = router(state)
-            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .oneshot(tenant_a_push_request(v1_body_with_samples(10)))
             .await
             .unwrap();
 
@@ -4012,213 +4119,120 @@ overrides:
     /// counted as a WAL append failure like any other, and a second time on
     /// the shared produce instruments, which size what the sender's retry will
     /// write twice.
-    #[tokio::test]
-    async fn a_partially_appended_batch_moves_the_produce_instruments() {
-        let sink = Arc::new(PartialSink::new(3));
-        let metrics = ServiceMetrics::new();
-        let state = Arc::new(DistributorState::new(sink).with_metrics(metrics.clone()));
-
-        let response = router(state)
-            .oneshot(partial_push_request(v1_body_with_samples(10)))
-            .await
-            .unwrap();
-
-        check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
-        check!(metrics.wal_append_failures.get() == 1);
-        check!(metrics.wal_produce.partial_batch_appends() == 1);
-        check!(metrics.wal_produce.unappended_records() == 7);
-    }
-
+    ///
     /// A batch that appended nothing is not partial. The sender's retry writes
     /// each record one time, so the partial-batch family must stay at zero
     /// while the failure is still counted and still a 500.
     #[tokio::test]
-    async fn a_batch_that_appended_nothing_is_counted_as_a_clean_failure() {
-        let sink = Arc::new(PartialSink::new(0));
-        let metrics = ServiceMetrics::new();
-        let state = Arc::new(DistributorState::new(sink).with_metrics(metrics.clone()));
+    async fn a_failed_batch_moves_the_produce_instruments_only_when_partial() {
+        struct PartialAppendCase {
+            appended: usize,
+            partial_batch_appends: u64,
+            unappended_records: u64,
+        }
+        for PartialAppendCase {
+            appended,
+            partial_batch_appends,
+            unappended_records,
+        } in [
+            PartialAppendCase {
+                appended: 3,
+                partial_batch_appends: 1,
+                unappended_records: 7,
+            },
+            PartialAppendCase {
+                appended: 0,
+                partial_batch_appends: 0,
+                unappended_records: 10,
+            },
+        ] {
+            let sink = Arc::new(PartialSink::new(appended));
+            let metrics = ServiceMetrics::new();
+            let state = Arc::new(DistributorState::new(sink).with_metrics(metrics.clone()));
 
-        let response = router(state)
-            .oneshot(partial_push_request(v1_body_with_samples(10)))
-            .await
-            .unwrap();
+            let response = router(state)
+                .oneshot(tenant_a_push_request(v1_body_with_samples(10)))
+                .await
+                .unwrap();
 
-        check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
-        check!(metrics.wal_append_failures.get() == 1);
-        check!(metrics.wal_produce.partial_batch_appends() == 0);
-        check!(metrics.wal_produce.unappended_records() == 10);
+            check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
+            check!(metrics.ingest.wal_append_failures.get() == 1);
+            check!(metrics.wal_produce.partial_batch_appends() == partial_batch_appends);
+            check!(metrics.wal_produce.unappended_records() == unappended_records);
+        }
     }
 }
 
-mod append_clock_readings;
-mod append_decoded_series;
-mod append_wal_records;
-mod clock_identity_labels;
-mod clock_projection;
-mod clock_reading_metric;
 mod clock_series;
-mod clock_state_series;
-mod clock_wal_records;
-mod clocks_push;
-mod clocks_push_inner;
 mod consumer;
 mod decode_influx;
-mod decode_otlp_http_body;
-mod decoded_sample_count;
 mod decoded_series;
-mod default_distributor_max_decompressed;
-mod default_max_tracked_tenants;
 mod distributor_state;
-mod enforce_and_record_active_series;
-mod enforce_creation_grace_period;
-mod enforce_ingest_limits;
-mod enforce_ingestion_rate;
-mod enforce_label_limits;
-mod enforce_out_of_order_window;
 mod ha_election_compaction_key;
-mod ha_election_consumer_commit;
-mod ha_election_consumer_error;
-mod ha_election_consumer_loop_summary;
-mod ha_election_consumer_poll;
-mod ha_election_consumer_record;
-mod ha_election_partition_offset;
-mod ha_election_replay_error;
-mod ha_election_replay_result;
-mod ha_election_sink;
-mod header_list_includes;
-mod indicator;
-mod influx_push;
-mod influx_push_inner;
+mod ha_election_consumer;
+mod http_push;
 mod ingest_clock;
-mod ingest_span;
-mod ingest_stamp;
-mod insert_written_header;
-mod is_valid_label_name;
+mod ingest_gates;
+mod ingest_request_start;
 mod kafka_ha_election_sink;
 mod kafka_sink;
-mod keyed_producer_record;
-mod label_pairs;
-mod max_exemplar_label_codepoints;
 mod mimir_tenant_status;
-mod otlp_grpc_export_inner;
+mod otlp_ingest;
 mod otlp_metrics_service;
-mod otlp_metrics_service_server;
-mod otlp_push;
-mod otlp_push_inner;
-mod otlp_translation_strategy;
-mod poll_ha_election_consumer_once;
-mod produce_error;
-mod projected_labels;
-mod push;
+mod producer_records;
 mod push_error;
-mod push_inner;
 mod push_success;
-mod record_ingest_outcome;
-mod replay_ha_election_records;
-mod require_otlp_protobuf_content_type;
-mod require_snappy_encoding;
 mod router;
-mod run_ha_election_consumer_loop;
 mod sample_timestamp_bounds;
-mod series_activity;
-mod series_sweep_interval;
 mod series_tracker;
-mod series_tracker_state;
 mod serve;
-mod status_from_http_status;
 mod status_from_push_error;
-mod system_ingest_clock;
-mod tenant_series;
 mod validate;
-mod validate_exemplar_labels;
-mod wal_producer_record;
-mod wal_records_from_series;
+mod wal_ingest;
 mod wal_sink;
-mod widen;
 mod written_counts_response;
 
-use append_clock_readings::append_clock_readings;
-use append_decoded_series::append_decoded_series;
-use append_wal_records::append_wal_records;
-use clock_identity_labels::clock_identity_labels;
-use clock_projection::clock_projection;
-pub use clock_reading_metric::CLOCK_READING_METRIC;
-pub use clock_series::clock_series;
-use clock_state_series::clock_state_series;
-pub use clock_wal_records::clock_wal_records;
-use clocks_push::clocks_push;
-use clocks_push_inner::clocks_push_inner;
+use clock_series::clock_identity_labels;
+pub use clock_series::{CLOCK_READING_METRIC, clock_series};
 use decode_influx::decode_influx;
-use decode_otlp_http_body::decode_otlp_http_body;
-use decoded_sample_count::decoded_sample_count;
-use decoded_series::decoded_series;
-pub use default_distributor_max_decompressed::DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED;
-pub use default_max_tracked_tenants::DEFAULT_MAX_TRACKED_TENANTS;
-pub use distributor_state::DistributorState;
-use enforce_and_record_active_series::enforce_and_record_active_series;
-use enforce_creation_grace_period::enforce_creation_grace_period;
-use enforce_ingest_limits::enforce_ingest_limits;
-use enforce_ingestion_rate::enforce_ingestion_rate;
-use enforce_label_limits::enforce_label_limits;
-use enforce_out_of_order_window::enforce_out_of_order_window;
+use decoded_series::{decoded_sample_count, decoded_series};
+pub use distributor_state::{
+    DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED, DEFAULT_MAX_TRACKED_TENANTS, DistributorState,
+};
 pub use ha_election_compaction_key::ha_election_compaction_key;
-pub use ha_election_consumer_commit::HaElectionConsumerCommit;
-pub use ha_election_consumer_error::HaElectionConsumerError;
-pub use ha_election_consumer_loop_summary::HaElectionConsumerLoopSummary;
-pub use ha_election_consumer_poll::HaElectionConsumerPoll;
-pub use ha_election_consumer_record::HaElectionConsumerRecord;
-pub use ha_election_partition_offset::HaElectionPartitionOffset;
-pub use ha_election_replay_error::HaElectionReplayError;
-pub use ha_election_replay_result::HaElectionReplayResult;
-pub use ha_election_sink::HaElectionSink;
-use header_list_includes::header_list_includes;
-use indicator::indicator;
-use influx_push::influx_push;
-use influx_push_inner::influx_push_inner;
-pub use ingest_clock::IngestClock;
-use ingest_span::ingest_span;
-use ingest_stamp::ingest_stamp;
-use insert_written_header::insert_written_header;
-use is_valid_label_name::is_valid_label_name;
+pub use ha_election_consumer::{
+    poll_ha_election_consumer_once, replay_ha_election_records, run_ha_election_consumer_loop,
+};
+#[cfg(test)]
+use http_push::decode_otlp_http_body;
+use http_push::{clocks_push, influx_push, otlp_push, push};
+use ingest_clock::ingest_stamp;
+pub use ingest_clock::{IngestClock, SystemIngestClock};
+use ingest_gates::enforce_ingest_limits;
+#[cfg(test)]
+use ingest_gates::{enforce_label_limits, enforce_out_of_order_window};
+use ingest_request_start::IngestRequestStart;
 pub use kafka_ha_election_sink::KafkaHaElectionSink;
 pub use kafka_sink::KafkaSink;
-use keyed_producer_record::keyed_producer_record;
-use label_pairs::label_pairs;
-use max_exemplar_label_codepoints::MAX_EXEMPLAR_LABEL_CODEPOINTS;
 use mimir_tenant_status::{all_user_stats, runtime_config, user_limits, user_stats};
-use otlp_grpc_export_inner::otlp_grpc_export_inner;
+pub use otlp_ingest::otlp_metrics_service_server;
+use otlp_ingest::{decode_tenant_otlp, otlp_grpc_export_inner, otlp_translation_strategy};
 pub use otlp_metrics_service::{OtlpMetricsService, otlp_metrics_service};
-pub use otlp_metrics_service_server::otlp_metrics_service_server;
-use otlp_push::otlp_push;
-use otlp_push_inner::otlp_push_inner;
-use otlp_translation_strategy::otlp_translation_strategy;
-pub use poll_ha_election_consumer_once::poll_ha_election_consumer_once;
-pub use produce_error::ProduceError;
-use projected_labels::projected_labels;
-use push::push;
+use producer_records::{TraceHeader, keyed_producer_record, wal_producer_record};
 use push_error::PushError;
-use push_inner::push_inner;
-use push_success::PushSuccess;
-use record_ingest_outcome::record_ingest_outcome;
-pub use replay_ha_election_records::replay_ha_election_records;
-use require_otlp_protobuf_content_type::require_otlp_protobuf_content_type;
-use require_snappy_encoding::require_snappy_encoding;
+use push_success::{PushOutcome, PushSuccess, series_push_result};
 pub use router::router;
-pub use run_ha_election_consumer_loop::run_ha_election_consumer_loop;
 use sample_timestamp_bounds::sample_timestamp_bounds;
-use series_activity::SeriesActivity;
-use series_sweep_interval::SERIES_SWEEP_INTERVAL;
 use series_tracker::SeriesTracker;
-use series_tracker_state::SeriesTrackerState;
 pub use serve::serve;
-use status_from_http_status::status_from_http_status;
+#[cfg(test)]
+use status_from_push_error::status_from_http_status;
 use status_from_push_error::status_from_push_error;
-pub use system_ingest_clock::SystemIngestClock;
-use tenant_series::TenantSeries;
 pub use validate::validate;
-use validate_exemplar_labels::validate_exemplar_labels;
-use wal_producer_record::wal_producer_record;
-pub use wal_records_from_series::wal_records_from_series;
-pub use wal_sink::WalSink;
-use widen::widen;
+#[cfg(test)]
+use validate::{MAX_EXEMPLAR_LABEL_CODEPOINTS, validate_exemplar_labels};
+use validate::{require_otlp_protobuf_content_type, require_snappy_encoding};
+use wal_ingest::{append_clock_readings, append_decoded_series};
+pub use wal_ingest::{clock_wal_records, wal_records_from_series};
+pub use wal_sink::{ProduceError, WalBatchRecord, WalSink};
 use written_counts_response::written_counts_response;

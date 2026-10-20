@@ -1,5 +1,10 @@
 use super::{Expr, MatrixSelector, RateUdfKind};
 
+pub(crate) struct RateRangeCall<'a> {
+    pub selector: &'a MatrixSelector,
+    pub kind: RateUdfKind,
+}
+
 /// Recognizes a top-level `f(selector[range])` rate-family call.
 ///
 /// This function returns the inner [`MatrixSelector`] and the UDF kind for the
@@ -10,7 +15,7 @@ use super::{Expr, MatrixSelector, RateUdfKind};
 /// not to a plain `MatrixSelector`, so this function rejects it and it stays on
 /// the interpreter. Nested forms (`sum(rate(...))`), `_over_time`, subqueries,
 /// and every other function also stay on the interpreter.
-pub(crate) fn match_rate_range_call(expr: &Expr) -> Option<(&MatrixSelector, RateUdfKind)> {
+pub(crate) fn match_rate_range_call(expr: &Expr) -> Option<RateRangeCall<'_>> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -25,5 +30,5 @@ pub(crate) fn match_rate_range_call(expr: &Expr) -> Option<(&MatrixSelector, Rat
     let Expr::MatrixSelector(selector) = arg else {
         return None;
     };
-    Some((selector, kind))
+    Some(RateRangeCall { selector, kind })
 }

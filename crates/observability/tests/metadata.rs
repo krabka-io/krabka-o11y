@@ -5,50 +5,85 @@ mod support;
 use std::collections::{BTreeMap, BTreeSet};
 
 use assert2::assert;
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
+use axum::{body::Body, http::StatusCode};
 use krabka_blockstore::{
     BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, TimeRange, labels,
 };
 use krabka_observability::{InMemoryWalSink, LogWalSink, QuerierState, WalLogRecord, loki_router};
 use serde_json::json;
 use support::{
-    DenyingQueryAuthorizer, assert_loki_error, current_unix_epoch_nanos, fixture, json_body,
-    text_body,
+    DenyingQueryAuthorizer, Tenant, assert_json_ok, assert_loki_error, current_unix_epoch_nanos,
+    fixture, insert_api_series, json_body, send, tenant_a_post, text_body,
 };
-use tower::ServiceExt as _;
+
+/// The shared fixture with one hot-tail `api` record at 20 ns that carries a
+/// `level="error"` label.
+async fn hot_error_level_app() -> axum::Router {
+    let hot_tail = InMemoryWalSink::default();
+    hot_tail
+        .append(WalLogRecord {
+            tenant: "tenant-a".to_string(),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api"),
+                krabka_blockstore::LabelPair::new("level", "error"),
+            ]),
+            timestamp_ns: 20,
+            line: "api hot error".to_string(),
+            structured_metadata: BTreeMap::new(),
+            position: None,
+        })
+        .await
+        .unwrap();
+    loki_router(fixture().with_hot_tail(hot_tail, 19))
+}
+
+/// A querier whose index names an `api` block at 10-19 ns and a `worker`
+/// block at 20-29 ns, with an extra `zone` label on `worker`.
+fn api_then_zoned_worker_app() -> axum::Router {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    let api = insert_api_series(&mut label_index, "tenant-a");
+    let worker = label_index.insert_series(
+        "tenant-a",
+        labels([
+            krabka_blockstore::LabelPair::new("app", "worker"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("zone", "east"),
+        ]),
+    );
+    let mut block_index = BlockIndex::default();
+    block_index.insert(BlockDescriptor::new(
+        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        BTreeSet::from([api]),
+    ));
+    block_index.insert(BlockDescriptor::new(
+        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
+        BTreeSet::from([worker]),
+    ));
+    loki_router(QuerierState::new(dir, label_index, block_index))
+}
+
+async fn assert_metadata_paths_return_bad_request(paths: &[&str], expected: &str) {
+    for path in paths {
+        let app = loki_router(fixture());
+        let response = Tenant("tenant-a").get(&app, path).await;
+
+        assert!(response.status() == StatusCode::BAD_REQUEST);
+        assert!(text_body(response).await == expected);
+    }
+}
 
 #[tokio::test]
 async fn metadata_endpoints_return_loki_parse_error_text_for_invalid_matcher() {
-    let paths = [
-        "/loki/api/v1/labels?query=%7Bapp%3D",
-        "/loki/api/v1/label/app/values?query=%7Bapp%3D",
-        "/loki/api/v1/series?match[]=%7Bapp%3D",
-    ];
-
-    for path in paths {
-        let state = fixture();
-        let app = loki_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::BAD_REQUEST);
-        assert!(
-            text_body(response).await
-                == "parse error at line 1, col 6: syntax error: unexpected $end, expecting STRING"
-        );
-    }
+    assert_metadata_paths_return_bad_request(
+        &[
+            "/loki/api/v1/labels?query=%7Bapp%3D",
+            "/loki/api/v1/label/app/values?query=%7Bapp%3D",
+            "/loki/api/v1/series?match[]=%7Bapp%3D",
+        ],
+        "parse error at line 1, col 6: syntax error: unexpected $end, expecting STRING",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -56,16 +91,9 @@ async fn series_endpoint_returns_loki_error_for_invalid_time_bound() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/series?start=not-a-number")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/series?start=not-a-number")
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -81,16 +109,7 @@ async fn series_endpoint_allows_missing_matcher_parameter_like_loki() {
         let state = QuerierState::new(&dir, LabelIndex::default(), BlockIndex::default());
         let app = loki_router(state);
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, path).await;
 
         assert!(response.status() == StatusCode::OK, "{path}");
         assert!(
@@ -105,33 +124,15 @@ async fn series_endpoint_allows_missing_matcher_parameter_like_loki() {
 
 #[tokio::test]
 async fn metadata_endpoints_reject_loki_query_ranges_over_limit() {
-    let paths = [
-        "/loki/api/v1/labels?start=0.000000000&end=2595601000000000",
-        "/loki/api/v1/label/app/values?start=0.000000000&end=2595601000000000",
-        "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000",
-    ];
-
-    for path in paths {
-        let state = fixture();
-        let app = loki_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::BAD_REQUEST);
-        assert!(
-            text_body(response).await
-                == "the query time range exceeds the limit (query length: 721h0m1s, limit: 30d1h)"
-        );
-    }
+    assert_metadata_paths_return_bad_request(
+        &[
+            "/loki/api/v1/labels?start=0.000000000&end=2595601000000000",
+            "/loki/api/v1/label/app/values?start=0.000000000&end=2595601000000000",
+            "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000",
+        ],
+        "the query time range exceeds the limit (query length: 721h0m1s, limit: 30d1h)",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -140,26 +141,16 @@ async fn labels_endpoint_returns_tenant_label_names() {
     let app = loki_router(state);
 
     for path in ["/loki/api/v1/labels", "/loki/api/v1/label"] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, path).await;
 
-        assert!(response.status() == StatusCode::OK);
-        assert!(
-            json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": ["app", "env"]
-                })
-        );
+        assert_json_ok(
+            response,
+            &json!({
+                "status": "success",
+                "data": ["app", "env"]
+            }),
+        )
+        .await;
     }
 }
 
@@ -177,20 +168,9 @@ async fn empty_metadata_endpoints_return_loki_sparse_success_shapes() {
         "/loki/api/v1/label",
         "/loki/api/v1/label/app/values",
     ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, path).await;
 
-        assert!(response.status() == StatusCode::OK);
-        assert!(json_body(response).await == json!({ "status": "success" }));
+        assert_json_ok(response, &json!({ "status": "success" })).await;
     }
 
     for path in [
@@ -200,123 +180,73 @@ async fn empty_metadata_endpoints_return_loki_sparse_success_shapes() {
         "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&limit=10",
         "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&limit=10",
     ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, path).await;
 
-        assert!(response.status() == StatusCode::OK);
-        assert!(json_body(response).await == json!({}));
+        assert_json_ok(response, &json!({})).await;
     }
 }
 
 #[tokio::test]
 async fn metadata_endpoints_hide_loki_detected_level_enrichment() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series(
+    let (dir, label_index) = support::manifest_with_series(
         "tenant-a",
         labels([
-            ("app", "api"),
-            ("detected_level", "error"),
-            ("env", "prod"),
-            ("service_name", "api"),
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("detected_level", "error"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("service_name", "api"),
         ]),
     );
     let app = loki_router(QuerierState::new(dir, label_index, BlockIndex::default()));
 
-    let labels_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let labels_response = Tenant("tenant-a").get(&app, "/loki/api/v1/labels").await;
+
+    assert_json_ok(
+        labels_response,
+        &json!({
+            "status": "success",
+            "data": ["app", "env", "service_name"]
+        }),
+    )
+    .await;
+
+    let series_response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D",
         )
-        .await
-        .unwrap();
+        .await;
 
-    assert!(labels_response.status() == StatusCode::OK);
-    assert!(
-        json_body(labels_response).await
-            == json!({
-                "status": "success",
-                "data": ["app", "env", "service_name"]
-            })
-    );
-
-    let series_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(series_response.status() == StatusCode::OK);
-    assert!(
-        json_body(series_response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "api",
-                        "env": "prod",
-                        "service_name": "api"
-                    }
-                ]
-            })
-    );
+    assert_json_ok(
+        series_response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "api",
+                    "env": "prod",
+                    "service_name": "api"
+                }
+            ]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn labels_endpoint_includes_hot_wal_tail_label_names() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("level", "error")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
+    let app = hot_error_level_app().await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/labels").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["app", "env", "level"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["app", "env", "level"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -324,178 +254,111 @@ async fn deprecated_api_prom_metadata_endpoints_return_loki_metadata() {
     let state = fixture();
     let app = loki_router(state);
 
-    let label_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/prom/label")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(label_response.status() == StatusCode::OK);
-    assert!(
-        json_body(label_response).await
-            == json!({
-                "values": ["app", "env"]
-            })
-    );
+    let label_response = Tenant("tenant-a").get(&app, "/api/prom/label").await;
+    assert_json_ok(
+        label_response,
+        &json!({
+            "values": ["app", "env"]
+        }),
+    )
+    .await;
 
-    let values_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/prom/label/env/values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(values_response.status() == StatusCode::OK);
-    assert!(
-        json_body(values_response).await
-            == json!({
-                "values": ["app", "env"]
-            })
-    );
+    let values_response = Tenant("tenant-a")
+        .get(&app, "/api/prom/label/env/values")
+        .await;
+    assert_json_ok(
+        values_response,
+        &json!({
+            "values": ["app", "env"]
+        }),
+    )
+    .await;
 
-    let series_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/prom/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let series_response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/api/prom/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030",
         )
-        .await
-        .unwrap();
-    assert!(series_response.status() == StatusCode::OK);
-    assert!(
-        json_body(series_response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "api",
-                        "env": "prod"
-                    }
-                ]
-            })
-    );
+        .await;
+    assert_json_ok(
+        series_response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "api",
+                    "env": "prod"
+                }
+            ]
+        }),
+    )
+    .await;
 
-    let series_post_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/prom/series")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(series_post_response.status() == StatusCode::OK);
-    assert!(
-        json_body(series_post_response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "api",
-                        "env": "prod"
-                    }
-                ]
-            })
-    );
+    let series_post_response = send(
+        &app,
+        tenant_a_post("/api/prom/series")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(
+                "match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030",
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_json_ok(
+        series_post_response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "api",
+                    "env": "prod"
+                }
+            ]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn labels_endpoint_applies_time_range() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker = label_index.insert_series(
-        "tenant-a",
-        labels([("app", "worker"), ("env", "prod"), ("zone", "east")]),
-    );
-    let mut block_index = BlockIndex::default();
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        BTreeSet::from([worker]),
-    ));
-    let app = loki_router(QuerierState::new(dir, label_index, block_index));
+    let app = api_then_zoned_worker_app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels?start=0.000000010&end=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/labels?start=0.000000010&end=0.000000019",
         )
-        .await
-        .unwrap();
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["app", "env"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["app", "env"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn label_values_endpoint_applies_since_when_start_is_absent() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker = label_index.insert_series(
-        "tenant-a",
-        labels([("app", "worker"), ("env", "prod"), ("zone", "east")]),
-    );
-    let mut block_index = BlockIndex::default();
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        BTreeSet::from([worker]),
-    ));
-    let app = loki_router(QuerierState::new(dir, label_index, block_index));
+    let app = api_then_zoned_worker_app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/label/app/values?end=0.000000029&since=9ns")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/label/app/values?end=0.000000029&since=9ns",
         )
-        .await
-        .unwrap();
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["worker"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["worker"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -507,11 +370,19 @@ async fn labels_endpoint_applies_since_with_default_end() {
     let mut label_index = LabelIndex::default();
     let recent = label_index.insert_series(
         "tenant-a",
-        labels([("app", "api"), ("env", "prod"), ("zone", "west")]),
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("zone", "west"),
+        ]),
     );
     let old = label_index.insert_series(
         "tenant-a",
-        labels([("app", "api"), ("env", "prod"), ("legacy", "true")]),
+        labels([
+            krabka_blockstore::LabelPair::new("app", "api"),
+            krabka_blockstore::LabelPair::new("env", "prod"),
+            krabka_blockstore::LabelPair::new("legacy", "true"),
+        ]),
     );
     let mut block_index = BlockIndex::default();
     block_index.insert(BlockDescriptor::new(
@@ -536,66 +407,36 @@ async fn labels_endpoint_applies_since_with_default_end() {
     ));
     let app = loki_router(QuerierState::new(dir, label_index, block_index));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels?since=5m")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/labels?since=5m")
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["app", "env", "zone"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["app", "env", "zone"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn labels_endpoint_applies_selector_query() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker = label_index.insert_series(
-        "tenant-a",
-        labels([("app", "worker"), ("env", "prod"), ("zone", "east")]),
-    );
-    let mut block_index = BlockIndex::default();
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    block_index.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
-        BTreeSet::from([worker]),
-    ));
-    let app = loki_router(QuerierState::new(dir, label_index, block_index));
+    let app = api_then_zoned_worker_app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels?query=%7Bapp%3D%22api%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/labels?query=%7Bapp%3D%22api%22%7D")
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["app", "env"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["app", "env"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -603,50 +444,41 @@ async fn label_metadata_endpoints_accept_form_encoded_post_body() {
     let state = fixture();
     let app = loki_router(state);
 
-    let labels_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/labels")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from("query=%7Bapp%3D%22api%22%7D"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let labels_response = send(
+        &app,
+        tenant_a_post("/loki/api/v1/labels")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("query=%7Bapp%3D%22api%22%7D"))
+            .unwrap(),
+    )
+    .await;
 
-    assert!(labels_response.status() == StatusCode::OK);
-    assert!(
-        json_body(labels_response).await
-            == json!({
-                "status": "success",
-                "data": ["app", "env"]
-            })
-    );
+    assert_json_ok(
+        labels_response,
+        &json!({
+            "status": "success",
+            "data": ["app", "env"]
+        }),
+    )
+    .await;
 
-    let values_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/label/app/values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from("query=%7Bapp%3D%22worker%22%7D"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let values_response = send(
+        &app,
+        tenant_a_post("/loki/api/v1/label/app/values")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("query=%7Bapp%3D%22worker%22%7D"))
+            .unwrap(),
+    )
+    .await;
 
-    assert!(values_response.status() == StatusCode::OK);
-    assert!(
-        json_body(values_response).await
-            == json!({
-                "status": "success",
-                "data": ["worker"]
-            })
-    );
+    assert_json_ok(
+        values_response,
+        &json!({
+            "status": "success",
+            "data": ["worker"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -654,63 +486,36 @@ async fn label_values_endpoint_returns_tenant_values() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/label/app/values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/label/app/values")
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["api", "worker"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["api", "worker"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn label_values_endpoint_includes_hot_wal_tail_values() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("level", "error")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
+    let app = hot_error_level_app().await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/label/level/values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/label/level/values")
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["error"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["error"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -718,25 +523,21 @@ async fn label_values_endpoint_applies_selector_query() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/label/app/values?query=%7Bapp%3D%22worker%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/label/app/values?query=%7Bapp%3D%22worker%22%7D",
         )
-        .await
-        .unwrap();
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["worker"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["worker"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -744,25 +545,21 @@ async fn label_values_endpoint_applies_time_range() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/label/app/values?start=0.000000010&end=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/label/app/values?start=0.000000010&end=0.000000019",
         )
-        .await
-        .unwrap();
+        .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": ["api"]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": ["api"]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -770,30 +567,21 @@ async fn series_endpoint_applies_matchers_time_range_and_tenant() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/series?match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000020&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/series?match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000020&end=0.000000030").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "worker",
-                        "env": "prod"
-                    }
-                ]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "worker",
+                    "env": "prod"
+                }
+            ]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -801,16 +589,7 @@ async fn label_names_endpoint_rejects_unauthorized_tenant_read() {
     let state = fixture().with_query_authorizer(DenyingQueryAuthorizer);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/labels")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/labels").await;
 
     assert!(response.status() == StatusCode::FORBIDDEN);
     assert_loki_error(
@@ -822,45 +601,23 @@ async fn label_names_endpoint_rejects_unauthorized_tenant_read() {
 
 #[tokio::test]
 async fn series_endpoint_includes_matching_hot_wal_tail_series() {
-    let hot_tail = InMemoryWalSink::default();
-    hot_tail
-        .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("level", "error")]),
-            timestamp_ns: 20,
-            line: "api hot error".to_string(),
-            structured_metadata: BTreeMap::new(),
-            position: None,
-        })
-        .await
-        .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
-    let app = loki_router(state);
+    let app = hot_error_level_app().await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/series?match%5B%5D=%7Blevel%3D%22error%22%7D&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/series?match%5B%5D=%7Blevel%3D%22error%22%7D&start=0.000000000&end=0.000000030").await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "api",
-                        "level": "error"
-                    }
-                ]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "api",
+                    "level": "error"
+                }
+            ]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -868,34 +625,30 @@ async fn series_endpoint_accepts_form_encoded_post_body() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/series")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000020&end=0.000000030",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        tenant_a_post("/loki/api/v1/series")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(
+                "match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000020&end=0.000000030",
+            ))
+            .unwrap(),
+    )
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "worker",
-                        "env": "prod"
-                    }
-                ]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "worker",
+                    "env": "prod"
+                }
+            ]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -903,31 +656,21 @@ async fn series_endpoint_accepts_post_query_parameters_when_body_is_empty() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22worker%22%7D&start=0.000000020&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(&app, tenant_a_post("/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22worker%22%7D&start=0.000000020&end=0.000000030").body(Body::empty()).unwrap()).await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "worker",
-                        "env": "prod"
-                    }
-                ]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "worker",
+                    "env": "prod"
+                }
+            ]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -935,32 +678,28 @@ async fn series_endpoint_merges_post_query_parameters_with_form_body() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/series?start=0.000000020&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from("match%5B%5D=%7Benv%3D%22prod%22%7D"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        tenant_a_post("/loki/api/v1/series?start=0.000000020&end=0.000000030")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("match%5B%5D=%7Benv%3D%22prod%22%7D"))
+            .unwrap(),
+    )
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "worker",
-                        "env": "prod"
-                    }
-                ]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "worker",
+                    "env": "prod"
+                }
+            ]
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -969,7 +708,10 @@ async fn series_endpoint_accepts_form_post_matcher_with_raw_ampersand() {
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api&edge"), ("level", "info")]),
+            labels: labels([
+                krabka_blockstore::LabelPair::new("app", "api&edge"),
+                krabka_blockstore::LabelPair::new("level", "info"),
+            ]),
             timestamp_ns: 20,
             line: "api edge hot".to_string(),
             structured_metadata: BTreeMap::new(),
@@ -980,32 +722,28 @@ async fn series_endpoint_accepts_form_post_matcher_with_raw_ampersand() {
     let state = fixture().with_hot_tail(hot_tail, 19);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/series")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"match[]={app="api&edge"}&start=0.000000000&end=0.000000030"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        tenant_a_post("/loki/api/v1/series")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(
+                r#"match[]={app="api&edge"}&start=0.000000000&end=0.000000030"#,
+            ))
+            .unwrap(),
+    )
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": [
-                    {
-                        "app": "api&edge",
-                        "level": "info"
-                    }
-                ]
-            })
-    );
+    assert_json_ok(
+        response,
+        &json!({
+            "status": "success",
+            "data": [
+                {
+                    "app": "api&edge",
+                    "level": "info"
+                }
+            ]
+        }),
+    )
+    .await;
 }

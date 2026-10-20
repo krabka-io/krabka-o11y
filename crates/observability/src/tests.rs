@@ -19,20 +19,6 @@ pub(crate) mod prelude {
 
     pub(crate) use assert2::check;
     pub(crate) use async_trait::async_trait;
-    pub(crate) use axum::{
-        Extension, Router,
-        body::Bytes,
-        extract::{
-            Path, RawQuery, State,
-            ws::{Message, WebSocket, WebSocketUpgrade},
-        },
-        http::{
-            HeaderMap, StatusCode,
-            header::{ACCEPT, CONTENT_ENCODING, CONTENT_TYPE},
-        },
-        response::{IntoResponse, Response},
-        routing::{get, post},
-    };
     pub(crate) use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     pub(crate) use clap::{Parser, ValueEnum};
     pub(crate) use datafusion::{
@@ -82,11 +68,12 @@ pub(crate) mod prelude {
         MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
         MetricVectorMatching, ParseError, ParserStage, PipelineStage, PlanError, Quantile,
         RangeAggregation, StreamPlan, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion,
-        VectorAggregation, VectorAggregationOp, VectorGrouping,
+        VectorAggregation, VectorAggregationOp, VectorGrouping, hex_digit_value,
         parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
         parse_metric_binary_set_query, parse_metric_label_join_query,
         parse_metric_label_replace_query, parse_metric_query, parse_metric_scalar_arithmetic_query,
         parse_metric_scalar_comparison_query, parse_query, plan_stream_query,
+        prometheus_duration_unit,
     };
     pub(crate) use krabka_units::{
         ByteRate, ByteSize, Time, bytes, bytes_per_sec,
@@ -97,17 +84,6 @@ pub(crate) mod prelude {
     pub(crate) use object_store::{
         ObjectStore, ObjectStoreExt, local::LocalFileSystem, parse_url_opts,
         path::Path as ObjectPath,
-    };
-    pub(crate) use opentelemetry_proto::tonic::{
-        collector::logs::v1::{
-            ExportLogsServiceRequest as ProtoExportLogsServiceRequest,
-            ExportLogsServiceResponse as ProtoExportLogsServiceResponse,
-            logs_service_server::{LogsService, LogsServiceServer},
-        },
-        common::v1::{
-            AnyValue as ProtoAnyValue, KeyValue as ProtoKeyValue, any_value as proto_any_value,
-        },
-        logs::v1::LogRecord as ProtoLogRecord,
     };
     pub(crate) use parquet::arrow::arrow_writer::ArrowWriter;
     pub(crate) use prost::Message as _;
@@ -133,10 +109,12 @@ pub(crate) mod prelude {
         hot_tail_frontier::*, ingest_and_operations::*, operators_and_alerts::*,
         patterns_and_prometheus_rules::*, per_tenant_limits::*, query_limits_and_timestamps::*,
         rules_and_expressions::*, runtime_policies::*, scalar_rules_and_scans::*,
-        scan_stats_and_samples::*, service_and_authorization::*, shard_index_cache::*,
-        tenant_resolution::*, vector_binary_operations::*, *,
+        scan_stats_and_samples::*, series_samples::*, service_and_authorization::*,
+        shard_index_cache::*, tenant_resolution::*, vector_binary_operations::*, *,
     };
     pub use crate::ids::{Offset, PartitionIndex};
+    // The crate root's own imports (axum, OTLP protos, and the rest).
+    pub(crate) use crate::*;
     pub(crate) use crate::{
         compactor::{
             configuration::*, delete_materialization::*, frontier::*, object_store_support::*,
@@ -156,14 +134,21 @@ pub(crate) mod prelude {
                 aggregation_formatting::*, metric_formatting::*, request_formatting::*,
                 stream_formatting::*,
             },
-            response::{loki_responses::*, parquet_responses::*, query_stats::*},
+            response::{
+                loki_responses::*,
+                parquet_responses::{MetricEvaluationWindow, *},
+                query_stats::*,
+            },
             router::*,
         },
         limits::*,
         metrics::ServiceMetrics,
         querier::{
             aggregate::{metric_values::*, record_matching::*, sample_windows::*},
-            analytics::{detected_fields::*, index_patterns::*},
+            analytics::{
+                detected_fields::{DetectedDurationUnit, ParsedLogfmtPair, *},
+                index_patterns::*,
+            },
             metadata::*,
             metric_eval::{
                 binary_arithmetic::*, binary_sets::*, expression_parser::*, expressions::*,
@@ -183,8 +168,40 @@ pub(crate) mod prelude {
         server_security::{AuthMethod, Principal, SecurityEventSink, TenantGrant},
         service::*,
         service_runtime::*,
-        wal::{hot_tail::*, pollers_and_records::*, traits_and_kafka::*},
+        wal::{
+            hot_tail::*,
+            pollers_and_records::*,
+            traits_and_kafka::{CachedFailure, CachedSnapshot, *},
+        },
     };
+
+    pub(crate) fn loki_streams_with_counts(counts: &[usize], app: &str) -> Vec<Value> {
+        counts
+            .iter()
+            .map(|count| {
+                json!({
+                    "stream": {"app": app},
+                    "values": (0..*count)
+                        .map(|index| json!([index.to_string(), "line"]))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// A one-line `{app="api"}` record under `tenant`, at timestamp 1.
+pub(crate) fn api_record_for_test(tenant: &str) -> prelude::WalLogRecord {
+    let mut labels = prelude::BTreeMap::new();
+    labels.insert("app".to_string(), "api".to_string());
+    prelude::WalLogRecord {
+        tenant: tenant.to_string(),
+        labels,
+        timestamp_ns: 1,
+        line: "line".to_string(),
+        structured_metadata: prelude::BTreeMap::new(),
+        position: None,
+    }
 }
 
 mod acl_quota_and_buffers;
@@ -208,6 +225,7 @@ mod rules_and_expressions;
 mod runtime_policies;
 mod scalar_rules_and_scans;
 mod scan_stats_and_samples;
+mod series_samples;
 mod service_and_authorization;
 mod shard_index_cache;
 mod tenant_resolution;

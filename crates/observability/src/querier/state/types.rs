@@ -7,40 +7,119 @@ use crate::{
     TimeRange, Value, minutes, secs,
 };
 
-mod cached_dynamic_index;
-mod cached_shard_ranges;
-mod cold_object_store_state;
 mod dynamic_index_cache;
-mod dynamic_index_cache_key;
-mod dynamic_index_source;
-mod dynamic_shard_index_cache_key;
-mod dynamic_shard_ranges_cache_key;
-mod hot_tail_state;
-mod loki_rule_groups_by_name;
-mod loki_rule_namespaces;
-mod loki_rule_tenants;
 mod merge_tenant_shard_indexes;
-mod prometheus_alert_key;
-mod prometheus_alert_runtime_state;
 mod querier_state;
-mod shared_loki_rules;
-mod shared_prometheus_alert_states;
 
-pub(crate) use cached_dynamic_index::CachedDynamicIndex;
-pub(crate) use cached_shard_ranges::CachedShardRanges;
-pub(crate) use cold_object_store_state::ColdObjectStoreState;
 pub(crate) use dynamic_index_cache::DynamicIndexCache;
-pub(crate) use dynamic_index_cache_key::DynamicIndexCacheKey;
-pub(crate) use dynamic_index_source::DynamicIndexSource;
-pub(crate) use dynamic_shard_index_cache_key::DynamicShardIndexCacheKey;
-pub(crate) use dynamic_shard_ranges_cache_key::DynamicShardRangesCacheKey;
-pub(crate) use hot_tail_state::HotTailState;
-pub(crate) use loki_rule_groups_by_name::LokiRuleGroupsByName;
-pub(crate) use loki_rule_namespaces::LokiRuleNamespaces;
-pub(crate) use loki_rule_tenants::LokiRuleTenants;
 pub(crate) use merge_tenant_shard_indexes::merge_tenant_shard_indexes;
-pub(crate) use prometheus_alert_key::PrometheusAlertKey;
-pub(crate) use prometheus_alert_runtime_state::PrometheusAlertRuntimeState;
 pub use querier_state::QuerierState;
-pub(crate) use shared_loki_rules::SharedLokiRules;
-pub(crate) use shared_prometheus_alert_states::SharedPrometheusAlertStates;
+
+#[derive(Clone)]
+pub(crate) struct TenantIndexPair {
+    pub(crate) label_index: Arc<LabelIndex>,
+    pub(crate) block_index: Arc<BlockIndex>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedDynamicIndex {
+    pub(crate) loaded_at: Instant,
+    pub(crate) label_index: Arc<LabelIndex>,
+    pub(crate) block_index: Arc<BlockIndex>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedShardRanges {
+    pub(crate) loaded_at: Instant,
+    pub(crate) listed_from_ns: i64,
+    pub(crate) ranges: Vec<TimeRange>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ColdObjectStoreState {
+    pub(crate) store: Arc<dyn ObjectStore>,
+    pub(crate) prefix: ObjectPath,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum DynamicIndexCacheKey {
+    TenantManifest {
+        tenant: String,
+    },
+    TenantShards {
+        tenant: String,
+        start_ns: i64,
+        end_ns: i64,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) enum DynamicIndexSource {
+    TenantObjectStoreManifest {
+        store: Arc<dyn ObjectStore>,
+        prefix: ObjectPath,
+    },
+    TenantObjectStoreShards {
+        store: Arc<dyn ObjectStore>,
+        prefix: ObjectPath,
+    },
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DynamicShardIndexCacheKey {
+    pub(crate) tenant: String,
+    pub(crate) start_ns: i64,
+    pub(crate) end_ns: i64,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DynamicShardRangesCacheKey {
+    pub(crate) tenant: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct HotTailState {
+    pub(crate) source: Arc<dyn LogHotTail>,
+    pub(crate) frontier: CompactionFrontierSource,
+}
+
+pub(crate) type LokiRuleGroupsByName = BTreeMap<String, serde_yaml::Value>;
+
+pub(crate) type LokiRuleNamespaces = BTreeMap<String, LokiRuleGroupsByName>;
+
+pub(crate) type LokiRuleTenants = BTreeMap<String, LokiRuleNamespaces>;
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) struct PrometheusAlertKey {
+    pub(crate) tenant: String,
+    pub(crate) alert_name: String,
+    pub(crate) query: String,
+    pub(crate) labels: Labels,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PrometheusAlertRuntimeState {
+    pub(crate) active_at: i64,
+    pub(crate) last_active_at: i64,
+    pub(crate) value: String,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct SharedLokiRules {
+    pub(crate) tenants: Arc<Mutex<LokiRuleTenants>>,
+    pub(crate) storage_path: Option<Arc<PathBuf>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct SharedPrometheusAlertStates {
+    pub(crate) alerts: Arc<Mutex<BTreeMap<PrometheusAlertKey, PrometheusAlertRuntimeState>>>,
+}
+
+impl SharedPrometheusAlertStates {
+    pub(crate) fn clear_tenant(&self, tenant: &str) {
+        self.alerts
+            .lock()
+            .expect("Prometheus alert state lock poisoned")
+            .retain(|key, _| key.tenant != tenant);
+    }
+}

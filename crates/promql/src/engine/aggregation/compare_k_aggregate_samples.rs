@@ -18,12 +18,20 @@ pub(crate) fn compare_k_aggregate_samples(
 ) -> Ordering {
     let left_value = float_sample_value(left).unwrap_or(f64::NAN);
     let right_value = float_sample_value(right).unwrap_or(f64::NAN);
-    let by_value = match (left_value.is_nan(), right_value.is_nan()) {
-        (true, true) => Ordering::Equal,
-        (true, false) => Ordering::Greater,
-        (false, true) => Ordering::Less,
-        (false, false) if op.id() == T_TOPK => right_value.total_cmp(&left_value),
-        (false, false) => left_value.total_cmp(&right_value),
+    let left_is_nan = left_value.is_nan();
+    let right_is_nan = right_value.is_nan();
+    let by_value = if left_is_nan {
+        if right_is_nan {
+            Ordering::Equal
+        } else {
+            Ordering::Greater
+        }
+    } else if right_is_nan {
+        Ordering::Less
+    } else if op.id() == T_TOPK {
+        right_value.total_cmp(&left_value)
+    } else {
+        left_value.total_cmp(&right_value)
     };
     by_value.then_with(|| labels_key(&left.labels).cmp(&labels_key(&right.labels)))
 }

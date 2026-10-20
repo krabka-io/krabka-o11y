@@ -1,1 +1,0 @@
-{app="api"} | logfmt | drop token | line_format "token=second" | logfmt

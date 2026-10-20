@@ -6,6 +6,16 @@ use super::{
     check_readable, read_password_file,
 };
 
+struct FlagSetting {
+    flag: &'static str,
+    is_set: bool,
+}
+
+struct ClientTlsIdentity {
+    certificate_chain: PathBuf,
+    private_key: PathBuf,
+}
+
 /// The write-ahead log security flags that every Krabka service binary
 /// flattens.
 ///
@@ -157,13 +167,25 @@ impl WalClientSecurityArgs {
         let protocol = self.wal_security_protocol;
         if !protocol.requires_tls() {
             let set_flag = [
-                ("--wal-tls-ca-path", self.wal_tls_ca_path.is_some()),
-                ("--wal-tls-server-name", self.wal_tls_server_name.is_some()),
-                ("--wal-tls-cert-path", self.wal_tls_cert_path.is_some()),
-                ("--wal-tls-key-path", self.wal_tls_key_path.is_some()),
+                FlagSetting {
+                    flag: "--wal-tls-ca-path",
+                    is_set: self.wal_tls_ca_path.is_some(),
+                },
+                FlagSetting {
+                    flag: "--wal-tls-server-name",
+                    is_set: self.wal_tls_server_name.is_some(),
+                },
+                FlagSetting {
+                    flag: "--wal-tls-cert-path",
+                    is_set: self.wal_tls_cert_path.is_some(),
+                },
+                FlagSetting {
+                    flag: "--wal-tls-key-path",
+                    is_set: self.wal_tls_key_path.is_some(),
+                },
             ]
             .into_iter()
-            .find_map(|(flag, set)| set.then_some(flag));
+            .find_map(|setting| setting.is_set.then_some(setting.flag));
             return match set_flag {
                 Some(flag) => {
                     Err(WalClientSecurityError::TlsFlagWithoutTlsProtocol { flag, protocol })
@@ -179,26 +201,34 @@ impl WalClientSecurityArgs {
             .wal_tls_server_name
             .clone()
             .ok_or(WalClientSecurityError::MissingTlsServerName { protocol })?;
-        let client_identity = match (&self.wal_tls_cert_path, &self.wal_tls_key_path) {
-            (Some(cert_path), Some(key_path)) => Some((cert_path.clone(), key_path.clone())),
-            (Some(_), None) => return Err(WalClientSecurityError::TlsCertWithoutKey),
-            (None, Some(_)) => return Err(WalClientSecurityError::TlsKeyWithoutCert),
-            (None, None) => None,
+        let client_identity = match &self.wal_tls_cert_path {
+            Some(cert_path) => {
+                let Some(key_path) = &self.wal_tls_key_path else {
+                    return Err(WalClientSecurityError::TlsCertWithoutKey);
+                };
+                Some(ClientTlsIdentity {
+                    certificate_chain: cert_path.clone(),
+                    private_key: key_path.clone(),
+                })
+            }
+            None if self.wal_tls_key_path.is_some() => {
+                return Err(WalClientSecurityError::TlsKeyWithoutCert);
+            }
+            None => None,
         };
         check_readable("--wal-tls-ca-path", &ca_path)?;
-        if let Some((cert_path, key_path)) = &client_identity {
-            check_readable("--wal-tls-cert-path", cert_path)?;
-            check_readable("--wal-tls-key-path", key_path)?;
+        if let Some(identity) = &client_identity {
+            check_readable("--wal-tls-cert-path", &identity.certificate_chain)?;
+            check_readable("--wal-tls-key-path", &identity.private_key)?;
         }
         let mut tls = TlsConnectorConfig::default();
         tls.trust_store = TrustStore::PemFile(ca_path);
         tls.server_name = server_name;
-        tls.key_store =
-            client_identity.map(|(certificate_chain, private_key)| KeyStore::PemFiles {
-                certificate_chain,
-                private_key,
-                key_password: None,
-            });
+        tls.key_store = client_identity.map(|identity| KeyStore::PemFiles {
+            certificate_chain: identity.certificate_chain,
+            private_key: identity.private_key,
+            key_password: None,
+        });
         Ok(Some(tls))
     }
 
@@ -207,19 +237,25 @@ impl WalClientSecurityArgs {
         let protocol = self.wal_security_protocol;
         if !protocol.requires_sasl() {
             let set_flag = [
-                ("--wal-sasl-mechanism", self.wal_sasl_mechanism.is_some()),
-                ("--wal-sasl-username", self.wal_sasl_username.is_some()),
-                (
-                    "--wal-sasl-password-path",
-                    self.wal_sasl_password_path.is_some(),
-                ),
-                (
-                    "--wal-sasl-oauthbearer-token-path",
-                    self.wal_sasl_oauthbearer_token_path.is_some(),
-                ),
+                FlagSetting {
+                    flag: "--wal-sasl-mechanism",
+                    is_set: self.wal_sasl_mechanism.is_some(),
+                },
+                FlagSetting {
+                    flag: "--wal-sasl-username",
+                    is_set: self.wal_sasl_username.is_some(),
+                },
+                FlagSetting {
+                    flag: "--wal-sasl-password-path",
+                    is_set: self.wal_sasl_password_path.is_some(),
+                },
+                FlagSetting {
+                    flag: "--wal-sasl-oauthbearer-token-path",
+                    is_set: self.wal_sasl_oauthbearer_token_path.is_some(),
+                },
             ]
             .into_iter()
-            .find_map(|(flag, set)| set.then_some(flag));
+            .find_map(|setting| setting.is_set.then_some(setting.flag));
             return match set_flag {
                 Some(flag) => {
                     Err(WalClientSecurityError::SaslFlagWithoutSaslProtocol { flag, protocol })

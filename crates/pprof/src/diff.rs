@@ -4,8 +4,30 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::{
     FlameGraphDiff, Level,
-    tree::{Tree, TreeSnapshotNode},
+    tree::{Tree, TreeSnapshotNode, name_slot},
 };
+
+#[derive(Clone, Debug)]
+pub(crate) struct Bar {
+    pub(crate) node: Option<usize>,
+    pub(crate) name: String,
+    pub(crate) total_left: i64,
+    pub(crate) self_left: i64,
+    pub(crate) total_right: i64,
+    pub(crate) self_right: i64,
+    pub(crate) x_left: i64,
+    pub(crate) x_right: i64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MergedNode {
+    pub(crate) name: String,
+    pub(crate) total_left: i64,
+    pub(crate) self_left: i64,
+    pub(crate) total_right: i64,
+    pub(crate) self_right: i64,
+    pub(crate) children: Vec<usize>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -13,6 +35,11 @@ mod tests {
 
     use super::*;
     use crate::{Frame, Tree};
+
+    struct DiffBarExpectation {
+        index: usize,
+        value: i64,
+    }
 
     fn frame(name: &str) -> Frame {
         Frame {
@@ -40,8 +67,17 @@ mod tests {
         let b_idx = i64::try_from(diff.names.iter().position(|name| name == "b").unwrap()).unwrap();
         let level1 = &diff.levels[1].values;
         let b_bar = level1.chunks(7).find(|chunk| chunk[6] == b_idx).unwrap();
-        for (index, want) in [(1, 0), (2, 0), (4, 5), (5, 5)] {
-            assert!(b_bar[index] == want, "b_bar[{index}]");
+        for expected in [
+            DiffBarExpectation { index: 1, value: 0 },
+            DiffBarExpectation { index: 2, value: 0 },
+            DiffBarExpectation { index: 4, value: 5 },
+            DiffBarExpectation { index: 5, value: 5 },
+        ] {
+            assert!(
+                b_bar[expected.index] == expected.value,
+                "b_bar[{}]",
+                expected.index
+            );
         }
     }
 
@@ -129,31 +165,60 @@ mod tests {
 }
 
 mod append_children;
-mod bar;
-mod children_by_name;
-mod combined_total;
 mod diff_trees;
 mod keep_set;
 mod merge_node;
-mod merged_node;
-mod name_slot;
-mod other_name;
-mod parents;
-mod root_name;
-mod subtree_self_left;
-mod subtree_self_right;
 
 use append_children::append_children;
-use bar::Bar;
-use children_by_name::children_by_name;
-use combined_total::combined_total;
 pub use diff_trees::diff_trees;
 use keep_set::keep_set;
 use merge_node::merge_node;
-use merged_node::MergedNode;
-use name_slot::name_slot;
-use other_name::OTHER_NAME;
-use parents::parents;
-use root_name::ROOT_NAME;
-use subtree_self_left::subtree_self_left;
-use subtree_self_right::subtree_self_right;
+
+pub(crate) const OTHER_NAME: &str = "other";
+
+pub(crate) const ROOT_NAME: &str = "total";
+
+pub(crate) fn combined_total(nodes: &[MergedNode], node: usize) -> i64 {
+    nodes[node].total_left + nodes[node].total_right
+}
+
+pub(crate) fn parents(nodes: &[MergedNode]) -> Vec<Option<usize>> {
+    let mut parents = vec![None; nodes.len()];
+    for (parent, node) in nodes.iter().enumerate() {
+        for child in &node.children {
+            parents[*child] = Some(parent);
+        }
+    }
+    parents
+}
+
+pub(crate) fn subtree_self_left(nodes: &[MergedNode], node: usize) -> i64 {
+    nodes[node].self_left
+        + nodes[node]
+            .children
+            .iter()
+            .map(|child| subtree_self_left(nodes, *child))
+            .sum::<i64>()
+}
+
+pub(crate) fn subtree_self_right(nodes: &[MergedNode], node: usize) -> i64 {
+    nodes[node].self_right
+        + nodes[node]
+            .children
+            .iter()
+            .map(|child| subtree_self_right(nodes, *child))
+            .sum::<i64>()
+}
+
+pub(crate) fn children_by_name(
+    node: Option<usize>,
+    nodes: &[TreeSnapshotNode],
+) -> BTreeMap<String, usize> {
+    let mut children = BTreeMap::new();
+    if let Some(index) = node {
+        for child in &nodes[index].children {
+            children.insert(nodes[*child].name.clone(), *child);
+        }
+    }
+    children
+}

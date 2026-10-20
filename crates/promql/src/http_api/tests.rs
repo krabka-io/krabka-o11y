@@ -13,14 +13,13 @@ use axum::{
 };
 use krabka_blockstore::Labels;
 use krabka_metrics::{Limits, NativeHistogram, OverridesProvider, ResetHint};
-use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
+use krabka_observability::server_security::{
+    ClientAuth, ServerSecurity, ServerSecurityArgs, authenticate_requests,
+};
 use tower::ServiceExt;
 
 use super::{request::unix_now_ms, *};
-use crate::{
-    ExemplarScan, InMemoryMetricStore, LabelNameCardinality, LabelValueCardinality, MetadataScan,
-    PromqlMatcher as LabelMatcher, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
-};
+use crate::{InMemoryMetricStore, PromqlMatcher as LabelMatcher, ScanResult};
 
 // Every request reaches the handlers through the authentication layer, as it
 // does on a served listener. With no credentials file, the layer marks each
@@ -29,40 +28,60 @@ fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>
     authenticate_requests(super::prometheus_router(state), &ServerSecurity::default())
 }
 
-mod a_read_that_repeats_its_tenant_reads_that_tenant;
+fn server_security_args(credentials: std::path::PathBuf) -> ServerSecurityArgs {
+    ServerSecurityArgs {
+        server_tls_cert_path: None,
+        server_tls_key_path: None,
+        server_tls_client_ca_path: None,
+        server_tls_client_auth: ClientAuth::NoClientCert,
+        server_tls_handshake_timeout: secs(10),
+        auth_credentials_config: Some(credentials),
+        internal_client_token_path: None,
+        internal_client_tls_cert_path: None,
+        internal_client_tls_key_path: None,
+        internal_client_tls_ca_path: None,
+    }
+}
+
 mod admin_erasure;
-mod an_unconfigured_state_enforces_the_default_query_limits;
 mod annotated_query_body;
-mod annotation_query_uri;
-mod annotation_store;
-mod cardinality_active_series_rejects_over_tenant_limit;
-mod discovery_rejects_label_counts_over_tenant_series_limit;
-mod expand_alert_template_substitutions;
-mod float_formatting_matches_go;
-mod instant_query_without_time_defaults_to_current_time;
+mod limited_get;
 mod mimir_alertmanager_api;
-mod promql_evaluation_rejects_series_over_tenant_limit;
-mod query_annotations_reach_the_response_envelope;
-mod query_handlers_respect_configured_concurrency_limit;
-mod query_range_annotations_agree_through_the_frontend_and_the_direct_path;
-mod query_range_rejects_ranges_over_tenant_limit;
-mod query_range_rejects_resolution_over_point_cap_without_limits;
-mod query_rejects_lookback_over_tenant_limit;
 mod query_reports_sample_cap_as_execution_error;
 mod query_timeout_and_stats;
-mod read_paths_admit_requests_when_limits_are_off;
-mod read_paths_answer_an_unusable_tenant_as_mimir_does;
-mod read_paths_reject_windows_over_tenant_limit;
-mod ruler_config_mutations_are_audited;
 mod ruler_filters_and_pagination;
-mod ruler_tenants_lists_each_configured_tenant;
 mod search_and_native_histogram_cardinality;
-mod series_rejects_selected_series_over_tenant_limit;
 mod slow_empty_store;
-mod two_series_store;
+mod tenant_limits;
 
-use annotated_query_body::annotated_query_body;
+use annotated_query_body::{OrgRequest, annotated_query_body, org_query_body};
+mod query_annotations;
 use annotation_query_uri::annotation_query_uri;
 use annotation_store::annotation_store;
+use limited_get::{assert_execution_error, limited_get};
 use slow_empty_store::SlowEmptyStore;
 use two_series_store::two_series_store;
+
+async fn assert_series_limit_rejected(uri: &str) {
+    let limits = Limits {
+        max_fetched_series_per_query: 1,
+        ..Limits::default()
+    };
+    let response = limited_get(two_series_store(), limits, uri).await;
+    assert_execution_error(
+        &response,
+        |error| error == "series per query exceeded: observed 2 above limit 1",
+        uri,
+    );
+}
+
+mod query_semantics;
+
+mod ruler_api_cases;
+
+mod http_semantics;
+
+mod support;
+pub(crate) use support::{
+    annotation_query_uri, annotation_store, first_vector_sample, two_series_store,
+};

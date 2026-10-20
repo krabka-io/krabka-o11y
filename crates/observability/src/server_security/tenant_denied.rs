@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    http::{StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use krabka_blockstore::TenantId;
@@ -21,11 +21,6 @@ pub struct TenantDenied {
 
 impl IntoResponse for TenantDenied {
     fn into_response(self) -> Response {
-        (
-            StatusCode::FORBIDDEN,
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            format!("{self}\n"),
-        )
-            .into_response()
+        crate::text_response(StatusCode::FORBIDDEN, &format!("{self}\n"))
     }
 }

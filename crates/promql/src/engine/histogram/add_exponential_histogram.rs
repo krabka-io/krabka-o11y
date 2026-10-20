@@ -2,14 +2,22 @@ use super::{
     NativeHistogram, add_bucket_maps, reduced_counts_outside_zero, zero_count_at_threshold,
 };
 
+struct CombinedZeroCounts {
+    left: f64,
+    right: f64,
+}
+
 pub(crate) fn add_exponential_histogram(left: &mut NativeHistogram, right: &NativeHistogram) {
     let mut threshold = left.zero_threshold.max(right.zero_threshold);
-    let (left_zero_count, right_zero_count) = loop {
-        let (left_count, left_threshold) = zero_count_at_threshold(left, threshold);
-        let (right_count, right_threshold) = zero_count_at_threshold(right, threshold);
-        let reconciled = left_threshold.max(right_threshold);
+    let zero_counts = loop {
+        let left_count = zero_count_at_threshold(left, threshold);
+        let right_count = zero_count_at_threshold(right, threshold);
+        let reconciled = left_count.threshold.max(right_count.threshold);
         if reconciled.to_bits() == threshold.to_bits() {
-            break (left_count, right_count);
+            break CombinedZeroCounts {
+                left: left_count.count,
+                right: right_count.count,
+            };
         }
         threshold = reconciled;
     };
@@ -46,8 +54,12 @@ pub(crate) fn add_exponential_histogram(left: &mut NativeHistogram, right: &Nati
 
     left.schema = target_schema;
     left.zero_threshold = threshold;
-    left.zero_count = left_zero_count + right_zero_count;
-    (left.positive_spans, left.positive_counts) = add_bucket_maps(left_positive, right_positive);
-    (left.negative_spans, left.negative_counts) = add_bucket_maps(left_negative, right_negative);
+    left.zero_count = zero_counts.left + zero_counts.right;
+    let positive = add_bucket_maps(left_positive, right_positive);
+    left.positive_spans = positive.spans;
+    left.positive_counts = positive.counts;
+    let negative = add_bucket_maps(left_negative, right_negative);
+    left.negative_spans = negative.spans;
+    left.negative_counts = negative.counts;
     left.custom_values = None;
 }

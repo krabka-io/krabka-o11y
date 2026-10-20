@@ -2,6 +2,13 @@ use super::*;
 
 type LabelPostings = BTreeMap<String, BTreeMap<String, BTreeSet<SeriesFingerprint>>>;
 
+/// A label set in a tenant's log index.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TenantSeries {
+    pub fingerprint: SeriesFingerprint,
+    pub labels: Labels,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LabelIndex {
     pub(crate) series: BTreeMap<String, BTreeMap<SeriesFingerprint, Labels>>,
@@ -17,11 +24,11 @@ impl LabelIndex {
         let tenant = tenant.into();
         let fingerprint = series_fingerprint(&labels);
         let postings = self.postings.entry(tenant.clone()).or_default();
-        for (name, value) in &labels {
+        for pair in labels.keys() {
             postings
-                .entry(name.clone())
+                .entry(pair.clone())
                 .or_default()
-                .entry(value.clone())
+                .entry(labels[pair].clone())
                 .or_default()
                 .insert(fingerprint);
         }
@@ -95,16 +102,18 @@ impl LabelIndex {
     }
 
     #[must_use]
-    pub fn tenant_series(&self, tenant: &str) -> Vec<(SeriesFingerprint, Labels)> {
+    pub fn tenant_series(&self, tenant: &str) -> Vec<TenantSeries> {
         self.series
             .get(tenant)
-            .map(|series| {
+            .map_or_else(Default::default, |series| {
                 series
-                    .iter()
-                    .map(|(fingerprint, labels)| (*fingerprint, labels.clone()))
+                    .keys()
+                    .map(|fingerprint| TenantSeries {
+                        fingerprint: *fingerprint,
+                        labels: series[fingerprint].clone(),
+                    })
                     .collect()
             })
-            .unwrap_or_default()
     }
 
     pub(crate) fn exact_candidates(
@@ -115,10 +124,10 @@ impl LabelIndex {
         let mut first: Option<&BTreeSet<SeriesFingerprint>> = None;
         let mut postings = Vec::new();
         for predicate in predicates {
-            let Some((name, value)) = predicate.exact_posting_key() else {
+            let Some(key) = predicate.exact_posting_key() else {
                 continue;
             };
-            let posting = self.postings.get(tenant)?.get(name)?.get(value)?;
+            let posting = self.postings.get(tenant)?.get(key.name)?.get(key.value)?;
             if let Some(first) = first {
                 // A single equality does not allocate a posting vector.
                 if postings.is_empty() {
@@ -140,12 +149,12 @@ impl LabelIndex {
         if postings.is_empty() {
             return Some(first.clone());
         }
-        let smallest = postings
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, posting)| posting.len())
-            .map(|(position, _)| position)
-            .expect("multiple equalities supply at least two postings");
+        let mut smallest = 0;
+        for position in 1..postings.len() {
+            if postings[position].len() < postings[smallest].len() {
+                smallest = position;
+            }
+        }
         let mut matched = postings.swap_remove(smallest).clone();
         for posting in postings {
             matched = matched.intersection(posting).copied().collect();

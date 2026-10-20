@@ -12,13 +12,31 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Labels;
+    use crate::test_support::{LabelPair, labels};
 
-    fn labels(pairs: &[(&str, &str)]) -> Labels {
-        pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-            .collect()
+    struct FieldExpressionMatchCase<'a> {
+        pairs: [LabelPair<'a>; 2],
+        expected: bool,
+    }
+
+    struct InvalidFieldFilterCase {
+        name: &'static str,
+        operation: ComparisonOp,
+        value: FieldValue,
+    }
+
+    struct NumberComparisonCase {
+        operation: ComparisonOp,
+        candidate: f64,
+        expected: f64,
+        result: bool,
+    }
+
+    struct StringComparisonCase {
+        operation: ComparisonOp,
+        candidate: &'static str,
+        expected: &'static str,
+        result: bool,
     }
 
     fn number_filter(name: &str, op: ComparisonOp, expected: f64) -> FieldFilter {
@@ -33,8 +51,8 @@ mod tests {
     fn field_filter_matches_returns_candidate_result() {
         let filter = number_filter("status", ComparisonOp::GreaterEqual, 500.0);
 
-        assert!(filter.matches(&labels(&[("status", "500")])));
-        assert!(!filter.matches(&labels(&[("status", "499")])));
+        assert!(filter.matches(&labels(&[LabelPair::new("status", "500")])));
+        assert!(!filter.matches(&labels(&[LabelPair::new("status", "499")])));
     }
 
     #[test]
@@ -47,18 +65,45 @@ mod tests {
                     500.0,
                 )),
             ))),
-            rest: vec![(
-                FieldFilterLogicOp::Or,
-                FieldFilterExpression::Filter(string_filter("level", ComparisonOp::Equal, "warn")),
-            )],
+            rest: vec![FieldFilterStep {
+                operation: FieldFilterLogicOp::Or,
+                filter: FieldFilterExpression::Filter(string_filter(
+                    "level",
+                    ComparisonOp::Equal,
+                    "warn",
+                )),
+            }],
         };
 
-        for (pairs, expected) in [
-            ([("status", "500"), ("level", "info")], true),
-            ([("status", "200"), ("level", "warn")], true),
-            ([("status", "200"), ("level", "info")], false),
+        for case in [
+            FieldExpressionMatchCase {
+                pairs: [
+                    LabelPair::new("status", "500"),
+                    LabelPair::new("level", "info"),
+                ],
+                expected: true,
+            },
+            FieldExpressionMatchCase {
+                pairs: [
+                    LabelPair::new("status", "200"),
+                    LabelPair::new("level", "warn"),
+                ],
+                expected: true,
+            },
+            FieldExpressionMatchCase {
+                pairs: [
+                    LabelPair::new("status", "200"),
+                    LabelPair::new("level", "info"),
+                ],
+                expected: false,
+            },
         ] {
-            assert_eq!(expression.matches(&labels(&pairs)), expected, "{pairs:?}");
+            assert_eq!(
+                expression.matches(&labels(&case.pairs)),
+                case.expected,
+                "{:?}",
+                case.pairs
+            );
         }
     }
 
@@ -67,81 +112,236 @@ mod tests {
         let rest_filter = string_filter("path", ComparisonOp::NotEqual, "/health");
         let chain = FieldFilterChain::new(
             number_filter("status", ComparisonOp::GreaterEqual, 500.0),
-            vec![(FieldFilterLogicOp::And, rest_filter.clone())],
+            vec![FieldFilterStep {
+                operation: FieldFilterLogicOp::And,
+                filter: rest_filter.clone(),
+            }],
         );
 
-        assert!(chain.matches(&labels(&[("status", "500"), ("path", "/checkout")])));
-        assert!(!chain.matches(&labels(&[("status", "500"), ("path", "/health")])));
-        assert_eq!(chain.rest(), &[(FieldFilterLogicOp::And, rest_filter)]);
+        assert!(chain.matches(&labels(&[
+            LabelPair::new("status", "500"),
+            LabelPair::new("path", "/checkout"),
+        ])));
+        assert!(!chain.matches(&labels(&[
+            LabelPair::new("status", "500"),
+            LabelPair::new("path", "/health"),
+        ])));
+        assert_eq!(
+            chain.rest(),
+            &[FieldFilterStep {
+                operation: FieldFilterLogicOp::And,
+                filter: rest_filter,
+            }]
+        );
     }
 
     #[test]
     fn field_filter_validation_rejects_invalid_combinations() {
-        for (name, op, value) in [
-            (
-                "path",
-                ComparisonOp::RegexEqual,
-                FieldValue::String("[".to_string()),
-            ),
-            ("path", ComparisonOp::RegexEqual, FieldValue::Number(1.0)),
-            (
-                "remote_addr",
-                ComparisonOp::Greater,
-                FieldValue::Ip(IpMatcher::parse("192.168.1.1").unwrap()),
-            ),
+        for case in [
+            InvalidFieldFilterCase {
+                name: "path",
+                operation: ComparisonOp::RegexEqual,
+                value: FieldValue::String("[".to_string()),
+            },
+            InvalidFieldFilterCase {
+                name: "path",
+                operation: ComparisonOp::RegexEqual,
+                value: FieldValue::Number(1.0),
+            },
+            InvalidFieldFilterCase {
+                name: "remote_addr",
+                operation: ComparisonOp::Greater,
+                value: FieldValue::Ip(IpMatcher::parse("192.168.1.1").unwrap()),
+            },
         ] {
             assert!(
-                FieldFilter::try_new(name, op, value.clone()).is_err(),
-                "{name} {op:?} {value:?}"
+                FieldFilter::try_new(case.name, case.operation, case.value.clone()).is_err(),
+                "{} {:?} {:?}",
+                case.name,
+                case.operation,
+                case.value
             );
         }
     }
 
     #[test]
     fn comparison_ops_compare_number_boundaries() {
-        for (op, candidate, expected, result) in [
-            (ComparisonOp::Equal, 500.0, 500.0, true),
-            (ComparisonOp::Equal, 499.0, 500.0, false),
-            (ComparisonOp::NotEqual, 499.0, 500.0, true),
-            (ComparisonOp::NotEqual, 500.0, 500.0, false),
-            (ComparisonOp::Greater, 501.0, 500.0, true),
-            (ComparisonOp::Greater, 500.0, 500.0, false),
-            (ComparisonOp::GreaterEqual, 501.0, 500.0, true),
-            (ComparisonOp::GreaterEqual, 500.0, 500.0, true),
-            (ComparisonOp::GreaterEqual, 499.0, 500.0, false),
-            (ComparisonOp::Less, 499.0, 500.0, true),
-            (ComparisonOp::Less, 500.0, 500.0, false),
-            (ComparisonOp::LessEqual, 499.0, 500.0, true),
-            (ComparisonOp::LessEqual, 500.0, 500.0, true),
-            (ComparisonOp::LessEqual, 501.0, 500.0, false),
+        for case in [
+            NumberComparisonCase {
+                operation: ComparisonOp::Equal,
+                candidate: 500.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::Equal,
+                candidate: 499.0,
+                expected: 500.0,
+                result: false,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::NotEqual,
+                candidate: 499.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::NotEqual,
+                candidate: 500.0,
+                expected: 500.0,
+                result: false,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::Greater,
+                candidate: 501.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::Greater,
+                candidate: 500.0,
+                expected: 500.0,
+                result: false,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::GreaterEqual,
+                candidate: 501.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::GreaterEqual,
+                candidate: 500.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::GreaterEqual,
+                candidate: 499.0,
+                expected: 500.0,
+                result: false,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::Less,
+                candidate: 499.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::Less,
+                candidate: 500.0,
+                expected: 500.0,
+                result: false,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::LessEqual,
+                candidate: 499.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::LessEqual,
+                candidate: 500.0,
+                expected: 500.0,
+                result: true,
+            },
+            NumberComparisonCase {
+                operation: ComparisonOp::LessEqual,
+                candidate: 501.0,
+                expected: 500.0,
+                result: false,
+            },
         ] {
             assert_eq!(
-                op.compare_numbers(candidate, expected),
-                result,
-                "{candidate} {op:?} {expected}"
+                case.operation
+                    .compare_numbers(case.candidate, case.expected),
+                case.result,
+                "{} {:?} {}",
+                case.candidate,
+                case.operation,
+                case.expected
             );
         }
     }
 
     #[test]
     fn comparison_ops_compare_string_boundaries() {
-        for (op, candidate, expected, result) in [
-            (ComparisonOp::Greater, "n", "m", true),
-            (ComparisonOp::Greater, "m", "m", false),
-            (ComparisonOp::GreaterEqual, "n", "m", true),
-            (ComparisonOp::GreaterEqual, "m", "m", true),
-            (ComparisonOp::GreaterEqual, "l", "m", false),
-            (ComparisonOp::Less, "l", "m", true),
-            (ComparisonOp::Less, "m", "m", false),
-            (ComparisonOp::Less, "n", "m", false),
-            (ComparisonOp::LessEqual, "l", "m", true),
-            (ComparisonOp::LessEqual, "m", "m", true),
-            (ComparisonOp::LessEqual, "n", "m", false),
+        for case in [
+            StringComparisonCase {
+                operation: ComparisonOp::Greater,
+                candidate: "n",
+                expected: "m",
+                result: true,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::Greater,
+                candidate: "m",
+                expected: "m",
+                result: false,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::GreaterEqual,
+                candidate: "n",
+                expected: "m",
+                result: true,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::GreaterEqual,
+                candidate: "m",
+                expected: "m",
+                result: true,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::GreaterEqual,
+                candidate: "l",
+                expected: "m",
+                result: false,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::Less,
+                candidate: "l",
+                expected: "m",
+                result: true,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::Less,
+                candidate: "m",
+                expected: "m",
+                result: false,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::Less,
+                candidate: "n",
+                expected: "m",
+                result: false,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::LessEqual,
+                candidate: "l",
+                expected: "m",
+                result: true,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::LessEqual,
+                candidate: "m",
+                expected: "m",
+                result: true,
+            },
+            StringComparisonCase {
+                operation: ComparisonOp::LessEqual,
+                candidate: "n",
+                expected: "m",
+                result: false,
+            },
         ] {
             assert_eq!(
-                op.compare_strings(candidate, expected),
-                result,
-                "{candidate} {op:?} {expected}"
+                case.operation
+                    .compare_strings(case.candidate, case.expected),
+                case.result,
+                "{} {:?} {}",
+                case.candidate,
+                case.operation,
+                case.expected
             );
         }
     }
@@ -206,32 +406,117 @@ mod comparison_op;
 mod field_filter;
 mod field_filter_chain;
 mod field_filter_expression;
-mod field_filter_expression_to_pipeline_stage;
 mod field_filter_logic_op;
 mod field_value;
-mod ip_candidate_tokens;
 mod ip_family;
 mod ip_matcher;
 mod ip_range;
-mod ip_to_value;
 mod line_filter;
 mod line_filter_op;
-mod line_matches_pattern;
-mod parse_ip_addr;
 
 pub use comparison_op::ComparisonOp;
 pub use field_filter::FieldFilter;
-pub use field_filter_chain::FieldFilterChain;
+pub use field_filter_chain::{FieldFilterChain, FieldFilterStep};
 pub use field_filter_expression::FieldFilterExpression;
-pub(crate) use field_filter_expression_to_pipeline_stage::field_filter_expression_to_pipeline_stage;
 pub use field_filter_logic_op::FieldFilterLogicOp;
 pub use field_value::FieldValue;
-use ip_candidate_tokens::ip_candidate_tokens;
 use ip_family::IpFamily;
 pub use ip_matcher::IpMatcher;
 use ip_range::IpRange;
-use ip_to_value::ip_to_value;
 pub use line_filter::LineFilter;
 pub use line_filter_op::LineFilterOp;
-use line_matches_pattern::line_matches_pattern;
-use parse_ip_addr::parse_ip_addr;
+
+pub(crate) fn ip_candidate_tokens(line: &str) -> impl Iterator<Item = &str> {
+    line.split(|ch: char| !(ch.is_ascii_hexdigit() || ch == '.' || ch == ':'))
+        .filter(|candidate| !candidate.is_empty())
+}
+
+pub(crate) fn line_matches_pattern(line: &str, pattern: &str) -> bool {
+    let mut remaining = line;
+    let mut matched_any_literal = false;
+    for literal in pattern.split("<_>").filter(|literal| !literal.is_empty()) {
+        let Some(offset) = remaining.find(literal) else {
+            return false;
+        };
+        matched_any_literal = true;
+        remaining = &remaining[offset + literal.len()..];
+    }
+    matched_any_literal || pattern.contains("<_>")
+}
+
+pub(crate) fn parse_ip_addr(value: &str) -> Result<IpAddr, ParseError> {
+    value.parse().map_err(|_| ParseError::Syntax {
+        message: "invalid ip pattern".to_string(),
+        position: 0,
+    })
+}
+
+// Field Filter Expression To Pipeline Stage
+pub(crate) fn field_filter_expression_to_pipeline_stage(
+    expression: FieldFilterExpression,
+) -> PipelineStage {
+    match expression {
+        FieldFilterExpression::Filter(filter) => PipelineStage::FieldFilter(filter),
+        FieldFilterExpression::Chain { first, rest } => {
+            let first = match *first {
+                FieldFilterExpression::Filter(filter) => filter,
+                first => {
+                    return PipelineStage::FieldFilterExpression(FieldFilterExpression::Chain {
+                        first: Box::new(first),
+                        rest,
+                    });
+                }
+            };
+
+            let mut flat_rest: Vec<FieldFilterStep<FieldFilter>> = Vec::new();
+            for step in rest {
+                let operation = step.operation;
+                let filter = match step.filter {
+                    FieldFilterExpression::Filter(filter) => filter,
+                    expression => {
+                        let first = Box::new(FieldFilterExpression::Filter(first));
+                        let rest = flat_rest
+                            .into_iter()
+                            .map(|step| FieldFilterStep {
+                                operation: step.operation,
+                                filter: FieldFilterExpression::Filter(step.filter),
+                            })
+                            .chain(std::iter::once(FieldFilterStep {
+                                operation,
+                                filter: expression,
+                            }))
+                            .collect();
+                        return PipelineStage::FieldFilterExpression(
+                            FieldFilterExpression::Chain { first, rest },
+                        );
+                    }
+                };
+                flat_rest.push(FieldFilterStep { operation, filter });
+            }
+
+            PipelineStage::FieldFilterChain(FieldFilterChain::new(first, flat_rest))
+        }
+        expression @ FieldFilterExpression::Group(_) => {
+            PipelineStage::FieldFilterExpression(expression)
+        }
+    }
+}
+
+// Ip To Value
+pub(crate) struct IpValue {
+    pub(crate) family: IpFamily,
+    pub(crate) value: u128,
+}
+
+pub(crate) fn ip_to_value(addr: IpAddr) -> IpValue {
+    match addr {
+        IpAddr::V4(addr) => IpValue {
+            family: IpFamily::V4,
+            value: u128::from(u32::from(addr)),
+        },
+        IpAddr::V6(addr) => IpValue {
+            family: IpFamily::V6,
+            value: u128::from(addr),
+        },
+    }
+}

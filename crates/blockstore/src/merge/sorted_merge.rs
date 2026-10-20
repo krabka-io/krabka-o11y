@@ -1,7 +1,14 @@
+use arrow::row::Row;
+
 use super::{
     BlockBatchStream, BlockStoreError, RecordBatch, Result, RowConverter, RunCursor,
     SORT_KEY_OPTIONS, SchemaRef, SortField, concat_batches,
 };
+
+struct RunHead<'a> {
+    index: usize,
+    key: Row<'a>,
+}
 
 /// A k-way merge of blocks that are each already in the declared sort order.
 ///
@@ -96,9 +103,7 @@ impl SortedMerge {
                 // is already in order, so it goes out as one slice rather than
                 // as a row at a time.
                 let count = match self.next_lowest_head(winner) {
-                    Some((limit_run, limit)) => {
-                        self.runs[winner].rows_before(&limit, winner < limit_run)
-                    }
+                    Some(limit) => self.runs[winner].rows_before(&limit.key, winner < limit.index),
                     None => self.runs[winner].remaining(),
                 };
                 count.clamp(1, self.batch_rows - rows)
@@ -117,21 +122,30 @@ impl SortedMerge {
 
     /// The run holding the lowest key, ties going to the earliest run.
     fn lowest_head(&self) -> Option<usize> {
-        self.runs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, run)| run.head().map(|head| (index, head)))
-            .min_by(|(_, left), (_, right)| left.cmp(right))
-            .map(|(index, _)| index)
+        let mut lowest: Option<RunHead<'_>> = None;
+        for (index, run) in self.runs.iter().enumerate() {
+            if let Some(key) = run.head()
+                && lowest.as_ref().is_none_or(|head| key < head.key)
+            {
+                lowest = Some(RunHead { index, key });
+            }
+        }
+        lowest.map(|head| head.index)
     }
 
     /// The lowest key held by any run other than `winner`.
-    fn next_lowest_head(&self, winner: usize) -> Option<(usize, arrow::row::Row<'_>)> {
-        self.runs
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != winner)
-            .filter_map(|(index, run)| run.head().map(|head| (index, head)))
-            .min_by(|(_, left), (_, right)| left.cmp(right))
+    fn next_lowest_head(&self, winner: usize) -> Option<RunHead<'_>> {
+        let mut lowest: Option<RunHead<'_>> = None;
+        for (index, run) in self.runs.iter().enumerate() {
+            if index == winner {
+                continue;
+            }
+            if let Some(key) = run.head()
+                && lowest.as_ref().is_none_or(|head| key < head.key)
+            {
+                lowest = Some(RunHead { index, key });
+            }
+        }
+        lowest
     }
 }

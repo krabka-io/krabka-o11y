@@ -19,11 +19,13 @@ impl From<krabka_pprof::Heatmap> for pb::querier::v1::HeatmapSeries {
                 .counts
                 .into_iter()
                 .enumerate()
-                .map(|(bucket, counts)| pb::querier::v1::HeatmapSlot {
+                .map(|bucket_entry| pb::querier::v1::HeatmapSlot {
                     timestamp: value.start_ms
-                        + (i64::try_from(bucket).expect("bucket index fits i64") + 1) * step_ms,
+                        + (i64::try_from(bucket_entry.0).expect("bucket index fits i64") + 1)
+                            * step_ms,
                     y_min: y_min.clone(),
-                    counts: counts
+                    counts: bucket_entry
+                        .1
                         .into_iter()
                         .map(|count| i32::try_from(count).unwrap_or(i32::MAX))
                         .collect(),

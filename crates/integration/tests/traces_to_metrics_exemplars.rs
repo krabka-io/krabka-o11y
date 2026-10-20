@@ -37,7 +37,7 @@ use assert2::{assert, check};
 use axum::http::{Request, StatusCode};
 use bytes::Bytes;
 use krabka_metrics::{
-    WalRecord,
+    MetricLabelPair, WalRecord,
     distributor::{DistributorState, ProduceError, WalSink, router},
 };
 use krabka_observability::server_security::{
@@ -51,17 +51,16 @@ use krabka_traces::metricsgen::{
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 use tower::ServiceExt as _;
 
+// The id under test is the whole point of the suite: it is written by
+// `krabka-traces` and has to be readable, unchanged, out of `krabka-promql`.
+use crate::correlated_span::{SPAN_ID, TRACE_ID};
+
+mod correlated_span;
+
 /// The tenant both halves are driven under. The distributor takes it from the
 /// `X-Scope-OrgID` header the traces sink sets from `SeriesPayload::tenant`,
 /// and the query API takes it from the same header on the way out.
 const TENANT: &str = "tenant-a";
-
-/// The id under test. It is the whole point of the suite: it is written by
-/// `krabka-traces` and has to be readable, unchanged, out of `krabka-promql`.
-const TRACE_ID: [u8; 16] = [
-    0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36,
-];
-const SPAN_ID: [u8; 8] = [0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7];
 
 /// A wall-clock-free base for every timestamp in the suite. The distributor
 /// rejects a sample that goes backwards within a series, and the query API
@@ -121,7 +120,12 @@ fn span() -> SpanRecord {
 /// A real listener, not a `oneshot` against the router: the traces side of this
 /// link is an HTTP client, and running it against anything but a socket would
 /// skip the half of the encoder that is `reqwest` and its headers.
-async fn serve_distributor() -> (String, Arc<CapturingWalSink>) {
+struct RunningDistributor {
+    url: String,
+    wal_sink: Arc<CapturingWalSink>,
+}
+
+async fn serve_distributor() -> RunningDistributor {
     let sink = Arc::new(CapturingWalSink::default());
     let state = Arc::new(DistributorState::new(Arc::clone(&sink) as Arc<dyn WalSink>));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -134,12 +138,15 @@ async fn serve_distributor() -> (String, Arc<CapturingWalSink>) {
         let app = authenticate_requests(router(state), &ServerSecurity::default());
         axum::serve(listener, app).await.expect("serve");
     });
-    (format!("http://{addr}/api/v1/push"), sink)
+    RunningDistributor {
+        url: format!("http://{addr}/api/v1/push"),
+        wal_sink: sink,
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn span_metrics_exemplar_survives_remote_write_with_its_trace_id() {
-    let (url, wal_sink) = serve_distributor().await;
+    let distributor = serve_distributor().await;
 
     // --- traces: derive span metrics, exemplars and all -------------------
     let config = MetricsGenConfig {
@@ -160,13 +167,13 @@ async fn span_metrics_exemplar_survives_remote_write_with_its_trace_id() {
     check!(
         latency.exemplars[0].labels
             == vec![
-                ("span_id".to_string(), hex::encode(SPAN_ID)),
-                ("trace_id".to_string(), hex::encode(TRACE_ID)),
+                krabka_traceql::MetricLabel::new("span_id", hex::encode(SPAN_ID)),
+                krabka_traceql::MetricLabel::new("trace_id", hex::encode(TRACE_ID)),
             ]
     );
 
     // --- the wire hop: krabka-traces' encoder, krabka-metrics' decoder -----
-    PrometheusRemoteWriteSink::new(&url, &InternalClient::default())
+    PrometheusRemoteWriteSink::new(&distributor.url, &InternalClient::default())
         .expect("the remote-write client builds")
         .write(&SeriesPayload {
             tenant: TENANT.to_string(),
@@ -175,7 +182,7 @@ async fn span_metrics_exemplar_survives_remote_write_with_its_trace_id() {
         .await
         .expect("remote_write into krabka-metrics");
 
-    let records = wal_sink.records();
+    let records = distributor.wal_sink.records();
     assert!(!records.is_empty());
 
     // Exemplars ride the classic histogram's `_bucket` series, placed on the
@@ -188,19 +195,15 @@ async fn span_metrics_exemplar_survives_remote_write_with_its_trace_id() {
     let decoded = with_exemplars[0];
 
     check!(decoded.tenant == TENANT);
-    check!(
-        decoded
-            .labels
-            .iter()
-            .any(|(name, value)| name == "__name__"
-                && value == "traces_spanmetrics_latency_bucket")
-    );
+    check!(decoded.labels.iter().any(
+        |label| label.name == "__name__" && label.value == "traces_spanmetrics_latency_bucket"
+    ));
     // The decoder rebuilt the exemplar the encoder wrote, label set and all.
     check!(
         decoded.exemplars[0].labels
             == vec![
-                ("span_id".to_string(), hex::encode(SPAN_ID)),
-                ("trace_id".to_string(), hex::encode(TRACE_ID)),
+                MetricLabelPair::new("span_id", hex::encode(SPAN_ID)),
+                MetricLabelPair::new("trace_id", hex::encode(TRACE_ID)),
             ]
     );
     check!((decoded.exemplars[0].value - 0.005).abs() < 1e-9);

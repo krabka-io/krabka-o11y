@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        ArrayRef, BooleanBuilder, FixedSizeBinaryBuilder, Float64Builder, Int32Builder,
-        Int64Builder, ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder,
+        ArrayBuilder, ArrayRef, BooleanBuilder, FixedSizeBinaryBuilder, Float64Builder,
+        Int32Builder, Int64Builder, ListBuilder, StringBuilder, StringDictionaryBuilder,
+        StructBuilder,
     },
     datatypes::{DataType, Field, Fields, Int32Type},
     record_batch::RecordBatch,
@@ -270,20 +271,28 @@ mod tests {
         row
     }
 
+    fn encode_promoted_attr(
+        key: &str,
+        value: AttrValue,
+        promoted: &PromotedSpanAttr,
+    ) -> RecordBatch {
+        let row = row_with_attrs(vec![SpanAttr {
+            key: key.into(),
+            is_array: false,
+            value,
+        }]);
+        encode_span_rows_with_promoted_attrs(&[row], std::slice::from_ref(promoted)).unwrap()
+    }
+
     #[test]
     fn promotes_double_attr_into_its_column() {
         // Guards the `Some(AttrValue::Double(values))` match arm in
         // PromotedAttrBuilder::append: deleting it falls through to
         // append_null, so the promoted column would be null instead of 1.5.
-        let promoted = [PromotedSpanAttr::double("latency")];
-        let row = row_with_attrs(vec![SpanAttr {
-            key: "latency".into(),
-            is_array: false,
-            value: AttrValue::Double(vec![1.5]),
-        }]);
-        let batch = encode_span_rows_with_promoted_attrs(&[row], &promoted).unwrap();
+        let promoted = PromotedSpanAttr::double("latency");
+        let batch = encode_promoted_attr("latency", AttrValue::Double(vec![1.5]), &promoted);
         let col = batch
-            .column_by_name(&promoted[0].column_name())
+            .column_by_name(&promoted.column_name())
             .unwrap()
             .as_any()
             .downcast_ref::<Float64Array>()
@@ -295,15 +304,10 @@ mod tests {
     #[test]
     fn promotes_bool_attr_into_its_column() {
         // Guards the `Some(AttrValue::Bool(values))` match arm.
-        let promoted = [PromotedSpanAttr::bool("ok")];
-        let row = row_with_attrs(vec![SpanAttr {
-            key: "ok".into(),
-            is_array: false,
-            value: AttrValue::Bool(vec![true]),
-        }]);
-        let batch = encode_span_rows_with_promoted_attrs(&[row], &promoted).unwrap();
+        let promoted = PromotedSpanAttr::bool("ok");
+        let batch = encode_promoted_attr("ok", AttrValue::Bool(vec![true]), &promoted);
         let col = batch
-            .column_by_name(&promoted[0].column_name())
+            .column_by_name(&promoted.column_name())
             .unwrap()
             .as_any()
             .downcast_ref::<BooleanArray>()
@@ -390,40 +394,338 @@ mod tests {
     }
 }
 
-mod append_attrs;
-mod append_events;
-mod append_kv;
-mod append_links;
 mod attr_value;
-mod encode_span_rows;
-mod encode_span_rows_with_promoted_attrs;
-mod new_event_struct_builder;
-mod new_link_struct_builder;
-mod new_str_list;
-mod new_str_list_list;
 mod promoted_attr_builder;
-mod promoted_attr_value;
 mod span_attr;
 mod span_column_builders;
-mod span_event;
-mod span_link;
-mod span_row;
 
-use append_attrs::append_attrs;
-use append_events::append_events;
-use append_kv::append_kv;
-use append_links::append_links;
 pub use attr_value::AttrValue;
-pub use encode_span_rows::encode_span_rows;
-pub use encode_span_rows_with_promoted_attrs::encode_span_rows_with_promoted_attrs;
-use new_event_struct_builder::new_event_struct_builder;
-use new_link_struct_builder::new_link_struct_builder;
-use new_str_list::new_str_list;
-use new_str_list_list::new_str_list_list;
 use promoted_attr_builder::PromotedAttrBuilder;
-use promoted_attr_value::promoted_attr_value;
 pub use span_attr::SpanAttr;
-use span_column_builders::SpanColumnBuilders;
-pub use span_event::SpanEvent;
-pub use span_link::SpanLink;
-pub use span_row::SpanRow;
+pub use span_column_builders::SpanColumnBuilders;
+
+/// One nested span event.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpanEvent {
+    pub name: String,
+    /// Offset from the owning span's start.
+    pub time_since_start: Time,
+    pub attrs: Vec<SpanAttr>,
+}
+
+/// One nested span link.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpanLink {
+    /// Trace and span identifiers of the linked span.
+    pub linked_trace_id: [u8; 16],
+    pub linked_span_id: [u8; 8],
+    pub attrs: Vec<SpanAttr>,
+}
+
+/// One flattened span row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpanRow {
+    pub trace_id: [u8; 16],
+    pub span_id: [u8; 8],
+    pub parent_span_id: Option<[u8; 8]>,
+    pub nested_set: NestedSet,
+    pub child_count: i32,
+    pub root_service_name: Option<String>,
+    pub root_span_name: Option<String>,
+    pub trace_start_unix_nano: i64,
+    pub trace_duration: Time,
+    pub name: Option<String>,
+    pub kind: SpanKind,
+    pub start_unix_nano: i64,
+    pub duration: Time,
+    pub status_code: StatusCode,
+    pub status_message: Option<String>,
+    pub instrumentation_name: Option<String>,
+    pub instrumentation_version: Option<String>,
+    /// Attributes, events and links retained in the flattened row.
+    pub attrs: Vec<SpanAttr>,
+    pub events: Vec<SpanEvent>,
+    pub links: Vec<SpanLink>,
+}
+
+/// Encodes rows into a record batch that matches the canonical span-block
+/// schema.
+///
+/// # Errors
+/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+pub fn encode_span_rows(rows: &[SpanRow]) -> Result<RecordBatch> {
+    encode_span_rows_with_promoted_attrs(rows, &[])
+}
+
+pub(crate) fn new_str_list() -> ListBuilder<StringBuilder> {
+    ListBuilder::new(StringBuilder::new())
+}
+
+pub(crate) fn new_str_list_list() -> ListBuilder<ListBuilder<StringBuilder>> {
+    ListBuilder::new(new_str_list())
+}
+
+pub(crate) fn promoted_attr_value<'a>(attrs: &'a [SpanAttr], key: &str) -> Option<&'a AttrValue> {
+    attrs
+        .iter()
+        .find_map(|attr| (attr.key == key && !attr.is_array).then_some(&attr.value))
+}
+
+pub(crate) fn append_events(events: &mut ListBuilder<StructBuilder>, rows: &[SpanEvent]) {
+    let sb = events.values();
+    for event in rows {
+        sb.field_builder::<StringBuilder>(0)
+            .expect("event name builder")
+            .append_value(&event.name);
+        sb.field_builder::<Int64Builder>(1)
+            .expect("event time builder")
+            .append_value(event.time_since_start.nanos_i64());
+        append_kv(sb, &event.attrs);
+        sb.append(true);
+    }
+    events.append(true);
+}
+
+pub(crate) fn append_links(
+    links: &mut ListBuilder<StructBuilder>,
+    rows: &[SpanLink],
+) -> Result<()> {
+    let sb = links.values();
+    for link in rows {
+        sb.field_builder::<FixedSizeBinaryBuilder>(0)
+            .expect("linked trace id builder")
+            .append_value(link.linked_trace_id)
+            .map_err(|e| BlockStoreError::InvalidBlock(e.to_string()))?;
+        sb.field_builder::<FixedSizeBinaryBuilder>(1)
+            .expect("linked span id builder")
+            .append_value(link.linked_span_id)
+            .map_err(|e| BlockStoreError::InvalidBlock(e.to_string()))?;
+        append_kv(sb, &link.attrs);
+        sb.append(true);
+    }
+    links.append(true);
+    Ok(())
+}
+
+pub(crate) fn new_event_struct_builder() -> StructBuilder {
+    new_attributed_struct_builder([
+        StructColumn {
+            field: Field::new("name", DataType::Utf8, true),
+            builder: Box::new(StringBuilder::new()),
+        },
+        StructColumn {
+            field: Field::new("time_since_start_nano", DataType::Int64, true),
+            builder: Box::new(Int64Builder::new()),
+        },
+    ])
+}
+
+pub(crate) fn new_link_struct_builder() -> StructBuilder {
+    new_attributed_struct_builder([
+        StructColumn {
+            field: Field::new("linked_trace_id", DataType::FixedSizeBinary(16), true),
+            builder: Box::new(FixedSizeBinaryBuilder::new(16)),
+        },
+        StructColumn {
+            field: Field::new("linked_span_id", DataType::FixedSizeBinary(8), true),
+            builder: Box::new(FixedSizeBinaryBuilder::new(8)),
+        },
+    ])
+}
+
+/// One column of a struct: its field and the builder that fills it.
+pub(crate) struct StructColumn {
+    pub(crate) field: Field,
+    pub(crate) builder: Box<dyn ArrayBuilder>,
+}
+
+/// A struct builder for a span event or link: its two leading columns, then
+/// the attribute keys, values and typed attributes every such struct carries.
+pub(crate) fn new_attributed_struct_builder(leading: [StructColumn; 2]) -> StructBuilder {
+    let [first, second] = leading;
+    StructBuilder::new(
+        Fields::from(vec![
+            first.field,
+            second.field,
+            Field::new(
+                SCOL_ATTR_KEYS,
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                true,
+            ),
+            Field::new(
+                SCOL_ATTR_VALUE,
+                DataType::List(Arc::new(Field::new(
+                    "item",
+                    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                    true,
+                ))),
+                true,
+            ),
+            Field::new("attr_typed", DataType::Utf8, true),
+        ]),
+        vec![
+            first.builder,
+            second.builder,
+            Box::new(new_str_list()),
+            Box::new(new_str_list_list()),
+            Box::new(StringBuilder::new()),
+        ],
+    )
+}
+
+/// Indexed text projections and the lossless typed values share one logical source.
+pub(crate) fn append_kv(sb: &mut StructBuilder, attrs: &[SpanAttr]) {
+    let keys = sb
+        .field_builder::<ListBuilder<StringBuilder>>(2)
+        .expect("attr key list builder");
+    for attr in attrs {
+        keys.values().append_value(&attr.key);
+    }
+    keys.append(true);
+    let values = sb
+        .field_builder::<ListBuilder<ListBuilder<StringBuilder>>>(3)
+        .expect("attr value list builder");
+    for attr in attrs {
+        let projected = match &attr.value {
+            AttrValue::Unsupported(_) => Vec::new(),
+            AttrValue::Str(values) => values.clone(),
+            AttrValue::Int(values) => values.iter().map(ToString::to_string).collect(),
+            AttrValue::Double(values) => values.iter().map(ToString::to_string).collect(),
+            AttrValue::Bool(values) => values.iter().map(ToString::to_string).collect(),
+        };
+        for value in projected {
+            values.values().values().append_value(value);
+        }
+        values.values().append(true);
+    }
+    values.append(true);
+    sb.field_builder::<StringBuilder>(4)
+        .expect("typed attribute payload builder")
+        .append_value(
+            serde_json::to_string(attrs).expect("typed attributes have total JSON serialization"),
+        );
+}
+
+pub(crate) fn append_attrs(
+    attrs: &[SpanAttr],
+    keys: &mut ListBuilder<StringBuilder>,
+    is_array: &mut ListBuilder<BooleanBuilder>,
+    str_values: &mut ListBuilder<ListBuilder<StringBuilder>>,
+    int_values: &mut ListBuilder<ListBuilder<Int64Builder>>,
+    double_values: &mut ListBuilder<ListBuilder<Float64Builder>>,
+    bool_values: &mut ListBuilder<ListBuilder<BooleanBuilder>>,
+) {
+    for attr in attrs {
+        keys.values().append_value(&attr.key);
+        is_array.values().append_value(attr.is_array);
+
+        match &attr.value {
+            AttrValue::Unsupported(_) => {}
+            AttrValue::Str(values) => {
+                for value in values {
+                    str_values.values().values().append_value(value);
+                }
+            }
+            AttrValue::Int(values) => {
+                for &value in values {
+                    int_values.values().values().append_value(value);
+                }
+            }
+            AttrValue::Double(values) => {
+                for &value in values {
+                    double_values.values().values().append_value(value);
+                }
+            }
+            AttrValue::Bool(values) => {
+                for &value in values {
+                    bool_values.values().values().append_value(value);
+                }
+            }
+        }
+
+        str_values.values().append(true);
+        int_values.values().append(true);
+        double_values.values().append(true);
+        bool_values.values().append(true);
+    }
+    keys.append(true);
+    is_array.append(true);
+    str_values.append(true);
+    int_values.append(true);
+    double_values.append(true);
+    bool_values.append(true);
+}
+
+/// Encodes rows into a record batch with configured attribute columns promoted
+/// out of the generic attribute lists.
+///
+/// # Errors
+/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+pub fn encode_span_rows_with_promoted_attrs(
+    rows: &[SpanRow],
+    promoted_attrs: &[PromotedSpanAttr],
+) -> Result<RecordBatch> {
+    let mut span_columns = SpanColumnBuilders::with_capacity(rows.len());
+    let mut promoted = promoted_attrs
+        .iter()
+        .map(PromotedAttrBuilder::new)
+        .collect::<Vec<_>>();
+    let mut attr_keys = new_str_list();
+    let mut attr_is_array = ListBuilder::new(BooleanBuilder::new());
+    let mut attr_value = new_str_list_list();
+    let mut attr_value_int = ListBuilder::new(ListBuilder::new(Int64Builder::new()));
+    let mut attr_value_double = ListBuilder::new(ListBuilder::new(Float64Builder::new()));
+    let mut attr_value_unsupported = new_str_list();
+    let mut attr_value_bool = ListBuilder::new(ListBuilder::new(BooleanBuilder::new()));
+    let mut events = ListBuilder::new(new_event_struct_builder());
+    let mut links = ListBuilder::new(new_link_struct_builder());
+
+    for row in rows {
+        span_columns.append(row)?;
+        for builder in &mut promoted {
+            builder.append(&row.attrs);
+        }
+
+        append_attrs(
+            &row.attrs,
+            &mut attr_keys,
+            &mut attr_is_array,
+            &mut attr_value,
+            &mut attr_value_int,
+            &mut attr_value_double,
+            &mut attr_value_bool,
+        );
+        for attr in &row.attrs {
+            attr_value_unsupported.values().append_option(
+                if let super::AttrValue::Unsupported(value) = &attr.value {
+                    Some(value)
+                } else {
+                    None
+                },
+            );
+        }
+        attr_value_unsupported.append(true);
+        append_events(&mut events, &row.events);
+        append_links(&mut links, &row.links)?;
+    }
+
+    let mut columns = span_columns.finish();
+    columns.extend(promoted.into_iter().map(PromotedAttrBuilder::finish));
+    columns.extend([
+        Arc::new(attr_keys.finish()) as ArrayRef,
+        Arc::new(attr_is_array.finish()) as ArrayRef,
+        Arc::new(attr_value.finish()) as ArrayRef,
+        Arc::new(attr_value_int.finish()) as ArrayRef,
+        Arc::new(attr_value_double.finish()) as ArrayRef,
+        Arc::new(attr_value_bool.finish()) as ArrayRef,
+        Arc::new(attr_value_unsupported.finish()) as ArrayRef,
+        Arc::new(events.finish()) as ArrayRef,
+        Arc::new(links.finish()) as ArrayRef,
+    ]);
+
+    RecordBatch::try_new(
+        span_block_schema_with_promoted_attrs(promoted_attrs),
+        columns,
+    )
+    .map_err(|e| BlockStoreError::InvalidBlock(e.to_string()))
+}

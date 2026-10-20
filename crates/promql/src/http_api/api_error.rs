@@ -1,5 +1,10 @@
 use super::{IntoResponse, Json, LimitError, PromqlError, Response, StatusCode, WireError, json};
 
+struct ErrorClassification {
+    status: StatusCode,
+    error_type: &'static str,
+}
+
 #[derive(Debug)]
 pub(crate) struct ApiError {
     pub(crate) status: StatusCode,
@@ -77,18 +82,28 @@ impl From<LimitError> for ApiError {
 
 impl From<PromqlError> for ApiError {
     fn from(error: PromqlError) -> Self {
-        let (status, error_type) = match &error {
-            PromqlError::Parse(_) | PromqlError::Plan(_) => (StatusCode::BAD_REQUEST, "bad_data"),
-            PromqlError::Unsupported(_) | PromqlError::Exec(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "execution")
-            }
+        let classification = match &error {
+            PromqlError::Parse(_) | PromqlError::Plan(_) => ErrorClassification {
+                status: StatusCode::BAD_REQUEST,
+                error_type: "bad_data",
+            },
+            PromqlError::Unsupported(_) | PromqlError::Exec(_) => ErrorClassification {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                error_type: "execution",
+            },
             PromqlError::Limit(limit_error) => return Self::from(limit_error.clone()),
-            PromqlError::Overloaded { .. } => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests"),
-            PromqlError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "execution"),
+            PromqlError::Overloaded { .. } => ErrorClassification {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                error_type: "too_many_requests",
+            },
+            PromqlError::Store(_) => ErrorClassification {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                error_type: "execution",
+            },
         };
         Self {
-            status,
-            error_type,
+            status: classification.status,
+            error_type: classification.error_type,
             message: error.to_string(),
         }
     }
@@ -96,15 +111,14 @@ impl From<PromqlError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(json!({
-                "status": "error",
-                "errorType": self.error_type,
-                "error": self.message,
-            })),
-        )
-            .into_response()
+        let mut response = Json(json!({
+            "status": "error",
+            "errorType": self.error_type,
+            "error": self.message,
+        }))
+        .into_response();
+        *response.status_mut() = self.status;
+        response
     }
 }
 

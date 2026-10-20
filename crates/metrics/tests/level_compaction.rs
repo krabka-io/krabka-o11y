@@ -41,6 +41,43 @@ use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 /// A wall-clock instant well inside the range every unit can express.
 const NOW_MS: i64 = 1_700_000_000_000;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FloatSample {
+    fingerprint: u64,
+    timestamp_ms: i64,
+    value: f64,
+}
+
+const fn float_sample(fingerprint: u64, timestamp_ms: i64, value: f64) -> FloatSample {
+    FloatSample {
+        fingerprint,
+        timestamp_ms,
+        value,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ManifestRange {
+    min_ts: i64,
+    max_ts: i64,
+}
+
+struct NativeHistogramSample {
+    fingerprint: u64,
+    timestamp_ms: i64,
+    histogram: NativeHistogram,
+}
+
+struct HistogramInput {
+    offset: i64,
+    timestamp_ms: i64,
+    count: f64,
+}
+
+const fn manifest_range(min_ts: i64, max_ts: i64) -> ManifestRange {
+    ManifestRange { min_ts, max_ts }
+}
+
 #[test]
 fn only_lifecycle_retention_errors_expose_partial_stats() {
     let stats = CompactionRetentionStats::default();
@@ -57,7 +94,7 @@ fn only_lifecycle_retention_errors_expose_partial_stats() {
 }
 
 fn labels(name: &str) -> Labels {
-    Labels::from_pairs([("__name__", name)])
+    Labels::from_pairs([krabka_blockstore::LabelPair::new("__name__", name)])
 }
 
 /// A policy whose window is wide enough to hold every sample a test writes, so
@@ -72,24 +109,23 @@ fn policy(max_blocks_per_job: usize, target_rows: usize, max_level: u32) -> Comp
     )
 }
 
-fn rows(tenant: &str, samples: &[(u64, i64, f64)]) -> TenantCompactionRows {
+fn rows(tenant: &str, samples: &[FloatSample]) -> TenantCompactionRows {
+    let mut series_labels = BTreeMap::new();
+    for sample in samples {
+        series_labels.insert(
+            sample.fingerprint,
+            labels(&format!("series_{}", sample.fingerprint)).into(),
+        );
+    }
     TenantCompactionRows {
         tenant: tenant.to_string(),
-        series_labels: samples
-            .iter()
-            .map(|(fingerprint, _, _)| {
-                (
-                    *fingerprint,
-                    labels(&format!("series_{fingerprint}")).into(),
-                )
-            })
-            .collect(),
+        series_labels,
         float_rows: samples
             .iter()
-            .map(|(fingerprint, timestamp_ms, value)| FloatRow {
-                fingerprint: *fingerprint,
-                timestamp_ms: *timestamp_ms,
-                value: *value,
+            .map(|sample| FloatRow {
+                fingerprint: sample.fingerprint,
+                timestamp_ms: sample.timestamp_ms,
+                value: sample.value,
                 start_timestamp_ms: None,
             })
             .collect(),
@@ -106,7 +142,7 @@ async fn write_float_block(
     store: &Arc<dyn ObjectStore>,
     tenant: &str,
     first_offset: i64,
-    samples: &[(u64, i64, f64)],
+    samples: &[FloatSample],
 ) -> CompactionIndexManifest {
     let mut writes = write_compacted_tenant_blocks(
         &BlockWriter::new(store.clone()),
@@ -138,18 +174,33 @@ async fn run_pass(
     .expect("one compaction pass")
 }
 
+/// One pass of the default policy (8 blocks per job, 1M target rows, up to
+/// level 4) with nothing deferred from an earlier pass.
+async fn run_default_pass(store: &Arc<dyn ObjectStore>) -> MetricCompactionPass {
+    run_pass(
+        store,
+        policy(8, 1_000_000, 4),
+        &mut DeferredBlockDeletions::new(),
+    )
+    .await
+}
+
 async fn exists(store: &Arc<dyn ObjectStore>, key: &str) -> bool {
     store.head(&Path::from(key)).await.is_ok()
 }
 
 /// Every `(fingerprint, timestamp, value)` the block at `key` holds.
-async fn samples_in(store: &Arc<dyn ObjectStore>, key: &str) -> Vec<(u64, i64, f64)> {
+async fn samples_in(store: &Arc<dyn ObjectStore>, key: &str) -> Vec<FloatSample> {
     read_block(store.clone(), key)
         .await
         .expect("read the block")
         .iter()
         .flat_map(|batch| decode_float_samples(batch).expect("decode float samples"))
-        .map(|(fingerprint, timestamp_ms, value, _)| (fingerprint, timestamp_ms, value))
+        .map(|row| FloatSample {
+            fingerprint: row.fingerprint,
+            timestamp_ms: row.timestamp_ms,
+            value: row.value,
+        })
         .collect()
 }
 
@@ -160,7 +211,7 @@ fn manifest(
     kind: MetricBlockKind,
     block_key: &str,
     level: BlockLevel,
-    (min_ts, max_ts): (i64, i64),
+    range: ManifestRange,
     row_count: usize,
 ) -> CompactionIndexManifest {
     CompactionIndexManifest {
@@ -172,33 +223,43 @@ fn manifest(
         first_offset: 0,
         last_offset: 1,
         row_count,
-        min_ts,
-        max_ts,
+        min_ts: range.min_ts,
+        max_ts: range.max_ts,
         fingerprints: vec![7],
         series: Vec::new(),
     }
 }
 
+// `tenant-a`'s block from offset 1: series 7 at `NOW_MS` and one second on.
+async fn write_first_tenant_a_block(store: &Arc<dyn ObjectStore>) -> CompactionIndexManifest {
+    write_float_block(
+        store,
+        "tenant-a",
+        1,
+        &[
+            float_sample(7, NOW_MS, 1.0),
+            float_sample(7, NOW_MS + 1_000, 2.0),
+        ],
+    )
+    .await
+}
+
 #[tokio::test]
 async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let first = write_float_block(
-        &store,
-        "tenant-a",
-        1,
-        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
-    )
-    .await;
+    let first = write_first_tenant_a_block(&store).await;
     let second = write_float_block(
         &store,
         "tenant-a",
         3,
-        &[(7, NOW_MS + 2_000, 3.0), (9, NOW_MS + 500, 4.0)],
+        &[
+            float_sample(7, NOW_MS + 2_000, 3.0),
+            float_sample(9, NOW_MS + 500, 4.0),
+        ],
     )
     .await;
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     assert!(pass.outputs.len() == 1);
     let output = &pass.outputs[0];
@@ -228,10 +289,10 @@ async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
     check!(
         samples_in(&store, &output.block_key).await
             == vec![
-                (7, NOW_MS, 1.0),
-                (7, NOW_MS + 1_000, 2.0),
-                (7, NOW_MS + 2_000, 3.0),
-                (9, NOW_MS + 500, 4.0),
+                float_sample(7, NOW_MS, 1.0),
+                float_sample(7, NOW_MS + 1_000, 2.0),
+                float_sample(7, NOW_MS + 2_000, 3.0),
+                float_sample(9, NOW_MS + 500, 4.0),
             ],
         "every sample is still there, in the declared order"
     );
@@ -253,12 +314,14 @@ async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
 #[tokio::test]
 async fn duplicate_samples_across_two_inputs_appear_once_in_the_merged_block() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let overlap = [(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)];
+    let overlap = [
+        float_sample(7, NOW_MS, 1.0),
+        float_sample(7, NOW_MS + 1_000, 2.0),
+    ];
     write_float_block(&store, "tenant-a", 1, &overlap).await;
     write_float_block(&store, "tenant-a", 3, &overlap).await;
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     assert!(pass.outputs.len() == 1);
     let output = &pass.outputs[0];
@@ -278,7 +341,7 @@ async fn repeated_planning_reaches_an_empty_plan() {
             &store,
             "tenant-a",
             offset * 2,
-            &[(7, NOW_MS + offset * 1_000, 1.0)],
+            &[float_sample(7, NOW_MS + offset * 1_000, 1.0)],
         )
         .await;
     }
@@ -310,11 +373,11 @@ async fn repeated_planning_reaches_an_empty_plan() {
     for manifest in &live {
         merged.extend(samples_in(&store, &manifest.block_key).await);
     }
-    merged.sort_by_key(|(_, timestamp, _)| *timestamp);
+    merged.sort_by_key(|sample| sample.timestamp_ms);
     check!(
         merged
             == (0..8)
-                .map(|offset| (7, NOW_MS + offset * 1_000, 1.0))
+                .map(|offset| float_sample(7, NOW_MS + offset * 1_000, 1.0))
                 .collect::<Vec<_>>()
     );
 }
@@ -332,7 +395,7 @@ fn blocks_in_different_windows_are_not_merged_into_one_job() {
             MetricBlockKind::Float,
             "early-a",
             BlockLevel(0),
-            (0, 1_000),
+            manifest_range(0, 1_000),
             1,
         ),
         manifest(
@@ -340,7 +403,7 @@ fn blocks_in_different_windows_are_not_merged_into_one_job() {
             MetricBlockKind::Float,
             "early-b",
             BlockLevel(0),
-            (2_000, 3_000),
+            manifest_range(2_000, 3_000),
             1,
         ),
         manifest(
@@ -348,7 +411,7 @@ fn blocks_in_different_windows_are_not_merged_into_one_job() {
             MetricBlockKind::Float,
             "late-a",
             BlockLevel(0),
-            (window_ms, window_ms + 1_000),
+            manifest_range(window_ms, window_ms + 1_000),
             1,
         ),
         manifest(
@@ -356,7 +419,7 @@ fn blocks_in_different_windows_are_not_merged_into_one_job() {
             MetricBlockKind::Float,
             "late-b",
             BlockLevel(0),
-            (window_ms + 2_000, window_ms + 3_000),
+            manifest_range(window_ms + 2_000, window_ms + 3_000),
             1,
         ),
     ];
@@ -395,8 +458,22 @@ fn every_metric_block_kind_is_a_compaction_input() {
         MetricBlockKind::ClockReadings,
     ] {
         let manifests = vec![
-            manifest("tenant-a", kind, "first", BlockLevel(0), (0, 1_000), 1),
-            manifest("tenant-a", kind, "second", BlockLevel(0), (1, 1_001), 1),
+            manifest(
+                "tenant-a",
+                kind,
+                "first",
+                BlockLevel(0),
+                manifest_range(0, 1_000),
+                1,
+            ),
+            manifest(
+                "tenant-a",
+                kind,
+                "second",
+                BlockLevel(0),
+                manifest_range(1, 1_001),
+                1,
+            ),
         ];
 
         let jobs = plan_metric_compactions(&manifests, policy(8, 1_000_000, 4));
@@ -414,7 +491,7 @@ async fn a_pass_merges_exemplars_without_dropping_shared_timestamp_rows() {
     let block_writer = BlockWriter::new(store.clone());
     let mut exemplars = Vec::new();
     for offset in [1_i64, 3] {
-        let mut rows = rows("tenant-a", &[(7, NOW_MS + offset, 1.0)]);
+        let mut rows = rows("tenant-a", &[float_sample(7, NOW_MS + offset, 1.0)]);
         // Two exemplars on one `(fingerprint, timestamp)`, which is exactly the
         // pair a merge would have deduplicated away.
         rows.exemplar_rows = vec![
@@ -446,9 +523,8 @@ async fn a_pass_merges_exemplars_without_dropping_shared_timestamp_rows() {
         );
     }
     assert!(exemplars.len() == 2);
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     check!(
         pass.outputs
@@ -471,19 +547,32 @@ async fn a_pass_merges_exemplars_without_dropping_shared_timestamp_rows() {
 
 #[tokio::test]
 async fn metadata_and_disjoint_clock_dictionaries_merge() {
+    struct ClockNodeCase {
+        offset: i64,
+        node: &'static str,
+    }
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let sink = ObjectStoreCompactionIndexSink::new(store.clone());
     let writer = BlockWriter::new(store.clone());
-    for (offset, node) in [(1, "host-a"), (3, "host-b")] {
+    for case in [
+        ClockNodeCase {
+            offset: 1,
+            node: "host-a",
+        },
+        ClockNodeCase {
+            offset: 3,
+            node: "host-b",
+        },
+    ] {
         let clock = DecodedClockReading {
-            node: node.to_string(),
+            node: case.node.to_string(),
             clock: "CLOCK_REALTIME".to_string(),
             source_kind: ClockSourceKind::Ntp,
-            reading_unix_nanos: UnixNanos::new(NOW_MS * 1_000_000 + offset),
+            reading_unix_nanos: UnixNanos::new(NOW_MS * 1_000_000 + case.offset),
             uncertainty_nanos: 1,
             offset_nanos: 0,
             sync_state: ClockSyncState::Synchronized,
-            reference_id: Some(format!("ref-{node}")),
+            reference_id: Some(format!("ref-{}", case.node)),
             last_sync_unix_nanos: None,
             frequency_ppb: None,
             last_step_nanos: None,
@@ -492,35 +581,36 @@ async fn metadata_and_disjoint_clock_dictionaries_merge() {
             timex: None,
             gnss: None,
         };
+        let mut series_labels = BTreeMap::new();
+        series_labels.insert(7, labels("metric").into());
         let rows = TenantCompactionRows {
             tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(7, labels("metric").into())]),
+            series_labels,
             float_rows: Vec::new(),
             histogram_rows: Vec::new(),
             exemplar_rows: Vec::new(),
             metadata_rows: vec![MetadataRow {
                 fingerprint: 7,
-                metric_family_name: format!("metric_{offset}"),
+                metric_family_name: format!("metric_{}", case.offset),
                 metric_type: "gauge".to_string(),
                 help: String::new(),
                 unit: String::new(),
             }],
             clock_rows: vec![ClockReadingRow {
                 fingerprint: 7,
-                timestamp_ms: NOW_MS + offset,
+                timestamp_ms: NOW_MS + case.offset,
                 reading: ClockReadingPayload {
                     reading: clock,
-                    ingest_unix_nanos: UnixNanos::new(NOW_MS * 1_000_000 + offset),
+                    ingest_unix_nanos: UnixNanos::new(NOW_MS * 1_000_000 + case.offset),
                 },
             }],
         };
-        write_compacted_tenant_blocks(&writer, &sink, &rows, offset, offset + 1)
+        write_compacted_tenant_blocks(&writer, &sink, &rows, case.offset, case.offset + 1)
             .await
             .expect("write metadata and clock blocks");
     }
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     for kind in [MetricBlockKind::Metadata, MetricBlockKind::ClockReadings] {
         let output = pass
@@ -561,7 +651,11 @@ async fn an_erasure_request_rewrites_only_its_series_and_time_range() {
         &store,
         "tenant-a",
         1,
-        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0), (9, NOW_MS, 3.0)],
+        &[
+            float_sample(7, NOW_MS, 1.0),
+            float_sample(7, NOW_MS + 1_000, 2.0),
+            float_sample(9, NOW_MS, 3.0),
+        ],
     )
     .await;
     let request = ErasureRequest::new(
@@ -582,7 +676,7 @@ async fn an_erasure_request_rewrites_only_its_series_and_time_range() {
     assert!(pass.outputs.len() == 1);
     check!(
         samples_in(&store, &pass.outputs[0].block_key).await
-            == vec![(7, NOW_MS, 1.0), (9, NOW_MS, 3.0)]
+            == vec![float_sample(7, NOW_MS, 1.0), float_sample(9, NOW_MS, 3.0)]
     );
     check!(deferred.keys().len() == 1, "the retired source is queued");
     check!(
@@ -602,10 +696,15 @@ async fn an_erasure_request_rewrites_only_its_series_and_time_range() {
 #[tokio::test]
 async fn a_merge_does_not_delete_its_inputs_until_a_later_pass() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let first = write_float_block(&store, "tenant-a", 1, &[(7, NOW_MS, 1.0)]).await;
-    let second = write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS + 1_000, 2.0)]).await;
+    let first = write_float_block(&store, "tenant-a", 1, &[float_sample(7, NOW_MS, 1.0)]).await;
+    let second = write_float_block(
+        &store,
+        "tenant-a",
+        3,
+        &[float_sample(7, NOW_MS + 1_000, 2.0)],
+    )
+    .await;
     let mut deferred = DeferredBlockDeletions::new();
-
     let merging = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
 
     assert!(merging.outputs.len() == 1);
@@ -646,15 +745,32 @@ async fn a_merge_does_not_delete_its_inputs_until_a_later_pass() {
 #[tokio::test]
 async fn retention_expires_a_compacted_block_as_readily_as_a_level_zero_one() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    write_float_block(&store, "tenant-a", 1, &[(7, NOW_MS - 10_000, 1.0)]).await;
-    write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS - 9_000, 2.0)]).await;
-    let mut deferred = DeferredBlockDeletions::new();
-    let merged = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    write_float_block(
+        &store,
+        "tenant-a",
+        1,
+        &[float_sample(7, NOW_MS - 10_000, 1.0)],
+    )
+    .await;
+    write_float_block(
+        &store,
+        "tenant-a",
+        3,
+        &[float_sample(7, NOW_MS - 9_000, 2.0)],
+    )
+    .await;
+    let merged = run_default_pass(&store).await;
     assert!(merged.outputs.len() == 1);
     let compacted = merged.outputs[0].clone();
     check!(compacted.block_key.contains("/float/compacted/l1-"));
     // A level-zero block of another tenant, so one pass judges both shapes.
-    let ingested = write_float_block(&store, "tenant-b", 5, &[(7, NOW_MS - 10_000, 3.0)]).await;
+    let ingested = write_float_block(
+        &store,
+        "tenant-b",
+        5,
+        &[float_sample(7, NOW_MS - 10_000, 3.0)],
+    )
+    .await;
     // Both shapes are listed as manifests in the first place.
     check!(
         list_compaction_manifests(&store)
@@ -744,23 +860,25 @@ async fn two_merges_over_one_range_write_to_different_keys() {
     let mut keys = BTreeMap::new();
     for tenant in ["tenant-a", "tenant-b"] {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        write_float_block(&store, tenant, 1, &[(7, NOW_MS, 1.0)]).await;
-        write_float_block(&store, tenant, 3, &[(7, NOW_MS + 1_000, 2.0)]).await;
-        let mut deferred = DeferredBlockDeletions::new();
+        write_float_block(&store, tenant, 1, &[float_sample(7, NOW_MS, 1.0)]).await;
+        write_float_block(&store, tenant, 3, &[float_sample(7, NOW_MS + 1_000, 2.0)]).await;
 
-        let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+        let pass = run_default_pass(&store).await;
 
         assert!(pass.outputs.len() == 1);
         keys.insert(tenant, pass.outputs[0].block_key.clone());
     }
 
     check!(keys["tenant-a"] != keys["tenant-b"]);
-    for (tenant, key) in &keys {
+    for entry in &keys {
         check!(
-            key.starts_with(&format!("metrics/{tenant}/float/compacted/l1-")),
-            "{key}"
+            entry
+                .1
+                .starts_with(&format!("metrics/{}/float/compacted/l1-", entry.0)),
+            "{}",
+            entry.1
         );
-        check!(key.ends_with(".parquet"), "{key}");
+        check!(entry.1.ends_with(".parquet"), "{}", entry.1);
     }
 }
 
@@ -790,39 +908,56 @@ async fn two_native_histogram_blocks_merge_into_one() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let sink = ObjectStoreCompactionIndexSink::new(store.clone());
     let block_writer = BlockWriter::new(store.clone());
-    for (offset, timestamp_ms, count) in [(1_i64, NOW_MS, 3.0), (3, NOW_MS + 1_000, 5.0)] {
+    for input in [
+        HistogramInput {
+            offset: 1,
+            timestamp_ms: NOW_MS,
+            count: 3.0,
+        },
+        HistogramInput {
+            offset: 3,
+            timestamp_ms: NOW_MS + 1_000,
+            count: 5.0,
+        },
+    ] {
         let mut rows = rows("tenant-a", &[]);
-        rows.series_labels = BTreeMap::from([(7, labels("latency").into())]);
+        rows.series_labels.insert(7, labels("latency").into());
         rows.histogram_rows = vec![NativeHistogramRow {
             fingerprint: 7,
-            timestamp_ms,
-            hist: histogram(count),
+            timestamp_ms: input.timestamp_ms,
+            hist: histogram(input.count),
         }];
-        write_compacted_tenant_blocks(&block_writer, &sink, &rows, offset, offset + 1)
+        write_compacted_tenant_blocks(&block_writer, &sink, &rows, input.offset, input.offset + 1)
             .await
             .expect("write a native-histogram block");
     }
-    let mut deferred = DeferredBlockDeletions::new();
 
-    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    let pass = run_default_pass(&store).await;
 
     assert!(pass.outputs.len() == 1);
     let output = &pass.outputs[0];
     check!(output.kind == MetricBlockKind::NativeHistograms);
     check!(output.level == BlockLevel(1));
     check!(output.row_count == 2);
-    let decoded: Vec<(u64, i64, NativeHistogram)> = read_block(store.clone(), &output.block_key)
+    let decoded: Vec<NativeHistogramSample> = read_block(store.clone(), &output.block_key)
         .await
         .expect("read the merged block")
         .iter()
         .flat_map(|batch| decode_native_histograms(batch).expect("decode native histograms"))
+        .map(|row| NativeHistogramSample {
+            fingerprint: row.fingerprint,
+            timestamp_ms: row.timestamp_ms,
+            histogram: row.hist,
+        })
         .collect();
     check!(
-        decoded
-            == vec![
-                (7, NOW_MS, histogram(3.0)),
-                (7, NOW_MS + 1_000, histogram(5.0)),
-            ]
+        decoded.len() == 2
+            && decoded[0].fingerprint == 7
+            && decoded[0].timestamp_ms == NOW_MS
+            && decoded[0].histogram == histogram(3.0)
+            && decoded[1].fingerprint == 7
+            && decoded[1].timestamp_ms == NOW_MS + 1_000
+            && decoded[1].histogram == histogram(5.0)
     );
 }
 
@@ -832,8 +967,8 @@ async fn two_native_histogram_blocks_merge_into_one() {
 #[tokio::test]
 async fn the_storage_audit_reads_the_manifests_the_compactor_writes() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    write_float_block(&store, "tenant-a", 0, &[(7, NOW_MS, 1.0)]).await;
-    write_float_block(&store, "tenant/b", 2, &[(8, NOW_MS, 2.0)]).await;
+    write_float_block(&store, "tenant-a", 0, &[float_sample(7, NOW_MS, 1.0)]).await;
+    write_float_block(&store, "tenant/b", 2, &[float_sample(8, NOW_MS, 2.0)]).await;
     let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
     options.signal = Some(StorageSignal::Metrics);
     options.verify_data = true;
@@ -870,9 +1005,21 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
 
     // Flush: two level-zero blocks for tenant-a, and one a week old for
     // tenant-b that retention will expire.
-    let first = write_float_block(&store, "tenant-a", 1, &[(7, today, 1.0)]).await;
-    let second = write_float_block(&store, "tenant-a", 3, &[(7, today + 1_000, 2.0)]).await;
-    let expired = write_float_block(&store, "tenant-b", 5, &[(9, today - 7 * DAY_MS, 3.0)]).await;
+    let first = write_float_block(&store, "tenant-a", 1, &[float_sample(7, today, 1.0)]).await;
+    let second = write_float_block(
+        &store,
+        "tenant-a",
+        3,
+        &[float_sample(7, today + 1_000, 2.0)],
+    )
+    .await;
+    let expired = write_float_block(
+        &store,
+        "tenant-b",
+        5,
+        &[float_sample(9, today - 7 * DAY_MS, 3.0)],
+    )
+    .await;
     let orphan = Path::from("metrics/tenant-a/float/orphaned-by-a-crashed-writer.parquet");
     store
         .put(&orphan, "never indexed".into())
@@ -891,7 +1038,10 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     }
 
     // Query: the merged block holds both samples.
-    let merged_samples = vec![(7, today, 1.0), (7, today + 1_000, 2.0)];
+    let merged_samples = vec![
+        float_sample(7, today, 1.0),
+        float_sample(7, today + 1_000, 2.0),
+    ];
     check!(samples_in(&store, &merged.block_key).await == merged_samples);
 
     // Restart: the manifests in the store are the whole index, so a new
@@ -963,19 +1113,23 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
         MetricBlockKind::Float,
         "metrics/a.parquet",
         BlockLevel(0),
-        (10, 20),
+        manifest_range(10, 20),
         2,
     );
     first.series = vec![CompactionSeriesLabels {
         fingerprint: 7,
-        labels: Labels::from_pairs([("__name__", "温度"), ("region", "north")]).into(),
+        labels: Labels::from_pairs([
+            krabka_blockstore::LabelPair::new("__name__", "温度"),
+            krabka_blockstore::LabelPair::new("region", "north"),
+        ])
+        .into(),
     }];
     let second = manifest(
         "tenant-b",
         MetricBlockKind::Float,
         "metrics/b.parquet",
         BlockLevel(1),
-        (30, 40),
+        manifest_range(30, 40),
         3,
     );
     sink.write_manifest(&first).await.unwrap();
@@ -990,7 +1144,11 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
     first.fingerprints = vec![7, 99];
     first.series.push(CompactionSeriesLabels {
         fingerprint: 99,
-        labels: Labels::from_pairs([("__name__", "温度"), ("region", "south")]).into(),
+        labels: Labels::from_pairs([
+            krabka_blockstore::LabelPair::new("__name__", "温度"),
+            krabka_blockstore::LabelPair::new("region", "south"),
+        ])
+        .into(),
     });
     sink.write_manifest(&first).await.unwrap();
     assert!(
@@ -1006,7 +1164,7 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
         MetricBlockKind::Float,
         "metrics/c.parquet",
         BlockLevel(0),
-        (50, 60),
+        manifest_range(50, 60),
         4,
     );
     sink.write_manifest(&third).await.unwrap();
@@ -1020,7 +1178,7 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
         MetricBlockKind::Float,
         &format!("{IMPORT}/float.parquet"),
         BlockLevel(0),
-        (70, 80),
+        manifest_range(70, 80),
         5,
     );
     sink.write_manifest(&imported).await.unwrap();
@@ -1073,15 +1231,16 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
 #[tokio::test]
 async fn compaction_keeps_complete_samples_tenants_and_deferred_deletion() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let first = write_float_block(
+    let first = write_first_tenant_a_block(&store).await;
+    let second = write_float_block(
         &store,
         "tenant-a",
-        1,
-        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
+        3,
+        &[float_sample(7, NOW_MS + 2_000, 3.0)],
     )
     .await;
-    let second = write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS + 2_000, 3.0)]).await;
-    let untouched = write_float_block(&store, "tenant-b", 5, &[(9, NOW_MS, 90.0)]).await;
+    let untouched =
+        write_float_block(&store, "tenant-b", 5, &[float_sample(9, NOW_MS, 90.0)]).await;
     let mut deferred = DeferredBlockDeletions::new();
     let writer = BlockWriter::new(store.clone());
     let sink = ObjectStoreCompactionIndexSink::new(store.clone());
@@ -1101,9 +1260,9 @@ async fn compaction_keeps_complete_samples_tenants_and_deferred_deletion() {
     assert!(
         samples_in(&store, &merged.block_key).await
             == vec![
-                (7, NOW_MS, 1.0),
-                (7, NOW_MS + 1_000, 2.0),
-                (7, NOW_MS + 2_000, 3.0)
+                float_sample(7, NOW_MS, 1.0),
+                float_sample(7, NOW_MS + 1_000, 2.0),
+                float_sample(7, NOW_MS + 2_000, 3.0)
             ]
     );
     assert!(exists(&store, &first.block_key).await && exists(&store, &second.block_key).await);
@@ -1119,7 +1278,7 @@ async fn compaction_keeps_complete_samples_tenants_and_deferred_deletion() {
     .unwrap();
     assert!(next.outputs.is_empty());
     assert!(!exists(&store, &first.block_key).await && !exists(&store, &second.block_key).await);
-    assert!(samples_in(&store, &untouched.block_key).await == vec![(9, NOW_MS, 90.0)]);
+    assert!(samples_in(&store, &untouched.block_key).await == vec![float_sample(9, NOW_MS, 90.0)]);
     let mut live = list_compaction_manifests(&store).await.unwrap();
     live.sort_by(|left, right| left.tenant.cmp(&right.tenant));
     assert!(live == vec![merged.clone(), untouched]);

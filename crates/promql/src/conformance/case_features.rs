@@ -161,7 +161,23 @@ pub(crate) fn disabled_limit_aggregators(features: &CaseFeatures) -> Vec<String>
 }
 
 /// A rejected parser call needs token binding, never substring/quoted matching.
-fn unquoted_calls(query: &str, expected: &str) -> Vec<(usize, usize)> {
+struct CallToken {
+    start: usize,
+    open: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ReplacementSpan {
+    start: usize,
+    end: usize,
+}
+
+struct CallMetadata {
+    function: Option<String>,
+    argument_types: Vec<String>,
+}
+
+fn unquoted_calls(query: &str, expected: &str) -> Vec<CallToken> {
     let bytes = query.as_bytes();
     let mut index = 0;
     let mut calls = Vec::new();
@@ -194,7 +210,7 @@ fn unquoted_calls(query: &str, expected: &str) -> Vec<(usize, usize)> {
                     index += 1;
                 }
                 if bytes.get(index) == Some(&b'(') {
-                    calls.push((start, index));
+                    calls.push(CallToken { start, open: index });
                 }
             }
         } else {
@@ -215,7 +231,7 @@ fn unquoted_call(query: &str, expected: &str) -> bool {
 fn boundary_helpers_are_well_typed(query: &str, names: &[&str]) -> bool {
     let mut replacements = Vec::new();
     for name in names {
-        for (start, open) in unquoted_calls(query, name) {
+        for CallToken { start, open } in unquoted_calls(query, name) {
             if query[..start]
                 .bytes()
                 .rev()
@@ -235,7 +251,10 @@ fn boundary_helpers_are_well_typed(query: &str, names: &[&str]) -> bool {
             if query.as_bytes().get(close) != Some(&b')') {
                 return false;
             }
-            replacements.push((start, close + 1));
+            replacements.push(ReplacementSpan {
+                start,
+                end: close + 1,
+            });
         }
     }
     if replacements.is_empty() {
@@ -243,8 +262,8 @@ fn boundary_helpers_are_well_typed(query: &str, names: &[&str]) -> bool {
     }
     replacements.sort_unstable();
     let mut normalized = query.to_owned();
-    for (start, end) in replacements.into_iter().rev() {
-        normalized.replace_range(start..end, "(0)");
+    for span in replacements.into_iter().rev() {
+        normalized.replace_range(span.start..span.end, "(0)");
     }
     promql_parser::parser::parse(&normalized).is_ok()
 }
@@ -271,16 +290,20 @@ impl ExprVisitor for FeatureVisitor<'_> {
             Expr::Call(_) => "call",
             Expr::Extension(_) => "extension",
         };
-        let (function, argument_types) = match expression {
-            Expr::Call(call) => (
-                Some(call.func.name.to_owned()),
-                call.args
+        let call_metadata = match expression {
+            Expr::Call(call) => CallMetadata {
+                function: Some(call.func.name.to_owned()),
+                argument_types: call
+                    .args
                     .args
                     .iter()
                     .map(|arg| arg.value_type().to_string())
                     .collect(),
-            ),
-            _ => (None, Vec::new()),
+            },
+            _ => CallMetadata {
+                function: None,
+                argument_types: Vec::new(),
+            },
         };
         let operator = match expression {
             Expr::Aggregate(aggregate) => Some(aggregate.op.to_string()),
@@ -295,8 +318,8 @@ impl ExprVisitor for FeatureVisitor<'_> {
             kind,
             value_type: expression.value_type().to_string(),
             depth: self.depth,
-            function,
-            argument_types,
+            function: call_metadata.function,
+            argument_types: call_metadata.argument_types,
             operator,
             literal_value: match expression {
                 Expr::NumberLiteral(number) => Some(number.val.to_string()),
@@ -386,9 +409,18 @@ mod tests {
     #[cfg(feature = "experimental-functions")]
     #[test]
     fn duration_bound_helpers_record_actual_lowered_literals_without_invented_calls() {
-        for (query, expected) in [("start()", "10"), ("end()", "30")] {
+        for case in [
+            BoundaryFeatureCase {
+                query: "start()",
+                expected: "10",
+            },
+            BoundaryFeatureCase {
+                query: "end()",
+                expected: "30",
+            },
+        ] {
             let metadata = CaseFeatures::from_query_with_context(
-                query,
+                case.query,
                 crate::DurationExprContext::range(10_000, 30_000, krabka_units::prelude::secs(10)),
             );
             assert!(metadata.parsed);
@@ -397,9 +429,15 @@ mod tests {
                 metadata
                     .nodes
                     .iter()
-                    .any(|node| node.literal_value.as_deref() == Some(expected))
+                    .any(|node| node.literal_value.as_deref() == Some(case.expected))
             );
         }
+    }
+
+    #[cfg(feature = "experimental-functions")]
+    struct BoundaryFeatureCase {
+        query: &'static str,
+        expected: &'static str,
     }
 
     #[test]

@@ -1,54 +1,47 @@
+use serde_json::Value;
+
 use super::{
-    ApiError, Arc, BTreeMap, DiscoveryParams, HeaderMap, IntoResponse, MetricStore, Principal,
-    PrometheusApiState, Response, apply_limit, authorized_tenant_from_headers, discovery_matchers,
-    discovery_window, enforce_query_range_limit, enforce_selected_series_limit, labels_json,
-    labels_key, success_data_response,
+    ApiError, Arc, BTreeMap, DiscoveryParams, MetricStore, PrometheusApiState, Rejection,
+    RequestAuth, Response, discovery_response, discovery_scope, labels_json, labels_key,
+    limit_discovery_results,
 };
 
 pub(crate) async fn series_dispatch<S: MetricStore>(
     state: &Arc<PrometheusApiState<S>>,
-    headers: &HeaderMap,
-    principal: &Principal,
+    auth: RequestAuth<'_>,
     params: DiscoveryParams,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(headers, principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
-    let window = match discovery_window(&params) {
-        Ok(window) => window,
-        Err(error) => return error.into_response(),
-    };
-    let matcher_sets = match discovery_matchers(&params) {
-        Ok(matcher_sets) => matcher_sets,
-        Err(error) => return error.into_response(),
-    };
-    if let Err(error) = enforce_query_range_limit(state, &tenant, window.start_ms, window.end_ms) {
-        return error.into_response();
-    }
+    discovery_response(matched_series(state, auth, &params).await)
+}
 
+/// The distinct label sets of the series that the request's selectors match,
+/// as JSON objects.
+async fn matched_series<S: MetricStore>(
+    state: &Arc<PrometheusApiState<S>>,
+    auth: RequestAuth<'_>,
+    params: &DiscoveryParams,
+) -> Result<Vec<Value>, Rejection> {
+    let scope = discovery_scope(state, auth, params)?;
     let mut by_key = BTreeMap::new();
-    for matchers in matcher_sets {
-        match state
+    for matchers in &scope.matcher_sets {
+        let series = state
             .store
-            .series(tenant.as_str(), &matchers, window.start_ms, window.end_ms)
+            .series(
+                scope.tenant.as_str(),
+                matchers,
+                scope.start_ms,
+                scope.end_ms,
+            )
             .await
-        {
-            Ok(series) => {
-                for labels in series {
-                    by_key.insert(labels_key(&labels), labels);
-                }
-            }
-            Err(error) => return ApiError::from(error).into_response(),
+            .map_err(|error| Rejection::of(ApiError::from(error)))?;
+        for labels in series {
+            by_key.insert(labels_key(&labels), labels);
         }
     }
     let mut series = by_key
         .into_values()
         .map(|labels| labels_json(labels.iter()))
         .collect::<Vec<_>>();
-    if let Err(error) = enforce_selected_series_limit(state, &tenant, series.len()) {
-        return error.into_response();
-    }
-    apply_limit(&mut series, params.limit);
-    success_data_response(series)
+    limit_discovery_results(state, scope.limits(params), &mut series)?;
+    Ok(series)
 }

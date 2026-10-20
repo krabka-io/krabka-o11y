@@ -150,14 +150,16 @@ pub(crate) fn range_histogram_sample(
         extrapolated_histogram_counts(&extrapolation, &histograms, |histogram| {
             &histogram.positive_counts
         })?;
-    (out.positive_spans, out.positive_counts) =
-        compact_histogram_spans(&out.positive_spans, &out.positive_counts);
+    let positive = compact_histogram_spans(&out.positive_spans, &out.positive_counts);
+    out.positive_spans = positive.spans;
+    out.positive_counts = positive.counts;
     out.negative_counts =
         extrapolated_histogram_counts(&extrapolation, &histograms, |histogram| {
             &histogram.negative_counts
         })?;
-    (out.negative_spans, out.negative_counts) =
-        compact_histogram_spans(&out.negative_spans, &out.negative_counts);
+    let negative = compact_histogram_spans(&out.negative_spans, &out.negative_counts);
+    out.negative_spans = negative.spans;
+    out.negative_counts = negative.counts;
     if matches!(kind, RangeFn::Delta)
         || extrapolation.duration_to_zero.is_some()
         || layout_changed

@@ -30,18 +30,18 @@ pub(crate) fn over_time_sample_from_series(
         return match kind {
             OverTimeFn::Count => Some(SampleValue::Float((0..sample_count).map(|_| 1.0).sum())),
             OverTimeFn::First => range_samples(series, range_end_ms, range)
-                .min_by_key(|(timestamp, _)| *timestamp)
-                .map(|(_, value)| value.clone()),
+                .min_by_key(|sample| sample.timestamp_ms)
+                .map(|sample| sample.value.clone()),
             OverTimeFn::Last => range_samples(series, range_end_ms, range)
-                .max_by_key(|(timestamp, _)| *timestamp)
-                .map(|(_, value)| value.clone()),
+                .max_by_key(|sample| sample.timestamp_ms)
+                .map(|sample| sample.value.clone()),
             OverTimeFn::Present => Some(SampleValue::Float(1.0)),
             OverTimeFn::TsOfFirst => range_samples(series, range_end_ms, range)
-                .map(|(timestamp, _)| timestamp)
+                .map(|sample| sample.timestamp_ms)
                 .min()
                 .map(|timestamp| SampleValue::Float(timestamp_seconds(timestamp))),
             OverTimeFn::TsOfLast => range_samples(series, range_end_ms, range)
-                .map(|(timestamp, _)| timestamp)
+                .map(|sample| sample.timestamp_ms)
                 .max()
                 .map(|timestamp| SampleValue::Float(timestamp_seconds(timestamp))),
             _ => unreachable!("over_time histogram-safe kind checked above"),
@@ -82,23 +82,23 @@ pub(crate) fn over_time_sample_from_series(
     }
 
     let value = match kind {
-        OverTimeFn::Sum => over_time_sum(samples.iter().map(|(_, value)| *value)),
-        OverTimeFn::Avg => over_time_mean(samples.iter().map(|(_, value)| *value)),
+        OverTimeFn::Sum => over_time_sum(samples.iter().map(|sample| sample.value)),
+        OverTimeFn::Avg => over_time_mean(samples.iter().map(|sample| sample.value)),
         OverTimeFn::Count => unreachable!("count_over_time handled before float extraction"),
         OverTimeFn::Min => fold_over_time_extremum(&samples, ExtremumKind::Min),
         OverTimeFn::Max => fold_over_time_extremum(&samples, ExtremumKind::Max),
-        OverTimeFn::Stddev => over_time_variance(&samples).sqrt(),
-        OverTimeFn::Stdvar => over_time_variance(&samples),
+        OverTimeFn::Stddev => over_time_variance(samples.iter().map(|sample| sample.value)).sqrt(),
+        OverTimeFn::Stdvar => over_time_variance(samples.iter().map(|sample| sample.value)),
         OverTimeFn::Mad => over_time_mad(&samples).expect("non-empty samples"),
         OverTimeFn::First => samples
             .into_iter()
-            .min_by_key(|(timestamp, _)| *timestamp)
-            .map(|(_, value)| value)
+            .min_by_key(|sample| sample.timestamp_ms)
+            .map(|sample| sample.value)
             .expect("non-empty samples"),
         OverTimeFn::Last => samples
             .into_iter()
-            .max_by_key(|(timestamp, _)| *timestamp)
-            .map(|(_, value)| value)
+            .max_by_key(|sample| sample.timestamp_ms)
+            .map(|sample| sample.value)
             .expect("non-empty samples"),
         OverTimeFn::TsOfFirst | OverTimeFn::TsOfLast => {
             unreachable!("ts_of_first/ts_of_last handled before float extraction")
@@ -107,22 +107,22 @@ pub(crate) fn over_time_sample_from_series(
             samples
                 .into_iter()
                 .min_by(|left, right| {
-                    left.1
-                        .total_cmp(&right.1)
-                        .then_with(|| right.0.cmp(&left.0))
+                    left.value
+                        .total_cmp(&right.value)
+                        .then_with(|| right.timestamp_ms.cmp(&left.timestamp_ms))
                 })
-                .map(|(timestamp, _)| timestamp)
+                .map(|sample| sample.timestamp_ms)
                 .expect("non-empty samples"),
         ),
         OverTimeFn::TsOfMax => timestamp_seconds(
             samples
                 .into_iter()
                 .max_by(|left, right| {
-                    left.1
-                        .total_cmp(&right.1)
-                        .then_with(|| left.0.cmp(&right.0))
+                    left.value
+                        .total_cmp(&right.value)
+                        .then_with(|| left.timestamp_ms.cmp(&right.timestamp_ms))
                 })
-                .map(|(timestamp, _)| timestamp)
+                .map(|sample| sample.timestamp_ms)
                 .expect("non-empty samples"),
         ),
         OverTimeFn::Present => unreachable!("present_over_time handled before float extraction"),

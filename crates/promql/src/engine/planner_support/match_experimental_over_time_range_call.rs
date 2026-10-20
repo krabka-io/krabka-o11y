@@ -1,5 +1,10 @@
 use super::{Expr, MatrixSelector, OverTimeFn};
 
+pub(crate) struct ExperimentalOverTimeRangeCall<'a> {
+    pub selector: &'a MatrixSelector,
+    pub function: OverTimeFn,
+}
+
 /// Matches a top-level EXPERIMENTAL `*_over_time` member range call.
 ///
 /// A call is eligible for the shared-kernel operator path if and only if `expr`
@@ -16,7 +21,7 @@ use super::{Expr, MatrixSelector, OverTimeFn};
 /// [`match_over_time_range_call`] matches the non-experimental members instead.
 pub(crate) fn match_experimental_over_time_range_call(
     expr: &Expr,
-) -> Option<(&MatrixSelector, OverTimeFn)> {
+) -> Option<ExperimentalOverTimeRangeCall<'_>> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -39,5 +44,8 @@ pub(crate) fn match_experimental_over_time_range_call(
     let Expr::MatrixSelector(selector) = arg else {
         return None;
     };
-    Some((selector, kind))
+    Some(ExperimentalOverTimeRangeCall {
+        selector,
+        function: kind,
+    })
 }

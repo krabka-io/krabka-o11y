@@ -3,6 +3,13 @@ use super::{MetricBlockKind, Path, compaction_index_key, escape_object_path_segm
 /// How many hex digits of the content hash a Parquet key holds.
 const KEY_HASH_DIGITS: usize = 16;
 
+/// The data block and index manifest keys of one imported object.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TsdbObjectKeys {
+    pub block_key: String,
+    pub index_key: String,
+}
+
 /// The object names of the TSDB imports of one tenant.
 ///
 /// A Parquet key holds the block ULID and a prefix of the content hash. Two
@@ -43,14 +50,17 @@ impl TsdbImportKeys {
     }
 
     /// The Parquet block and `.index` manifest keys of one import object.
-    pub fn object(&self, ulid: &str, sha256: &str, kind: MetricBlockKind) -> (String, String) {
+    pub fn object(&self, ulid: &str, sha256: &str, kind: MetricBlockKind) -> TsdbObjectKeys {
         let block_key = format!(
             "{}/{}.parquet",
             self.directory(ulid, sha256),
             kind.object_path()
         );
         let index_key = compaction_index_key(&block_key);
-        (block_key, index_key)
+        TsdbObjectKeys {
+            block_key,
+            index_key,
+        }
     }
 
     /// The marker whose creation makes every manifest of one import live.
@@ -66,12 +76,15 @@ impl TsdbImportKeys {
     /// that ends with an `uploaded` segment, then `<ULID>-<hash>` with a
     /// 26-character upper-case ULID and 16 lower-case hex digits.
     pub fn is_import_directory(directory: &str) -> bool {
-        let Some((parent, name)) = directory.rsplit_once('/') else {
+        let Some(directory_parts) = directory.rsplit_once('/') else {
             return false;
         };
-        let Some((ulid, digits)) = name.split_once('-') else {
+        let parent = directory_parts.0;
+        let Some(name_parts) = directory_parts.1.split_once('-') else {
             return false;
         };
+        let ulid = name_parts.0;
+        let digits = name_parts.1;
         parent.ends_with("/uploaded")
             && ulid.len() == 26
             && ulid

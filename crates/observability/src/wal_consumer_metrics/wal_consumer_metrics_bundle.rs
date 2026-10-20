@@ -8,6 +8,12 @@ use super::{
 };
 use crate::PanicSafeShared;
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct WalPartitionAssignment {
+    pub topic: String,
+    pub partition: i32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WalPartitionRecoveryStatus {
     pub topic: String,
@@ -27,7 +33,7 @@ pub struct WalRecoveryStatus {
 #[derive(Clone, Debug, Default)]
 struct WalRecoveryState {
     caught_up: bool,
-    partitions: BTreeMap<(String, i32), WalPartitionRecoveryStatus>,
+    partitions: BTreeMap<WalPartitionAssignment, WalPartitionRecoveryStatus>,
 }
 
 /// Delay buckets for one WAL record, in seconds.
@@ -175,20 +181,20 @@ impl WalConsumerMetrics {
 
     /// Records the live assignment and whether every assigned partition has
     /// consumed through the broker's last observed end offset.
-    pub fn record_assignment(&self, assigned: &[(String, i32)], caught_up: bool) {
+    pub fn record_assignment(&self, assigned: &[WalPartitionAssignment], caught_up: bool) {
         self.recovery.update(|state| {
             state.caught_up = caught_up;
             for status in state.partitions.values_mut() {
                 status.assigned = false;
                 status.lag = None;
             }
-            for (topic, partition) in assigned {
+            for assignment in assigned {
                 let status = state
                     .partitions
-                    .entry((topic.clone(), *partition))
+                    .entry(assignment.clone())
                     .or_insert_with(|| WalPartitionRecoveryStatus {
-                        topic: topic.clone(),
-                        partition: *partition,
+                        topic: assignment.topic.clone(),
+                        partition: assignment.partition,
                         assigned: true,
                         consumed_offset: None,
                         committed_offset: None,
@@ -293,7 +299,10 @@ impl WalConsumerMetrics {
                 state.caught_up = false;
                 let status = state
                     .partitions
-                    .entry((tally.topic.clone(), tally.partition))
+                    .entry(WalPartitionAssignment {
+                        topic: tally.topic.clone(),
+                        partition: tally.partition,
+                    })
                     .or_insert_with(|| WalPartitionRecoveryStatus {
                         topic: tally.topic.clone(),
                         partition: tally.partition,

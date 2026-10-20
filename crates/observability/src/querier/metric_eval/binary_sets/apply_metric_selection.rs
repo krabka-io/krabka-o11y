@@ -1,6 +1,20 @@
-use super::Value;
+use super::{SampleOrder, Value};
 
-pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, largest: bool) {
+#[derive(Clone, Copy)]
+struct RankedSample {
+    series_index: usize,
+    value: f64,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SelectedSample {
+    series_index: usize,
+    timestamp: String,
+}
+
+/// Keeps the first `limit` samples of `value` in `order`: per series for a
+/// vector, per timestamp for a matrix.
+pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, order: SampleOrder) {
     let result_type = value.pointer("/data/resultType").and_then(Value::as_str);
     let is_vector = result_type == Some("vector");
     let is_matrix = result_type == Some("matrix");
@@ -14,11 +28,7 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, largest: b
         series.sort_by(|left, right| {
             let left = sample_value(left.get("value"));
             let right = sample_value(right.get("value"));
-            if largest {
-                right.total_cmp(&left)
-            } else {
-                left.total_cmp(&right)
-            }
+            order.orient(left.total_cmp(&right))
         });
         series.truncate(limit);
         return;
@@ -27,7 +37,7 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, largest: b
         return;
     }
 
-    let mut ranked = std::collections::HashMap::<String, Vec<(usize, f64)>>::new();
+    let mut ranked = std::collections::HashMap::<String, Vec<RankedSample>>::new();
     for (series_index, item) in series.iter().enumerate() {
         for sample in item
             .get("values")
@@ -41,23 +51,27 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, largest: b
             ranked
                 .entry(timestamp.to_string())
                 .or_default()
-                .push((series_index, sample_value(Some(sample))));
+                .push(RankedSample {
+                    series_index,
+                    value: sample_value(Some(sample)),
+                });
         }
     }
     let mut selected = std::collections::HashSet::new();
-    for (timestamp, candidates) in &mut ranked {
-        candidates.sort_by(|left, right| {
-            if largest {
-                right.1.total_cmp(&left.1)
-            } else {
-                left.1.total_cmp(&right.1)
-            }
-        });
+    let timestamps = ranked.keys().cloned().collect::<Vec<_>>();
+    for timestamp in timestamps {
+        let Some(candidates) = ranked.get_mut(&timestamp) else {
+            continue;
+        };
+        candidates.sort_by(|left, right| order.orient(left.value.total_cmp(&right.value)));
         selected.extend(
             candidates
                 .iter()
                 .take(limit)
-                .map(|(series_index, _)| (*series_index, timestamp.clone())),
+                .map(|candidate| SelectedSample {
+                    series_index: candidate.series_index,
+                    timestamp: timestamp.clone(),
+                }),
         );
     }
     for (series_index, item) in series.iter_mut().enumerate() {
@@ -67,7 +81,10 @@ pub(crate) fn apply_metric_selection(value: &mut Value, limit: usize, largest: b
                     .as_array()
                     .and_then(|parts| parts.first())
                     .is_some_and(|timestamp| {
-                        selected.contains(&(series_index, timestamp.to_string()))
+                        selected.contains(&SelectedSample {
+                            series_index,
+                            timestamp: timestamp.to_string(),
+                        })
                     })
             });
         }
@@ -92,7 +109,7 @@ fn sample_value(sample: Option<&Value>) -> f64 {
 mod tests {
     use serde_json::json;
 
-    use super::apply_metric_selection;
+    use super::{SampleOrder, apply_metric_selection};
 
     #[test]
     fn selection_ranks_vectors_and_matrices() {
@@ -107,12 +124,12 @@ mod tests {
             }
         });
         let mut largest = vector.clone();
-        apply_metric_selection(&mut largest, 2, true);
+        apply_metric_selection(&mut largest, 2, SampleOrder::Descending);
         assert_eq!(largest["data"]["result"][0]["metric"]["name"], "high");
         assert_eq!(largest["data"]["result"][1]["metric"]["name"], "low");
 
         let mut smallest = vector;
-        apply_metric_selection(&mut smallest, 1, false);
+        apply_metric_selection(&mut smallest, 1, SampleOrder::Ascending);
         assert_eq!(smallest["data"]["result"][0]["metric"]["name"], "missing");
 
         let matrix = json!({
@@ -126,7 +143,7 @@ mod tests {
             }
         });
         let mut largest = matrix.clone();
-        apply_metric_selection(&mut largest, 1, true);
+        apply_metric_selection(&mut largest, 1, SampleOrder::Descending);
         assert_eq!(
             largest["data"]["result"],
             json!([
@@ -136,7 +153,7 @@ mod tests {
         );
 
         let mut smallest = matrix;
-        apply_metric_selection(&mut smallest, 1, false);
+        apply_metric_selection(&mut smallest, 1, SampleOrder::Ascending);
         assert_eq!(
             smallest["data"]["result"],
             json!([
@@ -150,11 +167,11 @@ mod tests {
     fn selection_ignores_non_metric_responses() {
         let mut scalar = json!({"data": {"resultType": "scalar", "result": [1, "2"]}});
         let original = scalar.clone();
-        apply_metric_selection(&mut scalar, 1, true);
+        apply_metric_selection(&mut scalar, 1, SampleOrder::Descending);
         assert_eq!(scalar, original);
 
         let mut missing = json!({"data": {"resultType": "vector"}});
-        apply_metric_selection(&mut missing, 1, true);
+        apply_metric_selection(&mut missing, 1, SampleOrder::Descending);
         assert_eq!(missing, json!({"data": {"resultType": "vector"}}));
     }
 }

@@ -1,8 +1,16 @@
 use super::ProfilesError;
 
-pub(crate) fn split_app_labels(s: &str) -> Result<(String, Vec<(String, String)>), ProfilesError> {
+pub(crate) struct SplitAppLabels {
+    pub(crate) name: String,
+    pub(crate) labels: Vec<krabka_blockstore::LabelPair>,
+}
+
+pub(crate) fn split_app_labels(s: &str) -> Result<SplitAppLabels, ProfilesError> {
     let Some(open) = s.find('{') else {
-        return Ok((s.to_string(), Vec::new()));
+        return Ok(SplitAppLabels {
+            name: s.to_string(),
+            labels: Vec::new(),
+        });
     };
     let name = s[..open].to_string();
     let inner = s[open + 1..]
@@ -10,13 +18,13 @@ pub(crate) fn split_app_labels(s: &str) -> Result<(String, Vec<(String, String)>
         .ok_or_else(|| ProfilesError::Invalid("unterminated label set".to_string()))?;
     let mut labels = Vec::new();
     for pair in inner.split(',').filter(|part| !part.is_empty()) {
-        let (key, value) = pair
+        let parts = pair
             .split_once('=')
             .ok_or_else(|| ProfilesError::Invalid("bad label pair".to_string()))?;
-        labels.push((
-            key.trim().to_string(),
-            value.trim().trim_matches('"').to_string(),
+        labels.push(krabka_blockstore::LabelPair::new(
+            parts.0.trim(),
+            parts.1.trim().trim_matches('"'),
         ));
     }
-    Ok((name, labels))
+    Ok(SplitAppLabels { name, labels })
 }

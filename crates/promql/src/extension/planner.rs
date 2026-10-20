@@ -38,7 +38,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::{
-        array::{Array, Float64Array, Int64Array, StringArray},
+        array::{Float64Array, Int64Array, StringArray},
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
@@ -49,9 +49,12 @@ mod tests {
     };
 
     use super::*;
-    use crate::extension::{
-        instant_manipulate::InstantManipulate, normalize::SeriesNormalize,
-        series_divide::SeriesDivide,
+    use crate::{
+        extension::{
+            instant_manipulate::InstantManipulate, normalize::SeriesNormalize,
+            series_divide::SeriesDivide,
+        },
+        planner::{JobValue as PlannerSample, job_values},
     };
 
     #[tokio::test]
@@ -90,64 +93,63 @@ mod tests {
         });
         let normalize = LogicalPlan::Extension(Extension {
             node: Arc::new(SeriesNormalize {
-                offset_ms: 0,
-                time_index: "timestamp".to_string(),
-                need_filter_out_nan: false,
+                settings: crate::SeriesNormalizeSettings {
+                    offset_ms: 0,
+                    time_index: "timestamp".to_string(),
+                    nan_samples: crate::NanSamples::Keep,
+                },
                 input: divide,
             }),
         });
         let instant = LogicalPlan::Extension(Extension {
             node: Arc::new(InstantManipulate {
-                start_ms: 120_000,
-                end_ms: 120_000,
-                step_ms: 300_000,
-                lookback_delta_ms: 300_000,
-                time_index: "timestamp".to_string(),
-                field_column: "value".to_string(),
+                settings: crate::InstantManipulateSettings {
+                    start_ms: 120_000,
+                    end_ms: 120_000,
+                    step_ms: 300_000,
+                    lookback_delta_ms: 300_000,
+                    time_index: "timestamp".to_string(),
+                    field_column: "value".to_string(),
+                },
                 input: normalize,
             }),
         });
 
-        let batches = ctx
-            .execute_logical_plan(instant)
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        let mut got = Vec::new();
-        for batch in &batches {
-            let job = batch
-                .column_by_name("job")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap();
-            let value = batch
-                .column_by_name("value")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap();
-            for row in 0..batch.num_rows() {
-                got.push((job.value(row).to_string(), value.value(row)));
-            }
-        }
-        got.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut got = job_values(&ctx, instant, "value").await;
+        got.sort_by(|left, right| left.job.cmp(&right.job));
 
         // At grid step 120_000 within a 300_000 lookback, the latest sample for
         // each series (ts=60_000) is selected.
-        assert2::assert!(got == vec![("a".to_string(), 2.0), ("b".to_string(), 20.0)]);
+        assert2::assert!(
+            got == vec![
+                PlannerSample {
+                    job: "a".to_string(),
+                    value: 2.0,
+                },
+                PlannerSample {
+                    job: "b".to_string(),
+                    value: 20.0,
+                },
+            ]
+        );
     }
 }
 
 mod prom_extension_planner;
 mod prom_query_planner;
 mod prom_session_context;
-mod single_input;
 
 pub use prom_extension_planner::PromExtensionPlanner;
 use prom_query_planner::PromQueryPlanner;
 pub use prom_session_context::prom_session_context;
-use single_input::single_input;
+
+pub(crate) fn single_input(
+    physical_inputs: &[Arc<dyn ExecutionPlan>],
+) -> DfResult<Arc<dyn ExecutionPlan>> {
+    match physical_inputs {
+        [input] => Ok(Arc::clone(input)),
+        _ => Err(datafusion::error::DataFusionError::Plan(
+            "PromQL operator node expects exactly one input".to_string(),
+        )),
+    }
+}

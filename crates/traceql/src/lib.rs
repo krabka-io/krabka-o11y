@@ -6,8 +6,10 @@
 //! `SpanStore` trait.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 mod ast;
+mod duration;
 mod engine;
 mod error;
 mod ids;
@@ -17,33 +19,82 @@ mod parser;
 mod planner;
 mod result;
 mod span_columns;
+mod span_enum_codes;
+mod span_matching;
 mod store;
 pub mod testkit;
 
+/// Converts an Arrow array into its string-array representation.
+///
+/// # Errors
+///
+/// Returns the error constructed by `error` when `array` is not a string array.
+pub fn string_array_from_arrow(
+    array: &dyn arrow::array::Array,
+    error: impl FnOnce() -> TraceqlError,
+) -> Result<&arrow::array::StringArray, TraceqlError> {
+    array
+        .as_any()
+        .downcast_ref::<arrow::array::StringArray>()
+        .ok_or_else(error)
+}
+
 pub use ast::{
     Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
-    ScalarAggregate, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
+    QueryHintValue, ScalarAggregate, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
 };
-pub use engine::{EngineOpts, SearchOptions, TraceqlEngine};
+pub use duration::{DurationPart, next_duration_part};
+pub use engine::{EngineOpts, SearchOptions, TraceqlEngine, block_row_attrs_where, bytes_to_hex};
 pub use error::TraceqlError;
 pub use in_memory::InMemorySpanStore;
 pub use lexer::{Token, lex};
 pub use parser::parse;
 pub use result::{
-    AttrValue, EventRef, LinkRef, ScopedTag, SearchResponse, SpanRef, SpanSet, TagScope,
+    AttrValue, Attribute, EventRef, LinkRef, MetricLabel, MetricPoint, ParsedTagScope, ScopedTag,
+    SearchResponse, SpanRef, SpanSet, TagNameGroups, TagNameSets, TagScope, TagScopePrefix,
     TraceMetricExemplar, TraceMetricLabelType, TraceMetricSeries, TraceMetricsResponse,
     TraceResult, TraceSpans, TypedValue,
 };
 pub use span_columns::{
-    ATTR_PREFIX, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME, COL_EVENT_TIME_SINCE_START,
-    COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, COL_KIND, COL_LINK_SPAN_ID,
-    COL_LINK_TRACE_ID, COL_NAME, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID,
-    COL_ROOT_SERVICE_NAME, COL_ROOT_SPAN_NAME, COL_SPAN_ID, COL_START, COL_STATUS_CODE,
-    COL_STATUS_MESSAGE, COL_TRACE_DURATION, COL_TRACE_ID, COL_TRACE_START, EVENT_ATTR_PREFIX,
-    INSTRUMENTATION_ATTR_PREFIX, InputSpan, LINK_ATTR_PREFIX, NestedSet, assign_nested_set,
-    span_schema, span_schema_with_attrs,
+    ATTR_PREFIX, AttributeColumn, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,
+    COL_EVENT_TIME_SINCE_START, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, COL_KIND,
+    COL_LINK_SPAN_ID, COL_LINK_TRACE_ID, COL_NAME, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID,
+    COL_PARENT_SPAN_ID, COL_ROOT_SERVICE_NAME, COL_ROOT_SPAN_NAME, COL_SPAN_ID, COL_START,
+    COL_STATUS_CODE, COL_STATUS_MESSAGE, COL_TRACE_DURATION, COL_TRACE_ID, COL_TRACE_START,
+    EVENT_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, InputSpan, LINK_ATTR_PREFIX, NestedSet,
+    assign_nested_set, span_schema, span_schema_with_attrs,
+};
+pub use span_enum_codes::{kind_enum_value, status_enum_value};
+pub use span_matching::{
+    SpanIntrinsicFields, attr_matches, attr_values_match, bool_matches, collect_event_values,
+    collect_link_values, collect_span_field_values, enum_int_matches,
+    event_matcher_matches_absence, event_matcher_matches_event, float_matches, int_matches,
+    link_matcher_matches_absence, link_matcher_matches_link, matcher_attributes_match,
+    nested_presence_matches, nil_matches, present_value_matches, string_matches, typed_value_parts,
 };
 pub use store::{
-    MatchCmp, MatchScope, MatchValue, ScanJob, ScanOptions, ScanResult, SpanMatcher, SpanStore,
-    filter_trace_spans_by_time,
+    MatchCmp, MatchScope, MatchValue, PreparedRegex, ScanJob, ScanOptions, ScanResult, SpanMatcher,
+    SpanStore, TagCatalog, filter_trace_spans_by_time,
 };
+
+/// Returns whether a matcher selects links, including link-scoped intrinsic keys.
+#[must_use]
+pub fn scope_is_link_matcher(scope: MatchScope, key: &str) -> bool {
+    scope == MatchScope::Link || (scope == MatchScope::Intrinsic && key.starts_with("link:"))
+}
+
+/// Returns whether a matcher selects events, including event-scoped intrinsic keys.
+#[must_use]
+pub fn scope_is_event_matcher(scope: MatchScope, key: &str) -> bool {
+    scope == MatchScope::Event || (scope == MatchScope::Intrinsic && key.starts_with("event:"))
+}
+
+/// Returns whether a legacy Tempo `tags=` key can be interpolated as a
+/// `TraceQL` attribute without introducing query syntax.
+#[must_use]
+pub fn key_is_safe_attribute(key: &str) -> bool {
+    !key.is_empty()
+        && key.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | ':' | '-')
+        })
+}

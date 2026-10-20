@@ -21,6 +21,11 @@
 //! its scope, a string is always quoted, and a `by` clause is always its own
 //! pipeline stage.
 
+#[path = "../../logql/tests/support/seed_splice.rs"]
+mod seed_splice;
+#[path = "../../logql/tests/support/token_salad.rs"]
+mod token_salad;
+
 use std::fmt::Write as _;
 
 use assert2::assert;
@@ -33,33 +38,50 @@ use proptest::prelude::*;
 /// Every intrinsic, with the scope and key that name it. The parser stores the
 /// key beside the scope, so a rendered intrinsic has to use the same key that
 /// the generated [`Field`] carries.
-const INTRINSICS: &[(&str, &str, Intrinsic)] = &[
-    ("span", "name", Intrinsic::Name),
-    ("span", "duration", Intrinsic::Duration),
-    ("span", "kind", Intrinsic::Kind),
-    ("span", "status", Intrinsic::Status),
-    ("span", "statusMessage", Intrinsic::StatusMessage),
-    ("span", "id", Intrinsic::Id),
-    ("span", "parentID", Intrinsic::ParentId),
-    ("span", "childCount", Intrinsic::ChildCount),
-    ("span", "nestedSetLeft", Intrinsic::NestedSetLeft),
-    ("span", "nestedSetRight", Intrinsic::NestedSetRight),
-    ("span", "nestedSetParent", Intrinsic::NestedSetParent),
-    ("trace", "duration", Intrinsic::TraceDuration),
-    ("trace", "rootName", Intrinsic::TraceRootName),
-    ("trace", "rootService", Intrinsic::TraceRootService),
-    ("trace", "id", Intrinsic::TraceId),
-    ("event", "name", Intrinsic::EventName),
-    ("event", "timeSinceStart", Intrinsic::EventTimeSinceStart),
-    ("link", "traceID", Intrinsic::LinkTraceId),
-    ("link", "spanID", Intrinsic::LinkSpanId),
-    ("instrumentation", "name", Intrinsic::InstrumentationName),
-    (
-        "instrumentation",
-        "version",
-        Intrinsic::InstrumentationVersion,
-    ),
-];
+#[derive(bon::Builder, Clone, Debug)]
+struct IntrinsicCase {
+    scope: &'static str,
+    key: &'static str,
+    intrinsic: Intrinsic,
+}
+
+fn intrinsic_case(scope: &'static str, key: &'static str, intrinsic: Intrinsic) -> IntrinsicCase {
+    IntrinsicCase::builder()
+        .scope(scope)
+        .key(key)
+        .intrinsic(intrinsic)
+        .build()
+}
+
+fn intrinsic_cases() -> Vec<IntrinsicCase> {
+    vec![
+        intrinsic_case("span", "name", Intrinsic::Name),
+        intrinsic_case("span", "duration", Intrinsic::Duration),
+        intrinsic_case("span", "kind", Intrinsic::Kind),
+        intrinsic_case("span", "status", Intrinsic::Status),
+        intrinsic_case("span", "statusMessage", Intrinsic::StatusMessage),
+        intrinsic_case("span", "id", Intrinsic::Id),
+        intrinsic_case("span", "parentID", Intrinsic::ParentId),
+        intrinsic_case("span", "childCount", Intrinsic::ChildCount),
+        intrinsic_case("span", "nestedSetLeft", Intrinsic::NestedSetLeft),
+        intrinsic_case("span", "nestedSetRight", Intrinsic::NestedSetRight),
+        intrinsic_case("span", "nestedSetParent", Intrinsic::NestedSetParent),
+        intrinsic_case("trace", "duration", Intrinsic::TraceDuration),
+        intrinsic_case("trace", "rootName", Intrinsic::TraceRootName),
+        intrinsic_case("trace", "rootService", Intrinsic::TraceRootService),
+        intrinsic_case("trace", "id", Intrinsic::TraceId),
+        intrinsic_case("event", "name", Intrinsic::EventName),
+        intrinsic_case("event", "timeSinceStart", Intrinsic::EventTimeSinceStart),
+        intrinsic_case("link", "traceID", Intrinsic::LinkTraceId),
+        intrinsic_case("link", "spanID", Intrinsic::LinkSpanId),
+        intrinsic_case("instrumentation", "name", Intrinsic::InstrumentationName),
+        intrinsic_case(
+            "instrumentation",
+            "version",
+            Intrinsic::InstrumentationVersion,
+        ),
+    ]
+}
 
 /// Attribute keys. The lexer takes `-` and `.` inside an identifier, so the
 /// table covers both.
@@ -188,88 +210,37 @@ fn arbitrary_text() -> impl Strategy<Value = String> {
     .prop_map(String::from_iter)
 }
 
-fn token_salad() -> impl Strategy<Value = String> {
-    prop::collection::vec((prop::sample::select(TOKENS), any::<bool>()), 1..14).prop_map(|parts| {
-        let mut out = String::new();
-        for (token, spaced) in parts {
-            out.push_str(token);
-            if spaced {
-                out.push(' ');
-            }
-        }
-        out
-    })
-}
-
-/// A valid seed with one splice applied: a range of it is replaced by a slice
-/// of another seed, or by nothing.
-fn mutated_seed() -> impl Strategy<Value = String> {
-    (
-        prop::sample::select(SEED_QUERIES),
-        prop::sample::select(SEED_QUERIES),
-        any::<prop::sample::Index>(),
-        any::<prop::sample::Index>(),
-        any::<prop::sample::Index>(),
-        any::<prop::sample::Index>(),
-    )
-        .prop_map(|(base, donor, cut_a, cut_b, paste_a, paste_b)| {
-            let cut = ordered_char_bounds(base, cut_a, cut_b);
-            let paste = ordered_char_bounds(donor, paste_a, paste_b);
-            let mut out = String::new();
-            out.push_str(&base[..cut.0]);
-            out.push_str(&donor[paste.0..paste.1]);
-            out.push_str(&base[cut.1..]);
-            out
-        })
-}
-
-/// Two ascending char boundaries into `text`, so the generator's own slicing
-/// never splits a multi-byte character.
-fn ordered_char_bounds(
-    text: &str,
-    first: prop::sample::Index,
-    second: prop::sample::Index,
-) -> (usize, usize) {
-    let bounds: Vec<usize> = (0..=text.len())
-        .filter(|at| text.is_char_boundary(*at))
-        .collect();
-    let a = *first.get(&bounds);
-    let b = *second.get(&bounds);
-    (a.min(b), a.max(b))
-}
-
 fn arbitrary_query() -> impl Strategy<Value = String> {
     prop_oneof![
         2 => arbitrary_text(),
-        3 => token_salad(),
-        3 => mutated_seed(),
+        3 => token_salad::spaced_token_salad(TOKENS),
+        3 => seed_splice::mutated_seed(SEED_QUERIES),
     ]
 }
 
 // -- Generators for the round-trip property ------------------------------
 
 fn arb_attribute_field() -> impl Strategy<Value = Field> {
-    (
-        prop::sample::select(&[
-            Scope::Both,
-            Scope::Span,
-            Scope::Resource,
-            Scope::Event,
-            Scope::Link,
-            Scope::Instrumentation,
-        ]),
-        prop::sample::select(ATTRIBUTE_KEYS),
-    )
-        .prop_map(|(scope, key)| Field {
-            scope,
+    prop::sample::select(&[
+        Scope::Both,
+        Scope::Span,
+        Scope::Resource,
+        Scope::Event,
+        Scope::Link,
+        Scope::Instrumentation,
+    ])
+    .prop_flat_map(|scope| {
+        prop::sample::select(ATTRIBUTE_KEYS).prop_map(move |key| Field {
+            scope: scope.clone(),
             key: key.to_owned(),
         })
+    })
 }
 
 fn arb_intrinsic_field() -> impl Strategy<Value = Field> {
-    prop::sample::select(INTRINSICS).prop_map(|(scope, key, intrinsic)| Field {
-        scope: Scope::Intrinsic(intrinsic),
-        key: format!("{scope}:{key}"),
+    prop::sample::select(intrinsic_cases()).prop_map(|case| Field {
+        scope: Scope::Intrinsic(case.intrinsic),
+        key: format!("{}:{}", case.scope, case.key),
     })
 }
 
@@ -292,14 +263,14 @@ fn arb_constant_comparison_field() -> impl Strategy<Value = Field> {
 /// A duration field, which is the only left-hand side that gives a bare
 /// duration literal on the right the type [`Value::Duration`].
 fn arb_duration_field() -> impl Strategy<Value = Field> {
-    prop::sample::select(&[
-        (Intrinsic::Duration, "span:duration"),
-        (Intrinsic::TraceDuration, "trace:duration"),
-        (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
+    prop::sample::select(vec![
+        intrinsic_case("span", "duration", Intrinsic::Duration),
+        intrinsic_case("trace", "duration", Intrinsic::TraceDuration),
+        intrinsic_case("event", "timeSinceStart", Intrinsic::EventTimeSinceStart),
     ])
-    .prop_map(|(intrinsic, key)| Field {
-        scope: Scope::Intrinsic(intrinsic),
-        key: key.to_owned(),
+    .prop_map(|case| Field {
+        scope: Scope::Intrinsic(case.intrinsic),
+        key: format!("{}:{}", case.scope, case.key),
     })
 }
 
@@ -461,75 +432,113 @@ fn arb_leading_stage() -> impl Strategy<Value = Pipeline> {
         1 => (0_usize..1000).prop_map(Pipeline::TopK),
         1 => (0_usize..1000).prop_map(Pipeline::BottomK),
         1 => Just(Pipeline::Coalesce),
-        1 => (
-            arb_spanset(),
-            0_usize..1000,
-            prop::option::of((-1_000_000_000_000_i64..1_000_000_000_000, -1_000_000_000_000_i64..1_000_000_000_000)),
-        )
-            .prop_map(|(selection, top_n, window)| Pipeline::Compare {
-                selection: Box::new(selection),
-                top_n,
-                start: window.map(|(start, _)| start),
-                end: window.map(|(_, end)| end),
-            }),
+        1 => arb_spanset().prop_flat_map(|selection| {
+            let selection = selection.clone();
+            (0_usize..1000).prop_flat_map(move |top_n| {
+                let selection = selection.clone();
+                compare_window_strategy().prop_map(move |window| Pipeline::Compare {
+                    selection: Box::new(selection.clone()),
+                    top_n,
+                    start: window.map(|window| window.start),
+                    end: window.map(|window| window.end),
+                })
+            })
+        }),
     ]
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NumericFilter {
+    op: ComparisonOp,
+    value: f64,
+}
+
+fn numeric_filter_strategy() -> impl Strategy<Value = Option<NumericFilter>> {
+    prop::option::of(
+        prop::sample::select(&[
+            ComparisonOp::Eq,
+            ComparisonOp::Neq,
+            ComparisonOp::Lt,
+            ComparisonOp::Lte,
+            ComparisonOp::Gt,
+            ComparisonOp::Gte,
+        ])
+        .prop_flat_map(|op| arb_float().prop_map(move |value| NumericFilter { op, value })),
+    )
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CompareWindow {
+    start: i64,
+    end: i64,
+}
+
+fn compare_window_strategy() -> impl Strategy<Value = Option<CompareWindow>> {
+    prop::option::of(
+        (-1_000_000_000_000_i64..1_000_000_000_000).prop_flat_map(|start| {
+            (-1_000_000_000_000_i64..1_000_000_000_000)
+                .prop_map(move |end| CompareWindow { start, end })
+        }),
+    )
 }
 
 /// One pipeline group: a stage, then the `by` clause the grammar lets follow
 /// it, then the numeric filter the grammar lets follow that.
 fn arb_pipeline_group() -> impl Strategy<Value = Vec<Pipeline>> {
-    (
-        arb_leading_stage(),
-        prop::option::of(prop::collection::vec(arb_field(), 1..3)),
-        prop::option::of((
-            prop::sample::select(&[
-                ComparisonOp::Eq,
-                ComparisonOp::Neq,
-                ComparisonOp::Lt,
-                ComparisonOp::Lte,
-                ComparisonOp::Gt,
-                ComparisonOp::Gte,
-            ]),
-            arb_float(),
-        )),
-    )
-        .prop_map(|(stage, by, filter)| {
-            let is_by = matches!(stage, Pipeline::By(_));
-            let mut out = vec![stage];
-            if let Some(fields) = by
-                && !is_by
-            {
-                out.push(Pipeline::By(fields));
-            }
-            if let Some((op, value)) = filter {
-                out.push(Pipeline::Filter { op, value });
-            }
-            out
+    arb_leading_stage().prop_flat_map(|stage| {
+        let stage = stage.clone();
+        let is_by = matches!(stage, Pipeline::By(_));
+        prop::option::of(prop::collection::vec(arb_field(), 1..3)).prop_flat_map(move |by| {
+            let stage = stage.clone();
+            numeric_filter_strategy().prop_map(move |filter| {
+                let mut out = vec![stage.clone()];
+                if let Some(fields) = by.clone()
+                    && !is_by
+                {
+                    out.push(Pipeline::By(fields));
+                }
+                if let Some(filter) = filter {
+                    out.push(Pipeline::Filter {
+                        op: filter.op,
+                        value: filter.value,
+                    });
+                }
+                out
+            })
         })
+    })
 }
 
 fn arb_query() -> impl Strategy<Value = Query> {
-    (
-        arb_spanset(),
-        prop::collection::vec(arb_pipeline_group(), 0..3),
-        any::<bool>(),
-        prop::option::of(any::<bool>()),
-        prop::option::of(any::<bool>()),
-    )
-        .prop_map(|(root, groups, most_recent, exemplars, sample)| {
-            // `QueryHints` is `pub` inside a private module that the crate root
-            // never re-exports, so the type has no name out here and cannot be
-            // constructed by name either. Parsing the match-all query yields a
-            // `Query` whose hints are the default ones, and every field is
-            // `pub`, so overwriting them afterwards builds any query at all.
-            let mut query = parse("{}").expect("the match-all query parses");
-            query.root = root;
-            query.pipeline = groups.into_iter().flatten().collect();
-            query.hints.most_recent = most_recent;
-            query.hints.exemplars = exemplars;
-            query.hints.sample = sample;
-            query
+    arb_spanset().prop_flat_map(|root| {
+        let root = root.clone();
+        prop::collection::vec(arb_pipeline_group(), 0..3).prop_flat_map(move |groups| {
+            let root = root.clone();
+            let groups = groups.clone();
+            any::<bool>().prop_flat_map(move |most_recent| {
+                let root = root.clone();
+                let groups = groups.clone();
+                prop::option::of(any::<bool>()).prop_flat_map(move |exemplars| {
+                    let root = root.clone();
+                    let groups = groups.clone();
+                    prop::option::of(any::<bool>()).prop_map(move |sample| {
+                        // `QueryHints` is `pub` inside a private module that the crate root
+                        // never re-exports, so the type has no name out here and cannot be
+                        // constructed by name either. Parsing the match-all query yields a
+                        // `Query` whose hints are the default ones, and every field is
+                        // `pub`, so overwriting them afterwards builds any query at all.
+                        let mut query = parse("{}").expect("the match-all query parses");
+                        query.root = root.clone();
+                        query.pipeline = groups.clone().into_iter().flatten().collect();
+                        query.hints.most_recent = most_recent;
+                        query.hints.exemplars = exemplars;
+                        query.hints.sample = sample;
+                        query
+                    })
+                })
+            })
         })
+    })
 }
 
 // -- The renderer --------------------------------------------------------
@@ -762,14 +771,18 @@ fn render_pipeline_stage(out: &mut String, stage: &Pipeline) {
             out.push_str("compare(");
             render_spanset(out, selection, 0);
             let _ = write!(out, ", {top_n}");
-            if let (Some(start), Some(end)) = (start, end) {
+            if let Some(start) = start
+                && let Some(end) = end
+            {
                 let _ = write!(out, ", {start}, {end}");
             }
             out.push(')');
         }
         Pipeline::With(bindings) => {
             out.push_str("with(");
-            for (at, binding) in bindings.iter().enumerate() {
+            for entry in bindings.iter().enumerate() {
+                let at = entry.0;
+                let binding = entry.1;
                 if at > 0 {
                     out.push_str(", ");
                 }
@@ -782,7 +795,9 @@ fn render_pipeline_stage(out: &mut String, stage: &Pipeline) {
 }
 
 fn render_field_list(out: &mut String, fields: &[Field]) {
-    for (at, field) in fields.iter().enumerate() {
+    for entry in fields.iter().enumerate() {
+        let at = entry.0;
+        let field = entry.1;
         if at > 0 {
             out.push_str(", ");
         }
@@ -982,22 +997,22 @@ fn arb_numeric_field() -> impl Strategy<Value = Field> {
     prop_oneof![
         arb_attribute_field(),
         arb_duration_field(),
-        prop::sample::select(&[
-            (Intrinsic::ChildCount, "span:childCount"),
-            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
-            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
-            (Intrinsic::NestedSetParent, "span:nestedSetParent")
+        prop::sample::select(vec![
+            intrinsic_case("span", "childCount", Intrinsic::ChildCount),
+            intrinsic_case("span", "nestedSetLeft", Intrinsic::NestedSetLeft),
+            intrinsic_case("span", "nestedSetRight", Intrinsic::NestedSetRight),
+            intrinsic_case("span", "nestedSetParent", Intrinsic::NestedSetParent),
         ])
-        .prop_map(|(intrinsic, key)| Field {
-            scope: Scope::Intrinsic(intrinsic),
-            key: key.into()
+        .prop_map(|case| Field {
+            scope: Scope::Intrinsic(case.intrinsic),
+            key: format!("{}:{}", case.scope, case.key),
         })
     ]
 }
 
 fn arb_scalar_arithmetic() -> impl Strategy<Value = ScalarExpr> {
-    (
-        arb_numeric_field(),
+    arb_numeric_field().prop_flat_map(|field| {
+        let field = field.clone();
         prop::sample::select(&[
             ArithmeticOp::Add,
             ArithmeticOp::Sub,
@@ -1005,12 +1020,14 @@ fn arb_scalar_arithmetic() -> impl Strategy<Value = ScalarExpr> {
             ArithmeticOp::Div,
             ArithmeticOp::Mod,
             ArithmeticOp::Pow,
-        ]),
-        1_i64..100,
-    )
-        .prop_map(|(field, op, value)| ScalarExpr::Binary {
-            lhs: Box::new(ScalarExpr::Field(field)),
-            op,
-            rhs: Box::new(ScalarExpr::Literal(Value::Int(value))),
+        ])
+        .prop_flat_map(move |op| {
+            let field = field.clone();
+            (1_i64..100).prop_map(move |value| ScalarExpr::Binary {
+                lhs: Box::new(ScalarExpr::Field(field.clone())),
+                op,
+                rhs: Box::new(ScalarExpr::Literal(Value::Int(value))),
+            })
         })
+    })
 }

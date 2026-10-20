@@ -16,9 +16,14 @@ pub struct StoreMeters {
     pub maintenance: ObjectStoreMetrics,
 }
 
+pub struct MeteredStores {
+    pub stores: Stores,
+    pub meters: StoreMeters,
+}
+
 impl StoreMeters {
     /// Wraps `backing` under `prefix` three times, each with its own counters.
-    pub fn wrap(backing: &Arc<dyn ObjectStore>, prefix: &str) -> (Stores, Self) {
+    pub fn wrap(backing: &Arc<dyn ObjectStore>, prefix: &str) -> MeteredStores {
         let meters = Self {
             write: ObjectStoreMetrics::unregistered(),
             read: ObjectStoreMetrics::unregistered(),
@@ -32,7 +37,7 @@ impl StoreMeters {
             read: MeteredObjectStore::wrap(scoped(), meters.read.clone()),
             maintenance: MeteredObjectStore::wrap(scoped(), meters.maintenance.clone()),
         };
-        (stores, meters)
+        MeteredStores { stores, meters }
     }
 
     pub fn snapshot(&self) -> MetersSnapshot {
@@ -83,7 +88,9 @@ pub struct Counts {
 impl Counts {
     fn take(metrics: &ObjectStoreMetrics) -> Self {
         let mut counts = Self::default();
-        for (slot, operation) in ObjectStoreOperation::all().into_iter().enumerate() {
+        let operations = ObjectStoreOperation::all();
+        for slot in 0..OPERATIONS {
+            let operation = operations[slot];
             counts.requests[slot] = metrics.operations(operation);
             counts.bytes[slot] = metrics.transferred_bytes(operation);
             counts.failures[slot] = metrics.failures(operation);
@@ -108,7 +115,9 @@ impl Counts {
         let mut bytes = Map::new();
         let mut total_requests = 0;
         let mut total_bytes = 0;
-        for (slot, operation) in ObjectStoreOperation::all().into_iter().enumerate() {
+        let operations = ObjectStoreOperation::all();
+        for slot in 0..OPERATIONS {
+            let operation = operations[slot];
             requests.insert(operation.as_str().into(), self.requests[slot].into());
             bytes.insert(operation.as_str().into(), self.bytes[slot].into());
             if operation != ObjectStoreOperation::WriteBlock {

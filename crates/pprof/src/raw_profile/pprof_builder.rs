@@ -17,7 +17,8 @@ impl PprofBuilder {
             string_table: vec![String::new()],
             ..Default::default()
         };
-        let mut strings = HashMap::from([(String::new(), 0)]);
+        let mut strings = HashMap::new();
+        strings.insert(String::new(), 0);
         let sample_type = intern_string(
             &mut profile.string_table,
             &mut strings,
@@ -165,12 +166,14 @@ impl PprofBuilder {
             file_offset: mapping.file_offset,
             filename,
             build_id,
-            symbolization: crate::proto::MappingSymbolization::from_parts((
-                mapping.has_functions,
-                mapping.has_filenames,
-                mapping.has_line_numbers,
-                mapping.has_inline_frames,
-            )),
+            symbolization: crate::proto::MappingSymbolization::from_parts(
+                crate::proto::MappingSymbolizationParts {
+                    functions: mapping.has_functions,
+                    filenames: mapping.has_filenames,
+                    line_numbers: mapping.has_line_numbers,
+                    inline_frames: mapping.has_inline_frames,
+                },
+            ),
         });
         self.mappings.insert(mapping.clone(), id);
         id

@@ -127,6 +127,13 @@ mod tests {
     use super::*;
     use crate::{MatchValue, parse};
 
+    #[derive(PartialEq)]
+    struct ProjectionDependency<'a> {
+        scope: MatchScope,
+        key: &'a str,
+        value: &'a MatchValue,
+    }
+
     #[test]
     fn structural_and_boolean_branches_keep_all_typed_projection_dependencies() {
         let query = parse(r#"{ (.route = "root" || .missing = nil) && !(.slow = true) } >> { parent.route = "root" && .cost > 3 && .ratio < 1.5 }"#).unwrap();
@@ -135,16 +142,40 @@ mod tests {
         let dependencies = options
             .projection_matchers
             .iter()
-            .map(|matcher| (matcher.scope, matcher.key.as_str(), &matcher.value))
+            .map(|matcher| ProjectionDependency {
+                scope: matcher.scope,
+                key: matcher.key.as_str(),
+                value: &matcher.value,
+            })
             .collect::<Vec<_>>();
         assert!(
             dependencies
                 == vec![
-                    (MatchScope::Both, "route", &MatchValue::Str("root".into())),
-                    (MatchScope::Both, "missing", &MatchValue::Nil),
-                    (MatchScope::Both, "slow", &MatchValue::Bool(true)),
-                    (MatchScope::Both, "cost", &MatchValue::Int(3)),
-                    (MatchScope::Both, "ratio", &MatchValue::Float(1.5)),
+                    ProjectionDependency {
+                        scope: MatchScope::Both,
+                        key: "route",
+                        value: &MatchValue::Str("root".into())
+                    },
+                    ProjectionDependency {
+                        scope: MatchScope::Both,
+                        key: "missing",
+                        value: &MatchValue::Nil
+                    },
+                    ProjectionDependency {
+                        scope: MatchScope::Both,
+                        key: "slow",
+                        value: &MatchValue::Bool(true)
+                    },
+                    ProjectionDependency {
+                        scope: MatchScope::Both,
+                        key: "cost",
+                        value: &MatchValue::Int(3)
+                    },
+                    ProjectionDependency {
+                        scope: MatchScope::Both,
+                        key: "ratio",
+                        value: &MatchValue::Float(1.5)
+                    },
                 ]
         );
         // The same regular OR has no safe conjunctive scan filter.

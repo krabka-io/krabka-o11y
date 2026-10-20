@@ -11,8 +11,19 @@ impl WalHeadConsumerPoll for Consumer {
             .map_err(|error| WalHeadConsumerError::Poll(error.to_string()))
     }
 
-    async fn recovery_state(&mut self) -> Option<(Vec<(String, i32)>, bool)> {
-        Some((self.assignment().await, self.at_log_end().await))
+    async fn recovery_state(&mut self) -> Option<super::WalHeadRecoveryState> {
+        Some(super::WalHeadRecoveryState {
+            assignment: self
+                .assignment()
+                .await
+                .into_iter()
+                .map(|assignment| super::WalPartitionAssignment {
+                    topic: assignment.0,
+                    partition: assignment.1,
+                })
+                .collect(),
+            at_log_end: self.at_log_end().await,
+        })
     }
 
     async fn close(self) -> Result<(), WalHeadConsumerError> {

@@ -101,7 +101,8 @@ pub(crate) async fn run_all(
     // never be started here and never be stopped. That is a role missing from
     // a list, which is exactly the kind of omission that otherwise shows up as
     // a port nobody is listening on months later, so it refuses to start.
-    if let Some((kind, _)) = roles.pop_first() {
+    if let Some(unhandled_role) = roles.pop_first() {
+        let kind = unhandled_role.0;
         return Err(format!(
             "--target all composes the {kind} role, which its drain order does not name"
         )

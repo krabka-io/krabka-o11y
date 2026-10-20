@@ -199,7 +199,7 @@ def crate_library(
                 crate = ":" + target,
             )
 
-def crate_binary(name, crate_root, lib, tests = True, **kwargs):
+def crate_binary(name, crate_root, lib, tests = True, extra_srcs = [], **kwargs):
     """`rust_binary` for a `[[bin]]` target that links its own crate's library.
 
     Args:
@@ -209,6 +209,10 @@ def crate_binary(name, crate_root, lib, tests = True, **kwargs):
       lib: the `crate_library` target in this package that it links.
       tests: emit a `rust_test` over the binary's own `#[cfg(test)]` module.
         `cargo test` runs those; without this they are simply not run.
+      extra_srcs: sources from outside the binary's directory, for a module it
+        reaches with `#[path]`. Bazel places a label at its own workspace path,
+        which is the path such an include is written against. The binary's
+        `rust_test` inherits them with the rest of its sources.
       **kwargs: passed through to `rust_binary`.
     """
     rust_binary(
@@ -219,7 +223,7 @@ def crate_binary(name, crate_root, lib, tests = True, **kwargs):
             [crate_root.rsplit("/", 1)[0] + "/**/*.rs"],
             exclude = [crate_root],
             allow_empty = True,
-        ),
+        ) + extra_srcs,
         aliases = _aliases(["deps"]),
         crate_features = _features(),
         crate_root = crate_root,

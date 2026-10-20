@@ -34,6 +34,12 @@ use tokio::{
     time::{Duration, timeout},
 };
 
+async fn free_listener() -> TcpListener {
+    TcpListener::bind(std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), 0))
+        .await
+        .expect("a free port")
+}
+
 /// A WAL consumer that polls forever and finds nothing, which is what an idle
 /// hot tail looks like.
 struct IdleWalConsumer;
@@ -91,10 +97,10 @@ fn distributor_config(data_root: &std::path::Path) -> ServiceConfig {
 /// for a supervisor that ended the role whenever any task was polled.
 #[tokio::test]
 async fn an_idle_wal_consumer_leaves_the_querier_serving() {
-    let (config, store, _dir) = tenant_object_store_shard_catalog_service_fixture().await;
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .expect("a free port");
+    let fixture = tenant_object_store_shard_catalog_service_fixture().await;
+    let config = fixture.config;
+    let store = fixture.store;
+    let listener = free_listener().await;
     let addr = listener.local_addr().expect("the port is bound");
     let role = tokio::spawn(async move {
         serve_service_listener(
@@ -123,9 +129,7 @@ async fn an_idle_wal_consumer_leaves_the_querier_serving() {
 async fn a_handler_panic_answers_500_and_the_next_request_still_works() {
     let dir = tempfile::tempdir().expect("a temporary data root");
     let accepted = Arc::new(PanicSafeShared::<Vec<String>>::default());
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .expect("a free port");
+    let listener = free_listener().await;
     let addr = listener.local_addr().expect("the port is bound");
     let role = tokio::spawn(serve_service_listener(
         listener,

@@ -2,8 +2,14 @@
 
 use std::collections::HashMap;
 
-use krabka_blockstore::{SpanNode, assign_nested_set};
+use krabka_blockstore::{CycleSpans, SpanNode, assign_nested_set};
 use proptest::prelude::*;
+
+#[derive(Debug)]
+struct ForestSeed {
+    n: usize,
+    parents: Vec<Option<usize>>,
+}
 
 fn sid(n: u32) -> [u8; 8] {
     let b = n.to_le_bytes();
@@ -16,21 +22,21 @@ fn arb_forest() -> impl Strategy<Value = Vec<SpanNode>> {
             let parents = (1..n)
                 .map(|i| prop_oneof![Just(None), (0_usize..i).prop_map(Some)])
                 .collect::<Vec<_>>();
-            (Just(n), parents)
+            parents.prop_map(move |parents| ForestSeed { n, parents })
         })
-        .prop_map(|(n, parents)| {
+        .prop_map(|seed| {
             let mut spans = vec![SpanNode {
                 span_id: sid(0),
                 parent_span_id: None,
             }];
-            for (i, parent) in parents.into_iter().enumerate() {
+            for (i, parent) in seed.parents.iter().copied().enumerate() {
                 let child = u32::try_from(i + 1).unwrap();
                 spans.push(SpanNode {
                     span_id: sid(child),
                     parent_span_id: parent.map(|p| sid(u32::try_from(p).unwrap())),
                 });
             }
-            debug_assert_eq!(spans.len(), n);
+            debug_assert_eq!(spans.len(), seed.n);
             spans
         })
 }
@@ -40,9 +46,11 @@ proptest! {
 
     #[test]
     fn nested_set_intervals_are_valid(spans in arb_forest()) {
-        let ns = assign_nested_set(&spans);
-        let by_id: HashMap<[u8; 8], usize> =
-            spans.iter().enumerate().map(|(i, s)| (s.span_id, i)).collect();
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
+        let mut by_id: HashMap<[u8; 8], usize> = HashMap::new();
+        for (i, span) in spans.iter().enumerate() {
+            by_id.insert(span.span_id, i);
+        }
 
         for n in &ns {
             prop_assert!(n.nested_set_left < n.nested_set_right);

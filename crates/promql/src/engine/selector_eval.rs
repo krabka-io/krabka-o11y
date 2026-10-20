@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{NativeHistogram, ResetHint};
@@ -6,16 +6,18 @@ use krabka_units::prelude::*;
 use promql_parser::parser::{Expr, MatrixSelector, SubqueryExpr, VectorSelector};
 
 use super::{
-    AtModifierBounds, PromqlEngine, RangeEval, current_at_modifier_bounds,
+    AtModifierBounds, PromqlEngine, RangeEval, RangeWindow,
+    annotations::TypeAndUnitLabels,
+    current_at_modifier_bounds,
     histogram::native_histogram_detect_reset,
     histogram_stats_enabled,
     planner_support::validate_extended_selector_modifier,
-    range_functions::{align_subquery_start, instant_smoothed_boundary_value},
-    row_cache::HistogramRow,
+    range_functions::{HistogramSample, align_subquery_start, instant_smoothed_boundary_value},
+    row_cache::{FloatRow, HistogramRow},
     selector::{apply_selector_time_modifier, label_matcher_sets, selector_duration},
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels, RangeSeriesSample,
     error::Result,
     extension::is_stale_nan,
     planner::{ExtendedSelectorExpr, ExtendedSelectorModifier, TimedValue},
@@ -23,7 +25,73 @@ use crate::{
     store::MetricStore,
 };
 
+pub(super) struct LatestSample<T> {
+    pub timestamp_ms: i64,
+    pub value: T,
+}
+
+struct SelectorEvaluationBounds {
+    eval_time_ms: i64,
+    lookback_start_ms: i64,
+}
+
+pub(super) fn retain_latest_by_fingerprint<T: Clone>(
+    latest: &mut BTreeMap<SeriesFingerprint, LatestSample<T>>,
+    fingerprint: SeriesFingerprint,
+    timestamp_ms: i64,
+    value: T,
+    start_ms: i64,
+    end_ms: i64,
+) {
+    if timestamp_ms <= start_ms || timestamp_ms > end_ms {
+        return;
+    }
+    latest
+        .entry(fingerprint)
+        .and_modify(|current| {
+            if timestamp_ms > current.timestamp_ms {
+                *current = LatestSample {
+                    timestamp_ms,
+                    value: value.clone(),
+                };
+            }
+        })
+        .or_insert(LatestSample {
+            timestamp_ms,
+            value,
+        });
+}
+
 impl<S: MetricStore> PromqlEngine<S> {
+    fn selector_evaluation_bounds(
+        &self,
+        selector: &VectorSelector,
+        time_ms: i64,
+    ) -> Result<SelectorEvaluationBounds> {
+        let eval_time_ms = selector_eval_time_ms(selector, time_ms)?;
+        Ok(SelectorEvaluationBounds {
+            eval_time_ms,
+            lookback_start_ms: self.lookback_start_ms(eval_time_ms),
+        })
+    }
+
+    async fn scan_selected_rows(
+        &self,
+        tenant: &str,
+        selector: &VectorSelector,
+        typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
+        window: ScanWindowMs,
+    ) -> Result<SelectorScanRows> {
+        let default_matchers = label_matcher_sets(selector);
+        self.scan_selector_rows(tenant, typed_matchers.unwrap_or(&default_matchers), window)
+            .await
+    }
+
+    /// The start of the lookback window that ends at `eval_time_ms`.
+    fn lookback_start_ms(&self, eval_time_ms: i64) -> i64 {
+        eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64())
+    }
+
     pub(super) async fn eval_instant_selector(
         &self,
         tenant: &str,
@@ -41,13 +109,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<QueryResult> {
-        let eval_time_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.at.as_ref(),
-            selector.offset.as_ref(),
-            current_at_modifier_bounds(),
-        )?;
-        let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
+        let SelectorEvaluationBounds {
+            eval_time_ms,
+            lookback_start_ms: start_ms,
+        } = self.selector_evaluation_bounds(selector, time_ms)?;
         let default_matchers = label_matcher_sets(selector);
         let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         if let Some(series) = self
@@ -74,55 +139,56 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(QueryResult::InstantVector(samples));
         }
 
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, matcher_sets, start_ms, eval_time_ms)
+        let SelectorScanRows {
+            labels_by_fp,
+            float_rows: rows,
+            histogram_rows: hist_rows,
+        } = self
+            .scan_selector_rows(
+                tenant,
+                matcher_sets,
+                ScanWindowMs {
+                    start_ms,
+                    end_ms: eval_time_ms,
+                },
+            )
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, matcher_sets, start_ms, eval_time_ms)
-            .await?;
-        let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, matcher_sets, start_ms, eval_time_ms)
-            .await?;
-        recompute_histogram_stats(&mut hist_rows);
 
-        let mut latest_by_fp: BTreeMap<SeriesFingerprint, (i64, SampleValue)> = BTreeMap::new();
+        let mut latest_by_fp: BTreeMap<SeriesFingerprint, LatestSample<SampleValue>> =
+            BTreeMap::new();
         for row in rows {
-            if row.ts_ms <= start_ms || row.ts_ms > eval_time_ms {
-                continue;
-            }
-            latest_by_fp
-                .entry(row.fp)
-                .and_modify(|latest| {
-                    if row.ts_ms > latest.0 {
-                        *latest = (row.ts_ms, SampleValue::Float(row.value));
-                    }
-                })
-                .or_insert((row.ts_ms, SampleValue::Float(row.value)));
+            retain_latest_by_fingerprint(
+                &mut latest_by_fp,
+                row.fp,
+                row.ts_ms,
+                SampleValue::Float(row.value),
+                start_ms,
+                eval_time_ms,
+            );
         }
         for row in hist_rows {
-            if row.ts_ms <= start_ms || row.ts_ms > eval_time_ms {
-                continue;
-            }
-            latest_by_fp
-                .entry(row.fp)
-                .and_modify(|latest| {
-                    if row.ts_ms > latest.0 {
-                        *latest = (row.ts_ms, SampleValue::Histogram(row.hist.clone()));
-                    }
-                })
-                .or_insert((row.ts_ms, SampleValue::Histogram(row.hist)));
+            retain_latest_by_fingerprint(
+                &mut latest_by_fp,
+                row.fp,
+                row.ts_ms,
+                SampleValue::Histogram(row.hist),
+                start_ms,
+                eval_time_ms,
+            );
         }
 
         let samples = latest_by_fp
             .into_iter()
-            .filter_map(|(fp, (ts_ms, value))| {
-                if matches!(&value, SampleValue::Float(value) if is_stale_nan(*value)) {
+            .filter_map(|entry| {
+                let fp = entry.0;
+                let sample = entry.1;
+                if matches!(&sample.value, SampleValue::Float(value) if is_stale_nan(*value)) {
                     return None;
                 }
                 labels_by_fp.get(&fp).map(|labels| InstantSample {
                     labels: (**labels).clone(),
-                    ts_ms,
-                    value,
+                    ts_ms: sample.timestamp_ms,
+                    value: sample.value,
                     drop_name: false,
                 })
             })
@@ -137,34 +203,36 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<QueryResult> {
-        let eval_time_ms = apply_selector_time_modifier(
-            time_ms,
-            selector.at.as_ref(),
-            selector.offset.as_ref(),
-            current_at_modifier_bounds(),
-        )?;
-        let scan_start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
+        let SelectorEvaluationBounds {
+            eval_time_ms,
+            lookback_start_ms: scan_start_ms,
+        } = self.selector_evaluation_bounds(selector, time_ms)?;
         let scan_end_ms = eval_time_ms.saturating_add(self.opts.lookback_delta.millis_i64());
-        let default_matchers = label_matcher_sets(selector);
-        let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
+        let SelectorScanRows {
+            labels_by_fp,
+            float_rows: rows,
+            histogram_rows: hist_rows,
+        } = self
+            .scan_selected_rows(
+                tenant,
+                selector,
+                typed_matchers,
+                ScanWindowMs {
+                    start_ms: scan_start_ms,
+                    end_ms: scan_end_ms,
+                },
+            )
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-
-        let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-        recompute_histogram_stats(&mut hist_rows);
-        let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<(i64, SampleValue)>> = BTreeMap::new();
+        let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<RangeSeriesSample>> = BTreeMap::new();
         for row in rows {
             if row.ts_ms > scan_start_ms && row.ts_ms <= scan_end_ms && !is_stale_nan(row.value) {
                 rows_by_fp
                     .entry(row.fp)
                     .or_default()
-                    .push((row.ts_ms, SampleValue::Float(row.value)));
+                    .push(RangeSeriesSample::new(
+                        row.ts_ms,
+                        SampleValue::Float(row.value),
+                    ));
             }
         }
         for row in hist_rows {
@@ -172,21 +240,26 @@ impl<S: MetricStore> PromqlEngine<S> {
                 rows_by_fp
                     .entry(row.fp)
                     .or_default()
-                    .push((row.ts_ms, SampleValue::Histogram(row.hist)));
+                    .push(RangeSeriesSample::new(
+                        row.ts_ms,
+                        SampleValue::Histogram(row.hist),
+                    ));
             }
         }
         let samples = rows_by_fp
             .into_iter()
-            .filter_map(|(fp, mut rows)| {
+            .filter_map(|entry| {
+                let fp = entry.0;
+                let mut rows = entry.1;
                 let labels = labels_by_fp.get(&fp)?;
                 let metric = labels.get("__name__").unwrap_or("");
-                rows.sort_by_key(|(timestamp, _)| *timestamp);
+                rows.sort_by_key(|sample| sample.timestamp_ms);
                 let floats = rows
                     .iter()
-                    .any(|(_, value)| matches!(value, SampleValue::Float(_)));
+                    .any(|sample| matches!(&sample.value, SampleValue::Float(_)));
                 let histograms = rows
                     .iter()
-                    .any(|(_, value)| matches!(value, SampleValue::Histogram(_)));
+                    .any(|sample| matches!(&sample.value, SampleValue::Histogram(_)));
                 if floats && histograms {
                     super::annotations::emit_warning(
                         super::annotations::mixed_floats_histograms_warning(metric),
@@ -196,11 +269,11 @@ impl<S: MetricStore> PromqlEngine<S> {
                 let value = if floats {
                     let timestamps = rows
                         .iter()
-                        .map(|(timestamp, _)| *timestamp)
+                        .map(|sample| sample.timestamp_ms)
                         .collect::<Vec<_>>();
                     let values = rows
                         .iter()
-                        .map(|(_, value)| match value {
+                        .map(|sample| match &sample.value {
                             SampleValue::Float(value) => *value,
                             SampleValue::Histogram(_) => unreachable!("float-only"),
                         })
@@ -213,20 +286,23 @@ impl<S: MetricStore> PromqlEngine<S> {
                 } else {
                     let points = rows
                         .into_iter()
-                        .map(|(timestamp, value)| match value {
-                            SampleValue::Histogram(histogram) => (timestamp, histogram),
+                        .map(|sample| match sample.value {
+                            SampleValue::Histogram(histogram) => HistogramSample {
+                                timestamp_ms: sample.timestamp_ms,
+                                histogram,
+                            },
                             SampleValue::Float(_) => unreachable!("histogram-only"),
                         })
                         .collect::<Vec<_>>();
-                    let index = points.partition_point(|(timestamp, _)| *timestamp < eval_time_ms);
+                    let index = points.partition_point(|point| point.timestamp_ms < eval_time_ms);
                     let histogram = if points
                         .get(index)
-                        .is_some_and(|(timestamp, _)| *timestamp == eval_time_ms)
+                        .is_some_and(|point| point.timestamp_ms == eval_time_ms)
                     {
-                        points[index].1.clone()
+                        points[index].histogram.clone()
                     } else if index > 0 && index < points.len() {
-                        let counter = points[index - 1].1.reset_hint != ResetHint::Gauge
-                            || points[index].1.reset_hint != ResetHint::Gauge;
+                        let counter = points[index - 1].histogram.reset_hint != ResetHint::Gauge
+                            || points[index].histogram.reset_hint != ResetHint::Gauge;
                         super::range_functions::interpolate_histogram(
                             &points[index - 1],
                             &points[index],
@@ -235,7 +311,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                             metric,
                         )?
                     } else if index > 0 {
-                        let mut previous = points[index - 1].1.clone();
+                        let mut previous = points[index - 1].histogram.clone();
                         previous.reset_hint = ResetHint::Unknown;
                         previous
                     } else {
@@ -302,18 +378,21 @@ impl<S: MetricStore> PromqlEngine<S> {
             }
             Some(ExtendedSelectorModifier::Anchored) | None => eval_end_ms,
         };
-        let default_matchers = label_matcher_sets(&selector.vs);
-        let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
+        let SelectorScanRows {
+            labels_by_fp,
+            float_rows: rows,
+            histogram_rows: hist_rows,
+        } = self
+            .scan_selected_rows(
+                tenant,
+                &selector.vs,
+                typed_matchers,
+                ScanWindowMs {
+                    start_ms: scan_start_ms,
+                    end_ms: scan_end_ms,
+                },
+            )
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-        let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
-            .await?;
-        recompute_histogram_stats(&mut hist_rows);
 
         let mut float_samples_by_fp: BTreeMap<SeriesFingerprint, Vec<TimedValue>> = BTreeMap::new();
         for row in rows {
@@ -333,22 +412,18 @@ impl<S: MetricStore> PromqlEngine<S> {
         let mut starts_by_fp = BTreeMap::new();
         let mut samples_by_fp: BTreeMap<SeriesFingerprint, BTreeMap<i64, SampleValue>> =
             BTreeMap::new();
-        for (fp, mut samples) in float_samples_by_fp {
+        for entry in float_samples_by_fp {
+            let fp = entry.0;
+            let mut samples = entry.1;
             samples.sort_unstable_by_key(|sample| sample.ts_ms);
-            starts_by_fp.insert(
-                fp,
-                samples
-                    .iter()
-                    .filter_map(|sample| {
-                        sample.start_timestamp_ms.map(|start| (sample.ts_ms, start))
-                    })
-                    .collect(),
-            );
-            samples_by_fp.entry(fp).or_default().extend(
-                samples
-                    .into_iter()
-                    .map(|sample| (sample.ts_ms, SampleValue::Float(sample.value))),
-            );
+            let starts = starts_by_fp.entry(fp).or_insert_with(BTreeMap::new);
+            let by_timestamp = samples_by_fp.entry(fp).or_default();
+            for sample in samples {
+                if let Some(start) = sample.start_timestamp_ms {
+                    starts.insert(sample.ts_ms, start);
+                }
+                by_timestamp.insert(sample.ts_ms, SampleValue::Float(sample.value));
+            }
         }
         for row in hist_rows {
             if row.ts_ms <= scan_start_ms || row.ts_ms > scan_end_ms {
@@ -367,7 +442,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         }
 
         let mut out = Vec::new();
-        for (fp, samples) in samples_by_fp {
+        for entry in samples_by_fp {
+            let fp = entry.0;
+            let samples = entry.1;
             let Some(labels) = labels_by_fp.get(&fp) else {
                 continue;
             };
@@ -375,7 +452,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                 drop_name: false,
                 start_timestamps_ms: starts_by_fp.remove(&fp).unwrap_or_default(),
                 labels: (**labels).clone(),
-                samples: samples.into_iter().collect(),
+                samples: samples
+                    .into_iter()
+                    .map(|entry| crate::RangeSeriesSample::new(entry.0, entry.1))
+                    .collect(),
             });
         }
         Ok(out)
@@ -480,11 +560,13 @@ impl<S: MetricStore> PromqlEngine<S> {
                     )
                     .await?;
                 Ok(RangeEval {
-                    enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
                     series,
-                    end_ms,
-                    range,
-                    modifier,
+                    window: RangeWindow {
+                        end_ms,
+                        range,
+                        modifier,
+                        type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+                    },
                 })
             }
             Expr::Subquery(subquery) => {
@@ -497,11 +579,13 @@ impl<S: MetricStore> PromqlEngine<S> {
                 )?;
                 let series = self.eval_subquery(tenant, subquery, time_ms).await?;
                 Ok(RangeEval {
-                    enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
                     series,
-                    end_ms,
-                    range,
-                    modifier,
+                    window: RangeWindow {
+                        end_ms,
+                        range,
+                        modifier,
+                        type_and_unit_labels: TypeAndUnitLabels::from_engine_opts(&self.opts),
+                    },
                 })
             }
             _ => Err(PromqlError::Plan(format!(
@@ -515,7 +599,11 @@ fn recompute_histogram_stats(rows: &mut [HistogramRow]) {
     if !histogram_stats_enabled() {
         return;
     }
-    rows.sort_unstable_by_key(|row| (row.fp, row.ts_ms));
+    rows.sort_unstable_by(|left, right| {
+        left.fp
+            .cmp(&right.fp)
+            .then_with(|| left.ts_ms.cmp(&right.ts_ms))
+    });
     let mut previous = BTreeMap::<SeriesFingerprint, NativeHistogram>::new();
     for row in rows {
         if row.hist.reset_hint != ResetHint::Gauge {
@@ -531,4 +619,59 @@ fn recompute_histogram_stats(rows: &mut [HistogramRow]) {
         }
         previous.insert(row.fp, row.hist.clone());
     }
+}
+
+/// A selector scan window, `(start_ms, end_ms]`, in epoch milliseconds.
+#[derive(Clone, Copy)]
+struct ScanWindowMs {
+    start_ms: i64,
+    end_ms: i64,
+}
+
+/// The labels, float rows and histogram rows of one selector scan.
+struct SelectorScanRows {
+    labels_by_fp: Arc<BTreeMap<SeriesFingerprint, Arc<Labels>>>,
+    float_rows: Vec<FloatRow>,
+    /// Histogram rows in `(fingerprint, timestamp)` order, with their
+    /// statistics recomputed.
+    histogram_rows: Vec<HistogramRow>,
+}
+
+impl<S: MetricStore> PromqlEngine<S> {
+    /// Scans the series labels, float rows and histogram rows that
+    /// `matcher_sets` select over `window`.
+    async fn scan_selector_rows(
+        &self,
+        tenant: &str,
+        matcher_sets: &[Vec<crate::PromqlMatcher>],
+        window: ScanWindowMs,
+    ) -> Result<SelectorScanRows> {
+        let ScanWindowMs { start_ms, end_ms } = window;
+        let labels_by_fp = self
+            .labels_by_fingerprint_sets(tenant, matcher_sets, start_ms, end_ms)
+            .await?;
+        let float_rows = self
+            .scan_float_row_sets(tenant, matcher_sets, start_ms, end_ms)
+            .await?;
+        let mut histogram_rows = self
+            .scan_histogram_row_sets(tenant, matcher_sets, start_ms, end_ms)
+            .await?;
+        recompute_histogram_stats(&mut histogram_rows);
+        Ok(SelectorScanRows {
+            labels_by_fp,
+            float_rows,
+            histogram_rows,
+        })
+    }
+}
+
+/// The instant `selector` evaluates at, after its `@` and `offset` modifiers
+/// move the query's `time_ms`.
+fn selector_eval_time_ms(selector: &VectorSelector, time_ms: i64) -> Result<i64> {
+    apply_selector_time_modifier(
+        time_ms,
+        selector.at.as_ref(),
+        selector.offset.as_ref(),
+        current_at_modifier_bounds(),
+    )
 }

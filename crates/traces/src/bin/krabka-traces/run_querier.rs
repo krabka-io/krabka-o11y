@@ -1,7 +1,13 @@
-use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_observability::SupervisedTasks;
 use krabka_traces::frontend::{HttpReadinessProbe, QuerierHealth, QuerierScheme, ReadinessProbe};
 
 use super::*;
+
+struct RemoteLiveStoreProbe {
+    gate: krabka_observability::ReadinessGate,
+    probe: HttpReadinessProbe,
+    address: String,
+}
 
 /// Answers `TraceQL` over blocks, and over whatever live tier it can reach.
 ///
@@ -12,14 +18,17 @@ use super::*;
 /// serving. Nothing is served on it until the startup below finishes, so a
 /// probe arriving in that window waits rather than being answered wrongly.
 pub(crate) async fn run_querier(
-    cli: Cli,
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    shutdown: CancellationToken,
-    listener: tokio::net::TcpListener,
+    role: ListeningRole<'_>,
     object_store: &SharedObjectStore,
-    security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let ListeningRole {
+        cli,
+        metrics,
+        readiness,
+        shutdown,
+        listener,
+        security,
+    } = role;
     // Registered before any of the work, and in the order the start meets it.
     // The object store, the index snapshot and the embedded live-store
     // consumer are all built before the router is served, so the honest report
@@ -52,21 +61,21 @@ pub(crate) async fn run_querier(
                 } else {
                     format!("{host}:{port}")
                 };
-                Ok((
-                    readiness.gate("live-store"),
-                    HttpReadinessProbe::new(
+                Ok(RemoteLiveStoreProbe {
+                    gate: readiness.gate("live-store"),
+                    probe: HttpReadinessProbe::new(
                         cli.querier_readiness_timeout.to_std(),
                         scheme,
                         security.server.internal_client(),
                     )?,
-                    addr,
-                ))
+                    address: addr,
+                })
             })
             .transpose()?
     } else {
         None
     };
-    let (router, store, trace_index_key, trace_index) = build_querier_router_with_live(
+    let router_build = build_querier_router_with_live(
         &cli,
         metrics.clone(),
         live_store.clone(),
@@ -76,11 +85,15 @@ pub(crate) async fn run_querier(
         security.server.internal_client(),
     )
     .await?;
+    let router = router_build.router;
+    let store = router_build.object_store;
+    let trace_index_key = router_build.trace_index_key;
+    let trace_index = router_build.trace_index;
     // Both loops below decide what this querier can see. Supervised, so that a
     // stop of either -- error, early return, or panic -- ends the role rather
     // than leaving it answering from a tier that no longer moves.
     let mut tasks = SupervisedTasks::new(shutdown.clone());
-    if let Some((gate, probe, addr)) = remote_live_store {
+    if let Some(remote) = remote_live_store {
         let probe_shutdown = shutdown.clone();
         let interval = cli.querier_membership_refresh_interval.to_std();
         tasks.spawn("traces querier remote live-store readiness", async move {
@@ -89,11 +102,11 @@ pub(crate) async fn run_querier(
             loop {
                 tokio::select! {
                     () = probe_shutdown.cancelled() => break,
-                    _ = tick.tick() => match probe.probe(&addr).await {
-                        QuerierHealth::Ready => gate.mark_ready(),
+                    _ = tick.tick() => match remote.probe.probe(&remote.address).await {
+                        QuerierHealth::Ready => remote.gate.mark_ready(),
                         health => {
-                            gate.mark_unready();
-                            tracing::warn!(%addr, ?health, "remote trace live-store is not ready");
+                            remote.gate.mark_unready();
+                            tracing::warn!(addr = %remote.address, ?health, "remote trace live-store is not ready");
                         }
                     }
                 }
@@ -154,17 +167,13 @@ pub(crate) async fn run_querier(
             }
         }
     });
-    let listener = ServerListener::bind(listener, &security.server)?;
-    let bound = listener.local_addr();
-    tracing::info!(%bound, "traces querier listening");
-    let server = serve_router(listener, router, &security.server)
-        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
-    let outcome = tokio::select! {
-        result = server => result.map_err(Into::into),
-        name = tasks.first_unexpected_exit() => Err(
-            Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)),
-        ),
-    };
-    tasks.shutdown().await;
-    outcome
+    serve_role_router(RoleServer {
+        role: "traces querier",
+        listener,
+        router,
+        security,
+        tasks,
+        shutdown,
+    })
+    .await
 }

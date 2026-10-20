@@ -16,6 +16,11 @@ pub struct FloatSeriesSummary {
     pub row_count: usize,
 }
 
+pub struct MatchingFloatSeries<'a> {
+    pub series: Vec<&'a FloatSeriesSummary>,
+    pub total_rows: usize,
+}
+
 /// Latest floats and retained raw counts from the same rows as a hot snapshot.
 #[derive(Clone, Default)]
 pub struct FloatHeadSummary {
@@ -32,7 +37,12 @@ impl FloatHeadSummary {
             .entry(row.fp)
             .or_insert_with(|| FloatSeriesSummary {
                 labels: Arc::clone(&row.labels),
-                latest: (row.fp, row.ts_ms, row.value, row.start_timestamp_ms),
+                latest: FloatSampleRow {
+                    fingerprint: row.fp,
+                    timestamp_ms: row.ts_ms,
+                    value: row.value,
+                    start_timestamp_ms: row.start_timestamp_ms,
+                },
                 row_count: 0,
             });
         // Equal values in distinct Arcs do not prove which Arc owns the first
@@ -41,8 +51,13 @@ impl FloatHeadSummary {
         entry.row_count += 1;
         // Preserve the first arrival at equal timestamps, including stale bits
         // and the optional counter start timestamp.
-        if row.ts_ms > entry.latest.1 {
-            entry.latest = (row.fp, row.ts_ms, row.value, row.start_timestamp_ms);
+        if row.ts_ms > entry.latest.timestamp_ms {
+            entry.latest = FloatSampleRow {
+                fingerprint: row.fp,
+                timestamp_ms: row.ts_ms,
+                value: row.value,
+                start_timestamp_ms: row.start_timestamp_ms,
+            };
         }
     }
 
@@ -57,29 +72,32 @@ impl FloatHeadSummary {
         label_start_ms: i64,
         sample_start_ms: i64,
         end_ms: i64,
-    ) -> Option<(Vec<&FloatSeriesSummary>, usize)> {
+    ) -> Option<MatchingFloatSeries<'_>> {
         if self.row_count != current_row_count || self.ambiguous_labels {
             return None;
         }
         let mut series = Vec::new();
         let mut upper_count = 0_usize;
         for entry in self.series.values() {
-            if !all_match(entry.latest.0, &entry.labels, matchers) {
+            if !all_match(entry.latest.fingerprint, &entry.labels, matchers) {
                 continue;
             }
             // An older eligible row may precede this matching future latest.
             // Test this before narrowing the label window, never omit it.
-            if entry.latest.1 > end_ms {
+            if entry.latest.timestamp_ms > end_ms {
                 return None;
             }
-            if entry.latest.1 < label_start_ms {
+            if entry.latest.timestamp_ms < label_start_ms {
                 continue;
             }
-            if entry.latest.1 >= sample_start_ms {
+            if entry.latest.timestamp_ms >= sample_start_ms {
                 upper_count = upper_count.saturating_add(entry.row_count);
             }
             series.push(entry);
         }
-        Some((series, upper_count))
+        Some(MatchingFloatSeries {
+            series,
+            total_rows: upper_count,
+        })
     }
 }

@@ -20,17 +20,19 @@ pub(crate) fn count_step_transitions(
     range_end_ms: i64,
     kind: RangeFn,
 ) -> Option<f64> {
-    let mut window = series
-        .samples
-        .iter()
-        .filter(|(timestamp, _)| *timestamp > range_start_ms && *timestamp <= range_end_ms)
-        .map(|(timestamp, value)| (timestamp, value));
-    let (mut previous_time, mut previous) = window.next()?;
+    let mut window = series.samples.iter().filter(|sample| {
+        sample.timestamp_ms > range_start_ms && sample.timestamp_ms <= range_end_ms
+    });
+    let first = window.next()?;
+    let mut previous_time = first.timestamp_ms;
+    let mut previous = &first.value;
     let mut count = 0.0_f64;
-    for (current_time, current) in window {
+    for current_sample in window {
+        let current_time = current_sample.timestamp_ms;
+        let current = &current_sample.value;
         let previous_start = series
             .start_timestamps_ms
-            .get(previous_time)
+            .get(&previous_time)
             .copied()
             .or(match previous {
                 SampleValue::Histogram(h) => h.start_timestamp_ms,
@@ -39,7 +41,7 @@ pub(crate) fn count_step_transitions(
             .unwrap_or(0);
         let start = series
             .start_timestamps_ms
-            .get(current_time)
+            .get(&current_time)
             .copied()
             .or(match current {
                 SampleValue::Histogram(h) => h.start_timestamp_ms,
@@ -48,7 +50,7 @@ pub(crate) fn count_step_transitions(
             .unwrap_or(0);
         if step_counts(previous, current, kind)
             || matches!(kind, RangeFn::Resets)
-                && start_timestamp_reset(previous_start, *previous_time, start, *current_time)
+                && start_timestamp_reset(previous_start, previous_time, start, current_time)
         {
             count += 1.0;
         }
@@ -59,15 +61,19 @@ pub(crate) fn count_step_transitions(
 }
 
 fn step_counts(previous: &SampleValue, current: &SampleValue, kind: RangeFn) -> bool {
-    match (previous, current) {
-        (SampleValue::Float(previous), SampleValue::Float(current)) => {
-            float_step_counts(*previous, *current, kind)
-        }
-        (SampleValue::Histogram(previous), SampleValue::Histogram(current)) => {
-            histogram_step_counts(previous, current, kind)
-        }
-        // The sample type changed, which is both a change and a reset.
-        _ => true,
+    match previous {
+        SampleValue::Float(previous_float) => match current {
+            SampleValue::Float(current_float) => {
+                float_step_counts(*previous_float, *current_float, kind)
+            }
+            SampleValue::Histogram(_) => true,
+        },
+        SampleValue::Histogram(previous_histogram) => match current {
+            SampleValue::Float(_) => true,
+            SampleValue::Histogram(current_histogram) => {
+                histogram_step_counts(previous_histogram, current_histogram, kind)
+            }
+        },
     }
 }
 

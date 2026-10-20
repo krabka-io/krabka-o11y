@@ -7,16 +7,53 @@ use super::{
     MetricLabelJoin, MetricLabelReplace, MetricQuery, MetricScalarArithmetic,
     MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
     MetricVectorMatching, OffsetNanos, ParseError, ParserStage, PatternParser, PipelineStage,
-    Quantile, QuantileDenominator, QuantileNumerator, QuotedChar, RangeAggregation,
-    RangeAggregationKind, RegexpParser, SourceLabel, StreamQuery, UnwrapExpression,
-    VectorAggregation, VectorAggregationOp, VectorGrouping, decode_quoted_escape, duration_unit,
+    Quantile, QuantileDenominator, QuantileNumerator, QuotedBodyError, QuotedChar,
+    RangeAggregation, RangeAggregationKind, RegexpParser, SourceLabel, StreamQuery,
+    UnwrapExpression, VectorAggregation, VectorAggregationOp, VectorGrouping,
     field_filter_expression_to_pipeline_stage, gcd_u64, is_ident_char, is_ident_start,
     parse_bytes_literal, parse_metric_subexpression, parse_prometheus_duration_literal,
-    range_aggregation_supports_grouping,
+    prometheus_duration_unit, range_aggregation_supports_grouping, read_quoted_body,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+const EXPECTED_METRIC_EXPRESSION: &str = "expected metric expression";
 
+struct MetricOperatorArgument<O> {
+    query: String,
+    operator: O,
+}
+
+struct OperatorSpelling<T> {
+    text: &'static str,
+    operator: T,
+}
+
+struct MetricSetOperatorAt {
+    token_length: usize,
+    operator: MetricBinarySetOp,
+}
+
+pub(super) struct ParsedMetricRangeStreamQuery {
+    pub(super) stream: StreamQuery,
+    pub(super) range_ns: DurationNanos,
+    pub(super) offset_ns: OffsetNanos,
+}
+
+struct LogfmtParserFlags {
+    strict: bool,
+    keep_empty: bool,
+}
+
+/// The error messages `Parser::scan_metric_argument` reports when a metric
+/// argument cannot be scanned.
+#[derive(Clone, Copy)]
+struct ScanErrors<'m> {
+    /// Reported at a `)` that closes no open parenthesis.
+    unbalanced_close: &'m str,
+    /// Reported when the input ends before the argument does.
+    end_of_input: &'m str,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Parser<'a> {
     pub(crate) input: &'a str,
     pub(crate) pos: usize,
@@ -60,7 +97,10 @@ impl<'a> Parser<'a> {
                 RangeAggregation::QuantileOverTime(quantile)
             }
         };
-        let (stream, range_ns, offset_ns) = self.parse_metric_range_stream_query()?;
+        let parsed = self.parse_metric_range_stream_query()?;
+        let stream = parsed.stream;
+        let range_ns = parsed.range_ns;
+        let offset_ns = parsed.offset_ns;
         self.expect(')')?;
         let range_grouping = self.try_parse_vector_grouping()?;
         if range_grouping.is_some() && !range_aggregation_supports_grouping(&aggregation) {
@@ -99,7 +139,7 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn parse_metric_range_stream_query(
         &mut self,
-    ) -> Result<(StreamQuery, DurationNanos, OffsetNanos), ParseError> {
+    ) -> Result<ParsedMetricRangeStreamQuery, ParseError> {
         self.skip_ws();
         self.expect('{')?;
         let matchers = self.parse_matchers()?;
@@ -139,7 +179,11 @@ impl<'a> Parser<'a> {
             return Err(self.error("expected range selector"));
         };
 
-        Ok((StreamQuery { matchers, pipeline }, range_ns, offset_ns))
+        Ok(ParsedMetricRangeStreamQuery {
+            stream: StreamQuery { matchers, pipeline },
+            range_ns,
+            offset_ns,
+        })
     }
 
     pub(crate) fn parse_metric_label_replace(mut self) -> Result<MetricLabelReplace, ParseError> {
@@ -212,55 +256,14 @@ impl<'a> Parser<'a> {
         function_name: &str,
     ) -> Result<String, ParseError> {
         self.skip_ws();
-        let start = self.pos;
-        let mut depth = 0usize;
-        let mut quote_delimiter: Option<char> = None;
-        let mut escaped = false;
-        while let Some(ch) = self.peek() {
-            if let Some(delimiter) = quote_delimiter {
-                self.pos = self.pos.saturating_add(ch.len_utf8());
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if delimiter.eq(&ch) {
-                    quote_delimiter = None;
-                }
-                continue;
-            }
-
-            match ch {
-                '"' | '`' => {
-                    quote_delimiter = Some(ch);
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                '(' => {
-                    depth = depth.saturating_add(1);
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                ')' => {
-                    let Some(next_depth) = depth.checked_sub(1) else {
-                        let message = format!("expected {function_name} metric query argument");
-                        return Err(self.error(&message));
-                    };
-                    depth = next_depth;
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                ',' if matches!(depth, 0) => {
-                    let metric_query = self.input[start..self.pos].trim();
-                    if metric_query.is_empty() {
-                        let message = format!("expected {function_name} metric query argument");
-                        return Err(self.error(&message));
-                    }
-                    return Ok(metric_query.to_string());
-                }
-                _ => {
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-            }
-        }
         let message = format!("expected {function_name} metric query argument");
-        Err(self.error(&message))
+        let errors = ScanErrors {
+            unbalanced_close: &message,
+            end_of_input: &message,
+        };
+        self.scan_metric_argument(errors, |parser, start, ch| {
+            (ch == ',').then(|| parser.trimmed_metric_argument(start, &message))
+        })
     }
 
     pub(crate) fn parse_metric_scalar_comparison(
@@ -332,12 +335,12 @@ impl<'a> Parser<'a> {
             }
         } else {
             self.pos = start;
-            let (metric_query_text, op) = self.parse_metric_arithmetic_argument()?;
-            let query = parse_metric_subexpression(&metric_query_text)?;
+            let argument = self.parse_metric_arithmetic_argument()?;
+            let query = parse_metric_subexpression(&argument.query)?;
             let scalar = self.parse_scalar_literal_text()?;
             MetricScalarArithmetic {
                 query,
-                op,
+                op: argument.operator,
                 scalar,
                 scalar_on_left: false,
             }
@@ -354,18 +357,14 @@ impl<'a> Parser<'a> {
         mut self,
     ) -> Result<MetricBinaryArithmetic, ParseError> {
         self.skip_ws();
-        let (left_text, op) = self.parse_metric_arithmetic_argument()?;
+        let argument = self.parse_metric_arithmetic_argument()?;
         let matching = self.parse_metric_vector_matching_modifier(true)?;
-        let right_text = self.input[self.pos..].trim().to_string();
-        if right_text.is_empty() {
-            return Err(self.error("expected metric expression"));
-        }
-        self.pos = self.input.len();
+        let right = self.parse_metric_binary_right()?;
         let arithmetic = MetricBinaryArithmetic {
-            left: parse_metric_subexpression(&left_text)?,
-            op,
+            left: parse_metric_subexpression(&argument.query)?,
+            op: argument.operator,
             matching,
-            right: parse_metric_subexpression(&right_text)?,
+            right,
         };
         self.skip_ws();
         if self.pos != self.input.len() {
@@ -373,6 +372,15 @@ impl<'a> Parser<'a> {
         }
 
         Ok(arithmetic)
+    }
+
+    fn parse_metric_binary_right(&mut self) -> Result<MetricQuery, ParseError> {
+        let right = self.input[self.pos..].trim();
+        if right.is_empty() {
+            return Err(self.error("expected metric expression"));
+        }
+        self.pos = self.input.len();
+        parse_metric_subexpression(right)
     }
 
     pub(crate) fn parse_metric_binary_comparison(
@@ -384,17 +392,13 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         let bool_modifier = self.consume_keyword("bool");
         let matching = self.parse_metric_vector_matching_modifier(true)?;
-        let right_text = self.input[self.pos..].trim().to_string();
-        if right_text.is_empty() {
-            return Err(self.error("expected metric expression"));
-        }
-        self.pos = self.input.len();
+        let right = self.parse_metric_binary_right()?;
         let comparison = MetricBinaryComparison {
             left: parse_metric_subexpression(&left_text)?,
             op,
             bool_modifier,
             matching,
-            right: parse_metric_subexpression(&right_text)?,
+            right,
         };
         self.skip_ws();
         if self.pos != self.input.len() {
@@ -406,18 +410,14 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn parse_metric_binary_set(mut self) -> Result<MetricBinarySet, ParseError> {
         self.skip_ws();
-        let (left_text, op) = self.parse_metric_set_argument()?;
+        let argument = self.parse_metric_set_argument()?;
         let matching = self.parse_metric_vector_matching_modifier(false)?;
-        let right_text = self.input[self.pos..].trim().to_string();
-        if right_text.is_empty() {
-            return Err(self.error("expected metric expression"));
-        }
-        self.pos = self.input.len();
+        let right = self.parse_metric_binary_right()?;
         let set = MetricBinarySet {
-            left: parse_metric_subexpression(&left_text)?,
-            op,
+            left: parse_metric_subexpression(&argument.query)?,
+            op: argument.operator,
             matching,
-            right: parse_metric_subexpression(&right_text)?,
+            right,
         };
         self.skip_ws();
         if self.pos != self.input.len() {
@@ -428,109 +428,76 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_metric_expression_argument(&mut self) -> Result<String, ParseError> {
-        let start = self.pos;
-        let mut depth = 0usize;
-        let mut quote_delimiter: Option<char> = None;
-        let mut escaped = false;
-        while let Some(ch) = self.peek() {
-            if let Some(delimiter) = quote_delimiter {
-                self.pos = self.pos.saturating_add(ch.len_utf8());
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if delimiter.eq(&ch) {
-                    quote_delimiter = None;
-                }
-                continue;
-            }
-
-            match ch {
-                '"' | '`' => {
-                    quote_delimiter = Some(ch);
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                '(' => {
-                    depth = depth.saturating_add(1);
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                ')' => {
-                    let Some(next_depth) = depth.checked_sub(1) else {
-                        return Err(self.error("expected metric expression"));
-                    };
-                    depth = next_depth;
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                '>' | '<' | '=' | '!' if matches!(depth, 0) => {
-                    let metric_query = self.input[start..self.pos].trim();
-                    if metric_query.is_empty() {
-                        return Err(self.error("expected metric expression"));
-                    }
-                    return Ok(metric_query.to_string());
-                }
-                _ => {
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-            }
-        }
-        Err(self.error("expected metric comparison operator"))
+        self.scan_metric_argument(
+            ScanErrors {
+                unbalanced_close: EXPECTED_METRIC_EXPRESSION,
+                end_of_input: "expected metric comparison operator",
+            },
+            |parser, start, ch| {
+                matches!(ch, '>' | '<' | '=' | '!')
+                    .then(|| parser.trimmed_metric_argument(start, EXPECTED_METRIC_EXPRESSION))
+            },
+        )
     }
 
-    pub(crate) fn parse_metric_arithmetic_argument(
+    fn parse_metric_arithmetic_argument(
         &mut self,
-    ) -> Result<(String, MetricScalarArithmeticOp), ParseError> {
-        let start = self.pos;
-        let mut depth = 0usize;
-        let mut quote_delimiter: Option<char> = None;
-        let mut escaped = false;
-        while let Some(ch) = self.peek() {
-            if let Some(delimiter) = quote_delimiter {
-                self.pos = self.pos.saturating_add(ch.len_utf8());
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if delimiter.eq(&ch) {
-                    quote_delimiter = None;
-                }
-                continue;
-            }
-
-            match ch {
-                '"' | '`' => {
-                    quote_delimiter = Some(ch);
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                '(' => {
-                    depth = depth.saturating_add(1);
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                ')' => {
-                    let Some(next_depth) = depth.checked_sub(1) else {
-                        return Err(self.error("expected metric expression"));
-                    };
-                    depth = next_depth;
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-                '+' | '-' | '*' | '/' | '%' | '^' if matches!(depth, 0) => {
-                    let metric_query = self.input[start..self.pos].trim();
-                    if metric_query.is_empty() {
-                        return Err(self.error("expected metric expression"));
-                    }
-                    let op = self.parse_arithmetic_op().expect("operator matched above");
-                    return Ok((metric_query.to_string(), op));
-                }
-                _ => {
-                    self.pos = self.pos.saturating_add(ch.len_utf8());
-                }
-            }
-        }
-        Err(self.error("expected metric arithmetic operator"))
+    ) -> Result<MetricOperatorArgument<MetricScalarArithmeticOp>, ParseError> {
+        self.scan_metric_argument(
+            ScanErrors {
+                unbalanced_close: EXPECTED_METRIC_EXPRESSION,
+                end_of_input: "expected metric arithmetic operator",
+            },
+            |parser, start, ch| {
+                matches!(ch, '+' | '-' | '*' | '/' | '%' | '^').then(|| {
+                    let metric_query =
+                        parser.trimmed_metric_argument(start, EXPECTED_METRIC_EXPRESSION)?;
+                    let op = parser
+                        .parse_arithmetic_op()
+                        .expect("operator matched above");
+                    Ok(MetricOperatorArgument {
+                        query: metric_query,
+                        operator: op,
+                    })
+                })
+            },
+        )
     }
 
-    pub(crate) fn parse_metric_set_argument(
+    fn parse_metric_set_argument(
         &mut self,
-    ) -> Result<(String, MetricBinarySetOp), ParseError> {
+    ) -> Result<MetricOperatorArgument<MetricBinarySetOp>, ParseError> {
+        self.scan_metric_argument(
+            ScanErrors {
+                unbalanced_close: EXPECTED_METRIC_EXPRESSION,
+                end_of_input: "expected metric set operator",
+            },
+            |parser, start, _| {
+                let matched = parser.match_metric_set_op_at(parser.pos)?;
+                Some(
+                    parser
+                        .trimmed_metric_argument(start, EXPECTED_METRIC_EXPRESSION)
+                        .map(|metric_query| {
+                            parser.pos = parser.pos.saturating_add(matched.token_length);
+                            MetricOperatorArgument {
+                                query: metric_query,
+                                operator: matched.operator,
+                            }
+                        }),
+                )
+            },
+        )
+    }
+
+    /// Scans a metric-query argument from the current position, stepping over
+    /// quoted strings and balanced parentheses. At every other character at
+    /// nesting depth zero, `at_top_level` receives the argument's start offset
+    /// and that character; `Some` ends the scan with its result.
+    fn scan_metric_argument<T>(
+        &mut self,
+        errors: ScanErrors<'_>,
+        mut at_top_level: impl FnMut(&mut Self, usize, char) -> Option<Result<T, ParseError>>,
+    ) -> Result<T, ParseError> {
         let start = self.pos;
         let mut depth = 0usize;
         let mut quote_delimiter: Option<char> = None;
@@ -559,19 +526,14 @@ impl<'a> Parser<'a> {
                 }
                 ')' => {
                     let Some(next_depth) = depth.checked_sub(1) else {
-                        return Err(self.error("expected metric expression"));
+                        return Err(self.error(errors.unbalanced_close));
                     };
                     depth = next_depth;
                     self.pos = self.pos.saturating_add(ch.len_utf8());
                 }
                 _ if matches!(depth, 0) => {
-                    if let Some((keyword_len, op)) = self.match_metric_set_op_at(self.pos) {
-                        let metric_query = self.input[start..self.pos].trim();
-                        if metric_query.is_empty() {
-                            return Err(self.error("expected metric expression"));
-                        }
-                        self.pos = self.pos.saturating_add(keyword_len);
-                        return Ok((metric_query.to_string(), op));
+                    if let Some(result) = at_top_level(self, start, ch) {
+                        return result;
                     }
                     self.pos = self.pos.saturating_add(ch.len_utf8());
                 }
@@ -580,31 +542,54 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Err(self.error("expected metric set operator"))
+        Err(self.error(errors.end_of_input))
     }
 
-    pub(crate) fn match_metric_set_op_at(
+    /// Returns the trimmed input from `start` to the current position, or an
+    /// error carrying `empty_message` when nothing but whitespace precedes it.
+    fn trimmed_metric_argument(
         &self,
-        position: usize,
-    ) -> Option<(usize, MetricBinarySetOp)> {
-        for (keyword, op) in [
-            ("unless", MetricBinarySetOp::Unless),
-            ("and", MetricBinarySetOp::And),
-            ("or", MetricBinarySetOp::Or),
+        start: usize,
+        empty_message: &str,
+    ) -> Result<String, ParseError> {
+        let metric_query = self.input[start..self.pos].trim();
+        if metric_query.is_empty() {
+            return Err(self.error(empty_message));
+        }
+        Ok(metric_query.to_string())
+    }
+
+    fn match_metric_set_op_at(&self, position: usize) -> Option<MetricSetOperatorAt> {
+        for spelling in [
+            OperatorSpelling {
+                text: "unless",
+                operator: MetricBinarySetOp::Unless,
+            },
+            OperatorSpelling {
+                text: "and",
+                operator: MetricBinarySetOp::And,
+            },
+            OperatorSpelling {
+                text: "or",
+                operator: MetricBinarySetOp::Or,
+            },
         ] {
-            if !self.input[position..].starts_with(keyword) {
+            if !self.input[position..].starts_with(spelling.text) {
                 continue;
             }
             let previous = self.input[..position].chars().next_back();
             if previous.is_some_and(is_ident_char) {
                 continue;
             }
-            let end = position.saturating_add(keyword.len());
+            let end = position.saturating_add(spelling.text.len());
             let next = self.input[end..].chars().next();
             if next.is_some_and(is_ident_char) {
                 continue;
             }
-            return Some((keyword.len(), op));
+            return Some(MetricSetOperatorAt {
+                token_length: spelling.text.len(),
+                operator: spelling.operator,
+            });
         }
         None
     }
@@ -613,23 +598,26 @@ impl<'a> Parser<'a> {
         &mut self,
         allow_group_modifier: bool,
     ) -> Result<Option<MetricVectorMatching>, ParseError> {
-        if self.consume_keyword("on") {
-            let labels = self.parse_grouping_labels()?;
-            let group = self.parse_metric_vector_group_modifier()?;
-            if matches!((allow_group_modifier, group.is_some()), (false, true)) {
-                return Err(self.error("group modifiers are not supported for set operators"));
-            }
-            return Ok(Some(MetricVectorMatching::On { labels, group }));
+        let on = if self.consume_keyword("on") {
+            Some(true)
+        } else if self.consume_keyword("ignoring") {
+            Some(false)
+        } else {
+            None
+        };
+        let Some(on) = on else {
+            return Ok(None);
+        };
+        let labels = self.parse_grouping_labels()?;
+        let group = self.parse_metric_vector_group_modifier()?;
+        if matches!((allow_group_modifier, group.is_some()), (false, true)) {
+            return Err(self.error("group modifiers are not supported for set operators"));
         }
-        if self.consume_keyword("ignoring") {
-            let labels = self.parse_grouping_labels()?;
-            let group = self.parse_metric_vector_group_modifier()?;
-            if matches!((allow_group_modifier, group.is_some()), (false, true)) {
-                return Err(self.error("group modifiers are not supported for set operators"));
-            }
-            return Ok(Some(MetricVectorMatching::Ignoring { labels, group }));
-        }
-        Ok(None)
+        Ok(Some(if on {
+            MetricVectorMatching::On { labels, group }
+        } else {
+            MetricVectorMatching::Ignoring { labels, group }
+        }))
     }
 
     pub(crate) fn parse_metric_vector_group_modifier(
@@ -1044,14 +1032,14 @@ impl<'a> Parser<'a> {
                 self.pos = self.pos.saturating_add(1);
             }
             let unit = &self.input[unit_start..self.pos];
-            let Some((unit_order, unit_bit, multiplier)) = duration_unit(unit) else {
+            let Some(unit) = prometheus_duration_unit(unit) else {
                 return Err(self.error("expected range duration unit"));
             };
-            if seen_units & unit_bit != 0 {
+            if seen_units & unit.bit != 0 {
                 return Err(self.error("repeated range duration unit"));
             }
             if let Some(previous) = previous_unit_order {
-                match unit_order.cmp(&previous) {
+                match unit.rank.cmp(&previous) {
                     std::cmp::Ordering::Greater => {}
                     std::cmp::Ordering::Equal | std::cmp::Ordering::Less => {
                         return Err(self.error("range duration units must be longest to shortest"));
@@ -1060,13 +1048,13 @@ impl<'a> Parser<'a> {
             }
 
             let chunk_ns = value
-                .checked_mul(multiplier)
+                .checked_mul(unit.nanoseconds)
                 .ok_or_else(|| self.error("range duration overflow"))?;
             total_ns = total_ns
                 .checked_add(chunk_ns)
                 .ok_or_else(|| self.error("range duration overflow"))?;
-            seen_units = seen_units.saturating_add(unit_bit);
-            previous_unit_order = Some(unit_order);
+            seen_units = seen_units.saturating_add(unit.bit);
+            previous_unit_order = Some(unit.rank);
             parsed_chunk = true;
 
             if matches!(self.peek(), Some(']')) {
@@ -1104,14 +1092,26 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_match_op(&mut self) -> Result<MatchOp, ParseError> {
-        for (text, op) in [
-            ("=~", MatchOp::RegexEqual),
-            ("!~", MatchOp::RegexNotEqual),
-            ("!=", MatchOp::NotEqual),
-            ("=", MatchOp::Equal),
+        for spelling in [
+            OperatorSpelling {
+                text: "=~",
+                operator: MatchOp::RegexEqual,
+            },
+            OperatorSpelling {
+                text: "!~",
+                operator: MatchOp::RegexNotEqual,
+            },
+            OperatorSpelling {
+                text: "!=",
+                operator: MatchOp::NotEqual,
+            },
+            OperatorSpelling {
+                text: "=",
+                operator: MatchOp::Equal,
+            },
         ] {
-            if self.consume(text) {
-                return Ok(op);
+            if self.consume(spelling.text) {
+                return Ok(spelling.operator);
             }
         }
         Err(self.error("expected label matcher operator"))
@@ -1140,16 +1140,16 @@ impl<'a> Parser<'a> {
         }
         if self.consume_keyword("logfmt") {
             self.skip_ws();
-            let (strict, keep_empty) = self.parse_logfmt_parser_flags();
+            let flags = self.parse_logfmt_parser_flags();
             self.skip_ws();
             if self.pos < self.input.len() && !matches!(self.peek(), Some('|' | '[')) {
                 return Ok(PipelineStage::Parser(ParserStage::LogfmtSelected(
-                    self.parse_logfmt_parser_config(strict, keep_empty)?,
+                    self.parse_logfmt_parser_config(flags.strict, flags.keep_empty)?,
                 )));
             }
-            if strict || keep_empty {
+            if flags.strict || flags.keep_empty {
                 return Ok(PipelineStage::Parser(ParserStage::LogfmtConfigured(
-                    LogfmtParserConfig::flags(strict, keep_empty)?,
+                    LogfmtParserConfig::flags(flags.strict, flags.keep_empty)?,
                 )));
             }
             return Ok(PipelineStage::Parser(ParserStage::Logfmt));
@@ -1291,7 +1291,7 @@ impl<'a> Parser<'a> {
         JsonParserConfig::new(extractions)
     }
 
-    pub(crate) fn parse_logfmt_parser_flags(&mut self) -> (bool, bool) {
+    fn parse_logfmt_parser_flags(&mut self) -> LogfmtParserFlags {
         let mut strict = false;
         let mut keep_empty = false;
         loop {
@@ -1304,7 +1304,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        (strict, keep_empty)
+        LogfmtParserFlags { strict, keep_empty }
     }
 
     pub(crate) fn parse_logfmt_parser_config(
@@ -1395,7 +1395,10 @@ impl<'a> Parser<'a> {
             } else {
                 break;
             };
-            rest.push((op, self.parse_field_filter_primary()?));
+            rest.push(crate::FieldFilterStep {
+                operation: op,
+                filter: self.parse_field_filter_primary()?,
+            });
         }
 
         if rest.is_empty() {
@@ -1409,19 +1412,46 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_comparison_op(&mut self) -> Result<ComparisonOp, ParseError> {
-        for (text, op) in [
-            (">=", ComparisonOp::GreaterEqual),
-            ("<=", ComparisonOp::LessEqual),
-            ("=~", ComparisonOp::RegexEqual),
-            ("!~", ComparisonOp::RegexNotEqual),
-            ("==", ComparisonOp::Equal),
-            ("!=", ComparisonOp::NotEqual),
-            ("=", ComparisonOp::Equal),
-            (">", ComparisonOp::Greater),
-            ("<", ComparisonOp::Less),
+        for spelling in [
+            OperatorSpelling {
+                text: ">=",
+                operator: ComparisonOp::GreaterEqual,
+            },
+            OperatorSpelling {
+                text: "<=",
+                operator: ComparisonOp::LessEqual,
+            },
+            OperatorSpelling {
+                text: "=~",
+                operator: ComparisonOp::RegexEqual,
+            },
+            OperatorSpelling {
+                text: "!~",
+                operator: ComparisonOp::RegexNotEqual,
+            },
+            OperatorSpelling {
+                text: "==",
+                operator: ComparisonOp::Equal,
+            },
+            OperatorSpelling {
+                text: "!=",
+                operator: ComparisonOp::NotEqual,
+            },
+            OperatorSpelling {
+                text: "=",
+                operator: ComparisonOp::Equal,
+            },
+            OperatorSpelling {
+                text: ">",
+                operator: ComparisonOp::Greater,
+            },
+            OperatorSpelling {
+                text: "<",
+                operator: ComparisonOp::Less,
+            },
         ] {
-            if self.consume(text) {
-                return Ok(op);
+            if self.consume(spelling.text) {
+                return Ok(spelling.operator);
             }
         }
         Err(self.error("expected field comparison operator"))
@@ -1507,22 +1537,13 @@ impl<'a> Parser<'a> {
         }
 
         self.expect('"')?;
-        let mut out = String::new();
-        while let Some(ch) = self.peek() {
-            self.pos = self.pos.saturating_add(ch.len_utf8());
-            match ch {
-                '"' => return Ok(out),
-                '\\' => {
-                    let Some(escaped) = self.peek() else {
-                        return Err(self.error("expected escaped character"));
-                    };
-                    self.pos = self.pos.saturating_add(escaped.len_utf8());
-                    out.push(decode_quoted_escape(escaped));
-                }
-                _ => out.push(ch),
-            }
-        }
-        Err(self.error("expected closing quote"))
+        let body = read_quoted_body(self.input, &mut self.pos);
+        body.map_err(|error| {
+            self.error(match error {
+                QuotedBodyError::DanglingEscape => "expected escaped character",
+                QuotedBodyError::Unterminated => "expected closing quote",
+            })
+        })
     }
 
     pub(crate) fn expect(&mut self, expected: char) -> Result<(), ParseError> {

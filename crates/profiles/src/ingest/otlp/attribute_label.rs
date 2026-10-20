@@ -3,7 +3,7 @@ use super::{ProfilesError, pb};
 pub(crate) fn attribute_label(
     index: i32,
     dict: &pb::otlp_profiles::ProfilesDictionary,
-) -> Result<(String, String), ProfilesError> {
+) -> Result<krabka_blockstore::LabelPair, ProfilesError> {
     use pb::opentelemetry::proto::common::v1::any_value::Value;
 
     let attr = usize::try_from(index)
@@ -26,5 +26,5 @@ pub(crate) fn attribute_label(
         Some(Value::IntValue(value)) => value.to_string(),
         None => String::new(),
     };
-    Ok((key, value))
+    Ok(krabka_blockstore::LabelPair::new(key, value))
 }

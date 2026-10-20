@@ -12,12 +12,46 @@ use krabka_units::{
     convert::{ByteSizeExt as _, TimeExt as _},
     mebibytes, secs,
 };
+#[cfg(test)]
+use object::{Object as _, ObjectSymbol as _};
 use refined_type::{Refined, rule::GreaterU64};
 
 use crate::{
     Frame, RawLocation, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping,
     SymbolDb, SymbolSource,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeSymbol {
+    pub function: String,
+    pub file: String,
+    pub line: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SymbolizeRequest {
+    pub build_id: String,
+    pub filename: String,
+    pub address: u64,
+}
+
+pub trait NativeResolver: Send + Sync {
+    fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>>;
+}
+
+#[cfg(test)]
+pub(crate) fn nearest_symbol_name(object: &object::File<'_>, address: u64) -> Option<String> {
+    object
+        .symbols()
+        .filter(|symbol| symbol.address() <= address)
+        .filter(|symbol| {
+            let size = symbol.size();
+            size == 0 || address < symbol.address().saturating_add(size)
+        })
+        .max_by_key(object::ObjectSymbol::address)
+        .and_then(|symbol| symbol.name().ok())
+        .map(ToString::to_string)
+}
 
 #[cfg(test)]
 mod tests {
@@ -30,6 +64,17 @@ mod tests {
     use object::{Object, ObjectSymbol};
 
     use super::*;
+
+    struct SymbolRecord {
+        address: u64,
+        size: u64,
+        name: String,
+    }
+
+    struct ZeroSizeSymbols {
+        address: u64,
+        names: Vec<String>,
+    }
     use crate::{LocationRec, MappingRec, MappingSymbolization};
 
     #[test]
@@ -94,8 +139,14 @@ mod tests {
         std::env::var_os("LLVM_PROFILE_FILE").is_some()
     }
 
-    #[test]
-    fn lazy_symbolizer_resolves_unsymbolized_location_once() {
+    /// A database holding one unsymbolized mapping of `/bin/app` (build
+    /// `build-a`) at `0x1000..0x2000`, file offset `0x30`, and that mapping's id.
+    struct UnsymbolizedAppFixture {
+        db: SymbolDb,
+        mapping_id: u32,
+    }
+
+    fn db_with_unsymbolized_app_mapping() -> UnsymbolizedAppFixture {
         let mut db = SymbolDb::new();
         let filename = db.intern_string("/bin/app");
         let build_id = db.intern_string("build-a");
@@ -107,6 +158,18 @@ mod tests {
             build_id,
             symbolization: MappingSymbolization::default(),
         });
+        UnsymbolizedAppFixture {
+            db,
+            mapping_id: mapping,
+        }
+    }
+
+    #[test]
+    fn lazy_symbolizer_resolves_unsymbolized_location_once() {
+        let UnsymbolizedAppFixture {
+            mut db,
+            mapping_id: mapping,
+        } = db_with_unsymbolized_app_mapping();
         let loc = db.intern_location(LocationRec {
             address: 0x1010,
             mapping_id: mapping,
@@ -142,17 +205,10 @@ mod tests {
             }
         }
 
-        let mut db = SymbolDb::new();
-        let filename = db.intern_string("/bin/app");
-        let build_id = db.intern_string("build-a");
-        let mapping = db.intern_mapping(MappingRec {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0x30,
-            filename,
-            build_id,
-            symbolization: MappingSymbolization::default(),
-        });
+        let UnsymbolizedAppFixture {
+            mut db,
+            mapping_id: mapping,
+        } = db_with_unsymbolized_app_mapping();
         for address in [0x1010, 0x1020] {
             db.intern_location(LocationRec {
                 address,
@@ -210,9 +266,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -248,9 +305,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -290,9 +348,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let max_debuginfo = ByteSize::from_bytes(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -300,7 +359,8 @@ mod tests {
         let served_clone = Arc::clone(&served);
         let server_thread = std::thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
-            let (mut stream, _) = accept_with_deadline(&listener);
+            let connection = accept_with_deadline(&listener);
+            let AcceptedConnection { mut stream, .. } = connection;
             let mut request = [0_u8; 1024];
             let read = std::io::Read::read(&mut stream, &mut request).unwrap();
             let request = String::from_utf8_lossy(&request[..read]);
@@ -383,10 +443,11 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
         let exe = std::env::current_exe().unwrap();
-        let bytes = std::fs::read(&exe).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            anchor_address: address,
+            ..
+        } = own_executable();
         let resolver = FileSystemResolver::default();
         let request = SymbolizeRequest {
             build_id: String::new(),
@@ -415,32 +476,39 @@ mod tests {
             .symbols()
             .filter_map(|symbol| {
                 let name = symbol.name().ok()?;
-                (!name.is_empty()).then(|| (symbol.address(), symbol.size(), name.to_string()))
+                (!name.is_empty()).then(|| SymbolRecord {
+                    address: symbol.address(),
+                    size: symbol.size(),
+                    name: name.to_string(),
+                })
             })
             .collect::<Vec<_>>();
-        let (zero_addr, zero_names) = symbols
+        let candidates = symbols
             .iter()
-            .filter(|(address, size, _)| *address != 0 && *size == 0)
-            .find_map(|(address, _, _)| {
-                let covered_by_sized = symbols.iter().any(|(candidate, size, _)| {
-                    *size != 0
-                        && *candidate <= *address
-                        && *address < (*candidate).saturating_add(*size)
+            .filter(|symbol| symbol.address != 0 && symbol.size == 0)
+            .find_map(|symbol| {
+                let covered_by_sized = symbols.iter().any(|candidate| {
+                    candidate.size != 0
+                        && candidate.address <= symbol.address
+                        && symbol.address < candidate.address.saturating_add(candidate.size)
                 });
                 if covered_by_sized {
                     return None;
                 }
                 let names = symbols
                     .iter()
-                    .filter(|(candidate, size, _)| candidate == address && *size == 0)
-                    .map(|(_, _, name)| name.clone())
+                    .filter(|candidate| candidate.address == symbol.address && candidate.size == 0)
+                    .map(|candidate| candidate.name.clone())
                     .collect::<Vec<_>>();
-                (!names.is_empty()).then_some((*address, names))
+                (!names.is_empty()).then_some(ZeroSizeSymbols {
+                    address: symbol.address,
+                    names,
+                })
             })
             .expect("test binary has an uncovered zero-size symbol");
         assert!(
-            nearest_symbol_name(&object, zero_addr)
-                .is_some_and(|name| zero_names.iter().any(|candidate| candidate == &name))
+            nearest_symbol_name(&object, candidates.address)
+                .is_some_and(|name| candidates.names.iter().any(|candidate| candidate == &name))
         );
 
         let anchor = object
@@ -540,14 +608,19 @@ mod tests {
         assert!(out.len() == cap_usize);
     }
 
-    #[test]
-    fn content_length_cap_allows_absent_and_exact_lengths_only() {
-        for (content_length, want) in [(None, true), (Some(10), true), (Some(11), false)] {
-            assert!(
-                content_length_within_cap(content_length, 10) == want,
-                "{content_length:?}"
-            );
-        }
+    #[yare::parameterized(
+        absent = { None, true },
+        exact_limit = { Some(10), true },
+        over_limit = { Some(11), false },
+    )]
+    fn content_length_cap_allows_absent_and_exact_lengths_only(
+        content_length: Option<u64>,
+        want: bool,
+    ) {
+        assert2::assert!(
+            content_length_within_cap(content_length, 10) == want,
+            "{content_length:?}"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -566,7 +639,8 @@ mod tests {
             listener
                 .set_nonblocking(true)
                 .expect("set listener non-blocking");
-            let (mut stream, _) = accept_with_deadline(&listener);
+            let connection = accept_with_deadline(&listener);
+            let AcceptedConnection { mut stream, .. } = connection;
             let mut request = [0_u8; 1024];
             let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
             let response = "HTTP/1.1 302 Found\r\nlocation: /elsewhere\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
@@ -591,6 +665,25 @@ mod tests {
         assert!(followed.load(Ordering::Relaxed) == 0);
     }
 
+    /// The test binary's own bytes, and the address of
+    /// `object_symbol_anchor` in them.
+    #[cfg(target_os = "linux")]
+    struct OwnExecutable {
+        bytes: Vec<u8>,
+        anchor_address: u64,
+    }
+
+    #[cfg(target_os = "linux")]
+    fn own_executable() -> OwnExecutable {
+        let _ = object_symbol_anchor();
+        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        let anchor_address = object_symbol_anchor_address(&bytes);
+        OwnExecutable {
+            bytes,
+            anchor_address,
+        }
+    }
+
     #[cfg(target_os = "linux")]
     fn object_symbol_anchor_address(bytes: &[u8]) -> u64 {
         let object = object::File::parse(bytes).unwrap();
@@ -609,13 +702,19 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn accept_with_deadline(
-        listener: &std::net::TcpListener,
-    ) -> (std::net::TcpStream, std::net::SocketAddr) {
+    struct AcceptedConnection {
+        stream: std::net::TcpStream,
+    }
+
+    fn accept_with_deadline(listener: &std::net::TcpListener) -> AcceptedConnection {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             match listener.accept() {
-                Ok(stream) => return stream,
+                Ok(connection) => {
+                    return AcceptedConnection {
+                        stream: connection.0,
+                    };
+                }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                     assert!(
                         std::time::Instant::now() < deadline,
@@ -638,50 +737,103 @@ mod tests {
 
 mod artifact_cache;
 mod chained_resolver;
-mod content_length_within_cap;
 mod debuginfod_config;
 mod debuginfod_resolver;
-mod default_debuginfod_connect_timeout;
-mod default_debuginfod_max_artifact_size;
-mod default_debuginfod_request_timeout;
 mod file_system_resolver;
-mod is_valid_build_id;
 mod lazy_symbolizer;
 mod loader_frames;
-mod lock_recover;
-mod native_resolver;
-mod native_symbol;
-#[cfg(test)]
-mod nearest_symbol_name;
 mod object_symbol_resolver;
-#[cfg(test)]
-mod parse_object_guarded;
-mod read_capped;
-mod read_capped_reader;
-mod symbolize_request;
-mod validate_positive_timeout;
-
 use artifact_cache::ArtifactCache;
 pub use chained_resolver::ChainedResolver;
-use content_length_within_cap::content_length_within_cap;
 pub use debuginfod_config::DebuginfodConfig;
 pub use debuginfod_resolver::DebuginfodResolver;
-pub use default_debuginfod_connect_timeout::DEFAULT_DEBUGINFOD_CONNECT_TIMEOUT;
-pub use default_debuginfod_max_artifact_size::DEFAULT_DEBUGINFOD_MAX_ARTIFACT_SIZE;
-pub use default_debuginfod_request_timeout::DEFAULT_DEBUGINFOD_REQUEST_TIMEOUT;
 pub use file_system_resolver::FileSystemResolver;
-use is_valid_build_id::is_valid_build_id;
 pub use lazy_symbolizer::LazySymbolizer;
 use loader_frames::loader_frames;
-use lock_recover::lock_recover;
-pub use native_resolver::NativeResolver;
-pub use native_symbol::NativeSymbol;
-#[cfg(test)]
-use nearest_symbol_name::nearest_symbol_name;
 pub use object_symbol_resolver::ObjectSymbolResolver;
+/// Default time allowed to open a debuginfod connection.
+pub const DEFAULT_DEBUGINFOD_CONNECT_TIMEOUT: Time = secs(5);
+
+/// Default maximum size of a debuginfo artifact downloaded from a debuginfod
+/// server.
+pub const DEFAULT_DEBUGINFOD_MAX_ARTIFACT_SIZE: ByteSize = mebibytes(512);
+
+/// Default time allowed for a whole debuginfod request, connection included.
+pub const DEFAULT_DEBUGINFOD_REQUEST_TIMEOUT: Time = secs(10);
+
+pub(crate) fn content_length_within_cap(content_length: Option<u64>, cap: u64) -> bool {
+    content_length.is_none_or(|len| len <= cap)
+}
+
+/// Returns `true` if and only if `build_id` is a valid debuginfod build-id.
+///
+/// A valid build-id is a non-empty lowercase hex string. debuginfod build-ids
+/// are hex digests, so this function rejects a build-id that holds `/`, `.`,
+/// `..`, uppercase, or other bytes. The rejection happens before the build-id
+/// can go into a URL. This is a defence against SSRF and path traversal.
+pub(crate) fn is_valid_build_id(build_id: &str) -> bool {
+    build_id.len() >= 2
+        && build_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Recover a poisoned mutex rather than propagate the panic.
+///
+/// One panicked worker must not permanently `DoS` the resolver. This function
+/// takes ownership of the inner guard and continues.
+pub(crate) fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Read an HTTP body into memory.
+///
+/// This function stops and returns `None` as soon as the accumulated size is
+/// more than `cap` bytes. It avoids the unbounded `response.bytes()`
+/// allocation.
+pub(crate) fn read_capped(mut response: reqwest::blocking::Response, cap: u64) -> Option<Vec<u8>> {
+    read_capped_reader(&mut response, cap)
+}
+
+pub(crate) fn validate_positive_timeout(name: &str, timeout: Time) -> Result<(), String> {
+    let duration = std::time::Duration::try_from_secs_f64(timeout.secs_f64())
+        .map_err(|error| format!("debuginfod {name} timeout: {error}"))?;
+    if duration.is_zero() {
+        return Err(format!("debuginfod {name} timeout must be positive"));
+    }
+    Ok(())
+}
+
+/// Parse an untrusted ELF/DWARF blob with `object::File::parse`.
+///
+/// This function catches any panic that the parser can trigger on a crafted
+/// artifact. It returns `Ok(())` only when the bytes parse cleanly and the
+/// parser does not panic.
 #[cfg(test)]
-use parse_object_guarded::parse_object_guarded;
-use read_capped::read_capped;
-use read_capped_reader::read_capped_reader;
-pub use symbolize_request::SymbolizeRequest;
-use validate_positive_timeout::validate_positive_timeout;
+pub(crate) fn parse_object_guarded(bytes: &[u8]) -> Result<(), String> {
+    std::panic::catch_unwind(|| {
+        object::File::parse(bytes)
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+    .unwrap_or_else(|_| Err("panic while parsing object file".to_string()))
+}
+
+pub(crate) fn read_capped_reader(mut reader: impl Read, cap: u64) -> Option<Vec<u8>> {
+    let cap_usize = usize::try_from(cap).unwrap_or(usize::MAX);
+    let mut buf = Vec::new();
+    let mut chunk = vec![0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut chunk).ok()?;
+        if read == 0 {
+            break;
+        }
+        if buf.len().saturating_add(read) > cap_usize {
+            return None;
+        }
+        buf.extend_from_slice(&chunk[..read]);
+    }
+    Some(buf)
+}

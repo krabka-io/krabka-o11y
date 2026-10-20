@@ -6,6 +6,7 @@ use krabka_client_admin::{
     TopicMetadataEntry,
 };
 use krabka_units::{minutes, secs};
+use maplit::btreemap;
 
 use super::{
     ALL_TOPICS, CLEANUP_POLICY, COMPACT, METRICS_HA_TOPIC, METRICS_WAL_TOPIC, ObservedTopic,
@@ -32,30 +33,58 @@ fn entry(name: &str, partitions: i32, replicas: i32) -> TopicMetadataEntry {
     }
 }
 
-fn overrides(name: &str, pairs: &[(&str, &str)]) -> (ConfigResource, Result<Config, KafkaError>) {
-    (
-        ConfigResource::topic(name),
-        Ok(Config {
-            entries: pairs
-                .iter()
-                .map(|(name, value)| {
-                    (
-                        (*name).to_string(),
-                        ConfigEntry {
-                            name: (*name).to_string(),
-                            value: Some((*value).to_string()),
-                            source: ConfigSource::DynamicTopicConfig,
-                            is_sensitive: false,
-                            is_read_only: false,
-                            synonyms: Vec::new(),
-                            config_type: ConfigType::Unknown,
-                            documentation: None,
-                        },
-                    )
-                })
-                .collect(),
-        }),
-    )
+fn missing_wal_topic() -> TopicDrift {
+    TopicDrift::Missing {
+        topic: METRICS_WAL_TOPIC.to_string(),
+        purpose: ALL_TOPICS[0].purpose,
+    }
+}
+
+struct ConfigPair {
+    name: &'static str,
+    value: &'static str,
+}
+
+struct TopicConfigOverride {
+    resource: ConfigResource,
+    config: Result<Config, KafkaError>,
+}
+
+fn config_pair(name: &'static str, value: &'static str) -> ConfigPair {
+    ConfigPair { name, value }
+}
+
+fn overrides(name: &str, pairs: &[ConfigPair]) -> TopicConfigOverride {
+    let mut entries = BTreeMap::new();
+    for pair in pairs {
+        entries.insert(
+            pair.name.to_string(),
+            ConfigEntry {
+                name: pair.name.to_string(),
+                value: Some(pair.value.to_string()),
+                source: ConfigSource::DynamicTopicConfig,
+                is_sensitive: false,
+                is_read_only: false,
+                synonyms: Vec::new(),
+                config_type: ConfigType::Unknown,
+                documentation: None,
+            },
+        );
+    }
+    TopicConfigOverride {
+        resource: ConfigResource::topic(name),
+        config: Ok(Config { entries }),
+    }
+}
+
+fn topic_configs(
+    entries: impl IntoIterator<Item = TopicConfigOverride>,
+) -> BTreeMap<ConfigResource, Result<Config, KafkaError>> {
+    let mut configs = BTreeMap::new();
+    for entry in entries {
+        configs.insert(entry.resource, entry.config);
+    }
+    configs
 }
 
 fn metadata(entries: Vec<TopicMetadataEntry>) -> TopicMetadata {
@@ -69,23 +98,23 @@ fn metadata(entries: Vec<TopicMetadataEntry>) -> TopicMetadata {
 fn a_wal_topic_asks_for_retention_and_a_state_topic_asks_for_compaction() {
     let specs = desired_specs(&ALL_TOPICS, &settings(4, 2, 3));
 
-    for (contract, spec) in ALL_TOPICS.iter().zip(&specs) {
+    for pair in ALL_TOPICS.iter().zip(&specs) {
+        let contract = pair.0;
+        let spec = pair.1;
         check!(spec.name == contract.name);
         check!(spec.replicas == 3);
         match contract.kind {
             TopicKind::Wal => {
                 check!(spec.partitions == 4);
                 check!(
-                    spec.configs
-                        == BTreeMap::from([(RETENTION_MS.to_string(), "900000".to_string())]),
+                    spec.configs == btreemap! { RETENTION_MS.to_string() => "900000".to_string() },
                     "a WAL topic states its retention window and nothing else"
                 );
             }
             TopicKind::CompactedState => {
                 check!(spec.partitions == 2);
                 check!(
-                    spec.configs
-                        == BTreeMap::from([(CLEANUP_POLICY.to_string(), COMPACT.to_string())]),
+                    spec.configs == btreemap! { CLEANUP_POLICY.to_string() => COMPACT.to_string() },
                     "a compacted topic must not carry a retention window"
                 );
             }
@@ -102,17 +131,19 @@ fn a_matching_broker_reports_no_drift_and_the_live_shard_count() {
         entry(METRICS_WAL_TOPIC, 4, 1),
         entry(METRICS_HA_TOPIC, 2, 1),
     ]);
-    let configs = BTreeMap::from([
-        overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "900000")]),
-        overrides(METRICS_HA_TOPIC, &[(CLEANUP_POLICY, COMPACT)]),
+    let configs = topic_configs([
+        overrides(METRICS_WAL_TOPIC, &[config_pair(RETENTION_MS, "900000")]),
+        overrides(METRICS_HA_TOPIC, &[config_pair(CLEANUP_POLICY, COMPACT)]),
     ]);
 
-    let (observed, drift) = inspect_topics(
+    let inspection = inspect_topics(
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
         &configs,
     );
+    let observed = inspection.observed;
+    let drift = inspection.drift;
 
     assert!(drift == Vec::new());
     assert!(
@@ -122,13 +153,13 @@ fn a_matching_broker_reports_no_drift_and_the_live_shard_count() {
                     name: METRICS_WAL_TOPIC.to_string(),
                     partitions: PartitionCount::new(4).expect("positive"),
                     replication_factor: 1,
-                    overrides: BTreeMap::from([(RETENTION_MS.to_string(), "900000".to_string())]),
+                    overrides: btreemap! { RETENTION_MS.to_string() => "900000".to_string() },
                 },
                 ObservedTopic {
                     name: METRICS_HA_TOPIC.to_string(),
                     partitions: PartitionCount::new(2).expect("positive"),
                     replication_factor: 1,
-                    overrides: BTreeMap::from([(CLEANUP_POLICY.to_string(), COMPACT.to_string())]),
+                    overrides: btreemap! { CLEANUP_POLICY.to_string() => COMPACT.to_string() },
                 },
             ]
     );
@@ -140,14 +171,18 @@ fn a_wrong_partition_count_is_fatal_and_names_both_counts() {
     let settings = settings(4, 1, 1);
     let specs = desired_specs(&contracts, &settings);
     let metadata = metadata(vec![entry(METRICS_WAL_TOPIC, 1, 1)]);
-    let configs = BTreeMap::from([overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "900000")])]);
+    let configs = topic_configs([overrides(
+        METRICS_WAL_TOPIC,
+        &[config_pair(RETENTION_MS, "900000")],
+    )]);
 
-    let (_, drift) = inspect_topics(
+    let drift = inspect_topics(
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
         &configs,
-    );
+    )
+    .drift;
 
     assert!(
         drift
@@ -175,9 +210,12 @@ fn an_uncompacted_state_topic_is_fatal_whether_the_policy_is_wrong_or_absent() {
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
-        &BTreeMap::from([overrides(METRICS_HA_TOPIC, &[(CLEANUP_POLICY, "delete")])]),
+        &topic_configs([overrides(
+            METRICS_HA_TOPIC,
+            &[config_pair(CLEANUP_POLICY, "delete")],
+        )]),
     )
-    .1;
+    .drift;
     check!(
         wrong
             == vec![TopicDrift::CleanupPolicy {
@@ -194,9 +232,9 @@ fn an_uncompacted_state_topic_is_fatal_whether_the_policy_is_wrong_or_absent() {
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
-        &BTreeMap::from([overrides(METRICS_HA_TOPIC, &[])]),
+        &topic_configs([overrides(METRICS_HA_TOPIC, &[])]),
     )
-    .1;
+    .drift;
     check!(
         absent
             == vec![TopicDrift::CleanupPolicy {
@@ -221,14 +259,19 @@ fn retention_and_replication_differences_are_reported_but_not_fatal() {
     let settings = settings(1, 1, 3);
     let specs = desired_specs(&contracts, &settings);
     let metadata = metadata(vec![entry(METRICS_WAL_TOPIC, 1, 1)]);
-    let configs = BTreeMap::from([overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "60000")])]);
+    let configs = topic_configs([overrides(
+        METRICS_WAL_TOPIC,
+        &[config_pair(RETENTION_MS, "60000")],
+    )]);
 
-    let (observed, drift) = inspect_topics(
+    let inspection = inspect_topics(
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
         &configs,
     );
+    let observed = inspection.observed;
+    let drift = inspection.drift;
 
     assert!(
         drift
@@ -278,21 +321,20 @@ fn an_absent_or_unreadable_topic_is_fatal() {
         },
     ]);
 
-    let (observed, drift) = inspect_topics(
+    let inspection = inspect_topics(
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
         &BTreeMap::new(),
     );
+    let observed = inspection.observed;
+    let drift = inspection.drift;
 
     assert!(observed == Vec::new());
     assert!(
         drift
             == vec![
-                TopicDrift::Missing {
-                    topic: METRICS_WAL_TOPIC.to_string(),
-                    purpose: ALL_TOPICS[0].purpose,
-                },
+                missing_wal_topic(),
                 TopicDrift::Unreadable {
                     topic: METRICS_HA_TOPIC.to_string(),
                     error: "TOPIC_AUTHORIZATION_FAILED".to_string(),
@@ -308,21 +350,17 @@ fn a_topic_the_broker_omits_entirely_is_also_absent() {
     let settings = settings(1, 1, 1);
     let specs = desired_specs(&contracts, &settings);
 
-    let (observed, drift) = inspect_topics(
+    let inspection = inspect_topics(
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata(Vec::new()),
         &BTreeMap::new(),
     );
+    let observed = inspection.observed;
+    let drift = inspection.drift;
 
     assert!(observed == Vec::new());
-    assert!(
-        drift
-            == vec![TopicDrift::Missing {
-                topic: METRICS_WAL_TOPIC.to_string(),
-                purpose: ALL_TOPICS[0].purpose,
-            }]
-    );
+    assert!(drift == vec![missing_wal_topic()]);
 }
 
 #[test]
@@ -378,17 +416,19 @@ fn a_structure_check_reads_the_shard_count_instead_of_comparing_it() {
         entry(METRICS_WAL_TOPIC, 12, 3),
         entry(METRICS_HA_TOPIC, 5, 3),
     ]);
-    let compacted = BTreeMap::from([
-        overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "60000")]),
-        overrides(METRICS_HA_TOPIC, &[(CLEANUP_POLICY, COMPACT)]),
+    let compacted = topic_configs([
+        overrides(METRICS_WAL_TOPIC, &[config_pair(RETENTION_MS, "60000")]),
+        overrides(METRICS_HA_TOPIC, &[config_pair(CLEANUP_POLICY, COMPACT)]),
     ]);
 
-    let (observed, drift) = inspect_topics(
+    let inspection = inspect_topics(
         &contracts,
         &TopicExpectation::Structure,
         &metadata,
         &compacted,
     );
+    let observed = inspection.observed;
+    let drift = inspection.drift;
 
     assert!(drift == Vec::new());
     check!(
@@ -400,16 +440,17 @@ fn a_structure_check_reads_the_shard_count_instead_of_comparing_it() {
         "the live counts come back for the role to use"
     );
 
-    let uncompacted = BTreeMap::from([
-        overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "60000")]),
+    let uncompacted = topic_configs([
+        overrides(METRICS_WAL_TOPIC, &[config_pair(RETENTION_MS, "60000")]),
         overrides(METRICS_HA_TOPIC, &[]),
     ]);
-    let (_, drift) = inspect_topics(
+    let drift = inspect_topics(
         &contracts,
         &TopicExpectation::Structure,
         &metadata,
         &uncompacted,
-    );
+    )
+    .drift;
     assert!(
         drift
             == vec![TopicDrift::CleanupPolicy {
@@ -428,67 +469,72 @@ fn a_structure_check_reads_the_shard_count_instead_of_comparing_it() {
 /// warning under another topic's name.
 #[test]
 fn every_difference_names_the_topic_it_is_about_and_says_whether_it_is_fatal() {
+    struct TopicDifferenceCase {
+        drift: TopicDrift,
+        topic: &'static str,
+        fatal: bool,
+    }
     let cases = [
-        (
-            TopicDrift::Missing {
+        TopicDifferenceCase {
+            drift: TopicDrift::Missing {
                 topic: "krabka.logs.wal".to_string(),
                 purpose: "the log write-ahead log",
             },
-            "krabka.logs.wal",
-            true,
-        ),
-        (
-            TopicDrift::Unreadable {
+            topic: "krabka.logs.wal",
+            fatal: true,
+        },
+        TopicDifferenceCase {
+            drift: TopicDrift::Unreadable {
                 topic: "krabka.logs.state".to_string(),
                 error: "TOPIC_AUTHORIZATION_FAILED".to_string(),
             },
-            "krabka.logs.state",
-            true,
-        ),
-        (
-            TopicDrift::PartitionCount {
+            topic: "krabka.logs.state",
+            fatal: true,
+        },
+        TopicDifferenceCase {
+            drift: TopicDrift::PartitionCount {
                 topic: "krabka.metrics.wal".to_string(),
                 expected: 4,
                 actual: 8,
                 purpose: "the metrics write path",
             },
-            "krabka.metrics.wal",
-            true,
-        ),
-        (
-            TopicDrift::CleanupPolicy {
+            topic: "krabka.metrics.wal",
+            fatal: true,
+        },
+        TopicDifferenceCase {
+            drift: TopicDrift::CleanupPolicy {
                 topic: "krabka.metrics.ha".to_string(),
                 actual: None,
                 purpose: "the HA dedup state",
             },
-            "krabka.metrics.ha",
-            true,
-        ),
-        (
-            TopicDrift::ReplicationFactor {
+            topic: "krabka.metrics.ha",
+            fatal: true,
+        },
+        TopicDifferenceCase {
+            drift: TopicDrift::ReplicationFactor {
                 topic: "krabka.traces.wal".to_string(),
                 expected: 3,
                 actual: 1,
             },
-            "krabka.traces.wal",
-            false,
-        ),
-        (
-            TopicDrift::Retention {
+            topic: "krabka.traces.wal",
+            fatal: false,
+        },
+        TopicDifferenceCase {
+            drift: TopicDrift::Retention {
                 topic: "krabka.profiles.wal".to_string(),
                 expected: 900_000,
                 actual: Some("60000".to_string()),
             },
-            "krabka.profiles.wal",
-            false,
-        ),
+            topic: "krabka.profiles.wal",
+            fatal: false,
+        },
     ];
 
-    for (drift, topic, fatal) in cases {
-        check!(drift.topic() == topic, "{drift:?}");
-        check!(drift.is_fatal() == fatal, "{drift:?}");
+    for case in cases {
+        check!(case.drift.topic() == case.topic, "{:?}", case.drift);
+        check!(case.drift.is_fatal() == case.fatal, "{:?}", case.drift);
         check!(
-            drift.to_string().contains(topic),
+            case.drift.to_string().contains(case.topic),
             "the message names the topic too, so a line read without its fields still says which"
         );
     }

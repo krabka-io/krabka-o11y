@@ -4,12 +4,30 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::planner::StepGrid;
+
 /// Sample accounting gathered at the engine's existing fetched-row count seams.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct QuerySampleStats {
     pub(crate) total_queryable_samples: u64,
     pub(crate) peak_samples: usize,
     pub(crate) per_step: BTreeMap<i64, u64>,
+}
+
+pub(crate) struct QuerySampleStatsResult<T> {
+    pub(crate) output: T,
+    pub(crate) stats: QuerySampleStats,
+}
+
+/// Whether [`collect_query_sample_stats`] breaks the queryable samples down
+/// by evaluation step, as Prometheus does for `stats=all`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PerStepSampleStats {
+    /// Report only the totals.
+    Omit,
+    /// Also report a per-step count for every instant on the grid, zero
+    /// included.
+    Include(StepGrid),
 }
 
 type SharedQuerySampleStats = Arc<Mutex<QuerySampleStats>>;
@@ -21,21 +39,18 @@ tokio::task_local! {
 
 /// Runs `future` with query sample accounting enabled.
 pub(crate) async fn collect_query_sample_stats<F>(
-    per_step: bool,
-    start_ms: i64,
-    end_ms: i64,
-    step_ms: i64,
+    per_step: PerStepSampleStats,
     future: F,
-) -> (F::Output, QuerySampleStats)
+) -> QuerySampleStatsResult<F::Output>
 where
     F: Future,
 {
     let mut stats = QuerySampleStats::default();
-    if per_step {
-        let mut timestamp_ms = start_ms;
-        while timestamp_ms <= end_ms {
+    if let PerStepSampleStats::Include(grid) = per_step {
+        let mut timestamp_ms = grid.start;
+        while timestamp_ms <= grid.end {
             stats.per_step.insert(timestamp_ms, 0);
-            let next = timestamp_ms.saturating_add(step_ms);
+            let next = timestamp_ms.saturating_add(grid.step);
             if next <= timestamp_ms {
                 break;
             }
@@ -45,7 +60,7 @@ where
     let shared = Arc::new(Mutex::new(stats));
     let output = QUERY_SAMPLE_STATS.scope(Arc::clone(&shared), future).await;
     let stats = shared.lock().expect("query sample stats poisoned").clone();
-    (output, stats)
+    QuerySampleStatsResult { output, stats }
 }
 
 /// Associates sample observations made by `future` with an evaluation step.

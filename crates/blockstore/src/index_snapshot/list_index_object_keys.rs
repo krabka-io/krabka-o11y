@@ -38,7 +38,7 @@ pub async fn list_index_object_keys(
         while let Some(meta) = listing.next().await {
             let meta = meta?;
             if parse_index_shard_location(&shards_prefix, meta.location.as_ref())
-                .is_some_and(|(_, object)| object != IndexShardObject::Foreign)
+                .is_some_and(|parsed| parsed.object != IndexShardObject::Foreign)
             {
                 keys.insert(meta.location.to_string());
             }

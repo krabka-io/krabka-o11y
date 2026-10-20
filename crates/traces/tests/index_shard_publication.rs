@@ -6,18 +6,22 @@
 //! and names the rest by the keys the previous generation already used. These
 //! tests pin that, and measure it.
 
+#[path = "../../blockstore/tests/support/hooked_store.rs"]
+mod hooked_store;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 
 use assert2::check;
-use futures::stream::BoxStream;
-use krabka_blockstore::{BlockLevel, ShardedTraceBloom, TraceBlockStats, TraceIndex};
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
+use krabka_blockstore::{
+    BlockLevel, IndexShardRange, ShardedTraceBloom, TenantSnapshotRangeRead, TraceBlockStats,
+    TraceIndex,
 };
+use object_store::{ObjectStore, PutPayload, memory::InMemory, path::Path};
+
+use self::hooked_store::{HookedStore, StoreHooks};
 
 const INDEX_KEY: &str = "index/traces.json";
 const TENANT: &str = "tenant-a";
@@ -35,21 +39,41 @@ const TRACES_PER_BLOCK: usize = 2_000;
 /// Object store that records every put, so a test can say what a flush wrote
 /// rather than what it hoped a flush wrote.
 struct RecordingStore {
-    inner: Arc<InMemory>,
-    puts: std::sync::Mutex<Vec<(String, usize)>>,
+    puts: std::sync::Mutex<Vec<PutRecord>>,
     /// Distinct objects read since the last reset. Distinct rather than
     /// counted, because one capped read is a head and then a get and the test
     /// is about which objects a load touches, not how it touches them.
     reads: std::sync::Mutex<BTreeSet<String>>,
 }
 
+struct PutRecord {
+    key: String,
+    bytes: usize,
+}
+
+struct WriteStats {
+    objects: usize,
+    bytes: usize,
+}
+
+struct SeededIndex {
+    index: TraceIndex,
+    blocks: Vec<TraceBlockStats>,
+}
+
+struct SavedSeededIndex {
+    recorder: Arc<HookedStore<RecordingStore>>,
+    store: Arc<dyn ObjectStore>,
+    index: TraceIndex,
+    blocks: Vec<TraceBlockStats>,
+}
+
 impl RecordingStore {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(InMemory::new()),
+    fn new() -> HookedStore<Self> {
+        HookedStore::new(Self {
             puts: std::sync::Mutex::new(Vec::new()),
             reads: std::sync::Mutex::new(BTreeSet::new()),
-        }
+        })
     }
 
     fn reset(&self) {
@@ -59,13 +83,13 @@ impl RecordingStore {
 
     /// `(objects, bytes)` put since the last reset, counting only the objects
     /// whose key contains `part`.
-    fn written(&self, part: &str) -> (usize, usize) {
+    fn written(&self, part: &str) -> WriteStats {
         let puts = self.puts.lock().expect("puts lock");
-        let matching = puts.iter().filter(|(key, _)| key.contains(part));
-        (
-            matching.clone().count(),
-            matching.map(|(_, len)| *len).sum::<usize>(),
-        )
+        let matching = puts.iter().filter(|put| put.key.contains(part));
+        WriteStats {
+            objects: matching.clone().count(),
+            bytes: matching.map(|put| put.bytes).sum::<usize>(),
+        }
     }
 
     /// Distinct objects read since the last reset.
@@ -74,80 +98,29 @@ impl RecordingStore {
     }
 }
 
-impl std::fmt::Debug for RecordingStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingStore")
-    }
-}
-
-impl std::fmt::Display for RecordingStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingStore")
-    }
-}
-
 #[async_trait::async_trait]
-impl ObjectStore for RecordingStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        self.puts
-            .lock()
-            .expect("puts lock")
-            .push((location.to_string(), payload.content_length()));
-        self.inner.put_opts(location, payload, opts).await
+impl StoreHooks for RecordingStore {
+    const NAME: &'static str = "RecordingStore";
+
+    async fn before_put(&self, location: &Path, payload: &PutPayload) -> object_store::Result<()> {
+        self.puts.lock().expect("puts lock").push(PutRecord {
+            key: location.to_string(),
+            bytes: payload.content_length(),
+        });
+        Ok(())
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
+    fn before_get(&self, location: &Path) {
         self.reads
             .lock()
             .expect("reads lock")
             .insert(location.to_string());
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 
 /// A block record of the weight a real one has: a bloom over `TRACES_PER_BLOCK`
 /// trace ids, and the tag sets a Tempo-shaped span block carries.
+#[allow(clippy::items_after_statements)]
 fn block(index: i64) -> TraceBlockStats {
     let min_ts = index * HOUR_NS;
     let mut bloom = ShardedTraceBloom::with_tempo_defaults(TRACES_PER_BLOCK);
@@ -159,17 +132,33 @@ fn block(index: i64) -> TraceBlockStats {
     }
     let mut tag_names = BTreeSet::new();
     let mut tag_values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (tag, value) in [
-        ("service.name", "checkout"),
-        ("span.kind", "server"),
-        ("http.method", "POST"),
-        ("deployment.environment", "prod"),
+    struct TagValueCase {
+        tag: &'static str,
+        value: &'static str,
+    }
+    for case in [
+        TagValueCase {
+            tag: "service.name",
+            value: "checkout",
+        },
+        TagValueCase {
+            tag: "span.kind",
+            value: "server",
+        },
+        TagValueCase {
+            tag: "http.method",
+            value: "POST",
+        },
+        TagValueCase {
+            tag: "deployment.environment",
+            value: "prod",
+        },
     ] {
-        tag_names.insert(tag.to_string());
+        tag_names.insert(case.tag.to_string());
         tag_values
-            .entry(tag.to_string())
+            .entry(case.tag.to_string())
             .or_default()
-            .insert(value.to_string());
+            .insert(case.value.to_string());
     }
     TraceBlockStats {
         object_key: format!("traces/{TENANT}/00000/{index:020}.parquet"),
@@ -185,6 +174,20 @@ fn block(index: i64) -> TraceBlockStats {
 
 /// What the old layout wrote on every flush: the whole index, as one
 /// `serde_json` document of the shape it had.
+/// Loads only `TENANT`'s shards that meet day number `day` of the snapshot
+/// published under `INDEX_KEY`.
+async fn load_tenant_day(store: &Arc<dyn ObjectStore>, day: i64) -> TraceIndex {
+    TraceIndex::load_latest_snapshot_for_range_with_max_bytes(TenantSnapshotRangeRead {
+        store,
+        key: INDEX_KEY,
+        tenant: TENANT,
+        span: IndexShardRange::new(day * DAY_NS, day * DAY_NS + DAY_NS - 1),
+        max_bytes: krabka_blockstore::MAX_INDEX_SNAPSHOT_BYTES,
+    })
+    .await
+    .unwrap()
+}
+
 fn monolithic_snapshot_bytes(blocks: &[TraceBlockStats]) -> usize {
     serde_json::to_vec(&serde_json::json!({
         "tenants": { TENANT: { "blocks": blocks } }
@@ -193,7 +196,7 @@ fn monolithic_snapshot_bytes(blocks: &[TraceBlockStats]) -> usize {
     .len()
 }
 
-fn seeded() -> (TraceIndex, Vec<TraceBlockStats>) {
+fn seeded() -> SeededIndex {
     let mut index = TraceIndex::new();
     let mut blocks = Vec::new();
     for hour in 0..(RETENTION_DAYS * BLOCKS_PER_DAY) {
@@ -201,7 +204,20 @@ fn seeded() -> (TraceIndex, Vec<TraceBlockStats>) {
         index.add_trace_block(TENANT, stats.clone());
         blocks.push(stats);
     }
-    (index, blocks)
+    SeededIndex { index, blocks }
+}
+
+async fn saved_seeded_index() -> SavedSeededIndex {
+    let recorder = Arc::new(RecordingStore::new());
+    let store: Arc<dyn ObjectStore> = Arc::clone(&recorder) as Arc<dyn ObjectStore>;
+    let SeededIndex { index, blocks } = seeded();
+    index.save_latest_snapshot(&store, INDEX_KEY).await.unwrap();
+    SavedSeededIndex {
+        recorder,
+        store,
+        index,
+        blocks,
+    }
 }
 
 /// The claim the layout exists to make: a flush stops republishing the world.
@@ -212,10 +228,12 @@ fn seeded() -> (TraceIndex, Vec<TraceBlockStats>) {
 /// flush costs are the bytes of the day it touched, not of the retention.
 #[tokio::test]
 async fn a_flush_writes_one_shard_and_one_manifest_however_many_days_are_indexed() {
-    let recorder = Arc::new(RecordingStore::new());
-    let store: Arc<dyn ObjectStore> = Arc::clone(&recorder) as Arc<dyn ObjectStore>;
-    let (mut index, mut blocks) = seeded();
-    index.save_latest_snapshot(&store, INDEX_KEY).await.unwrap();
+    let SavedSeededIndex {
+        recorder,
+        store,
+        mut index,
+        mut blocks,
+    } = saved_seeded_index().await;
 
     recorder.reset();
     let next = block(RETENTION_DAYS * BLOCKS_PER_DAY);
@@ -223,25 +241,27 @@ async fn a_flush_writes_one_shard_and_one_manifest_however_many_days_are_indexed
     index.add_trace_block(TENANT, next);
     index.save_latest_snapshot(&store, INDEX_KEY).await.unwrap();
 
-    let (payload_objects, payload_bytes) = recorder.written("/payloads/");
-    let (manifest_objects, manifest_bytes) = recorder.written("/snapshots/");
+    let payload = recorder.written("/payloads/");
+    let manifest = recorder.written("/snapshots/");
     let before = monolithic_snapshot_bytes(&blocks);
 
-    let flush_bytes = payload_bytes + manifest_bytes;
+    let flush_bytes = payload.bytes + manifest.bytes;
     println!(
         "blocks={} flush_objects={} flush_bytes={flush_bytes} \
-         (payload {payload_bytes} + manifest {manifest_bytes}) \
+         (payload {} + manifest {}) \
          monolithic_bytes={before} ratio={}x",
         blocks.len(),
-        payload_objects + manifest_objects,
+        payload.objects + manifest.objects,
+        payload.bytes,
+        manifest.bytes,
         before / flush_bytes.max(1),
     );
 
-    check!(payload_objects == 1);
-    check!(manifest_objects == 1);
+    check!(payload.objects == 1);
+    check!(manifest.objects == 1);
     // The new block sits in a day of its own, so the shard it rewrote holds
     // only it. Every other day is carried by reference.
-    check!(payload_bytes < before / 100);
+    check!(payload.bytes < before / 100);
 }
 
 /// The other half of the claim: a shard a merge read and put back unchanged is
@@ -251,10 +271,9 @@ async fn a_flush_writes_one_shard_and_one_manifest_however_many_days_are_indexed
 /// even though the merge had to fetch the shard it changed.
 #[tokio::test]
 async fn a_compaction_inside_one_day_rewrites_only_that_day() {
-    let recorder = Arc::new(RecordingStore::new());
-    let store: Arc<dyn ObjectStore> = Arc::clone(&recorder) as Arc<dyn ObjectStore>;
-    let (index, _) = seeded();
-    index.save_latest_snapshot(&store, INDEX_KEY).await.unwrap();
+    let SavedSeededIndex {
+        recorder, store, ..
+    } = saved_seeded_index().await;
 
     let mut compactor = TraceIndex::load_latest_snapshot(&store, INDEX_KEY)
         .await
@@ -273,9 +292,9 @@ async fn a_compaction_inside_one_day_rewrites_only_that_day() {
         .await
         .unwrap();
 
-    let (payload_objects, _) = recorder.written("/payloads/");
+    let payload = recorder.written("/payloads/");
     check!(level == BlockLevel::INGESTED.next());
-    check!(payload_objects == 1);
+    check!(payload.objects == 1);
 
     let reloaded = TraceIndex::load_latest_snapshot(&store, INDEX_KEY)
         .await
@@ -302,7 +321,7 @@ async fn a_compaction_inside_one_day_rewrites_only_that_day() {
 async fn a_query_about_one_day_reads_one_days_shard() {
     let recorder = Arc::new(RecordingStore::new());
     let store: Arc<dyn ObjectStore> = Arc::clone(&recorder) as Arc<dyn ObjectStore>;
-    let (index, _) = seeded();
+    let SeededIndex { index, .. } = seeded();
     index.save_latest_snapshot(&store, INDEX_KEY).await.unwrap();
 
     recorder.reset();
@@ -313,16 +332,7 @@ async fn a_query_about_one_day_reads_one_days_shard() {
 
     recorder.reset();
     let day = 7;
-    let scoped = TraceIndex::load_latest_snapshot_for_range_with_max_bytes(
-        &store,
-        INDEX_KEY,
-        TENANT,
-        day * DAY_NS,
-        day * DAY_NS + DAY_NS - 1,
-        krabka_blockstore::MAX_INDEX_SNAPSHOT_BYTES,
-    )
-    .await
-    .unwrap();
+    let scoped = load_tenant_day(&store, day).await;
     let scoped_reads = recorder.objects_read();
 
     println!("whole_index_objects_read={whole_reads} one_day_objects_read={scoped_reads}");
@@ -377,16 +387,7 @@ async fn a_block_that_straddles_midnight_is_in_both_days_and_reaches_a_reader_on
     );
 
     for day in [0, 1] {
-        let scoped = TraceIndex::load_latest_snapshot_for_range_with_max_bytes(
-            &store,
-            INDEX_KEY,
-            TENANT,
-            day * DAY_NS,
-            day * DAY_NS + DAY_NS - 1,
-            krabka_blockstore::MAX_INDEX_SNAPSHOT_BYTES,
-        )
-        .await
-        .unwrap();
+        let scoped = load_tenant_day(&store, day).await;
 
         let keys = scoped
             .trace_blocks(TENANT)

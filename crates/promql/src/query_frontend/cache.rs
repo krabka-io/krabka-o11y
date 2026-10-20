@@ -7,11 +7,52 @@ use krabka_query_frontend::{
 };
 use krabka_units::prelude::*;
 use object_store::ObjectStore;
+use serde::{Serialize, Serializer, ser::SerializeTuple};
 
 use super::{FrontendRangeQuery, TimeExt};
 use crate::{AnnotatedQueryResult, PromqlError};
 
 const DEFAULT_RESULT_CACHE_TTL: Duration = Duration::from_hours(7 * 24);
+
+struct RangeCacheKey<'a> {
+    query: &'a str,
+    start_ms: i64,
+    end_ms: i64,
+    step_ms: i64,
+    shard: Option<RangeCacheShard>,
+}
+
+struct RangeCacheShard {
+    index: usize,
+    total: usize,
+}
+
+impl Serialize for RangeCacheKey<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut tuple = serializer.serialize_tuple(5)?;
+        tuple.serialize_element(self.query)?;
+        tuple.serialize_element(&self.start_ms)?;
+        tuple.serialize_element(&self.end_ms)?;
+        tuple.serialize_element(&self.step_ms)?;
+        tuple.serialize_element(&self.shard)?;
+        tuple.end()
+    }
+}
+
+impl Serialize for RangeCacheShard {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.index)?;
+        tuple.serialize_element(&self.total)?;
+        tuple.end()
+    }
+}
 
 /// A `PromQL` result cache backed by a shared query-frontend cache.
 pub struct PromqlQueryFrontendCache<C> {
@@ -35,6 +76,33 @@ impl Default for QueryFrontendCache {
     }
 }
 
+/// Writes the clock and metrics builder methods, which delegate to the inner
+/// cache's inherent methods of the same names.
+///
+/// The two inner cache types share these methods without a common trait, so a
+/// generic `impl` cannot reach them and each cache type takes the methods from
+/// this macro.
+macro_rules! cache_clock_and_metrics_methods {
+    () => {
+        #[must_use]
+        pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+            self.inner = self.inner.with_clock(clock);
+            self
+        }
+
+        #[must_use]
+        pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
+            self.inner = self.inner.with_metrics(metrics);
+            self
+        }
+
+        #[must_use]
+        pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
+            self.inner.metrics()
+        }
+    };
+}
+
 impl QueryFrontendCache {
     #[must_use]
     pub fn with_ttl(ttl: Time) -> Self {
@@ -44,39 +112,7 @@ impl QueryFrontendCache {
         }
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.inner = self.inner.with_clock(clock);
-        self
-    }
-
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
-        self.inner = self.inner.with_metrics(metrics);
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
-        self.inner.metrics()
-    }
-
-    pub async fn get(
-        &self,
-        tenant: &str,
-        query: &FrontendRangeQuery,
-    ) -> Result<Option<AnnotatedQueryResult>, PromqlError> {
-        QueryCache::get(self, &range_cache_key(tenant, query)).await
-    }
-
-    pub async fn insert(
-        &self,
-        tenant: &str,
-        query: &FrontendRangeQuery,
-        result: AnnotatedQueryResult,
-    ) -> Result<(), PromqlError> {
-        QueryCache::insert(self, &range_cache_key(tenant, query), &result).await
-    }
+    cache_clock_and_metrics_methods!();
 }
 
 impl ObjectStoreQueryFrontendCache {
@@ -94,23 +130,14 @@ impl ObjectStoreQueryFrontendCache {
         self
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.inner = self.inner.with_clock(clock);
-        self
-    }
+    cache_clock_and_metrics_methods!();
+}
 
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
-        self.inner = self.inner.with_metrics(metrics);
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
-        self.inner.metrics()
-    }
-
+impl<C> PromqlQueryFrontendCache<C>
+where
+    C: QueryCache<AnnotatedQueryResult>,
+    C::Error: Display,
+{
     pub async fn get(
         &self,
         tenant: &str,
@@ -189,13 +216,16 @@ where
 pub(super) fn range_cache_key(tenant: &str, query: &FrontendRangeQuery) -> CacheKey {
     CacheKey::new(
         tenant,
-        serde_json::to_vec(&(
-            &query.query,
-            query.start_ms,
-            query.end_ms,
-            query.step.millis_i64(),
-            query.shard.map(|shard| (shard.index, shard.total)),
-        ))
+        serde_json::to_vec(&RangeCacheKey {
+            query: &query.query,
+            start_ms: query.start_ms,
+            end_ms: query.end_ms,
+            step_ms: query.step.millis_i64(),
+            shard: query.shard.map(|shard| RangeCacheShard {
+                index: shard.index,
+                total: shard.total,
+            }),
+        })
         .expect("a range cache key contains only JSON primitives"),
     )
 }

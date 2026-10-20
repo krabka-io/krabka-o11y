@@ -45,6 +45,19 @@ mod tests {
 
     use super::*;
 
+    struct ExpectedJobValue {
+        job: &'static str,
+        value: f64,
+    }
+
+    fn assert_job_values(got: &[crate::planner::JobValue], expected: &[ExpectedJobValue]) {
+        assert2::assert!(got.len() == expected.len());
+        for (actual, expected) in got.iter().zip(expected) {
+            check!(actual.job == expected.job);
+            check!(actual.value == expected.value);
+        }
+    }
+
     fn labeled(name: &str, l: &str, value: f64) -> LabeledValue {
         let mut labels = Labels::new();
         labels.insert("__name__", name);
@@ -60,7 +73,7 @@ mod tests {
         samples: Vec<LabeledValue>,
         op: ScalarMathOp,
         bounds: &[f64],
-    ) -> Vec<(String, f64)> {
+    ) -> Vec<crate::planner::JobValue> {
         let plan = plan_scalar_math(samples, op, bounds).await.unwrap();
         let batches = plan
             .ctx
@@ -86,13 +99,13 @@ mod tests {
                 .downcast_ref::<Float64ArrayT>()
                 .unwrap();
             for row in 0..batch.num_rows() {
-                got.push((
-                    std::str::from_utf8(l.value(row)).unwrap().to_owned(),
-                    value.value(row),
-                ));
+                got.push(crate::planner::JobValue {
+                    job: std::str::from_utf8(l.value(row)).unwrap().to_owned(),
+                    value: value.value(row),
+                });
             }
         }
-        got.sort_by(|a, b| a.0.cmp(&b.0));
+        got.sort_by(|a, b| a.job.cmp(&b.job));
         got
     }
 
@@ -104,22 +117,34 @@ mod tests {
             &[],
         )
         .await;
-        assert2::assert!(got == vec![("x".to_string(), 3.0), ("y".to_string(), 4.0)]);
+        assert_job_values(
+            &got,
+            &[
+                ExpectedJobValue {
+                    job: "x",
+                    value: 3.0,
+                },
+                ExpectedJobValue {
+                    job: "y",
+                    value: 4.0,
+                },
+            ],
+        );
     }
 
     #[tokio::test]
     async fn sqrt_negative_preserves_nan_row() {
         let got = run(vec![labeled("m", "x", -1.0)], ScalarMathOp::Sqrt, &[]).await;
         check!(got.len() == 1);
-        check!(got[0].0 == "x");
-        check!(got[0].1.is_nan());
+        check!(got[0].job == "x");
+        check!(got[0].value.is_nan());
     }
 
     #[tokio::test]
     async fn genuine_nan_value_survives() {
         let got = run(vec![labeled("m", "x", f64::NAN)], ScalarMathOp::Sin, &[]).await;
         assert2::assert!(got.len() == 1);
-        assert2::assert!(got[0].1.is_nan());
+        assert2::assert!(got[0].value.is_nan());
     }
 
     #[tokio::test]
@@ -130,32 +155,67 @@ mod tests {
             &[0.0, 3.0],
         )
         .await;
-        assert2::assert!(got == vec![("x".to_string(), 3.0), ("y".to_string(), 0.0)]);
+        assert_job_values(
+            &got,
+            &[
+                ExpectedJobValue {
+                    job: "x",
+                    value: 3.0,
+                },
+                ExpectedJobValue {
+                    job: "y",
+                    value: 0.0,
+                },
+            ],
+        );
     }
 
     #[tokio::test]
     async fn round_uses_to_nearest_bound() {
         let got = run(vec![labeled("m", "x", 12.0)], ScalarMathOp::Round, &[5.0]).await;
-        assert2::assert!(got == vec![("x".to_string(), 10.0)]);
+        assert2::assert!(
+            got == vec![crate::planner::JobValue {
+                job: "x".to_string(),
+                value: 10.0
+            }]
+        );
     }
 }
 
 mod build_leaf_batch;
-mod is_metadata_label;
-mod labeled_value;
-mod leaf_schema;
-mod metadata_labels;
 mod plan_scalar_math;
-mod sample_time_column;
 mod scalar_math_plan;
-mod value_column;
 
 use build_leaf_batch::build_leaf_batch;
-use is_metadata_label::is_metadata_label;
-pub use labeled_value::LabeledValue;
-use leaf_schema::leaf_schema;
-use metadata_labels::METADATA_LABELS;
 pub use plan_scalar_math::plan_scalar_math;
-pub use sample_time_column::SAMPLE_TIME_COLUMN;
 pub use scalar_math_plan::ScalarMathPlan;
-pub use value_column::VALUE_COLUMN;
+
+/// One already-evaluated inner instant-vector sample.
+pub struct LabeledValue {
+    pub labels: Labels,
+    pub ts_ms: i64,
+    pub value: f64,
+}
+
+/// Result-metadata labels dropped by every scalar-math function.
+pub(crate) const METADATA_LABELS: [&str; 2] = ["__type__", "__unit__"];
+
+/// Leaf-batch column that carries the per-series sample timestamp.
+pub const SAMPLE_TIME_COLUMN: &str = "sample_timestamp";
+
+/// Leaf-batch and projection column that carries the per-series float value.
+pub const VALUE_COLUMN: &str = "value";
+
+pub(crate) fn leaf_schema(label_names: &[String]) -> Arc<Schema> {
+    let mut fields = Vec::with_capacity(label_names.len() + 2);
+    for name in label_names {
+        fields.push(Field::new(name, DataType::Binary, true));
+    }
+    fields.push(Field::new(VALUE_COLUMN, DataType::Float64, true));
+    fields.push(Field::new(SAMPLE_TIME_COLUMN, DataType::Int64, false));
+    Arc::new(Schema::new(fields))
+}
+
+pub(crate) fn is_metadata_label(name: &str) -> bool {
+    METADATA_LABELS.contains(&name)
+}

@@ -29,22 +29,53 @@ mod collect_float_rows;
 mod collect_histogram_rows;
 mod float_row;
 mod float_window;
-mod histogram_row;
-mod matchers_cache_key;
-mod range_scan_cache;
 mod range_scan_cache_inner;
 mod scanned_rows;
 mod through_scan_cache;
-mod windowed;
 
 pub(super) use collect_float_rows::collect_float_rows;
 pub(super) use collect_histogram_rows::collect_histogram_rows;
 pub(super) use float_row::FloatRow;
+use float_row::{FLOAT_ROW_COLUMNS, FloatRowColumns};
 pub(super) use float_window::FloatWindow;
-pub(super) use histogram_row::HistogramRow;
-pub(super) use matchers_cache_key::matchers_cache_key;
-pub(super) use range_scan_cache::RangeScanCache;
 pub(super) use range_scan_cache_inner::RangeScanCacheInner;
 pub(super) use scanned_rows::ScannedRows;
 pub(super) use through_scan_cache::through_scan_cache;
-pub(super) use windowed::Windowed;
+
+pub(crate) struct FloatRowsWithCount {
+    pub(crate) total: usize,
+    pub(crate) rows: Vec<FloatRow>,
+}
+
+/// Deterministic cache key for a matcher set. `LabelMatcher` is not `Hash`, but
+/// its `Debug` output is stable and uniquely identifies the (name, op, value)
+/// triples in order. This is enough, because the same selector returns the same
+/// matcher list at every step of a range query.
+pub(crate) fn matchers_cache_key(matchers: &[LabelMatcher]) -> String {
+    format!("{matchers:?}")
+}
+
+/// Per-query scan cache shared across one evaluation.
+pub(crate) type RangeScanCache = Arc<Mutex<RangeScanCacheInner>>;
+
+/// A native histogram row in a cached store scan.
+#[derive(Clone)]
+pub(crate) struct HistogramRow {
+    pub(crate) fp: SeriesFingerprint,
+    pub(crate) ts_ms: i64,
+    pub(crate) hist: NativeHistogram,
+}
+
+/// One cached value and the inclusive store-request window that produced it.
+pub(crate) struct Windowed<T> {
+    pub(crate) start_ms: i64,
+    pub(crate) end_ms: i64,
+    pub(crate) value: Arc<T>,
+}
+
+impl<T> Windowed<T> {
+    /// Returns the value when its window covers `[start_ms, end_ms]`.
+    pub(crate) fn covering(&self, start_ms: i64, end_ms: i64) -> Option<Arc<T>> {
+        (start_ms >= self.start_ms && end_ms <= self.end_ms).then(|| Arc::clone(&self.value))
+    }
+}

@@ -9,7 +9,12 @@ use super::{
     planned::{InstantShape, OperatorInstant, PlannedInstant},
     result_utils::validate_unique_instant_labelsets,
 };
-use crate::{PromqlError, error::Result, result::QueryResult, store::MetricStore};
+use crate::{
+    PromqlError,
+    error::Result,
+    result::{InstantSample, QueryResult},
+    store::MetricStore,
+};
 
 impl<S: MetricStore> PromqlEngine<S> {
     /// Executes a planned instant query and assembles its output batches into an
@@ -116,5 +121,29 @@ impl<S: MetricStore> PromqlEngine<S> {
             )));
         };
         self.assemble_planned_instant(planned, time_ms).await
+    }
+}
+
+impl<S: MetricStore> PromqlEngine<S> {
+    /// Plans `inner` through the recursive planner and assembles it into its
+    /// instant-vector samples.
+    ///
+    /// Returns `None` when the planner cannot evaluate `inner`, or when it
+    /// assembles to anything other than an instant vector.
+    pub(super) async fn planned_instant_vector(
+        &self,
+        tenant: &str,
+        inner: &Expr,
+        time_ms: i64,
+    ) -> Result<Option<Vec<InstantSample>>> {
+        let Some(planned) = self.plan_instant_expr(tenant, inner, time_ms).await? else {
+            return Ok(None);
+        };
+        let QueryResult::InstantVector(samples) =
+            self.assemble_planned_instant(planned, time_ms).await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(samples))
     }
 }

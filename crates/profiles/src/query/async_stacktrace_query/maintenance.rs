@@ -7,6 +7,12 @@ use super::{
     TenantId, record, release, request_path, reserve, spawn_query, storage_error,
 };
 
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+struct AsyncQueryKey {
+    tenant: String,
+    id: String,
+}
+
 pub(super) fn expired<S: ProfileStore>(
     state: &QuerierState<S>,
     record: &record::Record,
@@ -26,7 +32,10 @@ pub(super) async fn fail_record<S: ProfileStore>(
 ) -> Result<bool, ConnectError> {
     let tenant = TenantId::new(&record.tenant)
         .map_err(|e| ConnectError::new(super::Code::Internal, e.to_string()))?;
-    let (mut current, version) = record::load(state, &tenant, &record.id).await?;
+    let record::LoadedRecord {
+        record: mut current,
+        version,
+    } = record::load(state, &tenant, &record.id).await?;
     if current.owner != record.owner
         || current.heartbeat_ms != record.heartbeat_ms
         || !expired(state, &current, record::now_ms())
@@ -91,12 +100,15 @@ pub(super) async fn adopt<S: ProfileStore + 'static>(
         };
         let id = metadata.id.clone();
         if location != record::metadata_path(&tenant, &id, metadata.generation)
-            || !visited.insert((tenant.as_str().to_string(), id.clone()))
+            || !visited.insert(AsyncQueryKey {
+                tenant: tenant.as_str().to_string(),
+                id: id.clone(),
+            })
         {
             continue;
         }
-        let (metadata, _) = match record::load(state, &tenant, &id).await {
-            Ok(record) => record,
+        let metadata = match record::load(state, &tenant, &id).await {
+            Ok(loaded) => loaded.record,
             Err(error) => {
                 tracing::warn!(?error, %tenant, %id, "failed to validate latest async metadata; skipping query");
                 continue;
@@ -144,7 +156,10 @@ pub(super) async fn adopt<S: ProfileStore + 'static>(
             continue;
         }
         let claimed = async {
-            let (mut current, version) = record::load(state, &tenant, &id).await?;
+            let record::LoadedRecord {
+                record: mut current,
+                version,
+            } = record::load(state, &tenant, &id).await?;
             if !expired(state, &current, record::now_ms()) {
                 return Ok(false);
             }
@@ -192,7 +207,7 @@ pub(super) async fn cleanup<S: ProfileStore>(
     let prefix = Path::from("profiles-admin");
     let mut objects = state.admin_store.list(Some(&prefix));
     let mut groups =
-        std::collections::BTreeMap::<(String, String), Vec<object_store::ObjectMeta>>::new();
+        std::collections::BTreeMap::<AsyncQueryKey, Vec<object_store::ObjectMeta>>::new();
     while let Some(object) = objects
         .try_next()
         .await
@@ -205,13 +220,21 @@ pub(super) async fn cleanup<S: ProfileStore>(
             && uuid::Uuid::parse_str(segments[3]).is_ok()
         {
             groups
-                .entry((segments[1].to_string(), segments[3].to_string()))
+                .entry(AsyncQueryKey {
+                    tenant: segments[1].to_string(),
+                    id: segments[3].to_string(),
+                })
                 .or_default()
                 .push(object);
         }
     }
     let mut deleted = 0;
-    'groups: for ((tenant, id), mut objects) in groups {
+    let keys: Vec<_> = groups.keys().cloned().collect();
+    'groups: for key in keys {
+        let Some(mut objects) = groups.remove(&key) else {
+            continue;
+        };
+        let AsyncQueryKey { tenant, id } = key;
         if state.async_runtime.stop.is_cancelled() {
             break;
         }
@@ -239,7 +262,8 @@ pub(super) async fn cleanup<S: ProfileStore>(
             false
         } else {
             match record::load(state, &tenant, &id).await {
-                Ok((metadata, _)) => {
+                Ok(loaded) => {
+                    let metadata = loaded.record;
                     // Recovery files live as long as a current query. Terminal
                     // retention is independent of individual recovery-file ages.
                     if !matches!(metadata.status, status if status == AsyncQueryStatus::Success as i32 || status == AsyncQueryStatus::Failure as i32)
@@ -285,8 +309,10 @@ pub(super) async fn cleanup<S: ProfileStore>(
         // stop this group on a failure. Otherwise an older in-progress record
         // could become visible after a partially failed cleanup.
         objects.sort_by(|left, right| {
-            (left.location.prefix_matches(&prefix), &left.location)
-                .cmp(&(right.location.prefix_matches(&prefix), &right.location))
+            left.location
+                .prefix_matches(&prefix)
+                .cmp(&right.location.prefix_matches(&prefix))
+                .then_with(|| left.location.cmp(&right.location))
         });
         for object in objects {
             if object.location == record::expiry_path(&tenant, &id) {

@@ -35,23 +35,54 @@ use krabka_metrics::{
     COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD,
 };
 
-#[cfg(test)]
-mod tests;
-
-mod f64_list_value;
 mod histogram_columns;
 mod histogram_span_view;
 mod histogram_view;
 mod list_offsets;
 mod range_array_type;
-mod span_list_value;
-mod struct_column;
-
-use f64_list_value::f64_list_value;
+#[cfg(test)]
+mod tests;
 use histogram_columns::HistogramColumns;
 pub use histogram_span_view::HistogramSpanView;
 pub use histogram_view::HistogramView;
 use list_offsets::list_offsets;
-pub use range_array_type::RangeArray;
-use span_list_value::span_list_value;
-use struct_column::struct_column;
+pub use range_array_type::{PairedRangeArrays, RangeArray, RangeWindow};
+
+pub(crate) fn f64_list_value(list: &ListArray, row: usize) -> Option<&[f64]> {
+    let offsets = list_offsets(list, row)?;
+    let start = offsets.start;
+    let end = offsets.end;
+    let values = list.values().as_any().downcast_ref::<Float64Array>()?;
+    Some(&values.values()[start..end])
+}
+
+pub(crate) fn struct_column<'a, T: Array + 'static>(
+    histograms: &'a StructArray,
+    name: &str,
+) -> Option<&'a T> {
+    histograms
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<T>()
+}
+
+pub(crate) fn span_list_value(list: &ListArray, row: usize) -> Option<HistogramSpanView<'_>> {
+    let offsets = list_offsets(list, row)?;
+    let start = offsets.start;
+    let end = offsets.end;
+    let values = list.values().as_any().downcast_ref::<StructArray>()?;
+    let offsets = values
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int32Array>()?
+        .values();
+    let lengths = values
+        .column(1)
+        .as_any()
+        .downcast_ref::<UInt32Array>()?
+        .values();
+    Some(HistogramSpanView {
+        offsets: &offsets[start..end],
+        lengths: &lengths[start..end],
+    })
+}
