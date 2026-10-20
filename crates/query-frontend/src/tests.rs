@@ -439,7 +439,7 @@ async fn object_store_cache_counts_decode_errors() {
         ObjectStoreCache::<usize>::new(store.clone(), "query-cache", Duration::from_mins(1));
     store
         .put(
-            &Path::from("query-cache/74656e616e742d61/6b6579.json"),
+            &Path::from("query-cache/74656e616e742d61/k6b6579/v2-1-0.json"),
             PutPayload::from("not-json"),
         )
         .await
