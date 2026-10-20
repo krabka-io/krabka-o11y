@@ -130,6 +130,12 @@ on GitHub. Both paths build the released tag, run the native client and browser
 runtime checks, and publish only after they pass. Main pushes leave the last
 released website and lab online until the next release.
 
+The `github-pages` environment must allow the release tags (for the image
+release workflow, `v*`) under Settings → Environments → github-pages →
+Deployment branches and tags. A policy allowing only the `main` branch blocks
+release deployments even when all builds and checks pass. Keep the existing
+branch policy and add a tag policy for `v*` before the first release deployment.
+
 Local Linux x86_64 qualification passed in Chromium. All ten WASIX modules
 compiled with the qualified locks. Browser checks passed actual ingestion and
 expected query results for every signal, tenant isolation, API error display,
