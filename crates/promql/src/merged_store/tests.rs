@@ -71,4 +71,4 @@ fn up_sample(timestamp_ms: i64, value: f64) -> MergedFloatSample {
 }
 
 mod support;
-pub(crate) use support::{labels, min_present_time_preserves_legitimate_zero_min_time};
+pub(crate) use support::labels;

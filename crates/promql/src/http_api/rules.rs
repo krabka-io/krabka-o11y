@@ -125,8 +125,6 @@ pub(super) use endpoints::{
     delete_ruler_config_group, delete_ruler_config_namespace, ruler_config_group, rules,
     set_ruler_config_group,
 };
-#[cfg(test)]
-use json_builders::{labels_map_json, prometheus_rule_json, prometheus_rules_json};
 use json_builders::{prometheus_alerts_for_rule_json, prometheus_rule_groups_json};
 pub(super) use ruler_config_rules::ruler_config_rules;
 pub(super) use tenant_ruler_rules::tenant_ruler_rules;

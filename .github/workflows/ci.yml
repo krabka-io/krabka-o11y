@@ -204,6 +204,8 @@ jobs:
       - name: test
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: cargo test --workspace --locked
+      - name: workspace Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # `heap-profiling` swaps the global allocator for jemalloc in each
       # service binary, behind a `cfg`. No Bazel target turns the feature on,
       # so `bazel test //...` never compiles those lines -- and the clippy

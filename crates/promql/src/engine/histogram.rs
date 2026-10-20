@@ -491,8 +491,6 @@ pub(crate) use bucket_helpers::{
 };
 use detect_reset_bucket_counts::detect_reset_bucket_counts;
 pub(super) use fractions::apply_histogram_fraction;
-#[cfg(test)]
-use fractions::{classic_histogram_fraction, native_histogram_fraction};
 pub(super) use histogram_accumulator::HistogramAccumulator;
 pub(crate) use krabka_metrics::compact_spanned_histogram_counts;
 pub(super) use native_histogram_detect_reset::native_histogram_detect_reset;
@@ -501,7 +499,7 @@ pub(super) use quantiles::apply_histogram_quantile;
 #[cfg(feature = "experimental-functions")]
 pub(super) use quantiles::apply_histogram_quantiles;
 #[cfg(test)]
-use quantiles::{classic_histogram_quantile, format_quantile_label, native_histogram_quantile};
+use quantiles::format_quantile_label;
 pub(crate) use template_histogram::template_histogram_value;
 
 fn observed_histogram_count(

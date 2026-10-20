@@ -335,7 +335,6 @@ mod avg_over_time_carries_infinities_and_keeps_its_compensation {
 }
 
 mod kahan_sum_inc_recovers_lost_bits_on_both_branches {
-    use super::*;
     /// `kahan_sum_inc` recovers the bits lost when one operand dwarfs the other,
     /// on both magnitude branches, and gives up on an infinite running sum rather
     /// than carrying a NaN forward.

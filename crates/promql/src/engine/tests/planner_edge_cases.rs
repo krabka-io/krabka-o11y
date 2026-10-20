@@ -58,7 +58,6 @@ mod check_resolution_points_enforces_cap {
 }
 
 mod conformance_corpus_runs_green_through_planner {
-    use super::*;
     /// Corpus green-through-the-public-entry-points guard.
     ///
     /// This test runs the full conformance corpus through the public

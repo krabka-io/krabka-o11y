@@ -551,7 +551,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     }
 
     #[cfg(test)]
-    pub(crate) async fn eval_clamp_call(
+    async fn eval_clamp_call(
         &self,
         tenant: &str,
         call: &Call,
@@ -676,7 +676,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         .ok_or_else(|| PromqlError::Plan("round expects a scalar or instant vector".to_string()))
     }
     #[cfg(test)]
-    pub(crate) async fn eval_sort_call(
+    async fn eval_sort_call(
         &self,
         tenant: &str,
         at: OracleCall<'_>,
@@ -701,7 +701,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     }
 
     #[cfg(test)]
-    pub(crate) async fn eval_sort_by_label_call(
+    async fn eval_sort_by_label_call(
         &self,
         tenant: &str,
         call: &Call,
@@ -1076,7 +1076,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?))
     }
     #[cfg(test)]
-    pub(crate) async fn eval_range_function_call(
+    async fn eval_range_function_call(
         &self,
         tenant: &str,
         at: OracleCall<'_>,
@@ -1092,7 +1092,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     }
 
     #[cfg(test)]
-    pub(crate) async fn eval_instant_delta_call(
+    async fn eval_instant_delta_call(
         &self,
         tenant: &str,
         at: OracleCall<'_>,

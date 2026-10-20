@@ -424,7 +424,7 @@ mod support;
 pub(crate) use support::{
     assert_aggregate_nan_staleness, assert_filled_many_side, assert_minmax_nan_ignoring,
     assert_one_unnamed_float, assert_sparse_aggregate_excludes_no_value, classic_bucket_store,
-    instant_experimental_functions_require_feature, native_histogram, query_results_match,
-    queue_depth_engine, range_matrices_match, range_query_routes_through_planner,
-    region_info_engine, set_op_store, short_lookback_up_engine, sort_instant_result,
+    native_histogram, query_results_match, queue_depth_engine, range_matrices_match,
+    range_query_routes_through_planner, region_info_engine, set_op_store, short_lookback_up_engine,
+    sort_instant_result,
 };

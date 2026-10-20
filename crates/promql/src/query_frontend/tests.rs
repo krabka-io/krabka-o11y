@@ -84,7 +84,4 @@ async fn assert_ttl_hit_then_miss<
 mod cache_semantics;
 
 mod support;
-pub(crate) use support::{
-    native_histogram_with_positive_buckets, range_query_plan_skips_unsupported_shards,
-    recording_executor,
-};
+pub(crate) use support::{native_histogram_with_positive_buckets, recording_executor};

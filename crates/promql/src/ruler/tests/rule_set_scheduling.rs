@@ -483,7 +483,6 @@ rules:
 }
 
 mod ruler_group_state_replays_compacted_last_eval_records {
-    use super::*;
     #[derive(bon::Builder)]
     struct RulerEvalExpectation {
         tenant: &'static str,
