@@ -370,7 +370,37 @@ async fn publish(
     for manifest in manifests {
         put_manifest(store, manifest).await?;
     }
-    put_marker(store, &keys.published_marker(&record.ulid, &record.sha256)).await?;
+    // The marker carries every compact reference, including manifests retained
+    // by a retry. Reading any summary can then resolve the whole publication.
+    let mut references = Vec::with_capacity(record.objects.len());
+    for object in &record.objects {
+        let key = Path::from(object.index_key.as_str());
+        let bytes = store
+            .get(&key)
+            .await
+            .map_err(|source| TsdbPublishError::ObjectStore {
+                key: key.to_string(),
+                source,
+            })?
+            .bytes()
+            .await
+            .map_err(|source| TsdbPublishError::ObjectStore {
+                key: key.to_string(),
+                source,
+            })?;
+        let manifest = CompactionIndexManifest::decode(&bytes)?;
+        crate::manifest_catalog::write_metric_manifest_catalog(store, &manifest).await?;
+        references.push((&manifest).into());
+    }
+    let catalog = crate::manifest_catalog::MetricManifestCatalog::new(references);
+    let key = keys.published_marker(&record.ulid, &record.sha256);
+    store
+        .put(&key, PutPayload::from(catalog.encode()?))
+        .await
+        .map_err(|source| TsdbPublishError::ObjectStore {
+            key: key.to_string(),
+            source,
+        })?;
     mark_published(store, keys, record).await
 }
 
@@ -461,17 +491,6 @@ async fn put_manifest(
     let key = Path::from(manifest.index_key.as_str());
     store
         .put(&key, PutPayload::from(manifest.encode()?))
-        .await
-        .map_err(|source| TsdbPublishError::ObjectStore {
-            key: key.to_string(),
-            source,
-        })?;
-    Ok(())
-}
-
-async fn put_marker(store: &dyn ObjectStore, key: &Path) -> Result<(), TsdbPublishError> {
-    store
-        .put(key, PutPayload::default())
         .await
         .map_err(|source| TsdbPublishError::ObjectStore {
             key: key.to_string(),

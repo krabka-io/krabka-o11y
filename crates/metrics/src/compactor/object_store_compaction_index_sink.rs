@@ -47,6 +47,6 @@ impl CompactionIndexSink for ObjectStoreCompactionIndexSink {
             )
             .await
             .map_err(|error| CompactionIndexError::ObjectStore(error.to_string()))?;
-        Ok(())
+        crate::manifest_catalog::write_metric_manifest_catalog(self.store.as_ref(), manifest).await
     }
 }

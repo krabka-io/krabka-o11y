@@ -512,6 +512,8 @@ mod tests {
     struct CountingObjectStore {
         inner: Arc<InMemory>,
         list_calls: Arc<AtomicUsize>,
+        listed_objects: Arc<AtomicUsize>,
+        listed_prefixes: Arc<std::sync::Mutex<Vec<String>>>,
         get_calls: Arc<AtomicUsize>,
         parquet_reads: Arc<AtomicUsize>,
         parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
@@ -527,6 +529,8 @@ mod tests {
             Self {
                 inner: Arc::new(InMemory::new()),
                 list_calls,
+                listed_objects: Arc::default(),
+                listed_prefixes: Arc::default(),
                 get_calls: Arc::new(AtomicUsize::new(0)),
                 parquet_reads: Arc::new(AtomicUsize::new(0)),
                 parquet_keys: Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new())),
@@ -622,11 +626,20 @@ mod tests {
             prefix: Option<&Path>,
         ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
             self.list_calls.fetch_add(1, Ordering::SeqCst);
+            self.listed_prefixes
+                .lock()
+                .unwrap()
+                .push(prefix.map_or_else(String::new, ToString::to_string));
+            let listed = Arc::clone(&self.listed_objects);
             let delay = self.list_delay.to_std();
-            Box::pin(self.inner.list(prefix).then(move |item| async move {
-                tokio::time::sleep(delay).await;
-                item
-            }))
+            Box::pin(
+                self.inner.list(prefix)
+                    .inspect(move |_| { listed.fetch_add(1, Ordering::SeqCst); })
+                    .then(move |item| async move {
+                        tokio::time::sleep(delay).await;
+                        item
+                    }),
+            )
         }
     }
 
@@ -2115,7 +2128,7 @@ rules:
                 .writer()
                 .write_block(
                     "tenant-a",
-                    &format!("metrics/{name}.parquet"),
+                    &format!("metrics/tenant-a/float/{name}.parquet"),
                     krabka_metrics::float_sample_schema(),
                     &[batch],
                 )
@@ -2123,7 +2136,7 @@ rules:
                 .unwrap();
             let plan = krabka_metrics::CompactionObjectPlan {
                 block_key: meta.object_key.clone(),
-                index_key: format!("metrics/{name}.index"),
+                index_key: format!("metrics/tenant-a/float/{name}.index"),
                 first_offset: 0,
                 last_offset: i64::try_from(rows.len()).unwrap() - 1,
                 row_count: meta.row_count,
@@ -2137,6 +2150,14 @@ rules:
                     labels: labels.clone().into(),
                 }],
             ));
+        }
+        for manifest in &manifests {
+            krabka_metrics::manifest_catalog::write_metric_manifest_catalog(
+                store.as_ref(),
+                manifest,
+            )
+            .await
+            .unwrap();
         }
         let old_key = Path::from(manifests[0].index_key.clone());
         let replacement_key = Path::from(manifests[1].index_key.clone());
@@ -2236,7 +2257,13 @@ rules:
         for result in [results.0, results.1, results.2, results.3] {
             assert2::assert!(result.unwrap().len() == 1);
         }
-        assert2::assert!(list_calls.load(Ordering::SeqCst) == 1);
+        assert2::assert!(
+            list_calls.load(Ordering::SeqCst)
+                == krabka_metrics::manifest_catalog::metric_manifest_catalog_prefixes(
+                    "metrics", "tenant-a", 0, 20_000,
+                )
+                .len()
+        );
     }
 
     /// A block writer rooted at `memory:///`, and the compaction-index sink
@@ -2443,7 +2470,15 @@ rules:
         check!(new.len() == 1);
         check!(new[0].get("job").unwrap() == "new");
         check!(
-            list_calls.load(Ordering::SeqCst) == 2,
+            list_calls.load(Ordering::SeqCst)
+                == krabka_metrics::manifest_catalog::metric_manifest_catalog_prefixes(
+                    "metrics", "tenant-a", 0, 20_000,
+                )
+                .len()
+                    + krabka_metrics::manifest_catalog::metric_manifest_catalog_prefixes(
+                        "metrics", "tenant-a", 990_000, 1_010_000,
+                    )
+                    .len(),
             "cold refresh should list for new manifest keys but not re-download known .index objects"
         );
         check!(
@@ -2990,6 +3025,7 @@ mod refreshing_metric_block_store;
 mod ruler_lease;
 mod run_fenced_ruler_evaluation_loop;
 mod run_ruler_evaluation_loop;
+mod tenant_manifests;
 mod unix_ms_to_rfc3339;
 mod unix_time_ms;
 
@@ -3030,8 +3066,8 @@ use wal_head::{finish_wal_consumer_replay, poll_checked_replay_records};
 mod manifests;
 #[cfg(test)]
 use manifests::load_compaction_manifests_filtered_with_cache;
+use manifests::normalize_refresh_range;
 pub use manifests::{load_compaction_manifests, load_compaction_manifests_for_range};
-use manifests::{load_compaction_manifests_for_range_with_cache, normalize_refresh_range};
 pub use metrics_service_error::MetricsServiceError;
 pub use mimir_tenant_admin::{MimirTenantAdminState, mimir_tenant_admin_router};
 pub use poll_ruler_state_consumer_once::poll_ruler_state_consumer_once;

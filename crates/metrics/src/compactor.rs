@@ -876,11 +876,11 @@ mod tests {
                     // The manifest first, then the block it named.
                     manifests_retired: one_object_deleted(),
                     blocks_deleted: one_object_deleted(),
-                    // The two objects of the surviving block, and nothing the
-                    // index does not name.
+                    // The surviving block and index, plus both catalog hints.
+                    // The next pass can sweep the retired hint.
                     orphans: OrphanSweepStats {
-                        listed: 2,
-                        live: 2,
+                        listed: 4,
+                        live: 4,
                         ..OrphanSweepStats::default()
                     },
                 }
@@ -925,8 +925,8 @@ overrides:
                     manifests_retired: one_object_deleted(),
                     blocks_deleted: one_object_deleted(),
                     orphans: OrphanSweepStats {
-                        listed: 4,
-                        live: 4,
+                        listed: 7,
+                        live: 7,
                         ..OrphanSweepStats::default()
                     },
                 }
@@ -971,7 +971,11 @@ overrides:
                     manifests_scanned: 1,
                     manifests_retired: one_object_deleted(),
                     blocks_deleted: one_object_deleted(),
-                    orphans: OrphanSweepStats::default(),
+                    orphans: OrphanSweepStats {
+                        listed: 1,
+                        live: 1,
+                        ..OrphanSweepStats::default()
+                    },
                 }
         );
     }
@@ -1010,8 +1014,8 @@ overrides:
                         manifests_retired: CompactionRetentionPhase::default(),
                         blocks_deleted: CompactionRetentionPhase::default(),
                         orphans: OrphanSweepStats {
-                            listed: 2,
-                            live: 2,
+                            listed: 3,
+                            live: 3,
                             ..OrphanSweepStats::default()
                         },
                     },
@@ -1085,8 +1089,8 @@ overrides:
                         manifests_retired: CompactionRetentionPhase::default(),
                         blocks_deleted: CompactionRetentionPhase::default(),
                         orphans: OrphanSweepStats {
-                            listed: 5,
-                            live: 4,
+                            listed: 7,
+                            live: 6,
                             kept_within_grace: within_grace,
                             deleted,
                             absent: 0,
@@ -1096,6 +1100,13 @@ overrides:
                 "{name}"
             );
             for manifest in [&first, &second] {
+                check!(
+                    exists(
+                        &object_store,
+                        &crate::manifest_catalog::metric_manifest_catalog_key(manifest)
+                    )
+                    .await
+                );
                 check!(
                     exists(&object_store, &manifest.index_key).await,
                     "{name}: {} is the index itself",
@@ -1143,8 +1154,8 @@ overrides:
                         failures: vec![refused_deletion(&stubborn.block_key)],
                     },
                     orphans: OrphanSweepStats {
-                        listed: 1,
-                        live: 1,
+                        listed: 3,
+                        live: 3,
                         ..OrphanSweepStats::default()
                     },
                 }
@@ -1210,8 +1221,8 @@ overrides:
                     // not offered to the second phase at all.
                     blocks_deleted: one_object_deleted(),
                     orphans: OrphanSweepStats {
-                        listed: 2,
-                        live: 2,
+                        listed: 4,
+                        live: 4,
                         ..OrphanSweepStats::default()
                     },
                 }
@@ -1262,8 +1273,8 @@ overrides:
                     manifests_retired: CompactionRetentionPhase::default(),
                     blocks_deleted: CompactionRetentionPhase::default(),
                     orphans: OrphanSweepStats {
-                        listed: 3,
-                        live: 2,
+                        listed: 4,
+                        live: 3,
                         deleted: 1,
                         ..OrphanSweepStats::default()
                     },

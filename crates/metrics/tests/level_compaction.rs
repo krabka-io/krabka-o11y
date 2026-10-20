@@ -1074,15 +1074,31 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
                     ..CompactionRetentionPhase::default()
                 },
                 orphans: OrphanSweepStats {
-                    listed: 3,
-                    live: 2,
-                    deleted: 1,
+                    listed: 7,
+                    live: 4,
+                    deleted: 3,
                     ..OrphanSweepStats::default()
                 },
             }
     );
     check!(!exists(&store, &expired.block_key).await);
     check!(!exists(&store, orphan.as_ref()).await);
+    for input in [&first, &second] {
+        check!(
+            !exists(
+                &store,
+                &krabka_metrics::manifest_catalog::metric_manifest_catalog_key(input)
+            )
+            .await
+        );
+    }
+    check!(
+        exists(
+            &store,
+            &krabka_metrics::manifest_catalog::metric_manifest_catalog_key(&merged)
+        )
+        .await
+    );
     check!(
         list_compaction_manifests(&store)
             .await

@@ -64,7 +64,13 @@ pub async fn enforce_compaction_retention(
     let live_keys: BTreeSet<String> = manifests
         .iter()
         .chain(&index.pending)
-        .flat_map(|manifest| [manifest.block_key.clone(), manifest.index_key.clone()])
+        .flat_map(|manifest| {
+            [
+                manifest.block_key.clone(),
+                manifest.index_key.clone(),
+                crate::manifest_catalog::metric_manifest_catalog_key(manifest),
+            ]
+        })
         .chain(index.markers)
         .collect();
 

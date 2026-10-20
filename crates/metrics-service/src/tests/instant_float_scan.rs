@@ -73,7 +73,12 @@ impl Fixture {
         end_ms: i64,
     ) -> PromqlEngine<MergedMetricStore<MetricBlockStore, WalHead>> {
         PromqlEngine::new(
-            Arc::new(self.store.current_store(5_000, end_ms).await.unwrap()),
+            Arc::new(
+                self.store
+                    .current_store("tenant-a", 5_000, end_ms)
+                    .await
+                    .unwrap(),
+            ),
             EngineOpts::default(),
         )
     }
@@ -296,7 +301,7 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
         1,
     )
     .await;
-    fixture.store.invalidate().await;
+    fixture.store.invalidate("tenant-a").await;
     let published = fixture
         .store
         .series_shared("tenant-a", &matchers, 5_000, 12_000)
@@ -795,7 +800,16 @@ async fn latest_aggregate_refreshes_one_window_for_samples_and_labels() {
     );
     // The first request starts with no cached manifest window. Separate sample
     // and label operations would list twice for their different lower bounds.
-    assert!(fixture.list_calls.load(Ordering::SeqCst) == 1);
+    assert!(
+        fixture.list_calls.load(Ordering::SeqCst)
+            == krabka_metrics::manifest_catalog::metric_manifest_catalog_prefixes(
+                "metrics",
+                "tenant-a",
+                12_000 - EngineOpts::default().lookback_delta.millis_i64(),
+                12_000,
+            )
+            .len()
+    );
     assert!(fixture.reads.load(Ordering::SeqCst) == 0);
 }
 
@@ -899,7 +913,13 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
     let engine = latest.engine;
     let expected = latest.expected;
     let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 12_000).await.unwrap()),
+        Arc::new(
+            fixture
+                .store
+                .current_store("tenant-a", 5_000, 12_000)
+                .await
+                .unwrap(),
+        ),
         opts,
     );
     for query in [

@@ -20,7 +20,8 @@ Each format has one current version. Writers stamp it. Readers reject a missing,
 | logs | block/index manifests, shard catalogs, and compaction frontier | JSON version 1 | exact version; index shards use immutable numbered snapshots and conditional create; other log metadata uses atomic replacement |
 | metrics | compaction index manifests and block-kind keys | JSON/versioned key version 1 | exact version; source blocks and WAL remain authoritative |
 | metrics | Prometheus TSDB import records and block-ULID bindings | JSON `version: 1`, required | exact version; another or absent version stops the import before it writes |
-| metrics | Prometheus TSDB import publication markers (`uploaded/<ULID>-<hash>/_published`) | empty object; its presence is the state | readers read no `.index` manifest in an import directory without the marker |
+| metrics | manifest catalogs (`<prefix>/<escaped-tenant>/_catalog/v1/`) | JSON `format_version: 1`, required; time bounds in the object key | summaries contain no series labels; `.index` existence decides liveness; orphan sweep retains summaries of live and pending manifests |
+| metrics | Prometheus TSDB import publication markers (`uploaded/<ULID>-<hash>/_published`) | manifest catalog JSON `format_version: 1`, required | marker contains every manifest reference of the import; its presence publishes the whole set |
 | traces | block metadata, compaction keys, and search index manifests | JSON/key version 1 | exact version; replacement only after output is durable |
 | profiles | block metadata, SymbolDB objects, and lifecycle manifests | protobuf/JSON version 1 | exact version; immutable object keys |
 | profiles | async query generations and expiry fences | JSON `version: 1`, required | exact version and tenant/query identity; immutable conditional creation; expiry fences remain after payload retention cleanup |
