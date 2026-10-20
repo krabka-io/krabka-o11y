@@ -24,9 +24,9 @@ jobs:
             command: bazel test //...
           - id: ordinary-cargo
             gate: ordinary
-            command: cargo test --workspace --locked
-            # Includes the compaction memory worker, run by its parent test.
-            allowed_ignored: 30
+            command: bash tools/qualification-cargo.sh
+            allowed_ignored: 12
+            replay_inventory: qualification/cargo-ignored-inventory.json
           - id: ordinary-clippy
             gate: ordinary
             command: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -134,7 +134,7 @@ jobs:
       - name: run and record gate
         env:
           QUALIFICATION_COMMAND: ${{ matrix.command }}
-        run: tools/qualification-gate.py --id "${{ matrix.id }}" --gate "${{ matrix.gate }}" --command "${QUALIFICATION_COMMAND}" --allowed-ignored "${{ matrix.allowed_ignored || 0 }}" --output "qualification/evidence/${{ matrix.id }}.json"
+        run: tools/qualification-gate.py --id "${{ matrix.id }}" --gate "${{ matrix.gate }}" --command "${QUALIFICATION_COMMAND}" --allowed-ignored "${{ matrix.allowed_ignored || 0 }}" ${{ matrix.replay_inventory && format('--replay-ignored-inventory {0}', matrix.replay_inventory) || '' }} --output "qualification/evidence/${{ matrix.id }}.json"
       - if: always()
         uses: actions/upload-artifact@v4
         with:

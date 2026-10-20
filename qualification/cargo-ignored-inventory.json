@@ -1,0 +1,14 @@
+{
+  "a_bare_group_modifier_round_trips_before_a_parenthesised_operand": "krabka-logql rejects a bare group_left before a parenthesised operand; see report",
+  "a_signed_operand_round_trips_after_a_vector_matching_modifier": "krabka-logql misreads a negative literal after a vector-matching modifier; see report",
+  "otlp::delta_state::tests::eviction_latency_under_same_tenant_contention": "manual latency comparison with 100,000 preloaded streams",
+  "distributor::ingest::tests::json_push_decode_benchmark": "manual before/after ingest benchmark",
+  "querier::aggregate::metric_values::metric_sample_state::tests::profile_overlapping_windows": "profiling workload; set METRIC_PROFILE_ROWS, METRIC_PROFILE_WINDOWS and METRIC_PROFILE_STATE",
+  "cold_store::parquet_scan::tests::scan_resource_usage": "manual latency and peak-memory measurement",
+  "distributor::ingest_concurrency_tests::ingest_throughput": "throughput benchmark",
+  "official_profilecli_uploads_elf_through_public_debuginfo_api": "requires the official Pyroscope 2.3.1 profilecli binary",
+  "engine::aggregation::apply_k_aggregate::tests::benchmark_k_selection": "opt-in topk/bottomk kernel latency benchmark",
+  "engine::tests::subquery_grid::subquery_grid_profile": "manual CPU and peak RSS measurement with /usr/bin/time -v",
+  "compaction_memory_worker": "spawned as a child process by the memory test",
+  "crates/blockstore/src/delegate_object_store.rs - delegate_object_store::delegate_object_store (line 16)": "documentation example"
+}
