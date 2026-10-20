@@ -48,6 +48,12 @@ tools/bench.sh --quick index_prune # one benchmark
 
 The results go to `benches/target/criterion`. Criterion writes an HTML report at `benches/target/criterion/report/index.html`, which the `bench` job uploads as an artifact.
 
+`KRABKA_BENCH_FILTER=selector_regex tools/bench.sh --quick traceql_filter`
+measures scalar and three-element array selectors at 100, 1,000 and 10,000 spans.
+Each case compares per-value regex compilation with preparation once per scan.
+Preparation is inside the timed iteration. Valid and invalid patterns have separate cases.
+These measurements isolate matcher cost; they do not measure complete query latency.
+
 `tools/bench.sh --quick profile_query` exercises complete profile queries at
 1,000, 10,000, 100,000 and 1,000,000 samples. The fixture repeats 256 stack IDs
 across four symbol partitions, with 16 frames per stack and 16 trace IDs.
