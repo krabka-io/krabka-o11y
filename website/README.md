@@ -108,18 +108,27 @@ count, plus every platform patch hash. It is published only after all ten module
 a failed build removes the ready manifest.
 
 CI keeps separate caches for WASIX tools, Cargo downloads, service build outputs,
-and the completed browser runtime. Main builds save these caches; PRs only read
-them. The runtime cache covers its scripts, pins, patches, and dependency lock.
+and the completed browser runtime. Release builds restore and save these caches;
+ordinary CI does not download or build the WASIX toolchain. The runtime cache
+covers its scripts, pins, patches, and dependency lock.
 The build checks every cached runtime file before reuse. It checks optimized
 service outputs against a completion record before Cargo can reuse them.
 Unchanged staged sources keep their previous timestamps so Cargo can reuse
 compiled dependencies. Changed sources receive new timestamps.
 
-Documentation-only PRs build the static site and check its links and browser
-navigation. They do not compile or start the WASIX services. Changes to Rust,
-dependencies, website code, build scripts, or workflows run the full lab. Main
-builds and manual runs also run the full lab. The website check remains in the
-CI gate for both paths.
+Every PR, main push, and manual CI run builds the static site and checks its
+links and browser navigation. These runs do not compile or start the WASIX
+services, regardless of which files changed. The static website check remains
+in the CI gate.
+
+Only published releases build and qualify the full WASI lab and publish the
+combined website and Rust API reference to GitHub Pages. The image release
+workflow calls `website-release.yml` after successfully publishing a release,
+because releases created with `GITHUB_TOKEN` do not trigger release-event
+workflows. A `release: published` trigger also handles releases published directly
+on GitHub. Both paths build the released tag, run the native client and browser
+runtime checks, and publish only after they pass. Main pushes leave the last
+released website and lab online until the next release.
 
 Local Linux x86_64 qualification passed in Chromium. All ten WASIX modules
 compiled with the qualified locks. Browser checks passed actual ingestion and
