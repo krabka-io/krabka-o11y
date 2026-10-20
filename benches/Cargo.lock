@@ -3604,6 +3604,7 @@ dependencies = [
  "bytes",
  "criterion",
  "datafusion",
+ "futures",
  "krabka-blockstore",
  "krabka-logql",
  "krabka-metrics",

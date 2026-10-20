@@ -165,6 +165,18 @@ The [issue 369 comparison](../qualification/metrics-otlp-http-369.md) records
 before/after HTTP timings and allocations with an explicitly documented local
 build profile.
 
+`sorted_merge_profile` measures the production sorted merge with interleaved and disjoint inputs at 2, 8, 24 and 64 runs:
+
+```bash
+cargo build --manifest-path benches/Cargo.toml --release --example sorted_merge_profile
+benches/target/release/examples/sorted_merge_profile 20
+/usr/bin/time -v benches/target/release/examples/sorted_merge_profile 100 interleaved 64
+```
+
+Each fixture has about 65,536 rows in batches of 1,024 rows. The interleaved case includes equal keys across runs. The driver checks every output row against a sorted input ledger before measurement. Fixture construction and verification stay outside the timed loop. Merge construction, key encoding, selection, output concatenation and consumption stay inside it.
+
+The CSV reports mean elapsed time, allocation count, total allocated bytes and peak live bytes for one merge. Allocation accounting runs separately from timing on a current-thread runtime. The final two arguments select one case for CPU and RSS captures with `time` or `perf`. Whole-process captures also include fixture construction, verification and the allocation pass. Input buffers remain outside the reported allocation scope.
+
 ## Where they run
 
 The `bench` job in [//.github/workflows/ci.yml](../.github/workflows/ci.yml) runs them on a schedule, not on a pull request. This follows the fuzz run, which is scheduled for the same reason: the work is unbounded, and a pull request cannot pay for it.
