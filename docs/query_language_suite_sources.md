@@ -122,3 +122,26 @@ Loki's [approximate top-k evaluator](https://github.com/grafana/loki/blob/7a4040
 Tempo's [metrics pipeline](https://github.com/grafana/tempo/blob/1900ed7bb5cad1a3edc285783d7d4ac4278337dc/pkg/traceql/engine_metrics.go) admits ordered metric filters and rank stages, scalar and grouped spanset stages before metrics, and typed static hints. Top/bottom-k selection occurs independently at each timestamp. Fractional sampling is periodic, with scaling measured over admitted span or complete trace cohorts. Physical storage order can select different cohorts, so the three fractional live cases use independently enumerated complete output domains and retain each raw response; they do not claim exact cross-server equality. The other positive cases require complete metric label/point equality against an independent ledger. Scalar stages that consume real spans and reject every span-set preserve the initialized ungrouped count/rate series with a complete zero grid. Genuinely empty selectors, grouped metrics and sum/average aggregations do not initialize that series; independent controls cover these distinctions. The pinned [scalar-filter validator](https://github.com/grafana/tempo/blob/1900ed7bb5cad1a3edc285783d7d4ac4278337dc/pkg/traceql/ast.go) rejects arithmetic or comparisons between aggregate results even where its grammar admits them. Those cases remain explicit query rejections.
 
 Prometheus histogram template values expose all 23 methods callable through Go templates. A separate 35-output Go ledger checks mutating method compositions, field and slice references, copied slice views, iterator headers, and replay isolation. Four exported methods have return signatures that Go templates reject; those remain error controls. The shared exponential bucket-bound helper uses the pinned source constants, with independent IEEE-754 endpoint controls for subnormal values and the last finite bucket. Separate pinned Go formatter goldens check typed fields, nil slices, all iterator cursor states and pointer flags. Pointer identity checks run within each process. Time-location controls check source field order, fixed-zone identities, lazy initialization and cache boundaries at load time. These goldens supplement the 55 helper cases above and retain the full query-language inventory denominator.
+
+## Grafana Loki client replay
+
+The client versions and immutable image digests come from `MODULE.bazel` and
+`bazel/images/images.bzl`. The [Grafana Loki suite](../crates/observability/tests/grafana_e2e.rs)
+uses the current and previous Grafana containers with the pinned Loki oracle.
+The dashboard inputs are independent fixtures, not browser captures. Grafana's
+Loki backend plugin generates the HTTP requests from `POST /api/ds/query`.
+Recording proxies retain each generated method, URI, tenant and body before
+forwarding it. The suite replays that request against both seeded backends.
+
+The five cases cover forward and backward logs, a line filter, a one-entry
+limit and an instant count. Independent ledgers check complete stream labels,
+entry timestamps, lines and the three-entry count. Grafana frames retain field
+types, labels and every data column. Stream order is not specified; each
+stream's entry order remains exact. Execution metadata is omitted from frame
+comparison. Metric formatting is parsed without rounding the count.
+
+`grafana-loki-client-replay.json` retains both dashboard inputs, both generated
+requests, both Grafana responses and both replay results. The report gate checks
+these values against the independent fixture and selected image configuration.
+Both client versions are required in the aggregate. This suite does not exercise
+browser builder actions, other Grafana datasources or other official clients.

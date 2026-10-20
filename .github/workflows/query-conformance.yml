@@ -64,6 +64,14 @@ jobs:
             target: //crates/profiles:pyroscope_differential_docker_test
             docker: true
             upstream_runner: false
+          - suite: grafana-loki-client
+            target: //crates/observability:grafana_e2e_docker_test
+            docker: true
+            upstream_runner: false
+          - suite: grafana-loki-client-previous
+            target: //crates/observability:grafana_e2e_previous_docker_test
+            docker: true
+            upstream_runner: false
           - suite: metrics-transitions
             target: //crates/metrics-service:metrics_deployment_docker_test
             docker: true
@@ -194,7 +202,7 @@ jobs:
         run: |
           set -euo pipefail
           suites=(promql-full-default promql-full-experimental prometheus-http mimir-http
-            loki-http tempo-http pyroscope-http metrics-transitions tempo-transitions profile-transitions backup-restore)
+            loki-http tempo-http pyroscope-http metrics-transitions tempo-transitions profile-transitions backup-restore grafana-loki-client grafana-loki-client-previous)
           for suite in "${suites[@]}"; do
             manifest="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${SOURCE_SHA}-${GITHUB_RUN_ATTEMPT}/SHA256SUMS"
             test -s "${manifest}"
