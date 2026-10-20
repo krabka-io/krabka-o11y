@@ -76,24 +76,7 @@ impl TsdbImportKeys {
     /// that ends with an `uploaded` segment, then `<ULID>-<hash>` with a
     /// 26-character upper-case ULID and 16 lower-case hex digits.
     pub fn is_import_directory(directory: &str) -> bool {
-        let Some(directory_parts) = directory.rsplit_once('/') else {
-            return false;
-        };
-        let parent = directory_parts.0;
-        let Some(name_parts) = directory_parts.1.split_once('-') else {
-            return false;
-        };
-        let ulid = name_parts.0;
-        let digits = name_parts.1;
-        parent.ends_with("/uploaded")
-            && ulid.len() == 26
-            && ulid
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
-            && digits.len() == KEY_HASH_DIGITS
-            && digits
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        krabka_blockstore::is_metrics_import_directory(directory)
     }
 
     fn directory(&self, ulid: &str, sha256: &str) -> String {

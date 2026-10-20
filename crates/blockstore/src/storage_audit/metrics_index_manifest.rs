@@ -28,8 +28,11 @@ struct MetricsManifestSeries {
 
 /// What the audit reads from a metrics `.index` manifest, which
 /// `krabka-metrics` persists as `CompactionIndexManifest`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MetricsIndexManifest {
+    pub kind: MetricsBlockKind,
+    pub min_ts: i64,
+    pub max_ts: i64,
     pub tenant: String,
     pub block_key: String,
     pub index_key: String,
@@ -53,6 +56,9 @@ impl MetricsIndexManifest {
         let shape = <SerdeCompat<MetricsManifestShape> as WincodeDeserialize>::deserialize(bytes)
             .map_err(|error| error.to_string())?;
         Ok(Self {
+            kind: shape.kind,
+            min_ts: shape.min_ts,
+            max_ts: shape.max_ts,
             tenant: shape.tenant,
             block_key: shape.block_key,
             index_key: shape.index_key,

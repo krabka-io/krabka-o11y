@@ -3,9 +3,7 @@
 //! Catalog entries are written after manifests and before WAL acknowledgement.
 //! A missing manifest is retired. The catalog never makes a block live by itself.
 
-use std::fmt::Write as _;
-
-use krabka_blockstore::{escape_object_path_segment, input_key_fingerprint};
+use krabka_blockstore::escape_object_path_segment;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
 
@@ -114,33 +112,12 @@ fn root(prefix: &str, tenant: &str) -> String {
 /// discard non-overlapping summaries without a GET or a label allocation.
 #[must_use]
 pub fn metric_manifest_catalog_key(manifest: &CompactionIndexManifest) -> String {
-    let tenant_segment = format!("{}/", escape_object_path_segment(&manifest.tenant));
-    let tenant_path = format!("/{tenant_segment}");
-    let prefix = manifest
-        .index_key
-        .split_once(&tenant_path)
-        .map_or("", |parts| parts.0);
-    let mut directory = root(prefix, &manifest.tenant);
-    if manifest.kind == MetricBlockKind::Metadata {
-        directory.push_str("timeless/");
-    } else {
-        directory.push_str("time/");
-        let first = ordered_time(manifest.min_ts) >> LEAF_SHIFT;
-        let last = ordered_time(manifest.max_ts) >> LEAF_SHIFT;
-        for shift in (0..10).rev().map(|level| level * 4) {
-            let left = (first >> shift) & 15;
-            if left != (last >> shift) & 15 {
-                break;
-            }
-            write!(&mut directory, "{left:x}/").expect("writing to a String cannot fail");
-        }
-        directory.push_str("entries/");
-    }
-    format!(
-        "{directory}{:016x}-{:016x}-{:016x}.catalog",
-        ordered_time(manifest.min_ts),
-        ordered_time(manifest.max_ts),
-        input_key_fingerprint(std::slice::from_ref(&manifest.index_key))
+    krabka_blockstore::metrics_manifest_catalog_key(
+        &manifest.tenant,
+        &manifest.index_key,
+        manifest.min_ts,
+        manifest.max_ts,
+        manifest.kind == MetricBlockKind::Metadata,
     )
 }
 

@@ -10,6 +10,9 @@ use super::{
     Url, WalHead, normalize_refresh_range, unix_time_ms,
 };
 
+// Bound retained snapshots when the queried tenant population changes.
+const MAX_MANIFEST_SCOPES: usize = 128;
+
 pub(crate) const MIMIR_TENANT_DELETION_PREFIX: &str = "mimir-tenant-deletions";
 
 /// A requested query range in Unix milliseconds.
@@ -25,9 +28,14 @@ pub struct RefreshingMetricBlockStore {
     pub(crate) blocks: BlockStore,
     pub(crate) manifest_prefix: String,
     pub(crate) hot_store: WalHead,
-    scopes: tokio::sync::RwLock<BTreeMap<String, Arc<ManifestScope>>>,
+    scopes: tokio::sync::RwLock<BTreeMap<String, CachedManifestScope>>,
     pub(crate) cold_cache_ttl: Time,
     pub(crate) unbounded_compatibility_lookback: Time,
+}
+
+struct CachedManifestScope {
+    scope: Arc<ManifestScope>,
+    last_used: Instant,
 }
 
 #[derive(Default)]
@@ -88,6 +96,35 @@ impl RefreshingMetricBlockStore {
         drop(removed);
     }
 
+    async fn manifest_scope(&self, tenant: &str) -> Arc<ManifestScope> {
+        let mut scopes = self.scopes.write().await;
+        if let Some(entry) = scopes.get_mut(tenant) {
+            entry.last_used = Instant::now();
+            return Arc::clone(&entry.scope);
+        }
+        let evicted = if scopes.len() >= MAX_MANIFEST_SCOPES {
+            let oldest = scopes
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(tenant, _)| tenant.clone());
+            oldest.and_then(|tenant| scopes.remove(&tenant))
+        } else {
+            None
+        };
+        let scope = Arc::new(ManifestScope::default());
+        scopes.insert(
+            tenant.to_owned(),
+            CachedManifestScope {
+                scope: Arc::clone(&scope),
+                last_used: Instant::now(),
+            },
+        );
+        drop(scopes);
+        // Active queries keep their Arc; only the cache releases its snapshot.
+        drop(evicted);
+        scope
+    }
+
     async fn current_store_for_tenant(
         &self,
         tenant: &str,
@@ -128,16 +165,7 @@ impl RefreshingMetricBlockStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<MergedMetricStore<MetricBlockStore, WalHead>, MetricsServiceError> {
-        let key = tenant.to_owned();
-        let scope = {
-            let scopes = self.scopes.read().await;
-            scopes.get(&key).cloned()
-        };
-        let scope = if let Some(scope) = scope {
-            scope
-        } else {
-            self.scopes.write().await.entry(key).or_default().clone()
-        };
+        let scope = self.manifest_scope(tenant).await;
         let range = normalize_refresh_range(
             start_ms,
             end_ms,
@@ -486,5 +514,45 @@ impl MetricStore for RefreshingMetricBlockStore {
             .await?
             .tsdb_blocks(tenant)
             .await
+    }
+}
+
+#[cfg(test)]
+mod scope_cache_tests {
+    use assert2::assert;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn tenant_scopes_are_bounded_and_recent_scopes_survive_churn() {
+        let store = RefreshingMetricBlockStore::new(
+            Arc::new(object_store::memory::InMemory::new()),
+            Url::parse("memory:///").unwrap(),
+            "metrics",
+            WalHead::new(),
+        );
+        let active = store.manifest_scope("active").await;
+        let in_flight = store.manifest_scope("in-flight").await;
+        let evicted = store.manifest_scope("old").await;
+        let released = Arc::downgrade(&evicted);
+        drop(evicted);
+        for i in 0..MAX_MANIFEST_SCOPES * 2 {
+            let hit = store.manifest_scope("active").await;
+            assert!(Arc::ptr_eq(&active, &hit));
+            store.manifest_scope(&format!("tenant-{i}")).await;
+            assert!(store.scopes.read().await.len() <= MAX_MANIFEST_SCOPES);
+        }
+        assert!(released.upgrade().is_none());
+        assert!(!Arc::ptr_eq(
+            &in_flight,
+            &store.manifest_scope("in-flight").await
+        ));
+        assert!(in_flight.manifests.read().await.is_empty());
+        let reloaded = store.manifest_scope("old").await;
+        assert!(Arc::strong_count(&reloaded) == 2);
+        store.invalidate("active").await;
+        assert!(!Arc::ptr_eq(&active, &store.manifest_scope("active").await));
+        // A caller can still use a scope after cache eviction or invalidation.
+        assert!(active.manifests.read().await.is_empty());
     }
 }
