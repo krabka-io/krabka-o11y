@@ -1,0 +1,858 @@
+{
+  "schema_version": 1,
+  "status": "complete_rejected_before_production_change",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "evidence_directory": "qualification/evidence/sorted-log-stream-2026-10-10",
+  "baseline_commit": "9560e5053f58252b0d4c1d6b5831b41412672d4e",
+  "scope": "Isolated sorter with matching five-field LokiStreamEntry stand-in; no serializer, HTTP or storage timing",
+  "hypothesis": "Complete HTTP profiles identify numeric timestamp parsing during sort_loki_stream_values. A single-pass monotonicity check could avoid cached-key allocation and sorting for already ordered streams.",
+  "profile_selection_record": "qualification/limited-log-frontend-2026-10-10.json",
+  "algorithm": {
+    "baseline": "Exact production sort_by_cached_key, parsed i64 timestamps with malformed values sorting at i64::MAX; stable ties",
+    "prototype": "Parse consecutive timestamps once while checking nondecreasing order. Return early for ordered/empty streams; otherwise run the unchanged cached-key sort. Unordered streams incur extra parses before falling back.",
+    "production_path": "crates/observability/src/querier/aggregate/record_matching/sort_loki_stream_values.rs",
+    "production_sha256_unchanged": "88beec7437805560f4fb25e80826b490ae4052703f518bf07e254195b8514281"
+  },
+  "decision": "Reject before changing or rebuilding production. Ordered million-row streams improve, but ten-entry shuffled streams slow in every primary and longer pair at one million rows. Longer 100,000-row controls also slow in every pair. Overlapping ranges are preserved; no universal sorter gain or actual caller/HTTP qualification is claimed.",
+  "fixture": {
+    "rows": [
+      1000,
+      20000,
+      100000,
+      1000000
+    ],
+    "points_per_stream": [
+      10,
+      1000
+    ],
+    "patterns": [
+      "ordered",
+      "reversed",
+      "shuffled"
+    ],
+    "entry_representation": "Stand-in matches production five-field layout: timestamp and line strings plus three BTreeMap label buckets; parsed_timestamp_ns is the same i64 parser. Constructor and serialization are omitted, so this is isolated algorithm evidence.",
+    "timestamps": "Realistic 19-digit positive nanoseconds, i64::MIN ties, i64::MAX and malformed ties; numeric key ledger generated independently before serialization",
+    "verification": "Complete BTreeMap of entries, including all timestamps, lines and label buckets, compared against independent (numeric key, actual input position) ordering before each timed process. Stable ties follow the shuffled/reversed input order.",
+    "timing_scope": "Only mutation by the sorter; input construction/ledger, verification, cloning and final disposal excluded. No HTTP, Parquet, WAL or native upstream service latency.",
+    "cpu_affinity": [
+      4
+    ]
+  },
+  "measurement_plan": {
+    "primary_observations": 144,
+    "longer_controls": 12,
+    "pairs": 3,
+    "order": "Alternating baseline/candidate",
+    "primary_iterations": "20 at <=20000 rows, 5 at 100000, 1 at one million",
+    "control_iterations": "20 at 100000, 5 at one million, ten-entry shuffled streams",
+    "censored": 0
+  },
+  "binary": {
+    "path": "qualification/evidence/sorted-log-stream-2026-10-10/binaries/sorted-log-stream",
+    "bytes": 5087328,
+    "sha256": "3e0603b18213f7f0af5fd2d4156bf3fe65d2ac61e22632df957481f8b65e3810",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "flags": "opt-level=3, line-tables-only, frame pointers, 16 codegen units, no LTO; both variants in one executable"
+  },
+  "timings": [
+    {
+      "rows": 1000,
+      "points_per_stream": 10,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 3.074535e-05,
+          "min": 3.0253399999999997e-05,
+          "max": 3.18497e-05
+        },
+        "candidate": {
+          "median": 2.197935e-05,
+          "min": 2.17592e-05,
+          "max": 4.03759e-05
+        }
+      },
+      "paired_ratios": [
+        1.3132359852790747,
+        0.7265084254992829,
+        0.6831838290470553
+      ],
+      "median_paired_ratio": 0.7265084254992829,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000,
+      "points_per_stream": 10,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 3.4621249999999997e-05,
+          "min": 3.29768e-05,
+          "max": 3.56623e-05
+        },
+        "candidate": {
+          "median": 4.07185e-05,
+          "min": 3.938e-05,
+          "max": 4.4424e-05
+        }
+      },
+      "paired_ratios": [
+        1.2456852194053665,
+        1.2347620145071687,
+        1.1374517095714338
+      ],
+      "median_paired_ratio": 1.2347620145071687,
+      "candidate_slower_pairs": 3,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 4.2274199999999996e-05,
+          "min": 3.24911e-05,
+          "max": 4.32361e-05
+        },
+        "candidate": {
+          "median": 3.97575e-05,
+          "min": 3.65782e-05,
+          "max": 4.19142e-05
+        }
+      },
+      "paired_ratios": [
+        0.8460106253801801,
+        1.2236427821772733,
+        0.991484167648353
+      ],
+      "median_paired_ratio": 0.991484167648353,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000,
+      "points_per_stream": 1000,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 2.673405e-05,
+          "min": 2.392245e-05,
+          "max": 2.84005e-05
+        },
+        "candidate": {
+          "median": 1.571005e-05,
+          "min": 1.547555e-05,
+          "max": 1.5916300000000002e-05
+        }
+      },
+      "paired_ratios": [
+        0.665329011033569,
+        0.5788703918785221,
+        0.5531610358972553
+      ],
+      "median_paired_ratio": 0.5788703918785221,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000,
+      "points_per_stream": 1000,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 4.3129650000000005e-05,
+          "min": 3.83184e-05,
+          "max": 4.47711e-05
+        },
+        "candidate": {
+          "median": 4.4044450000000005e-05,
+          "min": 3.958485e-05,
+          "max": 5.116115e-05
+        }
+      },
+      "paired_ratios": [
+        1.0212104665815744,
+        1.3351588270909014,
+        0.8841607644216916
+      ],
+      "median_paired_ratio": 1.0212104665815744,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000,
+      "points_per_stream": 1000,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 4.3095e-05,
+          "min": 4.283125e-05,
+          "max": 5.957515e-05
+        },
+        "candidate": {
+          "median": 4.36329e-05,
+          "min": 3.6686899999999996e-05,
+          "max": 4.81566e-05
+        }
+      },
+      "paired_ratios": [
+        0.7324010094813022,
+        0.8513029353753335,
+        1.124333284692835
+      ],
+      "median_paired_ratio": 0.8513029353753335,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 20000,
+      "points_per_stream": 10,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 0.0028934307,
+          "min": 0.002819181,
+          "max": 0.00303154135
+        },
+        "candidate": {
+          "median": 0.00213134715,
+          "min": 0.0019342752000000001,
+          "max": 0.00277737455
+        }
+      },
+      "paired_ratios": [
+        0.9161592171586246,
+        0.6861124560643677,
+        0.736615931392447
+      ],
+      "median_paired_ratio": 0.736615931392447,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "points_per_stream": 10,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 0.0025298372999999997,
+          "min": 0.0024758532,
+          "max": 0.00272895365
+        },
+        "candidate": {
+          "median": 0.0029468418,
+          "min": 0.0024504938,
+          "max": 0.00300739015
+        }
+      },
+      "paired_ratios": [
+        1.2146883950954763,
+        1.0798431112965219,
+        0.9686369158996906
+      ],
+      "median_paired_ratio": 1.0798431112965219,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 20000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.00266683105,
+          "min": 0.0024735424999999998,
+          "max": 0.00281451185
+        },
+        "candidate": {
+          "median": 0.0026535630000000003,
+          "min": 0.0026435232,
+          "max": 0.0028174420499999997
+        }
+      },
+      "paired_ratios": [
+        1.0564756436295428,
+        0.9392474933086532,
+        1.0727784139548848
+      ],
+      "median_paired_ratio": 1.0564756436295428,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 20000,
+      "points_per_stream": 1000,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 0.0006282372,
+          "min": 0.0006049584,
+          "max": 0.00065613545
+        },
+        "candidate": {
+          "median": 0.00043943575000000005,
+          "min": 0.00042412605,
+          "max": 0.0004398117
+        }
+      },
+      "paired_ratios": [
+        0.7000726795547924,
+        0.6697332844917921,
+        0.7010830000872788
+      ],
+      "median_paired_ratio": 0.7000726795547924,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "points_per_stream": 1000,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 0.00085209315,
+          "min": 0.0008217749499999999,
+          "max": 0.0008851670500000001
+        },
+        "candidate": {
+          "median": 0.0008838502999999999,
+          "min": 0.00081929815,
+          "max": 0.0008979916500000001
+        }
+      },
+      "paired_ratios": [
+        0.9985124276824355,
+        1.0538655896952114,
+        0.99698603614043
+      ],
+      "median_paired_ratio": 0.9985124276824355,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 20000,
+      "points_per_stream": 1000,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.0008558902000000001,
+          "min": 0.0008291665000000001,
+          "max": 0.0008664906499999999
+        },
+        "candidate": {
+          "median": 0.0008858970000000001,
+          "min": 0.00084737415,
+          "max": 0.0009155756
+        }
+      },
+      "paired_ratios": [
+        1.0697348795441284,
+        0.977938019296573,
+        1.0684187072198406
+      ],
+      "median_paired_ratio": 1.0684187072198406,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 100000,
+      "points_per_stream": 10,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 0.0163411626,
+          "min": 0.0157459994,
+          "max": 0.0169056694
+        },
+        "candidate": {
+          "median": 0.013834844600000002,
+          "min": 0.0132996038,
+          "max": 0.014209893800000001
+        }
+      },
+      "paired_ratios": [
+        0.8138713337323992,
+        0.8405401444795793,
+        0.8786260083307258
+      ],
+      "median_paired_ratio": 0.8405401444795793,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "points_per_stream": 10,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 0.0157714524,
+          "min": 0.015054485400000001,
+          "max": 0.0165607694
+        },
+        "candidate": {
+          "median": 0.0171798128,
+          "min": 0.015738545200000002,
+          "max": 0.018543683
+        }
+      },
+      "paired_ratios": [
+        1.0454389360927607,
+        1.037380111095563,
+        1.1757752253685905
+      ],
+      "median_paired_ratio": 1.0454389360927607,
+      "candidate_slower_pairs": 3,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 100000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.018386549999999998,
+          "min": 0.018348388400000002,
+          "max": 0.0190822144
+        },
+        "candidate": {
+          "median": 0.017654997999999998,
+          "min": 0.0167880698,
+          "max": 0.0183784814
+        }
+      },
+      "paired_ratios": [
+        0.9149615450695385,
+        0.9631209992064653,
+        0.9602126554465085
+      ],
+      "median_paired_ratio": 0.9602126554465085,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 100000,
+      "points_per_stream": 1000,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 0.0031677603999999996,
+          "min": 0.003144832,
+          "max": 0.0033392423999999998
+        },
+        "candidate": {
+          "median": 0.0023982828,
+          "min": 0.0023874226,
+          "max": 0.0025415133999999997
+        }
+      },
+      "paired_ratios": [
+        0.7591574367088607,
+        0.7570909719055773,
+        0.7611047943090324
+      ],
+      "median_paired_ratio": 0.7591574367088607,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "points_per_stream": 1000,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 0.0048827084,
+          "min": 0.004457398,
+          "max": 0.0048918524
+        },
+        "candidate": {
+          "median": 0.004602485,
+          "min": 0.0045921136,
+          "max": 0.0048925732
+        }
+      },
+      "paired_ratios": [
+        0.9408470705289473,
+        1.0020203541133033,
+        1.0302229237775045
+      ],
+      "median_paired_ratio": 1.0020203541133033,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 100000,
+      "points_per_stream": 1000,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.004728774,
+          "min": 0.004312926,
+          "max": 0.0048881364
+        },
+        "candidate": {
+          "median": 0.004645743799999999,
+          "min": 0.0044645204,
+          "max": 0.005030395599999999
+        }
+      },
+      "paired_ratios": [
+        0.9824414954066317,
+        1.0291029522007609,
+        1.0351488525423342
+      ],
+      "median_paired_ratio": 1.0291029522007609,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000000,
+      "points_per_stream": 10,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 0.179878743,
+          "min": 0.161762194,
+          "max": 0.19011708
+        },
+        "candidate": {
+          "median": 0.132040325,
+          "min": 0.128425875,
+          "max": 0.13512668
+        }
+      },
+      "paired_ratios": [
+        0.7939177370455299,
+        0.6945211077300366,
+        0.7512098302799458
+      ],
+      "median_paired_ratio": 0.7512098302799458,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "points_per_stream": 10,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 0.15305127,
+          "min": 0.149432476,
+          "max": 0.156172857
+        },
+        "candidate": {
+          "median": 0.153198726,
+          "min": 0.15270655,
+          "max": 0.164633173
+        }
+      },
+      "paired_ratios": [
+        0.9809561593664129,
+        0.9977476828516353,
+        1.1017228477161818
+      ],
+      "median_paired_ratio": 0.9977476828516353,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.15062875,
+          "min": 0.147208826,
+          "max": 0.153716117
+        },
+        "candidate": {
+          "median": 0.155982457,
+          "min": 0.153883281,
+          "max": 0.171293731
+        }
+      },
+      "paired_ratios": [
+        1.1371914790503141,
+        1.0453400463909686,
+        1.0147436719338934
+      ],
+      "median_paired_ratio": 1.0453400463909686,
+      "candidate_slower_pairs": 3,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "points_per_stream": 1000,
+      "pattern": "ordered",
+      "seconds": {
+        "baseline": {
+          "median": 0.031885563,
+          "min": 0.031116635,
+          "max": 0.034286567
+        },
+        "candidate": {
+          "median": 0.024434213,
+          "min": 0.023217172,
+          "max": 0.025256213
+        }
+      },
+      "paired_ratios": [
+        0.7852459946263469,
+        0.6771506753650782,
+        0.7920892913197111
+      ],
+      "median_paired_ratio": 0.7852459946263469,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "points_per_stream": 1000,
+      "pattern": "reversed",
+      "seconds": {
+        "baseline": {
+          "median": 0.045686763,
+          "min": 0.044464617,
+          "max": 0.047613949
+        },
+        "candidate": {
+          "median": 0.043879201,
+          "min": 0.04352354,
+          "max": 0.045886996
+        }
+      },
+      "paired_ratios": [
+        0.9637301035459167,
+        0.9526509899596083,
+        0.9868341157644516
+      ],
+      "median_paired_ratio": 0.9637301035459167,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000000,
+      "points_per_stream": 1000,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.051286922,
+          "min": 0.046929896,
+          "max": 0.051655812
+        },
+        "candidate": {
+          "median": 0.044588219,
+          "min": 0.044498591,
+          "max": 0.044826829
+        }
+      },
+      "paired_ratios": [
+        0.9551870517675982,
+        0.8693876969259337,
+        0.8614440326676115
+      ],
+      "median_paired_ratio": 0.8693876969259337,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    }
+  ],
+  "longer_controls": [
+    {
+      "rows": 100000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.0162987498,
+          "min": 0.0162416857,
+          "max": 0.0174078753
+        },
+        "candidate": {
+          "median": 0.01749086075,
+          "min": 0.0165324049,
+          "max": 0.01829071925
+        }
+      },
+      "paired_ratios": [
+        1.0178995706092255,
+        1.0731412509933735,
+        1.0507152041696899
+      ],
+      "median_paired_ratio": 1.0507152041696899,
+      "candidate_slower_pairs": 3,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000000,
+      "points_per_stream": 10,
+      "pattern": "shuffled",
+      "seconds": {
+        "baseline": {
+          "median": 0.16860102999999999,
+          "min": 0.1649721784,
+          "max": 0.1709510458
+        },
+        "candidate": {
+          "median": 0.1773958846,
+          "min": 0.169980075,
+          "max": 0.1894889824
+        }
+      },
+      "paired_ratios": [
+        1.0303560069859634,
+        1.0521637062359583,
+        1.1084400303797382
+      ],
+      "median_paired_ratio": 1.0521637062359583,
+      "candidate_slower_pairs": 3,
+      "ranges_overlap": true
+    }
+  ],
+  "cpu_profiles": [
+    {
+      "variant": "baseline",
+      "pattern": "ordered",
+      "rows": 100000,
+      "points_per_stream": 10,
+      "timed_iterations": 50,
+      "samples": 1796,
+      "lost_samples": 0,
+      "data": "baseline-100000-ordered.perf.data",
+      "flat_report": "baseline-100000-ordered-perf-flat.txt.gz",
+      "cumulative_report": "baseline-100000-ordered-perf-cum.txt.gz"
+    },
+    {
+      "variant": "candidate",
+      "pattern": "ordered",
+      "rows": 100000,
+      "points_per_stream": 10,
+      "timed_iterations": 50,
+      "samples": 1740,
+      "lost_samples": 0,
+      "data": "candidate-100000-ordered.perf.data",
+      "flat_report": "candidate-100000-ordered-perf-flat.txt.gz",
+      "cumulative_report": "candidate-100000-ordered-perf-cum.txt.gz"
+    },
+    {
+      "variant": "baseline",
+      "pattern": "shuffled",
+      "rows": 100000,
+      "points_per_stream": 10,
+      "timed_iterations": 50,
+      "samples": 1844,
+      "lost_samples": 0,
+      "data": "baseline-100000-shuffled.perf.data",
+      "flat_report": "baseline-100000-shuffled-perf-flat.txt.gz",
+      "cumulative_report": "baseline-100000-shuffled-perf-cum.txt.gz"
+    },
+    {
+      "variant": "candidate",
+      "pattern": "shuffled",
+      "rows": 100000,
+      "points_per_stream": 10,
+      "timed_iterations": 50,
+      "samples": 1771,
+      "lost_samples": 0,
+      "data": "candidate-100000-shuffled.perf.data",
+      "flat_report": "candidate-100000-shuffled-perf-flat.txt.gz",
+      "cumulative_report": "candidate-100000-shuffled-perf-cum.txt.gz"
+    }
+  ],
+  "heap_profiles": [
+    {
+      "variant": "baseline",
+      "pattern": "ordered",
+      "rows": 20000,
+      "points_per_stream": 10,
+      "timed_iterations": 10,
+      "allocation_calls": 2218361,
+      "temporary_allocations": 22002,
+      "peak_heap_reported": "81.71M",
+      "peak_rss_instrumented_reported": "97.55M",
+      "trace": "baseline-20000-ordered.heaptrack.zst",
+      "report": "baseline-20000-ordered-heap.txt.gz"
+    },
+    {
+      "variant": "candidate",
+      "pattern": "ordered",
+      "rows": 20000,
+      "points_per_stream": 10,
+      "timed_iterations": 10,
+      "allocation_calls": 2196361,
+      "temporary_allocations": 2,
+      "peak_heap_reported": "81.71M",
+      "peak_rss_instrumented_reported": "97.43M",
+      "trace": "candidate-20000-ordered.heaptrack.zst",
+      "report": "candidate-20000-ordered-heap.txt.gz"
+    },
+    {
+      "variant": "baseline",
+      "pattern": "shuffled",
+      "rows": 20000,
+      "points_per_stream": 10,
+      "timed_iterations": 10,
+      "allocation_calls": 2218361,
+      "temporary_allocations": 22002,
+      "peak_heap_reported": "81.71M",
+      "peak_rss_instrumented_reported": "97.54M",
+      "trace": "baseline-20000-shuffled.heaptrack.zst",
+      "report": "baseline-20000-shuffled-heap.txt.gz"
+    },
+    {
+      "variant": "candidate",
+      "pattern": "shuffled",
+      "rows": 20000,
+      "points_per_stream": 10,
+      "timed_iterations": 10,
+      "allocation_calls": 2218361,
+      "temporary_allocations": 22002,
+      "peak_heap_reported": "81.71M",
+      "peak_rss_instrumented_reported": "97.68M",
+      "trace": "candidate-20000-shuffled.heaptrack.zst",
+      "report": "candidate-20000-shuffled-heap.txt.gz"
+    }
+  ],
+  "profile_scope": "Whole-process construction, independent ledger verification, input cloning/disposal and timed sorter calls. Relative attribution does not isolate a normalized sorter CPU ratio.",
+  "upstream_comparison": {
+    "source": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L255",
+    "source_sha256": "87906790842578c02f35a87b8a58c33eed3f72cc5d7a11ddb8f6e3fff0d96e94",
+    "approach": "Pinned Loki sortFieldsAt obtains numeric timeNanos from the typed entry Timestamp.UnixNano and merges ordered iterators. ReadBatch stops at the requested count. Krabka stores a timestamp string and reparses it for cached sorting. The attempted order precheck keeps that representation and adds parser work on fallback, rather than implementing typed timestamps or upstream iterator qualification."
+  },
+  "validation": {
+    "complete_primary_and_control_ledgers": 156,
+    "additional_boundary_ledgers": 42,
+    "boundary_rows": [
+      0,
+      1,
+      2,
+      9,
+      10,
+      11,
+      1001
+    ],
+    "production": "Source is unchanged byte for byte. No new production crate compile/test claimed; rejected at isolated algorithm stage. Previous retained source has 587 passing tests.",
+    "build_recovery": "Initial unmeasured standalone build succeeds; switching to assert2 fails because cached dependencies were removed. A tiny offline assertion build first requests absent 0.3, then succeeds with cached 0.4. Failed logs preserved; final assert2-linked executable alone supplies all measured rows. All build-only assertion artifacts are hashed and removed before timing.",
+    "inventory": "No benchmark IDs or historical numeric budgets changed",
+    "managed_format": "The Bazel-generated //tools/format target passes with its existing pinned runfiles. Two bazel run attempts fail during fresh Rust/protobuf repository extraction with No space left on device; failure and recovery logs preserved separately.",
+    "rebased_main_source": "origin/main 45b254287a49cda79bbea61e447bb2580c7033a2 merges the measured head 9560e505; their complete trees are identical."
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/sorted-log-stream-2026-10-10/raw-manifest.json",
+    "sha256": "4006ff33690fe6916cc9dbd7f9e5a53787115849946c2e473245b283e1f39351",
+    "files": 69,
+    "bytes": 68276002,
+    "scope": "Every evidence file except this manifest"
+  },
+  "profile_interpretation": {
+    "cpu": "Four captures contain 1740\u20131844 actual samples with zero lost. Timestamp parsing self attribution is 8.41/8.85% ordered and 7.75/8.13% shuffled. Whole-process fixture/ledger, clones and disposal dominate; relative attribution neither isolates a normalized sorter CPU ratio nor establishes the cause of the timed regression.",
+    "heap": "Ordered allocation calls fall by 22000 (2218361 to 2196361); temporary allocations fall from 22002 to 2. Shuffled calls remain 2218361 in both variants. Peak heap stays 81.71 MB in every capture; instrumented RSS changes by at most 0.14 MB. No general memory advantage is qualified."
+  },
+  "validation_followup_manifest": {
+    "path": "qualification/evidence/sorted-log-stream-validation-2026-10-10/raw-manifest.json",
+    "sha256": "35b25b154e4653e9ae04d3633d19a62cff131aa7d916634486b5c94fa4b4b57a",
+    "files": 10,
+    "bytes": 51149802,
+    "scope": "Formatter failures/recovery and byte-verified archive of unused cached benchmark ELF; every validation-evidence file except this manifest"
+  }
+}
