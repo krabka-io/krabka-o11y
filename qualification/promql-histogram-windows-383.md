@@ -31,7 +31,7 @@ Each binary was copied to a separate path before the next checkout was built. Th
 
 ## Results
 
-All seven cases used fewer allocations and fewer allocated bytes. Allocation counts fell by 0.30–5.54%, and allocated bytes fell by 1.78–8.05%. Peak measured live bytes were unchanged in every case.
+All seven cases used fewer allocations and fewer allocated bytes. Allocation counts fell by 0.30–5.54%, and allocated bytes fell by 1.78–8.05%. Peak measured live bytes were unchanged in every case. Owned matrix materialization and bucket reconciliation continue to allocate.
 
 The case column is query duration in minutes, series count, then bucket count. Each result cell shows base followed by changed code.
 
@@ -64,4 +64,4 @@ The [repeat script](evidence/promql-histogram-windows-383/capture_repeat.py) rea
 - `cargo test -p krabka-promql --lib --locked`: 733 passed, including the new index boundary, duplicate ownership and property tests.
 - `cargo test -p krabka-promql --test histogram_windows --test conformance --locked`: 19 conformance entries and one range-query regression test passed.
 - The regression test compares cached range results and annotations with 216 independent instant evaluations. It covers 12 functions, offsets, mixed sample types, duplicate timestamps, reset hints, start timestamps, and changing exponential and custom buckets.
-- The full local `bazel test //...` cold build was interrupted after 13 repository checks passed. The full workspace gate is queued in PR CI.
+- The full local `bazel test //...` cold build was interrupted after 13 repository checks passed. The full workspace gate runs in PR CI.
