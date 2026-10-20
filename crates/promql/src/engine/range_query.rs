@@ -199,13 +199,6 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// Returns `Ok(None)` only if some step's [`Self::plan_instant_expr`] returns
     /// `None`. The planner is total, so this never happens for a plannable
     /// `expr`. The caller treats an `Ok(None)` as an internal planner bug.
-    #[tracing::instrument(
-        name = "promql.range_planner",
-        level = "debug",
-        skip_all,
-        fields(start_ms = start_ms, end_ms = end_ms, step_ms = step.millis_i64(), steps = tracing::field::Empty),
-        err
-    )]
     pub(super) async fn eval_range_via_planner(
         &self,
         tenant: &str,
@@ -214,6 +207,39 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
         step: Time,
     ) -> Result<Option<Vec<RangeSeries>>> {
+        self.eval_range_via_planner_bounded(
+            tenant,
+            expr,
+            StepGrid {
+                start: start_ms,
+                end: end_ms,
+                step: step.millis_i64(),
+            },
+            usize::MAX,
+        )
+        .await
+    }
+
+    #[tracing::instrument(
+        name = "promql.range_planner",
+        level = "debug",
+        skip_all,
+        fields(start_ms = grid.start, end_ms = grid.end, step_ms = grid.step, steps = tracing::field::Empty),
+        err
+    )]
+    pub(super) async fn eval_range_via_planner_bounded(
+        &self,
+        tenant: &str,
+        expr: &Expr,
+        grid: StepGrid,
+        point_budget: usize,
+    ) -> Result<Option<Vec<RangeSeries>>> {
+        let StepGrid {
+            start: start_ms,
+            end: end_ms,
+            step: step_ms,
+        } = grid;
+        let step = Time::from_millis(step_ms);
         // Backstop the resolution cap before the per-step loop, so an abusive
         // subquery resolution (e.g. `last_over_time(up[1000d:1ms])`) errors
         // rather than looping ~1e11 times. The HTTP front-gate enforces the same
@@ -245,9 +271,11 @@ impl<S: MetricStore> PromqlEngine<S> {
                 },
                 points: 0,
                 leaves: std::collections::HashMap::new(),
+                subqueries: std::collections::HashMap::new(),
             }));
         let driver = async move {
             let mut by_fp: BTreeMap<SeriesFingerprint, RangeSeries> = BTreeMap::new();
+            let mut points = 0_usize;
             let mut step_time_ms = start_ms;
             while step_time_ms <= end_ms {
                 let result = query_stats_step(step_time_ms, async {
@@ -269,18 +297,34 @@ impl<S: MetricStore> PromqlEngine<S> {
                     // whole query so the interpreter produces a consistent result.
                     return Ok(None);
                 };
+                points = points.saturating_add(match &result {
+                    QueryResult::InstantVector(samples) => samples.len(),
+                    QueryResult::Scalar { .. } => 1,
+                    _ => 0,
+                });
+                if points > point_budget {
+                    return Ok(None);
+                }
                 match result {
                     QueryResult::InstantVector(samples) => {
                         for sample in samples {
                             let fp = sample.labels.fingerprint();
-                            by_fp
-                                .entry(fp)
-                                .or_insert_with(|| RangeSeries {
-                                    drop_name: sample.drop_name,
-                                    start_timestamps_ms: std::collections::BTreeMap::new(),
-                                    labels: sample.labels.clone(),
-                                    samples: Vec::new(),
-                                })
+                            let series = by_fp.entry(fp).or_insert_with(|| RangeSeries {
+                                drop_name: sample.drop_name,
+                                start_timestamps_ms: std::collections::BTreeMap::new(),
+                                labels: sample.labels.clone(),
+                                samples: Vec::new(),
+                            });
+                            // A union memo needs one stable name policy per series.
+                            // Histograms have a variable size, so its point budget
+                            // only admits float samples.
+                            if point_budget != usize::MAX
+                                && (series.drop_name != sample.drop_name
+                                    || !matches!(sample.value, SampleValue::Float(_)))
+                            {
+                                return Ok(None);
+                            }
+                            series
                                 .samples
                                 .push(RangeSeriesSample::new(step_time_ms, sample.value));
                         }
@@ -307,7 +351,11 @@ impl<S: MetricStore> PromqlEngine<S> {
                         return Ok(None);
                     }
                 }
-                step_time_ms = step_time_ms.saturating_add(step.millis_i64());
+                let next = step_time_ms.saturating_add(step.millis_i64());
+                if next <= step_time_ms {
+                    break;
+                }
+                step_time_ms = next;
             }
             Ok(Some(by_fp.into_values().collect()))
         };

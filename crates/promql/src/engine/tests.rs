@@ -175,6 +175,7 @@ mod planner_parity_core;
 mod planner_parity_ranges;
 mod range_semantics;
 mod scalar_semantics;
+mod subquery_grid;
 mod vector_semantics;
 use api_series_engines::{api_latency_engine, late_jump_engine, requests_counter_engine};
 use assert_aggregate_nan_staleness::assert_aggregate_nan_staleness;
