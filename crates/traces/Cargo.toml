@@ -25,16 +25,16 @@ heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 [dependencies]
 assert2 = { workspace = true }
 arc-swap = { workspace = true }
-krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-krabka-metrics = { path = "../metrics", version = "0.4.0" }
-krabka-logql = { path = "../logql", version = "0.4.0" }
-krabka-observability = { path = "../observability", version = "0.4.0" }
-krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
+krabka-blockstore = { path = "../blockstore", version = "0.4.1" }
+krabka-metrics = { path = "../metrics", version = "0.4.1" }
+krabka-logql = { path = "../logql", version = "0.4.1" }
+krabka-observability = { path = "../observability", version = "0.4.1" }
+krabka-query-frontend = { path = "../query-frontend", version = "0.4.1" }
 krabka-telemetry = { version = "1.0.0" }
 krabka-client-consumer = { version = "0.6.0" }
 krabka-client-producer = { version = "0.6.0" }
 krabka-client-core = { version = "0.6.0" }
-krabka-traceql = { path = "../traceql", version = "0.4.0" }
+krabka-traceql = { path = "../traceql", version = "0.4.1" }
 krabka-units = { workspace = true }
 arrow = { workspace = true }
 async-trait = { workspace = true }

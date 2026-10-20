@@ -3540,7 +3540,15 @@ async fn status_buildinfo_endpoint_returns_prometheus_envelope() {
 
     let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["version"].as_str() == Some(env!("CARGO_PKG_VERSION")));
+    let expected_version = include_str!("../../../Cargo.toml")
+        .split("[workspace.package]\n")
+        .nth(1)
+        .expect("workspace package table")
+        .lines()
+        .find_map(|line| line.strip_prefix("version = \""))
+        .and_then(|version| version.strip_suffix('"'))
+        .expect("workspace package version");
+    assert2::assert!(body["data"]["version"].as_str() == Some(expected_version));
     assert2::assert!(
         body["data"]["revision"]
             .as_str()

@@ -175,6 +175,7 @@ def crate_library(
             rustc_flags = WORKSPACE_RUSTC_FLAGS,
             visibility = ["//visibility:public"],
             deps = deps,
+            version = native.module_version(),
             **kwargs
         )
 
@@ -231,6 +232,7 @@ def crate_binary(name, crate_root, lib, tests = True, extra_srcs = [], **kwargs)
         rustc_flags = WORKSPACE_RUSTC_FLAGS,
         visibility = ["//visibility:public"],
         deps = all_crate_deps(normal = True) + [lib],
+        version = native.module_version(),
         **kwargs
     )
     clippy_test(
@@ -248,6 +250,7 @@ def crate_binary(name, crate_root, lib, tests = True, extra_srcs = [], **kwargs)
             edition = edition(),
             rustc_flags = WORKSPACE_RUSTC_FLAGS,
             deps = all_crate_deps(normal_dev = True),
+            version = native.module_version(),
         )
         clippy_test(
             name = name + "_test_clippy",
@@ -385,6 +388,7 @@ def crate_tests(
         rustc_flags = WORKSPACE_RUSTC_FLAGS,
         tags = unit_tags,
         deps = all_crate_deps(normal_dev = True),
+        version = native.module_version(),
     )
     clippy_test(
         name = unit + "_clippy",
@@ -485,6 +489,7 @@ def crate_tests(
             # same package in both tables. `all_crate_deps` merges the two specs
             # through a set, so asking for both at once dedupes them.
             deps = all_crate_deps(normal = True, normal_dev = True) + [":" + lib],
+            version = native.module_version(),
         )
         clippy_test(
             name = target + "_clippy",
@@ -525,6 +530,7 @@ def crate_tests(
             tags = ["manual"],
             use_libtest_harness = not wrapped,
             deps = all_crate_deps(normal = True, normal_dev = True) + [":" + lib],
+            version = native.module_version(),
         )
 
         image_tars = ["//bazel/images:%s_tar" % image for image in docker[stem]]
@@ -636,6 +642,7 @@ def crate_tests(
             rustc_flags = WORKSPACE_RUSTC_FLAGS,
             tags = unit_tags,
             deps = all_crate_deps(normal_dev = True),
+            version = native.module_version(),
         )
         clippy_test(
             name = variant_lib + "_test_clippy",
@@ -675,6 +682,7 @@ def crate_tests(
                 use_libtest_harness = not wrapped,
                 deps = all_crate_deps(normal = True, normal_dev = True) +
                        [":" + variant_lib],
+                version = native.module_version(),
             )
             clippy_test(
                 name = target + "_clippy",
