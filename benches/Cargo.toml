@@ -107,6 +107,10 @@ debug = false
 # target's name, which is how //tools/bench-ratchet.py's `--bench` narrows a
 # partial run to the ids that run belongs to.
 [[bench]]
+name = "template_regex"
+harness = false
+
+[[bench]]
 name = "blockstore_write"
 harness = false
 

@@ -2,6 +2,7 @@ use base64::{Engine as _, prelude::BASE64_STANDARD};
 
 use super::TemplateRuntimeValue;
 mod byte_regex;
+pub(super) use byte_regex::TemplateRegexCache;
 mod go_unicode_case;
 
 /// Compares UTF-8 strings using Go's Unicode 15 simple case folding.
@@ -197,6 +198,30 @@ pub(crate) fn evaluate_template_byte_function(
         _ => return None,
     };
     Some(TemplateRuntimeValue::Bytes(result))
+}
+
+pub(super) fn evaluate_regex_function(
+    name: &str,
+    args: &[TemplateRuntimeValue],
+    regex: &regex::Regex,
+) -> TemplateRuntimeValue {
+    let result = byte_regex::regex_apply_compiled(
+        name,
+        regex,
+        args[1].string_bytes().expect("validated string"),
+        if name == "count" {
+            b""
+        } else {
+            args[2].string_bytes().expect("validated string")
+        },
+    );
+    if name == "count" {
+        TemplateRuntimeValue::Integer(
+            i64::try_from(result.matches).expect("regex matches fit int64"),
+        )
+    } else {
+        TemplateRuntimeValue::Bytes(result.value)
+    }
 }
 
 fn find_bytes(value: &[u8], needle: &[u8]) -> Option<usize> {
