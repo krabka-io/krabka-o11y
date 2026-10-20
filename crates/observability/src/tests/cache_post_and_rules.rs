@@ -1,4 +1,4 @@
-use crate::tests::prelude::{Bytes, check};
+use crate::tests::prelude::{Bytes, MetricSampleState, MetricValue, RangeAggregation, check};
 
 /// `post_query_params` merges a URL query with a form body. It has a
 /// near-twin, `post_query_params_body_first`, which differs only in which
@@ -33,17 +33,12 @@ pub(crate) fn a_posted_query_puts_the_url_first_and_the_body_second() {
     check!(body_first(Some(""), "b=2") == "b=2");
 }
 
-/// `has_samples` gates every aggregate that would otherwise divide by a
-/// count of zero, so it must be false at zero and true at one.
 #[test]
 pub(crate) fn a_sample_state_has_samples_from_the_first_one() {
-    let mut state = crate::tests::prelude::MetricSampleState::default();
-    check!(!state.has_samples(), "an empty state has none");
-
-    state.summary.count = 1;
-    check!(state.has_samples(), "one sample is enough");
-    state.summary.count = 100;
-    check!(state.has_samples());
+    let mut state = MetricSampleState::new(RangeAggregation::CountOverTime);
+    check!(!state.has_samples());
+    state.record(10, MetricValue::zero());
+    check!(state.has_samples(), "a zero value is still a sample");
 }
 
 /// A scalar renders its sign from the numerator alone, and a decimal that
@@ -126,193 +121,50 @@ pub(crate) fn empty_prometheus_rules_filter_values_are_ignored() {
     check!(filters == crate::tests::prelude::PrometheusRulesFilters::default());
 }
 
-#[bon::builder]
-fn tied_sample_state(value: i128) -> crate::tests::prelude::MetricSampleState {
-    let value = crate::tests::prelude::MetricValue {
-        numerator: value,
-        denominator: 1,
-    };
-    crate::tests::prelude::MetricSampleState {
-        summary: crate::tests::prelude::VectorAggregationState {
-            count: 1,
-            ..Default::default()
-        },
-        first: Some(crate::tests::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value,
-        }),
-        last: Some(crate::tests::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value,
-        }),
-        ..Default::default()
+#[test]
+pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
+    for (aggregation, expected) in [
+        (RangeAggregation::MinOverTime, 3),
+        (RangeAggregation::MaxOverTime, 9),
+        (RangeAggregation::FirstOverTime, 3),
+        (RangeAggregation::LastOverTime, 9),
+    ] {
+        let mut narrow = MetricSampleState::new(aggregation);
+        narrow.record(10, MetricValue::integer(5));
+        let mut wide = MetricSampleState::new(aggregation);
+        wide.record(5, MetricValue::integer(3));
+        wide.record(20, MetricValue::integer(9));
+        let mut left = narrow.clone();
+        left.merge(wide.clone());
+        wide.merge(narrow);
+        check!(left.value(aggregation) == MetricValue::integer(expected));
+        check!(wide.value(aggregation) == MetricValue::integer(expected));
+    }
+    for aggregation in [
+        RangeAggregation::FirstOverTime,
+        RangeAggregation::LastOverTime,
+    ] {
+        let mut held = MetricSampleState::new(aggregation);
+        held.record(10, MetricValue::integer(1));
+        let mut incoming = MetricSampleState::new(aggregation);
+        incoming.record(10, MetricValue::integer(7));
+        held.merge(incoming);
+        check!(held.value(aggregation) == MetricValue::integer(1));
     }
 }
 
-/// Merging two partial sample states keeps the smaller minimum, the larger
-/// maximum, the earliest first and the latest last, taking each from
-/// whichever side holds it. A tie on the timestamp keeps the side already
-/// held -- the only thing that separates `<` from `<=` at either end.
-#[test]
-pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
-    let value = |numerator: i128| crate::tests::prelude::MetricValue {
-        numerator,
-        denominator: 1,
-    };
-
-    // One side holds a single 5 at 10 ns, the other a 3 to 9 spread from
-    // 5 ns to 20 ns.
-    let narrow = crate::tests::prelude::MetricSampleState {
-        summary: crate::tests::prelude::VectorAggregationState {
-            count: 1,
-            min: Some(value(5)),
-            max: Some(value(5)),
-            ..Default::default()
-        },
-        first: Some(crate::tests::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value: value(1),
-        }),
-        last: Some(crate::tests::prelude::TimestampedMetricValue {
-            timestamp_ns: 10,
-            value: value(1),
-        }),
-        ..Default::default()
-    };
-    let wide = crate::tests::prelude::MetricSampleState {
-        summary: crate::tests::prelude::VectorAggregationState {
-            count: 1,
-            min: Some(value(3)),
-            max: Some(value(9)),
-            ..Default::default()
-        },
-        first: Some(crate::tests::prelude::TimestampedMetricValue {
-            timestamp_ns: 5,
-            value: value(2),
-        }),
-        last: Some(crate::tests::prelude::TimestampedMetricValue {
-            timestamp_ns: 20,
-            value: value(3),
-        }),
-        ..Default::default()
-    };
-
-    // Every field of the incoming state wins: a lower minimum, a higher
-    // maximum, an earlier first and a later last.
-    let mut left = narrow.clone();
-    left.merge(wide.clone());
-
-    check!(left.summary.count == 2);
-    check!(
-        left.summary.min == Some(value(3)),
-        "the smaller minimum wins"
-    );
-    check!(
-        left.summary.max == Some(value(9)),
-        "the larger maximum wins"
-    );
-    check!(
-        left.first
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 5,
-                value: value(2)
-            }),
-        "the earlier first wins"
-    );
-    check!(
-        left.last
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 20,
-                value: value(3)
-            }),
-        "the later last wins"
-    );
-
-    // Now the other way round, so neither side is simply preferred.
-    let mut right = wide;
-    right.merge(narrow);
-    check!(
-        right.summary.min == Some(value(3)),
-        "the held minimum survives"
-    );
-    check!(
-        right.summary.max == Some(value(9)),
-        "the held maximum survives"
-    );
-    check!(
-        right.first
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 5,
-                value: value(2)
-            }),
-        "the held first survives"
-    );
-    check!(
-        right.last
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 20,
-                value: value(3)
-            }),
-        "the held last survives"
-    );
-
-    // Matching timestamps on both sides: the value already held stays.
-    let mut tied = tied_sample_state().value(1).call();
-    tied.merge(tied_sample_state().value(7).call());
-    check!(
-        tied.first
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 10,
-                value: value(1)
-            }),
-        "a tie keeps the first already held"
-    );
-    check!(
-        tied.last
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 10,
-                value: value(1)
-            }),
-        "a tie keeps the last already held"
-    );
-}
-
-/// Recording keeps the earliest sample and the latest, and a later record
-/// at a timestamp already held changes neither. The four below arrive out
-/// of order and revisit both ends: without the revisits, the guards could
-/// take the last writer at each end instead of the first.
 #[test]
 pub(crate) fn recording_samples_keeps_the_earliest_and_the_latest() {
-    let value = |numerator: i128| crate::tests::prelude::MetricValue {
-        numerator,
-        denominator: 1,
-    };
-    let mut state = crate::tests::prelude::MetricSampleState::default();
-
-    state.record(10, value(1));
-    state.record(5, value(2));
-    // Neither of these displaces an end: one repeats the latest timestamp,
-    // the other the earliest.
-    state.record(10, value(3));
-    state.record(5, value(4));
-
-    check!(state.summary.count == 4);
-    check!(
-        state.first
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 5,
-                value: value(2)
-            }),
-        "the earliest timestamp, from the first record that reached it"
-    );
-    check!(
-        state.last
-            == Some(crate::tests::prelude::TimestampedMetricValue {
-                timestamp_ns: 10,
-                value: value(1)
-            }),
-        "the latest timestamp, from the first record that reached it"
-    );
+    for (aggregation, expected) in [
+        (RangeAggregation::FirstOverTime, 2),
+        (RangeAggregation::LastOverTime, 1),
+    ] {
+        let mut state = MetricSampleState::new(aggregation);
+        for (timestamp, value) in [(10, 1), (5, 2), (10, 3), (5, 4)] {
+            state.record(timestamp, MetricValue::integer(value));
+        }
+        check!(state.value(aggregation) == MetricValue::integer(expected));
+    }
 }
 
 /// The comparison operators are a six-entry table, and every strict one
