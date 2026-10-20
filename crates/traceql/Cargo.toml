@@ -21,7 +21,7 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
-krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
+krabka-blockstore = { path = "../blockstore", version = "0.4.1" }
 krabka-units = { workspace = true }
 arrow = { workspace = true }
 datafusion = { workspace = true }
