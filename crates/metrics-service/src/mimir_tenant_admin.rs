@@ -105,7 +105,7 @@ async fn delete_tenant(
         }
     }
     state.hot_store.delete_tenant(tenant.as_str());
-    state.query_store.invalidate().await;
+    state.query_store.invalidate(tenant.as_str()).await;
     StatusCode::OK.into_response()
 }
 

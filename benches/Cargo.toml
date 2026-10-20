@@ -68,6 +68,7 @@ krabka-blockstore = { path = "../crates/blockstore" }
 # `WalRecord` is `krabka-metrics`' type, not one //crates/promql re-exports,
 # and the WAL-head benchmark applies records rather than pushing samples.
 krabka-metrics = { path = "../crates/metrics" }
+krabka-metrics-service = { path = "../crates/metrics-service" }
 krabka-logql = { path = "../crates/logql" }
 krabka-observability = { path = "../crates/observability" }
 krabka-pprof = { path = "../crates/pprof" }
@@ -83,6 +84,8 @@ tower = { version = "0.5", features = ["util"] }
 # HTTP ingest profiling stays in this workspace so allocation instrumentation
 # and OTLP fixture dependencies do not reach production or unit-test binaries.
 allocation-counter = "0.8.1"
+futures = "0.3"
+url = "2"
 async-trait = "0.1"
 bytes = "1"
 futures = "0.3"

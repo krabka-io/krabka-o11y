@@ -161,6 +161,11 @@ fn metrics_index(key: &str, rest: &[&str]) -> ClassifiedObject {
 
 fn metrics_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
     let parts = match rest {
+        ["_catalog", "v1", "time" | "timeless", ..]
+            if rest.last().is_some_and(|file| file.ends_with(".catalog")) =>
+        {
+            return tenant_object(StorageSignal::Metrics, tenant, ObjectRole::MetricsCatalog);
+        }
         // A Prometheus TSDB import writes its blocks and its `_published`
         // marker in a directory of their own, `uploaded/<ulid>-<hash>/`.
         ["uploaded", _, "_published"] => {

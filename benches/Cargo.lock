@@ -3415,6 +3415,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabka-client-coordination"
+version = "0.6.0"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=ee411691e39a05f3ed4e4ed8adc1e8939fd111b4#ee411691e39a05f3ed4e4ed8adc1e8939fd111b4"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "bon",
+ "bytes",
+ "krabka-client-admin",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-protocol",
+ "krabka-units",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "krabka-client-core"
 version = "0.6.0"
 source = "git+https://github.com/krabka-io/krabka-client-rs?rev=ee411691e39a05f3ed4e4ed8adc1e8939fd111b4#ee411691e39a05f3ed4e4ed8adc1e8939fd111b4"
@@ -3593,6 +3612,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabka-metrics-service"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "assert2",
+ "async-trait",
+ "axum",
+ "bytes",
+ "clap",
+ "futures",
+ "krabka-blockstore",
+ "krabka-client-consumer",
+ "krabka-client-coordination",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-ids",
+ "krabka-metrics",
+ "krabka-observability",
+ "krabka-promql",
+ "krabka-query-frontend",
+ "krabka-telemetry",
+ "krabka-units",
+ "object_store",
+ "prometheus-client",
+ "refined_type",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "krabka-o11y-benches"
 version = "0.0.0"
 dependencies = [
@@ -3608,6 +3666,7 @@ dependencies = [
  "krabka-blockstore",
  "krabka-logql",
  "krabka-metrics",
+ "krabka-metrics-service",
  "krabka-observability",
  "krabka-pprof",
  "krabka-promql",
@@ -3619,6 +3678,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+ "url",
 ]
 
 [[package]]
@@ -8135,11 +8195,6 @@ source = "git+https://github.com/krabka-io/krabka-broker?rev=ada8e3adeab153dd2aa
 name = "krabka-broker"
 version = "1.0.0"
 source = "git+https://github.com/krabka-io/krabka-broker?rev=ada8e3adeab153dd2aa92a7459673519ad3e167a#ada8e3adeab153dd2aa92a7459673519ad3e167a"
-
-[[patch.unused]]
-name = "krabka-client-coordination"
-version = "0.6.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=ee411691e39a05f3ed4e4ed8adc1e8939fd111b4#ee411691e39a05f3ed4e4ed8adc1e8939fd111b4"
 
 [[patch.unused]]
 name = "krabka-docgen"

@@ -72,6 +72,7 @@ use crate::{
 mod audit_delete_state;
 mod audit_inventory;
 mod audit_log_manifests;
+mod audit_metrics_catalogs;
 mod audit_snapshot_index;
 mod check_block;
 mod classified_object;
@@ -135,7 +136,7 @@ pub struct ListedObject {
 }
 
 /// The block kind of a metrics `.index` manifest, in persisted variant order.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 pub enum MetricsBlockKind {
     Float,
     NativeHistograms,
@@ -151,6 +152,8 @@ pub enum ObjectRole {
     Block(BlockShape),
     /// A metrics `.index` sidecar that makes its block live.
     MetricsIndex { block: String },
+    /// A compact metrics manifest summary used for query discovery.
+    MetricsCatalog,
     /// A profiles `.symdb` symbol table, written after its block.
     Symbols { block: String },
     /// A generation, payload or shard object of a snapshot index.
@@ -469,6 +472,7 @@ pub async fn audit_metrics_objects(
 ) -> Result<Vec<StorageFinding>, StorageAuditError> {
     let mut live = LiveBlockSet::default();
     let mut findings = Vec::new();
+    let mut manifests = BTreeMap::new();
     for entry in inventory.of_signal(StorageSignal::Metrics) {
         let key = entry.key;
         let listed = entry.listed;
@@ -497,6 +501,9 @@ pub async fn audit_metrics_objects(
                     ));
                 }
                 let mismatch = manifest.mismatch(key, block, tenant.as_deref());
+                if mismatch.is_none() {
+                    manifests.insert(key.clone(), manifest.clone());
+                }
                 live.live.insert(manifest.block_key, manifest.tenant);
                 mismatch.map(|detail| finding(StorageFindingKind::IndexMismatch, detail))
             }
@@ -512,6 +519,9 @@ pub async fn audit_metrics_objects(
             findings.push(problem);
         }
     }
+    findings.extend(
+        audit_metrics_catalogs::audit_metrics_catalogs(store, inventory, &manifests).await?,
+    );
     append_unindexed_blocks(
         &mut findings,
         inventory,

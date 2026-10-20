@@ -44,6 +44,7 @@ mod map_array_string_entries;
 mod matcher;
 mod merge;
 mod metrics;
+mod metrics_manifest_catalog_key;
 mod nested_set;
 mod object_store_provider;
 mod object_store_semantics;
@@ -143,6 +144,7 @@ pub use merge::{
 pub use metrics::{
     MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
 };
+pub use metrics_manifest_catalog_key::{is_metrics_import_directory, metrics_manifest_catalog_key};
 pub use nested_set::{CycleSpans, NestedSet, SpanNode, assign_nested_set};
 pub use object_store_provider::{object_store_cloud, object_store_endpoint_host};
 pub use object_store_semantics::{

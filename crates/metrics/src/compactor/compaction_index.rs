@@ -21,7 +21,7 @@ pub struct CompactionIndex {
 }
 
 impl CompactionIndex {
-    /// The keys of every manifest, block and marker of `tenant`, in key
+    /// The keys of every manifest, catalog summary, block and marker of `tenant`, in key
     /// order.
     #[must_use]
     pub fn tenant_keys(&self, tenant: &str) -> Vec<String> {
@@ -34,7 +34,13 @@ impl CompactionIndex {
             .iter()
             .chain(&self.pending)
             .filter(|manifest| manifest.tenant == tenant)
-            .flat_map(|manifest| [manifest.index_key.clone(), manifest.block_key.clone()])
+            .flat_map(|manifest| {
+                [
+                    manifest.index_key.clone(),
+                    manifest.block_key.clone(),
+                    crate::manifest_catalog::metric_manifest_catalog_key(manifest),
+                ]
+            })
             .chain(
                 self.markers
                     .iter()

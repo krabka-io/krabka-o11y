@@ -129,6 +129,16 @@ pub fn metrics_manifest(tenant: &str, block_key: &str, index_key: &str) -> Vec<u
     SerdeCompat::<MetricsManifest>::serialize(&manifest).unwrap()
 }
 
+async fn publish_metrics_catalog(store: &Arc<dyn ObjectStore>, tenant: &str, index_key: &str) {
+    let key = krabka_blockstore::metrics_manifest_catalog_key(tenant, index_key, 10, 10, false);
+    let body = serde_json::to_vec(&serde_json::json!({
+        "format_version": 1,
+        "manifests": [{ "index_key": index_key, "min_ts": 10, "max_ts": 10, "kind": "Float" }]
+    }))
+    .unwrap();
+    put_bytes(store, &key, body).await;
+}
+
 // The bytes of an empty `.symdb` symbol table, in the field order of
 // `SymbolDb`.
 pub fn symbol_table() -> Vec<u8> {
@@ -274,6 +284,7 @@ pub async fn publish(
                 let sidecar = sidecar_key(signal, key);
                 let manifest = metrics_manifest(key_tenant(key), key, &sidecar);
                 put_bytes(store, &sidecar, manifest).await;
+                publish_metrics_catalog(store, key_tenant(key), &sidecar).await;
             }
         }
         StorageSignal::Traces => {
@@ -436,6 +447,7 @@ pub async fn upper_case_manifest(store: &Arc<dyn ObjectStore>) -> String {
     put_block(store, StorageSignal::Metrics, &block).await;
     let manifest = format!("{}.INDEX", block.trim_end_matches(".parquet"));
     put_bytes(store, &manifest, metrics_manifest("t", &block, &manifest)).await;
+    publish_metrics_catalog(store, "t", &manifest).await;
     block
 }
 

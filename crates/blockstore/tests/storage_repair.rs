@@ -598,7 +598,11 @@ async fn live_set(store: &Arc<dyn ObjectStore>, signal: StorageSignal) -> BTreeS
         match signal {
             StorageSignal::Metrics => {
                 let block = block_key(signal, tenant, 0, 9);
-                live.insert(sidecar_key(signal, &block));
+                let index = sidecar_key(signal, &block);
+                live.insert(krabka_blockstore::metrics_manifest_catalog_key(
+                    tenant, &index, 10, 10, false,
+                ));
+                live.insert(index);
                 live.insert(block);
             }
             StorageSignal::Traces => {

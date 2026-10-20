@@ -514,6 +514,11 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
     let record = expected_record(FIXTURE_ULID, &sha256, &block);
     let binding = format!("{RECORD_PREFIX}/{TENANT}/{FIXTURE_ULID}/import.json");
     let committed = format!("{RECORD_PREFIX}/{TENANT}/by-sha256/{sha256}.json");
+    let catalog_manifests = record
+        .objects
+        .iter()
+        .map(|object| expected_manifest(object, &block))
+        .collect::<Vec<_>>();
     let committed_keys = |indexes: usize| {
         [binding.clone(), committed.clone()]
             .into_iter()
@@ -546,6 +551,10 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
             remaining: BTreeSet::new(),
         },
         RefusalCase {
+            refused: ".catalog".to_owned(),
+            remaining: committed_keys(2),
+        },
+        RefusalCase {
             refused: "/float.index".to_owned(),
             remaining: committed_keys(0),
         },
@@ -575,8 +584,16 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
             "refused: {}",
             case.refused
         );
+        let mut expected = case.remaining.clone();
+        if case.refused == "/_published" {
+            expected.extend(
+                catalog_manifests
+                    .iter()
+                    .map(krabka_metrics::manifest_catalog::metric_manifest_catalog_key),
+            );
+        }
         check!(
-            all_keys(store.as_ref()).await == case.remaining,
+            all_keys(store.as_ref()).await == expected,
             "refused: {}",
             case.refused
         );
@@ -585,6 +602,16 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
         let retry = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
             .await
             .expect("the retry publishes");
+        for manifest in &catalog_manifests {
+            check!(
+                store
+                    .head(&Path::from(
+                        krabka_metrics::manifest_catalog::metric_manifest_catalog_key(manifest)
+                    ))
+                    .await
+                    .is_ok()
+            );
+        }
         check!(
             retry == TsdbImportOutcome::Imported(record.clone()),
             "refused: {}",
@@ -690,7 +717,18 @@ async fn a_published_import_is_not_restored_after_compaction_removed_its_manifes
     check!(outcome == TsdbImportOutcome::AlreadyImported(record));
     check!(
         keys_under(store.as_ref(), MANIFEST_PREFIX).await
-            == BTreeSet::from([marker_key(FIXTURE_ULID, &sha256)])
+            == std::iter::once(marker_key(FIXTURE_ULID, &sha256))
+                .chain(
+                    expected_record(FIXTURE_ULID, &sha256, &block)
+                        .objects
+                        .iter()
+                        .map(|object| {
+                            krabka_metrics::manifest_catalog::metric_manifest_catalog_key(
+                                &expected_manifest(object, &block),
+                            )
+                        })
+                )
+                .collect()
     );
 }
 
@@ -949,7 +987,18 @@ async fn an_import_that_stopped_after_its_marker_is_not_published_again() {
     check!(outcome == TsdbImportOutcome::AlreadyImported(record));
     check!(
         keys_under(store.as_ref(), MANIFEST_PREFIX).await
-            == BTreeSet::from([marker_key(FIXTURE_ULID, &sha256)])
+            == std::iter::once(marker_key(FIXTURE_ULID, &sha256))
+                .chain(
+                    expected_record(FIXTURE_ULID, &sha256, &block)
+                        .objects
+                        .iter()
+                        .map(|object| {
+                            krabka_metrics::manifest_catalog::metric_manifest_catalog_key(
+                                &expected_manifest(object, &block),
+                            )
+                        })
+                )
+                .collect()
     );
 }
 
@@ -1029,6 +1078,20 @@ fn the_tenant_keys_name_live_and_pending_objects_and_markers_of_one_tenant() {
     };
 
     let keys = index.tenant_keys(TENANT);
+    let catalogs = index
+        .live
+        .iter()
+        .chain(&index.pending)
+        .filter(|manifest| manifest.tenant == TENANT)
+        .map(krabka_metrics::manifest_catalog::metric_manifest_catalog_key)
+        .collect::<BTreeSet<_>>();
+    for key in &catalogs {
+        check!(keys.contains(key));
+    }
+    let keys = keys
+        .into_iter()
+        .filter(|key| !catalogs.contains(key))
+        .collect::<Vec<_>>();
 
     check!(
         keys == [

@@ -10,8 +10,9 @@ use axum::{
 };
 use krabka_blockstore::escape_object_path_segment;
 use krabka_metrics::{
-    COL_FINGERPRINT, COL_TIMESTAMP, CompactionIndexManifest, MetricBlockKind, exemplar_schema,
-    float_sample_schema, metadata_schema, native_histogram_schema,
+    COL_FINGERPRINT, COL_TIMESTAMP, CompactionIndexManifest, CompactionIndexSink, MetricBlockKind,
+    ObjectStoreCompactionIndexSink, exemplar_schema, float_sample_schema, metadata_schema,
+    native_histogram_schema,
 };
 use krabka_observability::server_security::Principal;
 use object_store::{ObjectStoreExt as _, PutPayload, path::Path as ObjectPath};
@@ -210,7 +211,7 @@ pub(crate) async fn finish_block_upload(
         return internal(error);
     }
     if saved.result == UploadResult::Complete {
-        state.query_store.invalidate().await;
+        state.query_store.invalidate(&tenant).await;
     }
     StatusCode::OK.into_response()
 }
@@ -436,12 +437,8 @@ async fn complete_native_upload(
     manifest.tenant = tenant.to_owned();
     manifest.block_key = final_block.to_string();
     manifest.index_key = final_index.to_string();
-    state
-        .store
-        .put(
-            &final_index,
-            PutPayload::from(manifest.encode().map_err(|error| error.to_string())?),
-        )
+    ObjectStoreCompactionIndexSink::new(state.store.clone())
+        .write_manifest(&manifest)
         .await
         .map_err(|error| error.to_string())?;
     Ok(())

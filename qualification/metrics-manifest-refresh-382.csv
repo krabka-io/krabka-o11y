@@ -1,0 +1,7 @@
+mode,unrelated_tenants,historical,lists,list_pages,listed_objects,gets,heads,allocations,allocated_bytes,mean_us
+global,0,0,1,1,6,3,1,302,45639,729
+tenant_time,0,0,12,12,3,6,1,479,64187,736
+global,1000,1000,1,5,4006,2003,1,114880,18743146,148446
+tenant_time,1000,1000,12,12,3,6,1,479,64187,750
+global,10000,10000,1,41,40006,20003,1,1147029,199338690,1943231
+tenant_time,10000,10000,12,12,3,6,1,479,64187,807

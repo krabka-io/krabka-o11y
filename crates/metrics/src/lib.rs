@@ -43,6 +43,7 @@ pub mod compactor;
 pub mod distributor;
 pub mod histogram;
 pub mod limits;
+pub mod manifest_catalog;
 pub mod metadata;
 pub mod metrics;
 mod numeric_sample_columns;

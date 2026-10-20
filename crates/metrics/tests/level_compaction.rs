@@ -979,6 +979,155 @@ async fn the_storage_audit_reads_the_manifests_the_compactor_writes() {
     check!(report.objects_unclassified == 0);
 }
 
+#[tokio::test]
+async fn storage_audit_checks_catalog_contents_and_live_manifest_coverage() {
+    use krabka_blockstore::StorageFindingKind;
+    use krabka_metrics::manifest_catalog::metric_manifest_catalog_key;
+
+    for fault in [
+        "missing",
+        "corrupt",
+        "version",
+        "missing-version",
+        "bounds",
+        "kind",
+        "reference",
+        "empty",
+        "retired",
+        "pending-import",
+        "published-import",
+    ] {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let manifest =
+            write_float_block(&store, "tenant/a", 0, &[float_sample(7, NOW_MS, 1.0)]).await;
+        let key = Path::from(metric_manifest_catalog_key(&manifest));
+        let bytes = store.get(&key).await.unwrap().bytes().await.unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let expected = match fault {
+            "missing" => {
+                store.delete(&key).await.unwrap();
+                Some(StorageFindingKind::UnreadableManifest)
+            }
+            "corrupt" => {
+                store.put(&key, b"not JSON".to_vec().into()).await.unwrap();
+                Some(StorageFindingKind::UnreadableManifest)
+            }
+            "retired" => {
+                store
+                    .delete(&Path::from(manifest.index_key.clone()))
+                    .await
+                    .unwrap();
+                store
+                    .delete(&Path::from(manifest.block_key.clone()))
+                    .await
+                    .unwrap();
+                None
+            }
+            "pending-import" | "published-import" => {
+                // A durable import can wait for retry before catalog publication.
+                let payload = store
+                    .get(&Path::from(manifest.block_key.clone()))
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap();
+                store.delete(&key).await.unwrap();
+                store
+                    .delete(&Path::from(manifest.index_key.clone()))
+                    .await
+                    .unwrap();
+                store
+                    .delete(&Path::from(manifest.block_key.clone()))
+                    .await
+                    .unwrap();
+                let mut pending = manifest.clone();
+                let directory =
+                    "metrics/tenant!2Fa/uploaded/01ARZ3NDEKTSV4RRFFQ69G5FAV-0123456789abcdef";
+                pending.index_key = format!("{directory}/float.index");
+                pending.block_key = format!("{directory}/float.parquet");
+                store
+                    .put(&Path::from(pending.block_key.clone()), payload.into())
+                    .await
+                    .unwrap();
+                store
+                    .put(
+                        &Path::from(pending.index_key.clone()),
+                        pending.encode().unwrap().into(),
+                    )
+                    .await
+                    .unwrap();
+                if fault == "published-import" {
+                    let catalog =
+                        krabka_metrics::manifest_catalog::MetricManifestCatalog::new(vec![
+                            (&pending).into(),
+                        ]);
+                    store
+                        .put(
+                            &Path::from(format!("{directory}/_published")),
+                            catalog.encode().unwrap().into(),
+                        )
+                        .await
+                        .unwrap();
+                    Some(StorageFindingKind::UnreadableManifest)
+                } else {
+                    None
+                }
+            }
+            _ => {
+                let kind = match fault {
+                    "version" => {
+                        value["format_version"] = 2.into();
+                        StorageFindingKind::UnsupportedFormat
+                    }
+                    "missing-version" => {
+                        value.as_object_mut().unwrap().remove("format_version");
+                        StorageFindingKind::UnreadableManifest
+                    }
+                    "bounds" => {
+                        value["manifests"][0]["min_ts"] = (NOW_MS - 1).into();
+                        StorageFindingKind::IndexMismatch
+                    }
+                    "kind" => {
+                        value["manifests"][0]["kind"] = "NativeHistograms".into();
+                        StorageFindingKind::IndexMismatch
+                    }
+                    "reference" => {
+                        value["manifests"][0]["index_key"] =
+                            "metrics/foreign/float/other.index".into();
+                        StorageFindingKind::IndexMismatch
+                    }
+                    "empty" => {
+                        value["manifests"] = serde_json::json!([]);
+                        StorageFindingKind::IndexMismatch
+                    }
+                    _ => unreachable!(),
+                };
+                store
+                    .put(&key, serde_json::to_vec(&value).unwrap().into())
+                    .await
+                    .unwrap();
+                Some(kind)
+            }
+        };
+        let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
+        options.signal = Some(StorageSignal::Metrics);
+        let report = audit_store(&store, &options).await.unwrap();
+        let actual: Vec<_> = report.findings.iter().map(|finding| finding.kind).collect();
+        assert!(
+            actual == expected.into_iter().collect::<Vec<_>>(),
+            "{fault}: {:?}",
+            report.findings
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.kind.is_repairable())
+        );
+    }
+}
+
 /// One day of epoch milliseconds.
 const DAY_MS: i64 = 86_400_000;
 
@@ -1074,15 +1223,31 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
                     ..CompactionRetentionPhase::default()
                 },
                 orphans: OrphanSweepStats {
-                    listed: 3,
-                    live: 2,
-                    deleted: 1,
+                    listed: 7,
+                    live: 4,
+                    deleted: 3,
                     ..OrphanSweepStats::default()
                 },
             }
     );
     check!(!exists(&store, &expired.block_key).await);
     check!(!exists(&store, orphan.as_ref()).await);
+    for input in [&first, &second] {
+        check!(
+            !exists(
+                &store,
+                &krabka_metrics::manifest_catalog::metric_manifest_catalog_key(input)
+            )
+            .await
+        );
+    }
+    check!(
+        exists(
+            &store,
+            &krabka_metrics::manifest_catalog::metric_manifest_catalog_key(&merged)
+        )
+        .await
+    );
     check!(
         list_compaction_manifests(&store)
             .await

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::{
     Arc, BlockWriter, CompactionIndexManifest, CompactionObjectPlan, DecodedTsdbBlock,
     ImportCommit, MetricBlockKind, ObjectStore, ObjectStoreExt, Path, PutPayload, RecordBatch,
@@ -370,7 +372,46 @@ async fn publish(
     for manifest in manifests {
         put_manifest(store, manifest).await?;
     }
-    put_marker(store, &keys.published_marker(&record.ulid, &record.sha256)).await?;
+    // The marker carries every compact reference, including manifests retained
+    // by a retry. Reading any summary can then resolve the whole publication.
+    let mut references = Vec::with_capacity(record.objects.len());
+    for object in &record.objects {
+        // A normal publication already owns these manifests. Only entries
+        // retained by a resumed import need another read of their labels.
+        let manifest = if let Some(manifest) = manifests
+            .iter()
+            .find(|manifest| manifest.index_key == object.index_key)
+        {
+            Cow::Borrowed(manifest)
+        } else {
+            let key = Path::from(object.index_key.as_str());
+            let bytes = store
+                .get(&key)
+                .await
+                .map_err(|source| TsdbPublishError::ObjectStore {
+                    key: key.to_string(),
+                    source,
+                })?
+                .bytes()
+                .await
+                .map_err(|source| TsdbPublishError::ObjectStore {
+                    key: key.to_string(),
+                    source,
+                })?;
+            Cow::Owned(CompactionIndexManifest::decode(&bytes)?)
+        };
+        crate::manifest_catalog::write_metric_manifest_catalog(store, manifest.as_ref()).await?;
+        references.push(manifest.as_ref().into());
+    }
+    let catalog = crate::manifest_catalog::MetricManifestCatalog::new(references);
+    let key = keys.published_marker(&record.ulid, &record.sha256);
+    store
+        .put(&key, PutPayload::from(catalog.encode()?))
+        .await
+        .map_err(|source| TsdbPublishError::ObjectStore {
+            key: key.to_string(),
+            source,
+        })?;
     mark_published(store, keys, record).await
 }
 
@@ -461,17 +502,6 @@ async fn put_manifest(
     let key = Path::from(manifest.index_key.as_str());
     store
         .put(&key, PutPayload::from(manifest.encode()?))
-        .await
-        .map_err(|source| TsdbPublishError::ObjectStore {
-            key: key.to_string(),
-            source,
-        })?;
-    Ok(())
-}
-
-async fn put_marker(store: &dyn ObjectStore, key: &Path) -> Result<(), TsdbPublishError> {
-    store
-        .put(key, PutPayload::default())
         .await
         .map_err(|source| TsdbPublishError::ObjectStore {
             key: key.to_string(),
