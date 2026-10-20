@@ -22,7 +22,7 @@ pub(crate) async fn through_scan_cache<T, F, Fut>(
     load: F,
 ) -> Result<Arc<T>>
 where
-    F: FnOnce(i64, i64) -> Fut,
+    F: Fn(i64, i64) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
     let Ok(cache) = RANGE_SCAN_CACHE.try_with(Arc::clone) else {
@@ -37,16 +37,44 @@ where
         {
             return Ok(value);
         }
-        if range_only && guard.union.is_none() {
+        if range_only && guard.unions.is_none() {
             None
         } else {
-            guard.fill_window(start_ms, end_ms)
+            guard.fill_window(&key, start_ms, end_ms)
         }
     };
-    let Some(fill) = fill else {
+    let Some(mut fill) = fill else {
         return Ok(Arc::new(load(start_ms, end_ms).await?));
     };
-    let value = Arc::new(load(fill.start_ms, fill.end_ms).await?);
+    let loaded = load(fill.start_ms, fill.end_ms).await;
+    let expanded = fill.start_ms != start_ms || fill.end_ms != end_ms;
+    let value = if expanded
+        && matches!(
+            &loaded,
+            Err(crate::PromqlError::Limit(
+                krabka_metrics::LimitError::SamplesPerQueryExceeded { .. }
+                    | krabka_metrics::LimitError::SeriesPerQueryExceeded { .. }
+            ))
+        ) {
+        // A union can exceed a limit even when each requested window fits.
+        // Disable this union and retain only the requested window.
+        {
+            let mut guard = cache.lock().expect("range scan cache poisoned");
+            if let Some(unions) = &mut guard.unions {
+                unions.insert(
+                    key.clone(),
+                    super::range_scan_cache_inner::TimeWindow { start_ms, end_ms },
+                );
+            }
+            guard.rows.remove(&key);
+            guard.labels.remove(&key);
+        }
+        fill = super::range_scan_cache_inner::TimeWindow { start_ms, end_ms };
+        load(start_ms, end_ms).await?
+    } else {
+        loaded?
+    };
+    let value = Arc::new(value);
     let mut guard = cache.lock().expect("range scan cache poisoned");
     entries(&mut guard).insert(
         key,

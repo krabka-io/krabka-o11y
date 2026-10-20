@@ -34,6 +34,7 @@ mod exemplar_cases;
 mod metadata_sidecar_cases;
 mod missing_block_cases;
 mod query_scan_cases;
+mod range_cache_windows;
 use counting_object_store::CountingObjectStore;
 use deleted_api_block_store::deleted_api_block_store;
 use exemplar_batch::exemplar_batch;

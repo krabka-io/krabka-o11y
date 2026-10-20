@@ -11,7 +11,7 @@ use super::{
     planner_support::range_expr_routes_through_planner,
     query_stats_step,
     result_utils::{finalize_metric_names, validate_unique_instant_labelsets},
-    row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner},
+    row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner, selector_windows},
     step_vectors::{RANGE_STEP_VECTORS, StepVectorCache, StepVectorCacheInner},
 };
 #[cfg(feature = "experimental-functions")]
@@ -221,14 +221,15 @@ impl<S: MetricStore> PromqlEngine<S> {
         // (including subqueries, whose grid the front-gate never sees).
         let step_count = check_resolution_points(start_ms, end_ms, step)?;
         tracing::Span::current().record("steps", step_count);
-        // Scan the union of all per-step lookback windows once per matcher set,
-        // shared across the step loop via the RANGE_SCAN_CACHE task-local. The
-        // union starts at the first step's lookback floor (`start - lookback`)
-        // and ends at the last step (`end`). Scans outside this window
-        // (offset/@-modifier or a `[range]` longer than the lookback) fall back to
-        // a direct scan inside `scanned_rows`, so results are unchanged.
+        let unions = selector_windows(
+            expr,
+            start_ms,
+            end_ms,
+            self.opts.lookback_delta.millis_i64(),
+        )?;
         let cache: RangeScanCache =
             std::sync::Arc::new(std::sync::Mutex::new(RangeScanCacheInner::range(
+                unions,
                 start_ms.saturating_sub(self.opts.lookback_delta.millis_i64()),
                 end_ms,
             )));

@@ -145,8 +145,15 @@ impl<S: MetricStore> PromqlEngine<S> {
             matchers,
             start_ms,
             end_ms,
-            |start_ms, end_ms| {
-                self.labels_by_fingerprint_uncached(tenant, matchers, start_ms, end_ms)
+            |from_ms, through_ms| async move {
+                let labels = self
+                    .labels_by_fingerprint_uncached(tenant, matchers, from_ms, through_ms)
+                    .await?;
+                let limit = self.opts.max_fetched_series;
+                if limit != 0 && labels.len() > limit {
+                    return Err(series_per_query_exceeded(limit, labels.len()));
+                }
+                Ok(labels)
             },
         )
         .await
@@ -226,10 +233,20 @@ impl<S: MetricStore> PromqlEngine<S> {
             matchers,
             start_ms,
             end_ms,
-            |start_ms, end_ms| async move {
-                let scan = self.store.scan(tenant, matchers, start_ms, end_ms).await?;
+            |from_ms, through_ms| async move {
+                let scan = self
+                    .store
+                    .scan(tenant, matchers, from_ms, through_ms)
+                    .await?;
                 emit_scan_warnings(&scan);
-                Ok(ScannedRows::new(scan))
+                let rows = ScannedRows::new(scan);
+                if from_ms != start_ms || through_ms != end_ms {
+                    // Bound retained rows before a union enters the cache.
+                    // A limit failure retries the requested window only.
+                    rows.floats(self.opts.max_samples).await?;
+                    rows.histograms(self.opts.max_samples).await?;
+                }
+                Ok(rows)
             },
         )
         .await

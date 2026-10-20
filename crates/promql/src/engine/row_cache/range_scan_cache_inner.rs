@@ -6,36 +6,17 @@ pub(crate) struct TimeWindow {
     pub(crate) end_ms: i64,
 }
 
-/// Per-query store-scan cache (see `PromqlEngine::scanned_rows`).
-///
-/// A range query evaluates the same selector at every step, and each step's
-/// instant scan covers `[step - lookback, step]`. Those windows overlap almost
-/// completely, so a driver without a cache re-scans the store once per step
-/// (240x for a 1h/15s query). The range driver sets `union` to
-/// `[start - lookback, end]`, and each matcher set scans that window one time.
-///
-/// An instant query sets `union` to `None`. Then each request that the cache
-/// cannot serve scans its own window and keeps the result in place of the
-/// previous one for that matcher set. The histogram probe of a selector asks
-/// for the whole window of the selector, so the float scan of the same
-/// selector that follows it reads the cache and not the store.
-///
-/// One store scan fills the float rows and the histogram rows of a window
-/// together, because the store registers both tables in the same scan.
-///
-/// The store is a pure time-range filter, so a filtered superset is
-/// byte-for-byte what a direct sub-window scan returns. Both stores keep
-/// `[start, end]` inclusive. Inside a range query, a request outside the union
-/// (an `offset`-modified, `@`-modified, or long-`[range]` scan) reads the store
-/// directly and is not kept. Results therefore never change, and only the
-/// redundant store scans are removed.
+/// Per-query rows and labels, retained for bounded selector union windows.
+/// Each subquery uses a separate cache for its own evaluation grid.
 pub(crate) struct RangeScanCacheInner {
     /// A single instant leaf can use latest samples without changing the
     /// shared full-scan snapshot seen by composite or range expressions.
     pub(crate) allow_latest_float_samples: bool,
     /// The window that a range query scans for each matcher set, or `None`
     /// for an instant query.
-    pub(crate) union: Option<TimeWindow>,
+    pub(crate) unions: Option<HashMap<String, TimeWindow>>,
+    // Dynamically generated selectors retain the ordinary lookback window.
+    fallback: Option<TimeWindow>,
     /// Per-matcher-set float and histogram rows.
     pub(crate) rows: HashMap<String, Windowed<ScannedRows>>,
     /// Per-matcher-set fingerprint->labels resolution. A series label set is
@@ -47,10 +28,10 @@ pub(crate) struct RangeScanCacheInner {
 }
 
 impl RangeScanCacheInner {
-    /// A cache for a range query that scans `[start_ms, end_ms]` for each
-    /// matcher set.
-    pub(crate) fn range(start_ms: i64, end_ms: i64) -> Self {
-        Self::new(Some(TimeWindow { start_ms, end_ms }))
+    pub(crate) fn range(unions: HashMap<String, TimeWindow>, start_ms: i64, end_ms: i64) -> Self {
+        let mut cache = Self::new(Some(unions));
+        cache.fallback = Some(TimeWindow { start_ms, end_ms });
+        cache
     }
 
     /// A cache for an instant query, which keeps the window of each scan.
@@ -58,10 +39,11 @@ impl RangeScanCacheInner {
         Self::new(None)
     }
 
-    fn new(union: Option<TimeWindow>) -> Self {
+    fn new(unions: Option<HashMap<String, TimeWindow>>) -> Self {
         Self {
             allow_latest_float_samples: false,
-            union,
+            unions,
+            fallback: None,
             rows: HashMap::new(),
             labels: HashMap::new(),
         }
@@ -69,11 +51,14 @@ impl RangeScanCacheInner {
 
     /// The window to scan and keep for a request of `[start_ms, end_ms]`, or
     /// `None` when the result of the request is not to be kept.
-    pub(crate) fn fill_window(&self, start_ms: i64, end_ms: i64) -> Option<TimeWindow> {
-        match self.union {
+    pub(crate) fn fill_window(&self, key: &str, start_ms: i64, end_ms: i64) -> Option<TimeWindow> {
+        match &self.unions {
             None => Some(TimeWindow { start_ms, end_ms }),
-            Some(union) if start_ms >= union.start_ms && end_ms <= union.end_ms => Some(union),
-            Some(_) => None,
+            Some(unions) => unions
+                .get(key)
+                .copied()
+                .or(self.fallback)
+                .filter(|union| start_ms >= union.start_ms && end_ms <= union.end_ms),
         }
     }
 }
