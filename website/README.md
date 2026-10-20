@@ -107,6 +107,36 @@ lock and build-script hashes, pinned runtime, and each module's SHA-256 and byte
 count, plus every platform patch hash. It is published only after all ten modules and the browser runtime exist;
 a failed build removes the ready manifest.
 
+The manifest's `modules` and `totalBytes` describe the nine commands used by the
+UI. `qualificationModules` and `qualificationBytes` describe the network checker
+separately; its WASM file is still built and published. The UI downloads and
+hashes at most two modules at once. Formatting, broker listener readiness, and
+WAL topic provisioning remain sequential prerequisites. The eight independent
+service roles then start with at most two pending spawns/listener waits, matching
+the SDK's worker parallelism. Every required listener must be ready before the
+stack becomes ready. Failure or cancellation aborts queued startup work.
+
+To compare startup on Linux using the same artifacts and Chromium version, save
+the previous `src/lab/runtime.js` outside the build directory, build the site and
+lab, start the ordinary preview above, then run:
+
+```sh
+node scripts/lab-startup-bench.mjs --baseline-runtime /tmp/baseline-runtime.js
+```
+
+Run this separately from other browser checks. The benchmark temporarily stages
+two runtime entrypoints and switches `dist/lab/manifest.json`, then restores the
+manifest and removes those entrypoints. It uses a fresh Chromium profile for
+each implementation, followed by a fresh sandbox with the same page and SDK
+cache for the warm measurement. JSON output includes time to ready, page resource
+transfer bytes, module bytes, and peak aggregate browser process RSS sampled
+from `/proc` every 100 ms. RSS includes guest workers and WASM allocations, and
+counts shared resident pages in each process. Page transfer bytes exclude
+requests initiated inside SDK workers. These local preview measurements do not
+model Internet latency or GitHub Pages HTTP caching; repeat runs on the target
+browser before drawing deployment conclusions.
+
+
 CI keeps separate caches for WASIX tools, Cargo downloads, service build outputs,
 and the completed browser runtime. Release builds restore and save these caches;
 ordinary CI does not download or build the WASIX toolchain. The runtime cache

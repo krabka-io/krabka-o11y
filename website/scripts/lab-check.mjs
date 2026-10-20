@@ -285,6 +285,13 @@ async function check() {
 
   stage = 'Stop and restart cleanup';
   await stopStack();
+  stage = 'Cancel while production service roles are starting';
+  await page.locator('#lab-start').click({ timeout: timeout(10_000) });
+  await page.waitForFunction(() => document.querySelector('[data-service="metrics"] small').textContent.startsWith('Starting metrics-'),
+    null, { timeout: timeout(120_000) });
+  assert.ok(await page.locator('#lab-seed').isDisabled(), 'Partial startup must not enable ingestion');
+  await stopStack();
+  progress('Cancelled startup with production guest spawns/listener waits in flight.');
   await startStack();
   stage = 'Verify fresh data after restart';
   for (const signal of Object.keys(queries)) empty(signal, (await query(signal)).data);

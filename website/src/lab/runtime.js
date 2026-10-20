@@ -47,17 +47,7 @@ export class Lab {
     const response = await fetch(`${base}lab/manifest.json`, { signal: this.abort.signal });
     if (!response.ok) throw new Error(`Could not download lab manifest (HTTP ${response.status}).`);
     this.manifest = await response.json();
-    const modules = {};
-    for (const module of this.manifest.modules) {
-      this.abort.signal.throwIfAborted();
-      this.status('download', `Downloading ${module.name} (${Math.ceil(module.bytes / 1_000_000)} MB)…`);
-      const response = await fetch(`${base}lab/${module.file}`, { signal: this.abort.signal });
-      if (!response.ok) throw new Error(`${module.name} download failed (HTTP ${response.status}).`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(value => value.toString(16).padStart(2, '0')).join('');
-      if (digest !== module.sha256) throw new Error(`${module.name} did not match the build manifest.`);
-      modules[module.name] = bytes;
-    }
+    const modules = await this.downloadModules();
     this.abort.signal.throwIfAborted();
     this.status('download', 'Preparing the service commands…');
     const pkg = await this.wait(this.client.packages.create({ modules, commands: Object.fromEntries(Object.keys(modules).map(name => [name, { module: name }])) }));
@@ -84,11 +74,49 @@ export class Lab {
     this.status('broker', 'Provisioning WAL topics');
     await this.run('krabka-o11y-bootstrap', ['--bootstrap', broker]);
     this.status('broker', 'Ready');
-    for (const [signal, role, command, args, port] of services) await this.spawn(signal, role, command, args, port);
+    // Every role depends on the ready broker and provisioned WAL topics above.
+    // They communicate through the WAL/object store, not each other's listeners.
+    await this.parallel(services, service => this.spawn(...service));
     this.abort.signal.throwIfAborted();
     for (const signal of Object.keys(signals)) this.status(signal, 'Ready');
     this.ready = true;
     return this.manifest;
+  }
+
+  // Bound both download/hash buffers and concurrent guest compilation/startup.
+  // Abort siblings on failure so queued work cannot outlive a failed start.
+  async parallel(items, work) {
+    const pending = items[Symbol.iterator]();
+    const worker = async () => {
+      try {
+        for (;;) {
+          this.abort.signal.throwIfAborted();
+          const item = pending.next();
+          if (item.done) return;
+          await work(item.value);
+        }
+      } catch (error) {
+        this.abort.abort(error);
+        throw this.abort.signal.reason;
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    this.abort.signal.throwIfAborted();
+  }
+
+  async downloadModules() {
+    const modules = {};
+    await this.parallel(this.manifest.modules, async module => {
+      this.abort.signal.throwIfAborted();
+      this.status('download', `Downloading ${module.name} (${Math.ceil(module.bytes / 1_000_000)} MB)…`);
+      const response = await fetch(`${base}lab/${module.file}`, { signal: this.abort.signal });
+      if (!response.ok) throw new Error(`${module.name} download failed (HTTP ${response.status}).`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(value => value.toString(16).padStart(2, '0')).join('');
+      if (digest !== module.sha256) throw new Error(`${module.name} did not match the build manifest.`);
+      modules[module.name] = bytes;
+    });
+    return modules;
   }
 
   async wait(promise) {
