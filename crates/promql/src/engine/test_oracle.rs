@@ -36,7 +36,6 @@ use crate::{
 };
 mod promql_engine;
 #[cfg(test)]
-
 pub(crate) fn over_time_function(name: &str) -> Option<OverTimeFn> {
     Some(match name {
         "sum_over_time" => OverTimeFn::Sum,

@@ -654,7 +654,6 @@ mod vector_vector_group_right_fill_left_preserves_unmatched_many_side {
 }
 
 mod limit_ratio_over_bound_emits_capping_warning {
-    use super::*;
     #[cfg(feature = "experimental-functions")]
     use super::*;
 

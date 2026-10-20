@@ -359,7 +359,7 @@ mod wal_head_delegates_metadata_cardinality_stats_and_blocks {
 }
 
 mod wal_head_delete_tenant {
-    use super::{MetricStore, WalHead, lbls, *};
+    use super::{MetricStore, WalHead, lbls};
 
     #[tokio::test]
     async fn wal_head_delete_tenant_removes_only_that_tenant() {
