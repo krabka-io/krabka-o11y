@@ -1,0 +1,9 @@
+algorithm,new_streams,eviction_us,concurrent_same_tenant_us
+repeated_scan,1,14608.73,31711.04
+repeated_scan,100,641356.21,649519.10
+repeated_scan,1000,6562334.12,6568773.65
+repeated_scan,10000,84472580.97,84480166.96
+bounded_heap,1,15239.29,30467.95
+bounded_heap,100,15716.86,29656.38
+bounded_heap,1000,21448.43,35989.73
+bounded_heap,10000,103450.18,121045.93
