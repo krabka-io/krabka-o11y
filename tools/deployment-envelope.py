@@ -528,62 +528,181 @@ def durably_caught_up(status, end_offset=0, durable_consumer_index=None):
         and p["committed_offset"] >= end_offset for p in partitions)
 
 
-def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None, check_durability=True):
+def query_load_config(mode="serial", readers=1, rate=4.0, deadline=P99_SECONDS):
+    if mode not in ("serial", "concurrent", "fixed"):
+        raise ValueError("query mode must be serial, concurrent or fixed")
+    if not isinstance(readers, int) or isinstance(readers, bool) or not 1 <= readers <= 256:
+        raise ValueError("query readers must be between 1 and 256")
+    if any(not math.isfinite(value) or value <= 0 for value in (rate, deadline)):
+        raise ValueError("query rate and deadline must be finite and positive")
+    if mode == "serial" and readers != 1:
+        raise ValueError("serial query mode requires one reader")
+    return {"mode": mode, "readers": readers, "rate_per_second": rate,
+            "deadline_seconds": deadline, "max_in_flight": readers,
+            "late_definition": "completed after scheduled time plus deadline",
+            "overflow_policy": "drop without queueing"}
+
+
+def add_query_arguments(parser):
+    parser.add_argument("--query-mode", choices=("serial", "concurrent", "fixed"), default="serial")
+    parser.add_argument("--query-readers", type=int, default=1, help="Maximum simultaneous query requests (1..256)")
+    parser.add_argument("--query-rate", type=float, default=4,
+                        help="Fixed mode: total arrivals/sec; serial/concurrent: requests/sec per reader ceiling")
+    parser.add_argument("--query-deadline", type=float, default=P99_SECONDS,
+                        help="End-to-end deadline in seconds, including dispatch delay")
+
+
+def query_options(args):
+    return {"query_" + key: getattr(args, "query_" + key, default)
+            for key, default in (("mode", "serial"), ("readers", 1), ("rate", 4.0), ("deadline", P99_SECONDS))}
+
+
+def run_queries(signal, tenant, cold, started, begin, until, config, records):
+    """Bound requests and keep fixed arrivals independent of response time.
+
+    All admitted requests drain before returning. Measurement membership follows
+    scheduled time, including requests completing after the offered-load window.
+    """
+    slots = threading.BoundedSemaphore(config["readers"])
+    pause = threading.Event()
+
+    def request(scheduled):
+        try:
+            before = time.monotonic()
+            path, body = query_request(signal, 1800 if cold else 30)
+            status, response = http(QUERY[signal], path, tenant, body)
+            completed = time.monotonic()
+            if scheduled >= begin:
+                records.append({"kind": "query", "tenant": tenant, "sequence": None,
+                    "time_unix": time.time(), "seconds": completed - scheduled,
+                    "request_seconds": completed - before, "status": status, "rows": 0,
+                    "scheduled_seconds": scheduled - begin, "started_seconds": before - begin,
+                    "completed_seconds": completed - begin, "dispatch_lag_seconds": before - scheduled,
+                    "late": completed - scheduled > config["deadline_seconds"],
+                    "has_data": has_data(signal, response),
+                    "error": response[:200].decode(errors="replace") if status >= 300 or status == 0 else None})
+        finally:
+            slots.release()
+
+    def reader():
+        while time.monotonic() < until:
+            scheduled = time.monotonic()
+            slots.acquire()
+            request(scheduled)
+            pause.wait(min(max(0, 1 / config["rate_per_second"] - (time.monotonic() - scheduled)),
+                           max(0, until - time.monotonic())))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=config["readers"]) as pool:
+        if config["mode"] != "fixed":
+            tasks = [pool.submit(reader) for _ in range(config["readers"])]
+            for task in tasks:
+                task.result()
+            return
+        pending = set()
+        # Anchor both cohorts at begin. Omit the initial fractional interval
+        # so the last warm-up arrival is exactly one interval before measurement.
+        first = -math.floor((begin - started) * config["rate_per_second"])
+        for index in range(first, math.ceil((until - begin) * config["rate_per_second"])):
+            scheduled = begin + index / config["rate_per_second"]
+            if scheduled >= until:
+                break
+            pause.wait(max(0, scheduled - time.monotonic()))
+            # Harvest continuously: neither the executor queue nor this set
+            # grows with test duration. Propagate unexpected worker errors.
+            done = {task for task in pending if task.done()}
+            for task in done:
+                task.result()
+            pending.difference_update(done)
+            lag = time.monotonic() - scheduled
+            reason = "scheduler_late" if lag >= 1 / config["rate_per_second"] else None
+            if reason is None and not slots.acquire(blocking=False):
+                reason = "in_flight_limit"
+            if reason:
+                if scheduled >= begin:
+                    records.append({"kind": "query_drop", "tenant": tenant,
+                        "scheduled_seconds": scheduled - begin, "dispatch_lag_seconds": lag,
+                        "drop_reason": reason})
+            else:
+                pending.add(pool.submit(request, scheduled))
+        for task in pending:
+            task.result()
+
+
+def summarize_queries(records, seconds):
+    completed = [r for r in records if r["kind"] == "query"]
+    dropped = [r for r in records if r["kind"] == "query_drop"]
+    summary = summarize(completed, seconds)
+    summary.update(scheduled=len(completed) + len(dropped), completed=len(completed),
+                   dropped=len(dropped), late=sum(r["late"] for r in completed),
+                   offered_window_seconds=seconds,
+                   completed_per_second=len(completed) / seconds,
+                   scheduled_per_second=(len(completed) + len(dropped)) / seconds,
+                   request_latency_seconds=quantiles([r["request_seconds"] for r in completed]),
+                   dispatch_lag_seconds=quantiles([r["dispatch_lag_seconds"] for r in completed]),
+                   drop_reasons={reason: sum(r["drop_reason"] == reason for r in dropped)
+                                 for reason in sorted({r["drop_reason"] for r in dropped})})
+    return summary
+
+
+def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None, check_durability=True,
+            query_mode="serial", query_readers=1, query_rate=4.0, query_deadline=P99_SECONDS):
+    query_config = query_load_config(query_mode, query_readers, query_rate, query_deadline)
     records = []
     stop = threading.Event()
     started = time.monotonic()
     begin = started + warmup
     until = begin + seconds
 
-    def worker(kind, tenant, pace):
+    def worker(tenant, pace):
         while time.monotonic() < until:
-            seq = next(deployment.sequence) if kind == "write" else None
-            if kind == "write":
-                path, body, content, rows = write_request(signal, seq, cardinality, tenant)
-                port = INGEST[signal]
-            else:
-                path, body = query_request(signal, 1800 if cold else 30)
-                content, rows, port = "application/json", 0, QUERY[signal]
+            seq = next(deployment.sequence)
+            path, body, content, rows = write_request(signal, seq, cardinality, tenant)
             before = time.monotonic()
-            status, response = http(port, path, tenant, body, content)
+            status, response = http(INGEST[signal], path, tenant, body, content)
             elapsed = time.monotonic() - before
             if before >= begin:
-                records.append({"kind": kind, "tenant": tenant, "sequence": seq,
+                records.append({"kind": "write", "tenant": tenant, "sequence": seq,
                                 "time_unix": time.time(), "seconds": elapsed,
-                                "status": status, "rows": rows,
-                                "has_data": has_data(signal, response) if kind == "query" else None,
+                                "status": status, "rows": rows, "has_data": None,
                                 "error": response[:200].decode(errors="replace") if status >= 300 or status == 0 else None})
             if pace:
-                stop.wait(max(0, pace - elapsed))
+                stop.wait(min(max(0, pace - elapsed), max(0, until - time.monotonic())))
 
-    tenants = [("quiet" if noisy else tenant, writers, interval)]
+    main = "quiet" if noisy else tenant
+    tenants = [(main, writers, interval)]
     if noisy:
         tenants.append(("noisy", 4, 0))
     with concurrent.futures.ThreadPoolExecutor(max_workers=writers + 6) as pool:
-        tasks = [pool.submit(worker, "query", "quiet" if noisy else tenant, 0.25)]
+        tasks = [pool.submit(run_queries, signal, main, cold, started, begin, until, query_config, records)]
         for tenant, count, pace in tenants:
-            tasks.extend(pool.submit(worker, "write", tenant, pace) for _ in range(count))
+            tasks.extend(pool.submit(worker, tenant, pace) for _ in range(count))
         samples = []
         maintenance_future = None
-        while time.monotonic() < until:
-            if time.monotonic() >= begin:
+        next_sample = begin
+        while time.monotonic() < until or any(not task.done() for task in tasks) or (
+                maintenance_future is not None and not maintenance_future.done()):
+            if time.monotonic() >= next_sample:
                 samples.append(deployment.sample(signal))
-                if on_measurement and maintenance_future is None:
+                next_sample = time.monotonic() + 1
+                if on_measurement and maintenance_future is None and time.monotonic() < until:
                     maintenance_future = pool.submit(on_measurement)
-            stop.wait(1)
+            # Poll completion independently of the one-second scrape cadence,
+            # including while admitted requests drain beyond the offered window.
+            stop.wait(min(0.1, max(0, next_sample - time.monotonic())))
         for task in tasks:
             task.result()
         maintenance_result = maintenance_future.result() if maintenance_future else None
     duration = time.monotonic() - begin
     samples.append(deployment.sample(signal))
-    main = "quiet" if noisy else tenant
-    writes = summarize([r for r in records if r["kind"] == "write" and r["tenant"] == main], duration)
-    queries = summarize([r for r in records if r["kind"] == "query"], duration)
+    writes = summarize([r for r in records if r["kind"] == "write" and r["tenant"] == main], seconds)
+    queries = summarize_queries(records, seconds)
     result = {"signal": signal, "writers": writers, "cardinality": cardinality,
               "warmup_seconds": warmup, "duration_seconds": duration, "write_interval_seconds": interval,
-              "ingest": writes, "query": queries, "telemetry": telemetry(samples, signal),
+              "ingest": writes, "query": queries, "query_load": query_config,
+              "offered_window_seconds": seconds, "drain_seconds": max(0, duration - seconds),
+              "telemetry": telemetry(samples, signal),
               "tenant": main,
-              "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], duration)
+              "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], seconds)
                           for t, _, _ in tenants}}
     maintenance = result["telemetry"]["maintenance"]
     maintenance_errors = sum(value for key, value in maintenance.items()
@@ -592,19 +711,21 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
         (writers == 0 or writes["attempts"] > 0 and writes["error_rate"] == 0
          and writes["latency_seconds"]["p99"] <= P99_SECONDS)
         and queries["attempts"] > 0 and queries["error_rate"] == 0
-        and queries["empty_queries"] == 0 and queries["latency_seconds"]["p99"] <= P99_SECONDS
+        and queries["empty_queries"] == 0 and queries["latency_seconds"]["p99"] <= query_deadline
+        and queries["dropped"] == 0 and queries["late"] == 0
         and result["telemetry"]["scrape_errors"] == 0
     )
     if maintenance_result:
         result["deletion_verification"] = maintenance_result
     if check_durability:
         result["catchup"] = deployment.drain(signal)
-        result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
+        result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (seconds + result["catchup"]["seconds"])
         result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
     return result, records, samples
 
 
 def run(args):
+    load = query_load_config(args.query_mode, args.query_readers, args.query_rate, args.query_deadline)
     baseline = json.loads(args.baseline.read_text()) if args.baseline else None
     deployment = Deployment(args.output, args.image)
     report = {"schema_version": 1, "harness_commit": command("git", "rev-parse", "HEAD"),
@@ -618,12 +739,12 @@ def run(args):
                         "profiles_hot_retention_seconds": 30, "traces_hot_retention_seconds": 30,
                         "metrics_hot_retention_seconds": 300, "cold_fixture_age_seconds": 600,
                         "maintenance_interval_seconds": 2, "nofile": 65536,
-                        "write_interval_seconds": 1,
+                        "write_interval_seconds": 1, "query_load": load,
                         "noisy_logs_bytes_per_sec": 65536,
                         "broker_image": json.loads(deployment.file.read_text())["services"]["broker"]["image"],
                         "object_store_image": json.loads(deployment.file.read_text())["services"]["minio"]["image"]},
               "run_id": f"{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}-{args.output.name}",
-              "objectives": {"ingest_p99_seconds": P99_SECONDS, "query_p99_seconds": P99_SECONDS,
+              "objectives": {"ingest_p99_seconds": P99_SECONDS, "query_p99_seconds": args.query_deadline,
                              "error_rate": 0, "durable_catchup_seconds": CATCHUP_SECONDS},
               "dataset": {"points_per_series": POINTS, "series_per_request":
                           {"metrics": SERIES, "logs": SERIES, "traces": 10, "profiles": 1}},
@@ -699,7 +820,8 @@ def run(args):
                     result, records, samples = measure(deployment, signal, phase_seconds, phase_seconds / 4,
                                                         writers, cardinality, noisy, cold or phase == "high_cardinality",
                                                         1.0, tenant,
-                                                        (lambda: deployment.enable_retention(signal)) if phase == "deletion" else None)
+                                                        (lambda: deployment.enable_retention(signal)) if phase == "deletion" else None,
+                                                        **query_options(args))
                 result["phase"] = phase
                 if phase == "cold_blocks":
                     result["cold_fixture_age_seconds"] = 600
@@ -761,8 +883,141 @@ def run(args):
         deployment.close()
 
 
+def query_load_self_test():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from unittest.mock import patch
+
+    class Endpoint(BaseHTTPRequestHandler):
+        def do_GET(self):
+            with self.server.lock:
+                self.server.active += 1
+                self.server.peak = max(self.server.peak, self.server.active)
+                self.server.calls += 1
+            try:
+                time.sleep(self.server.delay)
+                self.send_response(self.server.status)
+                self.end_headers()
+                self.wfile.write(b'{"status":"success","data":{"result":[{}]}}')
+            finally:
+                with self.server.lock:
+                    self.server.active -= 1
+
+        def log_message(self, *_args):
+            pass
+
+    def exercise(mode, readers, rate, seconds=0.6, warmup=0, delay=0.12, deadline=2, status=200, measurement=False):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+        server.active = server.peak = server.calls = 0
+        server.lock = threading.Lock()
+        server.delay, server.status = delay, status
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        thread.start()
+        try:
+            config = query_load_config(mode, readers, rate, deadline)
+            records = []
+            start = time.monotonic()
+            with patch.dict(QUERY, metrics=server.server_port):
+                if measurement:
+                    deployment = object.__new__(Deployment)
+                    deployment.sequence = itertools.count()
+                    deployment.sample = lambda _signal: {"time_unix": time.time(), "rss_kib": {},
+                                                         "metrics": {}, "scrape_errors": []}
+                    result, records, samples = measure(deployment, "metrics", seconds, warmup, 0,
+                        check_durability=False, query_mode=mode, query_readers=readers,
+                        query_rate=rate, query_deadline=deadline)
+                    assert result["query_load"] == config and len(samples) >= 2
+                    assert result["duration_seconds"] >= seconds
+                    assert result["objectives_met"] == (status == 200 and result["query"]["dropped"] == 0
+                                                        and result["query"]["late"] == 0)
+                    summary = result["query"]
+                else:
+                    run_queries("metrics", "test", False, start, start + warmup,
+                                start + warmup + seconds, config, records)
+                    summary = summarize_queries(records, seconds)
+            assert summary["scheduled"] == summary["completed"] + summary["dropped"]
+            assert server.active == 0  # Includes the final in-flight cohort.
+            assert 0 <= server.peak <= readers
+            assert all(r["scheduled_seconds"] >= 0 for r in records)
+            for record in records:
+                if record["kind"] == "query":
+                    assert record["seconds"] >= record["request_seconds"] > 0
+                    assert record["seconds"] == record["completed_seconds"] - record["scheduled_seconds"]
+            return summary, records, server.peak, server.calls
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    serial, _, peak, _ = exercise("serial", 1, 100)
+    assert peak == 1 and serial["completed"] < 10
+    concurrent, _, peak, _ = exercise("concurrent", 3, 100)
+    assert peak == 3 and concurrent["completed"] >= serial["completed"] * 2
+    # Identical offered load regardless of the endpoint's response time.
+    for delay in (0.01, 0.12):
+        fixed, _, peak, _ = exercise("fixed", 4, 20, warmup=0.13, delay=delay)
+        assert fixed["scheduled"] == 12 and fixed["completed"] == 12
+        assert fixed["dropped"] == fixed["late"] == 0
+        assert fixed["scheduled_per_second"] == 20
+        if delay > 0.1:
+            assert peak >= 2
+    boundary, _, _, _ = exercise("fixed", 1, 4, warmup=0.26)
+    assert boundary["scheduled"] == boundary["completed"] == 3 and boundary["dropped"] == 0
+    # Slow endpoints cannot reduce the offered rate or grow an executor queue.
+    overloaded, _, peak, _ = exercise("fixed", 2, 40, deadline=0.05)
+    assert overloaded["scheduled"] == 24 and overloaded["dropped"] > 0
+    assert overloaded["late"] == overloaded["completed"] and peak == 2
+    assert overloaded["drop_reasons"]["in_flight_limit"] > 0
+    failed, records, _, _ = exercise("fixed", 1, 4, seconds=0.05, delay=0.12, status=503)
+    assert failed["scheduled"] == failed["completed"] == failed["errors"] == 1
+    assert records[0]["completed_seconds"] > 0.05 and records[0]["error"]
+    exercise("fixed", 2, 40, seconds=0.2, deadline=0.05, measurement=True)
+    exercise("fixed", 4, 20, seconds=0.2, measurement=True)
+    deployment = object.__new__(Deployment)
+    deployment.sequence = itertools.count()
+    deployment.sample = lambda _signal: {"time_unix": time.monotonic(), "rss_kib": {},
+                                         "metrics": {}, "scrape_errors": []}
+    deployment.drain = lambda _signal: {"seconds": 0.2, "recovered": True}
+    def slow_query(port, *_args):
+        if port == QUERY["metrics"]:
+            time.sleep(1.25)
+            return 200, b'{"status":"success","data":{"result":[{}]}}'
+        return 204, b""
+    with patch.dict(globals(), http=slow_query):
+        result, _, samples = measure(deployment, "metrics", 0.3, 0, 1, interval=0.1,
+                                      query_mode="fixed", query_readers=2, query_rate=4)
+    rows = result["ingest"]["accepted_rows"]
+    assert rows > 0 and result["duration_seconds"] >= 1.25
+    assert result["ingest"]["accepted_rows_per_sec"] == rows / 0.3
+    assert result["tenants"]["soak"]["accepted_rows_per_sec"] == rows / 0.3
+    assert result["ingest"]["durable_rows_per_sec"] == rows / (0.3 + 0.2)
+    # Intermediate scrapes stay one second apart; the final scrape captures
+    # completion immediately and may be closer to its predecessor.
+    assert len(samples) >= 3
+    assert all(b["time_unix"] - a["time_unix"] >= 1 for a, b in zip(samples[:-2], samples[1:-1]))
+    # A blocked scheduler drops missed slots instead of replaying a stampede.
+    real_wait = threading.Event.wait
+    def delayed_wait(event, timeout=None):
+        if threading.current_thread() is threading.main_thread() and timeout is not None:
+            time.sleep(0.08)
+        return real_wait(event, timeout)
+    with patch.object(threading.Event, "wait", delayed_wait):
+        stalled, _, _, _ = exercise("fixed", 2, 40)
+    assert stalled["scheduled"] == 24 and stalled["drop_reasons"]["scheduler_late"] > 0
+    for args in (("unknown", 1, 4, 2), ("serial", 2, 4, 2), ("fixed", 0, 4, 2),
+                 ("fixed", 257, 4, 2), ("fixed", 1, 0, 2), ("fixed", 1, float("nan"), 2),
+                 ("fixed", 1, 4, float("inf")), ("fixed", 1, 4, -1)):
+        try:
+            query_load_config(*args)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid query configuration accepted: {args}")
+
+
 def self_test():
     from unittest.mock import patch
+
+    query_load_self_test()
 
     records = [{"status": 204, "seconds": 0.1, "rows": 100},
                {"status": 429, "seconds": 0.2, "rows": 100}]
@@ -854,6 +1109,9 @@ def self_test():
     assert baseline["limits"]["logs"]["burst"]["level"] == 1
     assert baseline["metrics"]["metrics/steady/durable_rows_per_sec"]["median"] == 200
     qualification(reports, baseline)
+    legacy = json.loads(json.dumps(baseline))
+    legacy["reference"]["shape"].pop("query_load")
+    qualification(reports, legacy)
     jitter = json.loads(json.dumps(reports))
     jitter[0]["entries"][0]["query"]["latency_seconds"]["p99"] = 0.4
     # A three-run median tolerates one timing outlier within the absolute SLO.
@@ -874,6 +1132,7 @@ def self_test():
         raise AssertionError("an unsaturated search published a new limit")
     for mutate in (
         lambda rs: rs[1].update(run_id="0"),
+        lambda rs: [r["shape"].update(query_load=query_load_config("fixed", 4)) for r in rs],
         lambda rs: rs[1].update(host={"cpu_count": 8}),
         lambda rs: rs[0]["entries"][0]["telemetry"]["rss_kib_peak_by_role"].update(querier=5000),
         lambda rs: [r["entries"][0]["ingest"].update(durable_rows_per_sec=10) for r in rs],
@@ -923,8 +1182,14 @@ def qualification(reports, baseline=None):
                 raise ValueError(f"qualification runs differ in {key}")
         if not re.fullmatch(r"[0-9a-f]{40}", report["image_commit"] or ""):
             raise ValueError("qualification requires the image source commit")
-    if baseline and reference != baseline["reference"]:
-        raise ValueError("workload or host differs from the baseline; review new measurements")
+    # Historical reports used one paced serial reader. Make that implicit
+    # configuration explicit when comparing old and new serial baselines.
+    reference["shape"] = {"query_load": query_load_config(), **reference["shape"]}
+    if baseline:
+        prior = {**baseline["reference"], "shape": {
+            "query_load": query_load_config(), **baseline["reference"]["shape"]}}
+        if reference != prior:
+            raise ValueError("workload or host differs from the baseline; review new measurements")
     limits, metrics = {}, {}
     for signal in SIGNALS:
         entries = [[e for e in report["entries"] if e["signal"] == signal] for report in reports]
@@ -1034,6 +1299,7 @@ if __name__ == "__main__":
     parser.add_argument("--baseline", type=pathlib.Path, help="Apply a recorded stable-runner baseline")
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("qualification/evidence/deployment"))
     parser.add_argument("--seconds", type=int, default=60)
+    add_query_arguments(parser)
     parser.add_argument("--self-test", action="store_true")
     options = parser.parse_args()
     if options.self_test:
@@ -1052,4 +1318,8 @@ if __name__ == "__main__":
         digest = options.image_digest or (options.image or "").split("@")[-1]
         if not options.image or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) or options.seconds <= 0:
             parser.error("--image needs an immutable digest and --seconds must be positive")
+        try:
+            query_load_config(options.query_mode, options.query_readers, options.query_rate, options.query_deadline)
+        except ValueError as error:
+            parser.error(str(error))
         run(options)

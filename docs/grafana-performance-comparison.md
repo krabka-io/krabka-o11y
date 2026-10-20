@@ -185,8 +185,48 @@ python3 tools/compare-grafana.py --signal metrics \
 The default measures both backends in alternating order. `--backends krabka`
 measures only Krabka for a diagnostic iteration. Keep the same measurement
 length, dataset, host, and harness when comparing a baseline and candidate.
-A faster query completes more requests in this closed-loop workload.
-Check completed query counts when interpreting CPU ratios.
+The CLI defaults to `--query-mode serial --query-readers 1 --query-rate 4`
+for continuity with historical measurements. `concurrent` runs bounded readers
+with the same per-reader rate ceiling. Both modes are closed loop: slower
+responses reduce their offered load. `fixed` schedules total arrivals independently
+of responses. For example, compare both revisions with:
+
+```sh
+python3 tools/compare-grafana.py --signal metrics \
+  --image "$MEASURED_IMAGE" --image-digest "$MEASURED_MANIFEST_DIGEST" \
+  --image-commit "$MEASURED_SOURCE_COMMIT" \
+  --seconds 60 --repetitions 3 --phases steady --backends krabka \
+  --query-mode fixed --reader-sweep 1 4 16 --query-rate 4 \
+  --output qualification/evidence/metrics-candidate
+```
+
+Each sweep level uses an independent deployment and writes a complete report,
+operations, resource samples and checksums under `fixed-1/`, `fixed-4/` or
+`fixed-16/`. Use `--query-mode concurrent --reader-sweep 1 4 16` for the
+closed-loop reader sweep, or `--query-readers N` for a single configuration.
+The deployment-envelope CLI accepts the same single-configuration query flags.
+The workflow defaults to fixed mode with reader levels `1 4 16` and four total
+arrivals/sec, passing exactly the same settings to baseline and candidate.
+Select `query_mode=serial` to reproduce the serial comparison.
+
+Fixed arrivals are anchored at the start of the measured window; warm-up is a
+separate cohort. At the in-flight limit, requests are dropped immediately without
+an executor queue. A scheduler delayed by at least one arrival interval drops
+that slot with reason `scheduler_late`, avoiding a catch-up stampede. Every
+measured slot is counted as either completed or dropped. Admitted requests drain
+after the window, with resource sampling continuing through drain. Reports retain
+both the offered window and the elapsed duration including drain.
+
+`query.scheduled`, `completed`, `late`, `dropped`, and `drop_reasons` expose overload.
+Late means a completed request exceeded `--query-deadline` (default two seconds)
+from its scheduled arrival. `query.latency_seconds` is the end-to-end distribution,
+including dispatch delay; `request_latency_seconds` and `dispatch_lag_seconds`
+separate the components. Raw operations include schedule, start, completion,
+status and error details. Warm-up requests are excluded by scheduled time,
+including when they finish during measurement. Drops or late completions fail
+objectives, so a saturated generator cannot silently qualify a lower offered load.
+Keep load configuration, completed counts and dropped slots alongside CPU ratios;
+closed-loop rates depend on response time.
 
 Each run records the harness file hashes and writes `SHA256SUMS` for its raw
 evidence. Summarize fresh reports directly after three paired repetitions:
@@ -197,7 +237,10 @@ python3 tools/summarize-grafana.py \
   --output qualification/evidence/metrics-candidate-summary.json
 ```
 
-Pass additional signal reports to summarize them together. The summarizer
+For a sweep, point `--reports` at one configuration's child report (for example,
+`metrics-candidate/fixed-4/comparison-report.json`) and summarize each configuration
+separately. Pass additional signal reports with matching query load to summarize
+them together. The summarizer
 checks file hashes, telemetry coverage, and matching image identities. It
 recomputes CPU and peak RSS from verified raw samples in the current scope,
 including for historical reports. Peak RSS is the maximum simultaneous sum
@@ -206,7 +249,9 @@ is incorrect. The output labels the accounting scope and records the accounting
 harness hash. MinIO costs and its separate budget remain visible.
 
 The harness self-test checks the payload encoder against independent bytes
-and checks CPU, S3, and RSS accounting. CI runs it on each pull request:
+and checks CPU, S3, and RSS accounting. The deployment-envelope self-test also
+uses delayed local HTTP endpoints to verify concurrency, offered rate, warm-up,
+drain, deadline, error and drop accounting before cloud measurements. CI runs it on each pull request:
 
 ```sh
 python3 tools/compare-grafana.py --self-test

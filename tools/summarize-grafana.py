@@ -40,6 +40,9 @@ def at(data,*keys):
 FIELDS={'rows_per_second':('ingest','accepted_rows_per_sec'),'accepted_rows':('ingest','accepted_rows'),'ingest_p99_seconds':('ingest','latency_seconds','p99'),'query_p99_seconds':('query','latency_seconds','p99'),'query_attempts':('query','attempts'),'cpu_seconds':('resources','cpu_seconds_total'),'object_store_cpu_seconds':('resources','object_store','cpu_seconds'),'object_store_rss_kib':('resources','object_store','rss_kib_peak'),'rss_kib':('resources','rss_kib_simultaneous_peak'),'cpu_seconds_per_million_rows':('resources','cpu_seconds_per_million_accepted_rows'),'generator_cpu_seconds':('resources','load_generator_cpu_seconds'),'s3_requests':('resources','s3_requests'),'s3_read_bytes':('resources','s3_read_bytes'),'s3_write_bytes':('resources','s3_write_bytes'),'duration_seconds':('duration_seconds',)}
 def distribution(points):
     result={field:stats([at(e,*keys) for e in points]) for field,keys in FIELDS.items()}
+    if all('scheduled' in e['query'] for e in points):
+        for field in ('scheduled', 'completed', 'late', 'dropped', 'scheduled_per_second', 'completed_per_second'):
+            result['query_'+field]=stats([e['query'][field] for e in points])
     result['query_attempts_per_second']=stats([e['query']['attempts']/e['duration_seconds'] for e in points])
     result['average_cpu_cores']=stats([e['resources']['cpu_seconds_total']/e['duration_seconds'] for e in points])
     result['object_store_average_cpu_cores']=stats([e['resources']['object_store']['cpu_seconds']/e['duration_seconds'] for e in points])
@@ -66,7 +69,10 @@ for signal in args.signals:
     reports.append(report)
     summary['source_resource_accounting_scopes'][signal]=report.get('resource_accounting_scope','legacy_full_stack_including_object_store')
     assert report['phase_seconds']==60 and report['signal']==signal
-    assert report['write_interval_seconds']==1 and report['query_interval_seconds']==0.25
+    load=report.get('query_load',comparison.env.query_load_config())
+    assert report['write_interval_seconds']==1 and report['query_interval_seconds']==1/load['rate_per_second']
+    if 'query_load' in report:
+        assert all(e.get('query_load')==load for e in report['entries'] if 'resources' in e), 'entry query load differs from report'
     coverage=[]
     for e in report['entries']:
         if 'resources' not in e:continue
@@ -90,6 +96,7 @@ for signal in args.signals:
     findings=[{k:e[k] for k in ('backend','repetition','phase','cardinality','seed_error')} for e in report['entries'] if e.get('seed_error','').startswith('seed value mismatch')]
     host_findings=[{k:e[k] for k in ('backend','repetition','phase','resources')} for e in report['entries'] if e.get('resources',{}).get('host_activity_qualified') is False]
     result={'host':report['host'],'harness_commit':report['commit'],'resource_coverage':coverage,'seed_value_mismatches':findings,'correctness_disqualified':bool(findings),'host_activity_disqualified':bool(host_findings),'host_activity_failures':host_findings,'backends':{}}
+    result['query_load']=load
     result['deployment_target']=report.get('deployment_target',report.get('profiles_target') or 'split')
     if signal=='profiles':result['profiles_target']=report.get('profiles_target','split')
     for backend in ('krabka',product):
@@ -124,6 +131,9 @@ for signal in args.signals:
     summary['signals'][signal]=result
 assert len(reports)==len(set(args.signals))
 assert all(r['dataset']==reports[0]['dataset'] for r in reports)
+loads=[r.get('query_load',comparison.env.query_load_config()) for r in reports]
+assert all(load==loads[0] for load in loads), 'query loads differ; summarize configurations separately'
+summary['query_load']=loads[0]
 assert len({r['image_commit'] for r in reports})==1 and len({r['image_digest'] for r in reports})==1
 summary.update(harness_commits={r['signal']:r['commit'] for r in reports},dataset=reports[0]['dataset'],image_commit=reports[0]['image_commit'],image_digest=reports[0]['image_digest'])
 args.output.write_text(json.dumps(summary,indent=2)+'\n')

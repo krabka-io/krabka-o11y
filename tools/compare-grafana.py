@@ -973,11 +973,31 @@ class ComparisonDeployment(env.Deployment):
 
 
 def run(args):
+    readers = getattr(args, 'reader_sweep', None)
+    if readers:
+        if len(readers) != len(set(readers)):
+            raise ValueError('reader sweep levels must be unique')
+        for count in readers:
+            env.query_load_config(args.query_mode, count, args.query_rate, args.query_deadline)
+        for count in readers:
+            child = argparse.Namespace(**vars(args))
+            child.reader_sweep = None
+            child.query_readers = count
+            child.output = args.output / f'{args.query_mode}-{count}'
+            run_one(child)
+    else:
+        run_one(args)
+
+
+def run_one(args):
     if args.signal == 'profiles':
         args.deployment_target = args.profiles_target if args.deployment_target == 'split' else args.deployment_target
         args.profiles_target = args.deployment_target
     env.SIGNALS = (args.signal,)
     env.write_request, env.query_request, env.http = write_request, query_request, http
+    query_options = env.query_options(args)
+    load = env.query_load_config(query_options["query_mode"], query_options["query_readers"],
+                                 query_options["query_rate"], query_options["query_deadline"])
     identity = json.loads(env.command('docker', 'inspect', args.image))[0]
     known_digests = {value.rsplit('@', 1)[-1] for value in (identity.get('RepoDigests') or [])}
     descriptor_digest = (identity.get('Descriptor') or {}).get('digest')
@@ -991,7 +1011,8 @@ def run(args):
               'resource_accounting_scope': RESOURCE_ACCOUNTING_SCOPE,
               'object_store_budget': {'cpu': getattr(args, 'object_store_cpus', None) or 2,
                                       'memory_gib': 2, 'included_in_application_budget': False},
-              'write_interval_seconds': 1, 'query_interval_seconds': 0.25,
+              'write_interval_seconds': 1, 'query_interval_seconds': 1 / load['rate_per_second'],
+              'query_load': load,
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': identity,
               'init_image_identity': json.loads(env.command('docker', 'inspect', args.init_image))[0]
@@ -1039,7 +1060,7 @@ def run(args):
                                         (output / 'host-preflight.jsonl').read_bytes())
                             duration = args.seconds if phase == 'steady' else args.seconds / 2
                             result, operations, samples = env.measure(deployment, args.signal, duration, duration / 4,
-                                writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False)
+                                writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False, **query_options)
                             name = f'{level}'
                             (output / f'{name}.operations.jsonl').write_text(''.join(json.dumps(record) + '\n' for record in operations))
                             (output / f'{name}.telemetry.jsonl').write_text(''.join(json.dumps(sample) + '\n' for sample in samples))
@@ -1806,18 +1827,21 @@ def self_test():
                                       max_cardinality=maximum, host_wait_seconds=120,
                                       application_cpus=2.5, object_store_cpus=0.5,
                                       output=pathlib.Path(directory))
+            if maximum == 500:
+                args.query_mode, args.query_readers, args.query_rate, args.query_deadline = 'fixed', 4, 8, 1.25
             with patch.dict(globals(), {'ComparisonDeployment': deployment_for_phase,
                                         'cost': lambda _: {'cpu_seconds_total': 1, 'host_activity_qualified': True}}), \
                     patch.object(env, 'command', return_value='[{}]'), patch.object(env, 'measure', phase_measure):
                 run(args)
             report = json.loads((args.output / 'comparison-report.json').read_text())
+            assert report['query_load'] == env.query_load_config(*env.query_options(args).values())
             assert report['object_store_budget']['cpu'] == 0.5
             assert all(entry['minio_cpu'] == 0.5 for entry in report['entries'])
             assert calls == [
                 (signal, duration, duration / 4, 2, level,
                  {'cold': phase == 'high_cardinality', 'interval': 1,
                   'tenant': f'cardinality-{level}' if phase == 'high_cardinality' else 'soak',
-                  'check_durability': False}) for level in levels]
+                  'check_durability': False, **env.query_options(args)}) for level in levels]
             output = args.output / f'1-krabka-{phase}'
             if phase == 'high_cardinality':
                 assert [json.loads((output / f'{level}.host-preflight.jsonl').read_text())
@@ -1825,6 +1849,15 @@ def self_test():
                 assert json.loads((output / 'host-preflight.jsonl').read_text()) == [f'cardinality-{levels[-1]}', levels[-1]]
             else:
                 assert not list(output.glob('*.host-preflight.jsonl'))
+    for mode in ('concurrent', 'fixed'):
+        args = argparse.Namespace(query_mode=mode, query_rate=4, query_deadline=2,
+                                  reader_sweep=[1, 4, 16], output=pathlib.Path('/unused'))
+        with patch.dict(globals(), run_one=lambda child: calls.append(child)):
+            calls = []
+            run(args)
+        assert [child.query_readers for child in calls] == [1, 4, 16]
+        assert [child.output for child in calls] == [args.output / f'{mode}-{n}' for n in (1, 4, 16)]
+        assert all(child.reader_sweep is None and child.query_rate == 4 for child in calls)
     print('compare-grafana self-test passed')
 
 
@@ -1853,6 +1886,9 @@ if __name__ == '__main__':
                    default=['steady', 'burst', 'high_cardinality'])
     p.add_argument('--backends', nargs='+', choices=('krabka', 'native'), default=['krabka', 'native'])
     p.add_argument('--output', type=pathlib.Path, default=pathlib.Path('qualification/evidence/comparison'))
+    env.add_query_arguments(p)
+    p.add_argument('--reader-sweep', nargs='+', type=int,
+                   help='Run isolated deployments for each reader count, under MODE-N subdirectories')
     p.add_argument('--self-test', action='store_true')
     options = p.parse_args()
     if options.self_test:
@@ -1870,4 +1906,11 @@ if __name__ == '__main__':
             p.error('CPU caps must be finite and positive')
         if len(set(options.phases)) != len(options.phases) or len(set(options.backends)) != len(options.backends):
             p.error('phases and backends must be unique')
+        try:
+            for readers in options.reader_sweep or [options.query_readers]:
+                env.query_load_config(options.query_mode, readers, options.query_rate, options.query_deadline)
+            if options.reader_sweep and len(set(options.reader_sweep)) != len(options.reader_sweep):
+                raise ValueError('reader sweep levels must be unique')
+        except ValueError as error:
+            p.error(str(error))
         run(options)
