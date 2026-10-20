@@ -1108,18 +1108,11 @@ mod block_partition_map;
 mod cold_profile_store;
 mod composite_symbols;
 mod filter_and_remap_batch;
+mod parquet_scan;
 use block_partition_map::block_partition_map;
 pub use cold_profile_store::ColdProfileStore;
 use composite_symbols::CompositeSymbols;
 use filter_and_remap_batch::{BlockRowFilter, filter_and_remap_batch};
-
-pub(crate) fn batch_fingerprints_overlap(
-    batch: &RecordBatch,
-    fps: &BTreeSet<SeriesFingerprint>,
-) -> bool {
-    let fingerprints = batch.column(0).as_primitive::<UInt64Type>();
-    (0..batch.num_rows()).any(|row| fps.contains(&fingerprints.value(row)))
-}
 
 pub(crate) fn is_unbounded_metadata_range(start_ms: i64, end_ms: i64) -> bool {
     start_ms == 0 && end_ms == i64::MAX

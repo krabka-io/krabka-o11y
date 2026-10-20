@@ -4,7 +4,6 @@ use bytes::Bytes;
 use futures::StreamExt;
 use krabka_pprof::ProfileLabel;
 use krabka_units::ByteSize;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 
 use super::{
     AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, BlockRowFilter, ChainedResolver,
@@ -12,9 +11,9 @@ use super::{
     HashMap, Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, Mutex, NativeResolver,
     ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex,
     ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock,
-    SeriesFingerprint, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
-    block_partition_map, filter_and_remap_batch, is_unbounded_metadata_range,
-    local_native_resolver,
+    SeriesFingerprint, SymbolDb, UInt64Type, VecDeque, block_partition_map,
+    is_unbounded_metadata_range, local_native_resolver,
+    parquet_scan::{self, ScanFilter},
 };
 
 const SYMBOL_DB_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -595,17 +594,11 @@ impl ColdProfileStore {
         let mut active = BTreeSet::new();
         for block_key in blocks {
             for batch in self
-                .load_block_batches_for_fingerprints(&block_key, &fps)
+                .load_block_batches_for_fingerprints(&block_key, &fps, start_ms, end_ms)
                 .await?
             {
                 let fingerprints = batch.column(0).as_primitive::<UInt64Type>();
-                let timestamps = batch.column(1).as_primitive::<Int64Type>();
-                for row in 0..batch.num_rows() {
-                    let fp = fingerprints.value(row);
-                    if timestamps.value(row) >= start_ms && timestamps.value(row) <= end_ms {
-                        active.insert(fp);
-                    }
-                }
+                active.extend(fingerprints.values().iter().copied());
             }
         }
         Ok(active)
@@ -621,26 +614,25 @@ impl ColdProfileStore {
             .map_err(|err| ProfileError::Store(err.to_string()))
     }
 
-    async fn open_block_reader(
-        &self,
-        block_key: &str,
-    ) -> Result<ParquetRecordBatchReader, ProfileError> {
-        let bytes = self.object_bytes(&Path::from(block_key)).await?;
-        ParquetRecordBatchReaderBuilder::try_new(bytes)
-            .map_err(|err| ProfileError::Store(err.to_string()))?
-            .build()
-            .map_err(|err| ProfileError::Store(err.to_string()))
-    }
-
-    pub(crate) async fn load_block_batches_for_fingerprints(
+    async fn load_block_batches_for_fingerprints(
         &self,
         block_key: &str,
         fps: &BTreeSet<SeriesFingerprint>,
+        start_ms: i64,
+        end_ms: i64,
     ) -> Result<Vec<RecordBatch>, ProfileError> {
-        let reader = self.open_block_reader(block_key).await?;
-        read_parquet_batches(reader, |batch| {
-            Ok(batch_fingerprints_overlap(&batch, fps).then_some(batch))
-        })
+        parquet_scan::load(
+            Arc::clone(&self.store),
+            Path::from(block_key),
+            ScanFilter {
+                fingerprints: fps.clone(),
+                profile_type: None,
+                start_ms,
+                end_ms,
+            },
+            None,
+        )
+        .await
     }
 
     pub(crate) async fn load_symdb(&self, block_key: &str) -> Result<SymbolDb, ProfileError> {
@@ -678,24 +670,17 @@ impl ColdProfileStore {
         partition_map: &BTreeMap<u64, u64>,
         filter: BlockRowFilter<'_>,
     ) -> Result<Vec<RecordBatch>, ProfileError> {
-        let reader = self.open_block_reader(block_key).await?;
-        read_parquet_batches(reader, |batch| {
-            let filtered = filter_and_remap_batch(&batch, partition_map, filter)?;
-            Ok((filtered.num_rows() > 0).then_some(filtered))
-        })
+        parquet_scan::load(
+            Arc::clone(&self.store),
+            Path::from(block_key),
+            ScanFilter {
+                fingerprints: filter.fps.clone(),
+                profile_type: Some(filter.profile_type.to_string()),
+                start_ms: filter.start_ms,
+                end_ms: filter.end_ms,
+            },
+            Some(partition_map.clone()),
+        )
+        .await
     }
-}
-
-fn read_parquet_batches(
-    reader: ParquetRecordBatchReader,
-    mut transform: impl FnMut(RecordBatch) -> Result<Option<RecordBatch>, ProfileError>,
-) -> Result<Vec<RecordBatch>, ProfileError> {
-    let mut batches = Vec::new();
-    for batch in reader {
-        let batch = batch.map_err(|err| ProfileError::Store(err.to_string()))?;
-        if let Some(batch) = transform(batch)? {
-            batches.push(batch);
-        }
-    }
-    Ok(batches)
 }
