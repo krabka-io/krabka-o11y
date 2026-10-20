@@ -59,7 +59,7 @@ fn json_push_preserves_top_level_and_duplicate_field_contract() {
         "\u{feff}{}",
         "{\"streams\":[]",
         "{\"streams\":[]}\0",
-        r#"{}"#,
+        "{}",
         r#"{"streams":null}"#,
         r#"{"streams":[]}"#,
         r#"{"streams":"bad"}"#,
