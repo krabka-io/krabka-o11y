@@ -7619,7 +7619,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7656,7 +7656,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7693,7 +7693,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7730,7 +7730,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7767,7 +7767,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7804,7 +7804,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7841,7 +7841,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7878,7 +7878,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7915,7 +7915,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7952,7 +7952,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -7989,7 +7989,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8026,7 +8026,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8063,7 +8063,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8100,7 +8100,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8137,7 +8137,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8174,7 +8174,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8211,7 +8211,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8248,7 +8248,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8285,7 +8285,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8322,7 +8322,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8359,7 +8359,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8396,7 +8396,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8433,7 +8433,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8470,7 +8470,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8507,7 +8507,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8544,7 +8544,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8581,7 +8581,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8618,7 +8618,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8655,7 +8655,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8692,7 +8692,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8729,7 +8729,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8766,7 +8766,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8803,7 +8803,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8840,7 +8840,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8877,7 +8877,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8914,7 +8914,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8951,7 +8951,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -8988,7 +8988,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9025,7 +9025,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9062,7 +9062,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9099,7 +9099,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9136,7 +9136,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9173,7 +9173,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9210,7 +9210,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9247,7 +9247,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9284,7 +9284,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9321,7 +9321,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9358,7 +9358,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9395,7 +9395,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9432,7 +9432,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9469,7 +9469,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9506,7 +9506,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9543,7 +9543,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9580,7 +9580,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9617,7 +9617,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9654,7 +9654,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9691,7 +9691,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9728,7 +9728,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9765,7 +9765,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9802,7 +9802,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9839,7 +9839,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9876,7 +9876,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9913,7 +9913,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9950,7 +9950,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -9987,7 +9987,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10024,7 +10024,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10061,7 +10061,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10098,7 +10098,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10135,7 +10135,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10172,7 +10172,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10209,7 +10209,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10246,7 +10246,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10283,7 +10283,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10320,7 +10320,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10357,7 +10357,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10394,7 +10394,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10431,7 +10431,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10468,7 +10468,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10505,7 +10505,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10542,7 +10542,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10579,7 +10579,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10616,7 +10616,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10653,7 +10653,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10690,7 +10690,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10727,7 +10727,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10764,7 +10764,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
@@ -10801,7 +10801,7 @@
         "supporting_sources": [
           {
             "path": "crates/logql/tests/support/template_functions.rs",
-            "sha256": "12d03e9f7251a881da6a334369bd9a68d757d1ab69a2ab38f5ead0ce66dbc550"
+            "sha256": "f5d326d2d7e0cb1cb4feca7350cd98d101ca7a2f2169458228e51f48737e7831"
           }
         ]
       },
