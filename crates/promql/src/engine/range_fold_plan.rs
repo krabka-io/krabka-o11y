@@ -6,7 +6,7 @@ use super::range_functions::validate_smoothing_factor;
 use super::{
     PromqlEngine, RangeEval, RangeWindow,
     annotations::{TypeAndUnitLabels, emit_warning, invalid_quantile_warning, is_valid_quantile},
-    apply_selector_time_modifier,
+    apply_selector_time_modifier, check_resolution_points,
     planned::PlannedInstant,
     planner_support::{
         SubqueryOuterFn, instant_expr_is_plannable, no_param_outer_range_fn,
@@ -296,16 +296,23 @@ impl<S: MetricStore> PromqlEngine<S> {
             None,
         )?;
         let start_ms = align_subquery_start(end_ms.saturating_sub(range.millis_i64()), step);
+        check_resolution_points(start_ms, end_ms, step)?;
 
         // Build the subquery's range vector through the recursive planner. A
         // `None` here means some sub-step's shape is not planner-supported, so the
         // whole subquery falls back to the interpreter.
-        let Some(series) = self
-            .eval_range_via_planner(tenant, &subquery.expr, start_ms, end_ms, step)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let series =
+            if let Some(series) = self.subquery_grid_window(tenant, subquery, time_ms).await? {
+                series
+            } else {
+                let Some(series) = self
+                    .eval_range_via_planner(tenant, &subquery.expr, start_ms, end_ms, step)
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                series
+            };
 
         // Apply the outer fold via the *same* shared routine the interpreter
         // uses. A subquery range argument always carries `modifier: None` (the

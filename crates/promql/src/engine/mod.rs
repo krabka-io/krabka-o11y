@@ -39,6 +39,7 @@ mod selector_eval;
 mod selector_plan;
 mod step_vectors;
 mod store_scans;
+mod subquery_grid;
 #[cfg(test)]
 mod test_oracle;
 mod util_plan;
