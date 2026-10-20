@@ -298,3 +298,16 @@ jobs:
           gh release create "${tag}" release-assets/* \
             --verify-tag --title "krabka-o11y ${tag}" \
             --notes-file "docs/releases/${tag}.md"
+
+  website:
+    name: publish released website and WASI lab
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    # A non-release run skips `release`, so it also skips this workflow call.
+    uses: ./.github/workflows/website-release.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    with:
+      ref: ${{ inputs.release_tag || github.ref }}
