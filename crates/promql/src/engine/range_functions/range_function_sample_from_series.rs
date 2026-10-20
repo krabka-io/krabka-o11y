@@ -72,7 +72,7 @@ pub(crate) fn range_function_sample_from_series(
                     return warn_mixed_window(series);
                 }
                 timestamps.push(timestamp);
-                histograms.push(histogram.clone());
+                histograms.push(histogram);
             }
         }
     }
@@ -85,7 +85,7 @@ pub(crate) fn range_function_sample_from_series(
                 .zip(histograms)
                 .map(|point| HistogramSample {
                     timestamp_ms: point.0,
-                    histogram: point.1,
+                    histogram: point.1.clone(),
                 })
                 .collect::<Vec<_>>();
             return extended_histogram_range_value(

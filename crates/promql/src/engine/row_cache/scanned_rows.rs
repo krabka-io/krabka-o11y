@@ -5,8 +5,8 @@ use tokio::sync::OnceCell;
 
 use super::{
     Arc, FLOAT_ROW_COLUMNS, FloatRow, FloatRowColumns, FloatRowsWithCount, FloatWindow,
-    HistogramRow, Result, ScanResult, SessionContext, collect_float_rows, collect_histogram_rows,
-    samples_per_query_exceeded,
+    HistogramWindow, Result, ScanResult, SessionContext, collect_float_rows,
+    collect_histogram_rows, samples_per_query_exceeded,
 };
 
 /// The tables of one store scan, read into rows on first use.
@@ -22,7 +22,7 @@ pub(crate) struct ScannedRows {
     float_table: Option<String>,
     histogram_table: Option<String>,
     floats: OnceCell<Arc<FloatWindow>>,
-    histograms: OnceCell<Arc<Vec<HistogramRow>>>,
+    histograms: OnceCell<Arc<HistogramWindow>>,
 }
 
 impl ScannedRows {
@@ -118,10 +118,10 @@ impl ScannedRows {
     }
 
     /// The histogram rows of the scan, in `(fingerprint, timestamp)` order.
-    pub(crate) async fn histograms(&self, max_samples: usize) -> Result<Arc<Vec<HistogramRow>>> {
+    pub(crate) async fn histograms(&self, max_samples: usize) -> Result<Arc<HistogramWindow>> {
         self.histograms
             .get_or_try_init(|| async {
-                let mut rows = match &self.histogram_table {
+                let rows = match &self.histogram_table {
                     Some(table) => {
                         let rows = collect_histogram_rows(&self.ctx, table, max_samples).await?;
                         self.ctx.deregister_table(table.as_str())?;
@@ -129,20 +129,7 @@ impl ScannedRows {
                     }
                     None => Vec::new(),
                 };
-                rows.sort_by(|left, right| {
-                    left.fp
-                        .cmp(&right.fp)
-                        .then_with(|| left.ts_ms.cmp(&right.ts_ms))
-                });
-                rows.dedup_by(|later, earlier| {
-                    if later.fp == earlier.fp && later.ts_ms == earlier.ts_ms {
-                        earlier.clone_from(later);
-                        true
-                    } else {
-                        false
-                    }
-                });
-                Ok(Arc::new(rows))
+                Ok(Arc::new(HistogramWindow::new(rows)))
             })
             .await
             .map(Arc::clone)

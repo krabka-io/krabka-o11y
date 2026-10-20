@@ -8,7 +8,8 @@ use super::{
     merge_by_fingerprint::merge_by_fingerprint,
     record_queryable_samples,
     row_cache::{
-        FloatRow, FloatWindow, HistogramRow, RANGE_SCAN_CACHE, ScannedRows, through_scan_cache,
+        FloatRow, FloatWindow, HistogramRow, HistogramWindow, RANGE_SCAN_CACHE, ScannedRows,
+        through_scan_cache,
     },
     samples_per_query_exceeded, series_per_query_exceeded,
 };
@@ -420,10 +421,9 @@ impl<S: MetricStore> PromqlEngine<S> {
                 continue;
             }
             if self
-                .cached_histogram_rows(tenant, matchers, from_ms, through_ms)
+                .histogram_window(tenant, matchers, from_ms, through_ms)
                 .await?
-                .iter()
-                .any(|row| row.ts_ms >= from_ms && row.ts_ms <= through_ms)
+                .has_rows(from_ms, through_ms)
             {
                 return Ok(true);
             }
@@ -435,13 +435,13 @@ impl<S: MetricStore> PromqlEngine<S> {
     ///
     /// Like [`Self::float_window`], the returned rows may cover more than
     /// `[start_ms, end_ms]`, so every caller narrows them.
-    async fn cached_histogram_rows(
+    async fn histogram_window(
         &self,
         tenant: &str,
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Arc<Vec<HistogramRow>>> {
+    ) -> Result<Arc<HistogramWindow>> {
         self.scanned_rows(tenant, matchers, start_ms, end_ms)
             .await?
             .histograms(self.opts.max_samples)
@@ -456,10 +456,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
     ) -> Result<Vec<HistogramRow>> {
         Ok(self
-            .cached_histogram_rows(tenant, matchers, start_ms, end_ms)
+            .histogram_window(tenant, matchers, start_ms, end_ms)
             .await?
-            .iter()
-            .filter(|row| row.ts_ms >= start_ms && row.ts_ms <= end_ms)
+            .rows_between(start_ms, end_ms)
             .cloned()
             .collect())
     }
