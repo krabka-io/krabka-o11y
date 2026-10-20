@@ -26,7 +26,7 @@ where
     Fut: Future<Output = Result<T>>,
 {
     let Ok(cache) = RANGE_SCAN_CACHE.try_with(Arc::clone) else {
-        return Ok(Arc::new(load(start_ms, end_ms).await?));
+        return Ok(Arc::new(Box::pin(load(start_ms, end_ms)).await?));
     };
     let key = matchers_cache_key(matchers);
     let fill = {
@@ -44,9 +44,10 @@ where
         }
     };
     let Some(mut fill) = fill else {
-        return Ok(Arc::new(load(start_ms, end_ms).await?));
+        return Ok(Arc::new(Box::pin(load(start_ms, end_ms)).await?));
     };
-    let loaded = load(fill.start_ms, fill.end_ms).await;
+    // Box only cache misses to bound the nested future layout seen by callers.
+    let loaded = Box::pin(load(fill.start_ms, fill.end_ms)).await;
     let expanded = fill.start_ms != start_ms || fill.end_ms != end_ms;
     let value = if expanded
         && matches!(
@@ -70,7 +71,7 @@ where
             guard.labels.remove(&key);
         }
         fill = super::range_scan_cache_inner::TimeWindow { start_ms, end_ms };
-        load(start_ms, end_ms).await?
+        Box::pin(load(start_ms, end_ms)).await?
     } else {
         loaded?
     };
