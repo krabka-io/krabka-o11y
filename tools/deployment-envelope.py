@@ -599,31 +599,31 @@ def run_queries(signal, tenant, cold, started, begin, until, config, records):
                 task.result()
             return
         pending = set()
-        # Anchor the measured cohort separately, so warm-up duration does not
-        # change the number or offsets of measured arrivals across revisions.
-        for epoch, end in ((started, begin), (begin, until)):
-            for index in range(math.ceil((end - epoch) * config["rate_per_second"])):
-                scheduled = epoch + index / config["rate_per_second"]
-                if scheduled >= end:
-                    break
-                pause.wait(max(0, scheduled - time.monotonic()))
-                # Harvest continuously: neither the executor queue nor this set
-                # grows with test duration. Propagate unexpected worker errors.
-                done = {task for task in pending if task.done()}
-                for task in done:
-                    task.result()
-                pending.difference_update(done)
-                lag = time.monotonic() - scheduled
-                reason = "scheduler_late" if lag >= 1 / config["rate_per_second"] else None
-                if reason is None and not slots.acquire(blocking=False):
-                    reason = "in_flight_limit"
-                if reason:
-                    if scheduled >= begin:
-                        records.append({"kind": "query_drop", "tenant": tenant,
-                            "scheduled_seconds": scheduled - begin, "dispatch_lag_seconds": lag,
-                            "drop_reason": reason})
-                else:
-                    pending.add(pool.submit(request, scheduled))
+        # Anchor both cohorts at begin. Omit the initial fractional interval
+        # so the last warm-up arrival is exactly one interval before measurement.
+        first = -math.floor((begin - started) * config["rate_per_second"])
+        for index in range(first, math.ceil((until - begin) * config["rate_per_second"])):
+            scheduled = begin + index / config["rate_per_second"]
+            if scheduled >= until:
+                break
+            pause.wait(max(0, scheduled - time.monotonic()))
+            # Harvest continuously: neither the executor queue nor this set
+            # grows with test duration. Propagate unexpected worker errors.
+            done = {task for task in pending if task.done()}
+            for task in done:
+                task.result()
+            pending.difference_update(done)
+            lag = time.monotonic() - scheduled
+            reason = "scheduler_late" if lag >= 1 / config["rate_per_second"] else None
+            if reason is None and not slots.acquire(blocking=False):
+                reason = "in_flight_limit"
+            if reason:
+                if scheduled >= begin:
+                    records.append({"kind": "query_drop", "tenant": tenant,
+                        "scheduled_seconds": scheduled - begin, "dispatch_lag_seconds": lag,
+                        "drop_reason": reason})
+            else:
+                pending.add(pool.submit(request, scheduled))
         for task in pending:
             task.result()
 
@@ -678,19 +678,23 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
             tasks.extend(pool.submit(worker, tenant, pace) for _ in range(count))
         samples = []
         maintenance_future = None
+        next_sample = begin
         while time.monotonic() < until or any(not task.done() for task in tasks) or (
                 maintenance_future is not None and not maintenance_future.done()):
-            if time.monotonic() >= begin:
+            if time.monotonic() >= next_sample:
                 samples.append(deployment.sample(signal))
+                next_sample = time.monotonic() + 1
                 if on_measurement and maintenance_future is None and time.monotonic() < until:
                     maintenance_future = pool.submit(on_measurement)
-            stop.wait(min(1, max(0.1, until - time.monotonic())))
+            # Poll completion independently of the one-second scrape cadence,
+            # including while admitted requests drain beyond the offered window.
+            stop.wait(min(0.1, max(0, next_sample - time.monotonic())))
         for task in tasks:
             task.result()
         maintenance_result = maintenance_future.result() if maintenance_future else None
     duration = time.monotonic() - begin
     samples.append(deployment.sample(signal))
-    writes = summarize([r for r in records if r["kind"] == "write" and r["tenant"] == main], duration)
+    writes = summarize([r for r in records if r["kind"] == "write" and r["tenant"] == main], seconds)
     queries = summarize_queries(records, seconds)
     result = {"signal": signal, "writers": writers, "cardinality": cardinality,
               "warmup_seconds": warmup, "duration_seconds": duration, "write_interval_seconds": interval,
@@ -698,7 +702,7 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
               "offered_window_seconds": seconds, "drain_seconds": max(0, duration - seconds),
               "telemetry": telemetry(samples, signal),
               "tenant": main,
-              "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], duration)
+              "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], seconds)
                           for t, _, _ in tenants}}
     maintenance = result["telemetry"]["maintenance"]
     maintenance_errors = sum(value for key, value in maintenance.items()
@@ -715,7 +719,7 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
         result["deletion_verification"] = maintenance_result
     if check_durability:
         result["catchup"] = deployment.drain(signal)
-        result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
+        result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (seconds + result["catchup"]["seconds"])
         result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
     return result, records, samples
 
@@ -956,6 +960,8 @@ def query_load_self_test():
         assert fixed["scheduled_per_second"] == 20
         if delay > 0.1:
             assert peak >= 2
+    boundary, _, _, _ = exercise("fixed", 1, 4, warmup=0.26)
+    assert boundary["scheduled"] == boundary["completed"] == 3 and boundary["dropped"] == 0
     # Slow endpoints cannot reduce the offered rate or grow an executor queue.
     overloaded, _, peak, _ = exercise("fixed", 2, 40, deadline=0.05)
     assert overloaded["scheduled"] == 24 and overloaded["dropped"] > 0
@@ -966,6 +972,28 @@ def query_load_self_test():
     assert records[0]["completed_seconds"] > 0.05 and records[0]["error"]
     exercise("fixed", 2, 40, seconds=0.2, deadline=0.05, measurement=True)
     exercise("fixed", 4, 20, seconds=0.2, measurement=True)
+    deployment = object.__new__(Deployment)
+    deployment.sequence = itertools.count()
+    deployment.sample = lambda _signal: {"time_unix": time.monotonic(), "rss_kib": {},
+                                         "metrics": {}, "scrape_errors": []}
+    deployment.drain = lambda _signal: {"seconds": 0.2, "recovered": True}
+    def slow_query(port, *_args):
+        if port == QUERY["metrics"]:
+            time.sleep(1.25)
+            return 200, b'{"status":"success","data":{"result":[{}]}}'
+        return 204, b""
+    with patch.dict(globals(), http=slow_query):
+        result, _, samples = measure(deployment, "metrics", 0.3, 0, 1, interval=0.1,
+                                      query_mode="fixed", query_readers=2, query_rate=4)
+    rows = result["ingest"]["accepted_rows"]
+    assert rows > 0 and result["duration_seconds"] >= 1.25
+    assert result["ingest"]["accepted_rows_per_sec"] == rows / 0.3
+    assert result["tenants"]["soak"]["accepted_rows_per_sec"] == rows / 0.3
+    assert result["ingest"]["durable_rows_per_sec"] == rows / (0.3 + 0.2)
+    # Intermediate scrapes stay one second apart; the final scrape captures
+    # completion immediately and may be closer to its predecessor.
+    assert len(samples) >= 3
+    assert all(b["time_unix"] - a["time_unix"] >= 1 for a, b in zip(samples[:-2], samples[1:-1]))
     # A blocked scheduler drops missed slots instead of replaying a stampede.
     real_wait = threading.Event.wait
     def delayed_wait(event, timeout=None):
