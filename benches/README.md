@@ -165,6 +165,16 @@ The [issue 369 comparison](../qualification/metrics-otlp-http-369.md) records
 before/after HTTP timings and allocations with an explicitly documented local
 build profile.
 
+`promql_histogram_profile` measures complete native-histogram `rate` queries. It varies query duration, series count and bucket count independently. The range window stays at five minutes and the step stays at one minute.
+
+```bash
+cargo run --manifest-path benches/Cargo.toml --release --example promql_histogram_profile -- 3
+```
+
+The CSV reports mean latency, allocation count, allocated bytes and peak live bytes per query. Fixture construction, result verification and warmup stay outside measurement. Allocation counting runs separately from timing. The current-thread Tokio runtime keeps query futures on the measured thread. Allocations on other threads are excluded. The allocator remains linked during timing, with counting disabled. Each run checks the count and bucket rates before measurement. Compare the same driver and build profile on the base and changed revisions.
+
+The [issue 383 comparison](../qualification/promql-histogram-windows-383.md) records local allocation counts, timings and their limits.
+
 `sorted_merge_profile` measures the production sorted merge with interleaved and disjoint inputs at 2, 8, 24 and 64 runs:
 
 ```bash

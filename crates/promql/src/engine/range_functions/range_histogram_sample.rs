@@ -9,7 +9,7 @@ use super::{
 
 pub(crate) fn range_histogram_sample(
     timestamps: &[i64],
-    histograms: &[NativeHistogram],
+    histograms: &[&NativeHistogram],
     range_start_ms: i64,
     range_end_ms: i64,
     range: Time,
@@ -44,8 +44,9 @@ pub(crate) fn range_histogram_sample(
     });
     let layout_changed = histograms
         .windows(2)
-        .any(|pair| !native_histograms_are_range_compatible(&pair[0], &pair[1]));
-    let mut histograms = histograms.to_vec();
+        .any(|pair| !native_histograms_are_range_compatible(pair[0], pair[1]));
+    // Reconciliation needs owned payloads. The caller lends the samples until here.
+    let mut histograms = histograms.iter().copied().cloned().collect::<Vec<_>>();
     let mixed_pair = !reconcile_native_histogram_layouts(&mut histograms);
     if mixed_pair {
         if histograms.len() != 2 || matches!(kind, RangeFn::Delta) {

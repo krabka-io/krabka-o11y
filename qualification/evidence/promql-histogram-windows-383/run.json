@@ -1,0 +1,27 @@
+{
+  "issue": 383,
+  "base_commit": "efb9708daef226f52d86f0b74402f6806389963b",
+  "changed_commit": "38ac933c66ad324896e536c687bfd1abd55cbd06",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "cpu_quota": "400000 100000",
+  "memory_limit_bytes": 17179869184,
+  "profile": {
+    "opt_level": 0,
+    "debug": "line-tables-only",
+    "split_debuginfo": "packed"
+  },
+  "driver": "benches/examples/promql_histogram_profile.rs",
+  "iterations": 3,
+  "allocator": "allocation-counter 0.8.1, built directly with rustc",
+  "build": "Copy the driver to crates/promql/examples/histogram_profile_383.rs in each checkout. Run cargo rustc -p krabka-promql --example histogram_profile_383 --locked -- --extern allocation_counter=/tmp/383-profile-deps/liballocation_counter.rlib. Both builds use the root Cargo.lock and a shared target directory.",
+  "scope": "Complete in-memory native-histogram rate query and result drop. Warmup and fixture construction excluded. Allocations counted on the current thread, separately from timing. No concurrent build during capture.",
+  "sha256": {
+    "Cargo.lock": "3da34c9536112be7934f9972076a21e857b2e8b0fa66952bb090f48c5bb35ccc",
+    "benches/examples/promql_histogram_profile.rs": "d9b5e7ae7e295eb33dc29c1b52a304cce0b8ac3628988081f0c49c66fe282642"
+  },
+  "binaries_sha256": {
+    "base": "1d5cdaef16c737045cce075ee5c3d4786eabf6b156d6151f27006af1af9915ea",
+    "after": "f93bd855dfae865f895e7c64d86825c53b31a6c4772ef2f282b60209f338c2a6"
+  },
+  "repeat_capture": "capture_repeat.py reads the first complete CSV row and terminates the remaining cases, in base/fix/fix/base order. Original binaries are reused without recompilation."
+}
