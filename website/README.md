@@ -105,7 +105,21 @@ The default release profile uses size optimization and retains the toolchain's
 panic behavior. The manifest records the source revision, dirty state, dependency
 lock and build-script hashes, pinned runtime, and each module's SHA-256 and byte
 count, plus every platform patch hash. It is published only after all ten modules and the browser runtime exist;
-a failed build removes the ready manifest. Cached tools do not replace builds.
+a failed build removes the ready manifest.
+
+CI keeps separate caches for WASIX tools, Cargo downloads, service build outputs,
+and the completed browser runtime. Main builds save these caches; PRs only read
+them. The runtime cache covers its scripts, pins, patches, and dependency lock.
+The build checks every cached runtime file before reuse. It checks optimized
+service outputs against a completion record before Cargo can reuse them.
+Unchanged staged sources keep their previous timestamps so Cargo can reuse
+compiled dependencies. Changed sources receive new timestamps.
+
+Documentation-only PRs build the static site and check its links and browser
+navigation. They do not compile or start the WASIX services. Changes to Rust,
+dependencies, website code, build scripts, or workflows run the full lab. Main
+builds and manual runs also run the full lab. The website check remains in the
+CI gate for both paths.
 
 Local Linux x86_64 qualification passed in Chromium. All ten WASIX modules
 compiled with the qualified locks. Browser checks passed actual ingestion and
