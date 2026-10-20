@@ -1,4 +1,17 @@
+use datafusion::{
+    common::ScalarValue,
+    logical_expr::Expr,
+    prelude::{col, lit},
+};
+
 use super::*;
+
+fn trace_id_filter(trace_id: &[u8; 16]) -> Expr {
+    col(COL_TRACE_ID).eq(lit(ScalarValue::FixedSizeBinary(
+        16,
+        Some(trace_id.to_vec()),
+    )))
+}
 
 struct IndexSnapshotConfig {
     key: String,
@@ -50,6 +63,7 @@ impl KrabkaSpanStore {
     async fn indexed_batches(
         &self,
         candidates: impl Fn(&TraceIndex) -> Vec<String> + Send,
+        filter: Option<Expr>,
     ) -> Result<Vec<RecordBatch>, TraceqlError> {
         struct ScanFailure {
             error: TraceqlError,
@@ -66,6 +80,12 @@ impl KrabkaSpanStore {
             {
                 Ok(registered) => {
                     let query = registered.context.table(&registered.table).await?;
+                    // Apply the predicate on every attempt so Parquet can prune
+                    // row groups before the candidate blocks reach memory.
+                    let query = match &filter {
+                        Some(filter) => query.filter(filter.clone())?,
+                        None => query,
+                    };
                     match query.collect().await {
                         Ok(batches) => return Ok(batches),
                         Err(error) => {
@@ -134,7 +154,10 @@ impl KrabkaSpanStore {
         }
         let Some(job) = job else {
             return self
-                .indexed_batches(|index| index.candidate_blocks(tenant, start_ns, end_ns))
+                .indexed_batches(
+                    |index| index.candidate_blocks(tenant, start_ns, end_ns),
+                    None,
+                )
                 .await;
         };
         let trace_index = self.trace_index.load();
@@ -240,9 +263,10 @@ impl KrabkaSpanStore {
         end_ns: i64,
     ) -> Result<Option<TraceSpans>, TraceqlError> {
         let batches = self
-            .indexed_batches(|index| {
-                index.candidate_blocks_for_trace(tenant, trace_id, start_ns, end_ns)
-            })
+            .indexed_batches(
+                |index| index.candidate_blocks_for_trace(tenant, trace_id, start_ns, end_ns),
+                Some(trace_id_filter(trace_id)),
+            )
             .await?;
         let mut spans = trace_from_batches(trace_id, batches)?;
 
@@ -569,3 +593,6 @@ fn missing_object<'a>(mut error: &'a (dyn std::error::Error + 'static)) -> Optio
         error = error.source()?;
     }
 }
+
+#[cfg(test)]
+mod tests;
