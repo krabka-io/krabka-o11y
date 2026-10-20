@@ -26,6 +26,7 @@ crate_library(
 )
 
 crate_tests(
+    compile_data = ["//:Cargo.toml"],
     data = glob(["tests/testdata/**"]),
     # The shared near-miss and token-salad query generators, reached with
     # `#[path]` from //crates/logql.
