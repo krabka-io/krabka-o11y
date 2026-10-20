@@ -72,6 +72,9 @@ impl MetricManifestCatalog {
     }
 
     /// Encodes the compact references as JSON.
+    ///
+    /// # Errors
+    /// Returns [`CompactionIndexError::Encode`] if JSON serialization fails.
     pub fn encode(&self) -> Result<Vec<u8>, CompactionIndexError> {
         serde_json::to_vec(self).map_err(|error| CompactionIndexError::Encode(error.to_string()))
     }

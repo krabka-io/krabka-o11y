@@ -20,9 +20,10 @@ use krabka_metrics::{
 };
 use krabka_metrics_service::{RefreshingMetricBlockStore, load_compaction_manifests_for_range};
 use krabka_promql::{MergedMetricStore, MetricBlockStore, MetricStore, WalHead};
-use krabka_units::Time;
+use krabka_units::{Time, convert::TimeExt as _};
 use object_store::{
-    GetOptions, GetResult, ObjectMeta, ObjectStore, ObjectStoreExt, memory::InMemory, path::Path,
+    GetOptions, GetResult, ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory,
+    path::Path,
 };
 
 const NOW: i64 = 1_790_000_000_000;
@@ -97,6 +98,7 @@ krabka_blockstore::delegate_object_store! {
 async fn publish(
     sink: &ObjectStoreCompactionIndexSink,
     legacy: &dyn ObjectStore,
+    candidate: &dyn ObjectStore,
     tenant: &str,
     timestamp: i64,
     number: usize,
@@ -124,6 +126,17 @@ async fn publish(
             labels: labels.into(),
         }],
     };
+    // Series queries use the manifest labels. Placeholders preserve the LIST
+    // footprint of block objects without constructing unused sample payloads.
+    for store in [legacy, candidate] {
+        store
+            .put(
+                &Path::from(manifest.block_key.as_str()),
+                PutPayload::default(),
+            )
+            .await
+            .unwrap();
+    }
     legacy
         .put(
             &Path::from(manifest.index_key.as_str()),
@@ -152,12 +165,21 @@ fn main() {
         runtime.block_on(async {
             let sink = ObjectStoreCompactionIndexSink::new(Arc::clone(&objects));
             for number in 0..3 {
-                publish(&sink, legacy.as_ref(), "target", NOW, number).await;
+                publish(
+                    &sink,
+                    legacy.as_ref(),
+                    objects.as_ref(),
+                    "target",
+                    NOW,
+                    number,
+                )
+                .await;
             }
             for number in 0..noise {
                 publish(
                     &sink,
                     legacy.as_ref(),
+                    objects.as_ref(),
                     &format!("unrelated-{number}"),
                     NOW,
                     number,
@@ -166,6 +188,7 @@ fn main() {
                 publish(
                     &sink,
                     legacy.as_ref(),
+                    objects.as_ref(),
                     "target",
                     NOW - 86_400_000 * (1 + i64::try_from(number / 10).unwrap()),
                     number + 3,

@@ -382,3 +382,45 @@ async fn an_unbounded_snapshot_does_not_claim_to_cover_history_outside_its_lookb
             == 1
     );
 }
+
+#[tokio::test]
+async fn catalog_retirement_during_get_relists_replacement_manifests() {
+    use krabka_metrics::manifest_catalog::metric_manifest_catalog_key;
+
+    use super::{ManifestObjectReplacement, ManifestRetirement};
+
+    let counted = Arc::new(CountingObjectStore::new(Arc::default(), Time::ZERO));
+    let objects: Arc<dyn ObjectStore> = counted.clone();
+    let base = url::Url::parse("memory:///").unwrap();
+    let writer = BlockStore::new(Arc::clone(&objects), base.clone());
+    let sink = ObjectStoreCompactionIndexSink::new(Arc::clone(&objects));
+    let mut manifests = Vec::new();
+    for (job, timestamp) in [("old", 10_000), ("replacement", 11_000)] {
+        let key = format!("metrics/tenant-a/float/{job}.parquet");
+        write_float_manifest(&writer, &sink, "tenant-a", job, timestamp, &key, 0).await;
+        manifests.push(sink.read_manifest(&format!("{key}.index")).await.unwrap());
+    }
+    let replacement_key = Path::from(metric_manifest_catalog_key(&manifests[1]));
+    let payload = objects
+        .get(&replacement_key)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    objects.delete(&replacement_key).await.unwrap();
+    // The first listing sees the old hint. Before its GET completes, the
+    // replacement publishes, the old index retires, then cleanup removes its hint.
+    *counted.retire_on_get.lock().unwrap() = Some(ManifestRetirement {
+        key: Path::from(metric_manifest_catalog_key(&manifests[0])),
+        replacement: Some(ManifestObjectReplacement {
+            key: replacement_key,
+            payload: payload.into(),
+        }),
+        also_delete: vec![Path::from(manifests[0].index_key.as_str())],
+    });
+    let service = RefreshingMetricBlockStore::new(objects, base, "metrics", WalHead::new());
+    let result = service.series("tenant-a", &[], 0, 20_000).await.unwrap();
+    assert!(result.len() == 1);
+    assert!(result[0].get("job").unwrap() == "replacement");
+}

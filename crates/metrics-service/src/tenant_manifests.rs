@@ -32,7 +32,8 @@ pub(crate) async fn load_tenant_manifests(
     // Retry once after a retirement to include its replacement, as the global
     // loader does. Missing authoritative keys never resurrect cached blocks.
     for attempt in 0..2 {
-        let references = list_references(store, prefix, tenant, start_ms, end_ms).await?;
+        let (references, mut missing) =
+            list_references(store, prefix, tenant, start_ms, end_ms).await?;
         let mut reads = futures::stream::iter(references.into_values())
             .map(|reference| async move {
                 let key = Path::from(reference.index_key.as_str());
@@ -75,7 +76,6 @@ pub(crate) async fn load_tenant_manifests(
             })
             .buffered(4);
         let mut manifests = Vec::new();
-        let mut missing = false;
         let mut fetched = BTreeMap::new();
         while let Some(result) = reads.next().await {
             let (key, manifest) = result?;
@@ -102,7 +102,7 @@ async fn list_references(
     tenant: &str,
     start_ms: i64,
     end_ms: i64,
-) -> Result<BTreeMap<String, MetricManifestReference>, MetricsServiceError> {
+) -> Result<(BTreeMap<String, MetricManifestReference>, bool), MetricsServiceError> {
     let prefixes = metric_manifest_catalog_prefixes(prefix, tenant, start_ms, end_ms);
     let listings = futures::stream::iter(prefixes)
         .map(|prefix| async move {
@@ -128,16 +128,25 @@ async fn list_references(
         .map(|object| async move {
             match store.get(&object.location).await {
                 Ok(object) => Ok(Some(MetricManifestCatalog::decode(&object.bytes().await?)?)),
-                // Orphan cleanup can remove summaries after index retirement.
-                Err(object_store::Error::NotFound { .. }) => Ok(None),
+                // Cleanup can retire a listed hint after its replacement is
+                // published. Relist rather than omit that replacement.
+                Err(error @ object_store::Error::NotFound { .. }) => {
+                    match store.head(&object.location).await {
+                        Ok(_) => Err(MetricsServiceError::from(error)),
+                        Err(object_store::Error::NotFound { .. }) => Ok(None),
+                        Err(error) => Err(MetricsServiceError::from(error)),
+                    }
+                }
                 Err(error) => Err(MetricsServiceError::from(error)),
             }
         })
         .buffered(4);
     let mut references = BTreeMap::new();
+    let mut missing_summaries = false;
     let mut imports = std::collections::BTreeSet::new();
     while let Some(catalog) = summaries.next().await {
         let Some(catalog) = catalog? else {
+            missing_summaries = true;
             continue;
         };
         for reference in catalog.manifests {
@@ -168,5 +177,5 @@ async fn list_references(
             }
         }
     }
-    Ok(references)
+    Ok((references, missing_summaries))
 }

@@ -502,6 +502,7 @@ mod tests {
     struct ManifestRetirement {
         key: Path,
         replacement: Option<ManifestObjectReplacement>,
+        also_delete: Vec<Path>,
     }
 
     struct ManifestObjectReplacement {
@@ -575,9 +576,10 @@ mod tests {
                     None
                 }
             };
-            if let Some(ManifestRetirement { key, replacement }) = retirement {
+            if let Some(ManifestRetirement { key, replacement, also_delete }) = retirement {
                 if let Some(replacement) = replacement {
                     self.inner.put(&replacement.key, replacement.payload).await?;
+                    for retired in also_delete { self.inner.delete(&retired).await?; }
                     self.inner.delete(&key).await?;
                 } else {
                     return Err(object_store::Error::NotFound {
@@ -2169,6 +2171,7 @@ rules:
         // then physically retire the listed sidecar.
         *counting.retire_on_get.lock().unwrap() = Some(ManifestRetirement {
             key: old_key,
+            also_delete: Vec::new(),
             replacement: Some(ManifestObjectReplacement {
                 key: replacement_key.clone(),
                 payload: PutPayload::from(manifests[1].encode().unwrap()),
@@ -2196,6 +2199,7 @@ rules:
         // an integrity error, even though a second GET could succeed.
         *counting.retire_on_get.lock().unwrap() = Some(ManifestRetirement {
             key: replacement_key,
+            also_delete: Vec::new(),
             replacement: None,
         });
         let router = authenticated(super::refreshing_blockstore_prometheus_router(

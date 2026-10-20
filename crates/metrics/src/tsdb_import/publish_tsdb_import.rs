@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::{
     Arc, BlockWriter, CompactionIndexManifest, CompactionObjectPlan, DecodedTsdbBlock,
     ImportCommit, MetricBlockKind, ObjectStore, ObjectStoreExt, Path, PutPayload, RecordBatch,
@@ -374,23 +376,32 @@ async fn publish(
     // by a retry. Reading any summary can then resolve the whole publication.
     let mut references = Vec::with_capacity(record.objects.len());
     for object in &record.objects {
-        let key = Path::from(object.index_key.as_str());
-        let bytes = store
-            .get(&key)
-            .await
-            .map_err(|source| TsdbPublishError::ObjectStore {
-                key: key.to_string(),
-                source,
-            })?
-            .bytes()
-            .await
-            .map_err(|source| TsdbPublishError::ObjectStore {
-                key: key.to_string(),
-                source,
-            })?;
-        let manifest = CompactionIndexManifest::decode(&bytes)?;
-        crate::manifest_catalog::write_metric_manifest_catalog(store, &manifest).await?;
-        references.push((&manifest).into());
+        // A normal publication already owns these manifests. Only entries
+        // retained by a resumed import need another read of their labels.
+        let manifest = if let Some(manifest) = manifests
+            .iter()
+            .find(|manifest| manifest.index_key == object.index_key)
+        {
+            Cow::Borrowed(manifest)
+        } else {
+            let key = Path::from(object.index_key.as_str());
+            let bytes = store
+                .get(&key)
+                .await
+                .map_err(|source| TsdbPublishError::ObjectStore {
+                    key: key.to_string(),
+                    source,
+                })?
+                .bytes()
+                .await
+                .map_err(|source| TsdbPublishError::ObjectStore {
+                    key: key.to_string(),
+                    source,
+                })?;
+            Cow::Owned(CompactionIndexManifest::decode(&bytes)?)
+        };
+        crate::manifest_catalog::write_metric_manifest_catalog(store, manifest.as_ref()).await?;
+        references.push(manifest.as_ref().into());
     }
     let catalog = crate::manifest_catalog::MetricManifestCatalog::new(references);
     let key = keys.published_marker(&record.ulid, &record.sha256);
