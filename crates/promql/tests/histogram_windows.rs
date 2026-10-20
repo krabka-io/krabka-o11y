@@ -8,7 +8,11 @@ use krabka_units::prelude::*;
 fn histogram(step: u32, custom: bool) -> NativeHistogram {
     let count = f64::from(step % 4 + 1);
     NativeHistogram {
-        schema: if custom { -53 } else { i8::from(step % 2 == 0) },
+        schema: if custom {
+            -53
+        } else {
+            i8::from(step.is_multiple_of(2))
+        },
         is_float: true,
         reset_hint: match step % 4 {
             0 => ResetHint::Unknown,
@@ -27,7 +31,13 @@ fn histogram(step: u32, custom: bool) -> NativeHistogram {
         positive_counts: vec![count, count * 2.0],
         negative_spans: vec![],
         negative_counts: vec![],
-        custom_values: custom.then(|| if step % 2 == 0 { vec![1.0] } else { vec![2.0] }),
+        custom_values: custom.then(|| {
+            if step.is_multiple_of(2) {
+                vec![1.0]
+            } else {
+                vec![2.0]
+            }
+        }),
         start_timestamp_ms: Some(i64::from(step / 4) * 60_000),
     }
 }
