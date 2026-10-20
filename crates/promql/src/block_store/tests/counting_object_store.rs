@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 use futures::stream::BoxStream;
 use object_store::{
@@ -18,12 +21,14 @@ use super::*;
 pub(crate) struct CountingObjectStore {
     inner: Arc<dyn ObjectStore>,
     counts: Arc<Mutex<RequestCounts>>,
+    fetched_bytes: Arc<AtomicU64>,
     read_pause: Mutex<Option<[Arc<Notify>; 2]>>,
 }
 
 pub(crate) struct CountingObjectStoreParts {
     pub(crate) store: Arc<dyn ObjectStore>,
     pub(crate) counts: Arc<Mutex<RequestCounts>>,
+    pub(crate) fetched_bytes: Arc<AtomicU64>,
 }
 
 pub(crate) struct PausedCountingObjectStore {
@@ -35,12 +40,18 @@ pub(crate) struct PausedCountingObjectStore {
 impl CountingObjectStore {
     pub(crate) fn wrap(inner: Arc<dyn ObjectStore>) -> CountingObjectStoreParts {
         let counts = Arc::new(Mutex::new(RequestCounts::default()));
+        let fetched_bytes = Arc::new(AtomicU64::new(0));
         let store = Arc::new(Self {
             inner,
             counts: Arc::clone(&counts),
+            fetched_bytes: Arc::clone(&fetched_bytes),
             read_pause: Mutex::new(None),
         });
-        CountingObjectStoreParts { store, counts }
+        CountingObjectStoreParts {
+            store,
+            counts,
+            fetched_bytes,
+        }
     }
 
     pub(crate) fn wrap_paused(inner: Arc<dyn ObjectStore>) -> PausedCountingObjectStore {
@@ -48,6 +59,7 @@ impl CountingObjectStore {
         let store = Arc::new(Self {
             inner,
             counts: Arc::new(Mutex::new(RequestCounts::default())),
+            fetched_bytes: Arc::new(AtomicU64::new(0)),
             read_pause: Mutex::new(Some(signals.clone())),
         });
         PausedCountingObjectStore {
@@ -106,7 +118,13 @@ impl ObjectStore for CountingObjectStore {
         } else {
             self.count(|counts| counts.full_gets += 1);
         }
-        self.inner.get_opts(location, options).await
+        let head = options.head;
+        let result = self.inner.get_opts(location, options).await?;
+        if !head {
+            self.fetched_bytes
+                .fetch_add(result.range.end - result.range.start, Ordering::Relaxed);
+        }
+        Ok(result)
     }
 
     fn delete_stream(

@@ -31,6 +31,7 @@ mod float_row;
 mod float_window;
 mod range_scan_cache_inner;
 mod scanned_rows;
+mod selector_windows;
 mod through_scan_cache;
 
 pub(super) use collect_float_rows::collect_float_rows;
@@ -38,8 +39,9 @@ pub(super) use collect_histogram_rows::collect_histogram_rows;
 pub(super) use float_row::FloatRow;
 use float_row::{FLOAT_ROW_COLUMNS, FloatRowColumns};
 pub(super) use float_window::FloatWindow;
-pub(super) use range_scan_cache_inner::RangeScanCacheInner;
+pub(super) use range_scan_cache_inner::{RangeScanCacheInner, TimeWindow};
 pub(super) use scanned_rows::ScannedRows;
+pub(super) use selector_windows::selector_windows;
 pub(super) use through_scan_cache::through_scan_cache;
 
 pub(crate) struct FloatRowsWithCount {

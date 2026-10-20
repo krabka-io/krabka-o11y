@@ -11,7 +11,9 @@ use super::{
     planner_support::range_expr_routes_through_planner,
     query_stats_step,
     result_utils::{finalize_metric_names, validate_unique_instant_labelsets},
-    row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner},
+    row_cache::{
+        RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner, TimeWindow, selector_windows,
+    },
     step_vectors::{RANGE_STEP_VECTORS, StepVectorCache, StepVectorCacheInner},
 };
 #[cfg(feature = "experimental-functions")]
@@ -247,17 +249,23 @@ impl<S: MetricStore> PromqlEngine<S> {
         // (including subqueries, whose grid the front-gate never sees).
         let step_count = check_resolution_points(start_ms, end_ms, step)?;
         tracing::Span::current().record("steps", step_count);
-        // Scan the union of all per-step lookback windows once per matcher set,
-        // shared across the step loop via the RANGE_SCAN_CACHE task-local. The
-        // union starts at the first step's lookback floor (`start - lookback`)
-        // and ends at the last step (`end`). Scans outside this window
-        // (offset/@-modifier or a `[range]` longer than the lookback) fall back to
-        // a direct scan inside `scanned_rows`, so results are unchanged.
-        let cache: RangeScanCache =
-            std::sync::Arc::new(std::sync::Mutex::new(RangeScanCacheInner::range(
-                start_ms.saturating_sub(self.opts.lookback_delta.millis_i64()),
-                end_ms,
-            )));
+        let unions = selector_windows(
+            expr,
+            start_ms,
+            end_ms,
+            step,
+            self.opts.lookback_delta.millis_i64(),
+        )?;
+        // Dynamic selectors can share the lookback union only on a dense grid.
+        let fallback = (step <= self.opts.lookback_delta).then_some(TimeWindow {
+            start_ms: start_ms.saturating_sub(self.opts.lookback_delta.millis_i64()),
+            end_ms,
+        });
+        // Without a connected union, retain only each requested scan window.
+        let cache_inner = unions.map_or_else(RangeScanCacheInner::instant, |unions| {
+            RangeScanCacheInner::range(unions, fallback)
+        });
+        let cache: RangeScanCache = std::sync::Arc::new(std::sync::Mutex::new(cache_inner));
         // Plan each operator leaf once over the whole grid rather than once per
         // step, and let the loop read the memo. Scoped like the scan cache
         // above, so a nested range evaluation (a subquery's own grid) shadows it
