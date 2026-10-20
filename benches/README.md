@@ -173,6 +173,8 @@ cargo run --manifest-path benches/Cargo.toml --release --example promql_histogra
 
 The CSV reports mean latency, allocation count, allocated bytes and peak live bytes per query. Fixture construction, result verification and warmup stay outside measurement. Allocation counting runs separately from timing. The current-thread Tokio runtime keeps query futures on the measured thread. Allocations on other threads are excluded. The allocator remains linked during timing, with counting disabled. Each run checks the count and bucket rates before measurement. Compare the same driver and build profile on the base and changed revisions.
 
+The [issue 383 comparison](../qualification/promql-histogram-windows-383.md) records local allocation counts, timings and their limits.
+
 ## Where they run
 
 The `bench` job in [//.github/workflows/ci.yml](../.github/workflows/ci.yml) runs them on a schedule, not on a pull request. This follows the fuzz run, which is scheduled for the same reason: the work is unbounded, and a pull request cannot pay for it.
