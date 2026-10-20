@@ -6,6 +6,16 @@ use serde_json::{Value, json};
 
 use super::{client_replay_proxy::RecordingProxy, upstream_http::TestResult};
 
+const RATE_INFO: &str = "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"http_requests_total\" (1:6)";
+
+fn expected_infos(case: &ReplayCase) -> Value {
+    if case.id.ends_with("rate") {
+        json!([RATE_INFO])
+    } else {
+        json!([])
+    }
+}
+
 struct ReplayCase {
     id: &'static str,
     expression: &'static str,
@@ -88,7 +98,7 @@ fn dashboard_request(case: &ReplayCase, uid: &str) -> Value {
 }
 
 fn ledger(case: &ReplayCase) -> Value {
-    json!({"labels":(case.labels)(),"samples":case.values.iter().enumerate().map(|(index,value)|
+    json!({"labels":(case.labels)(),"infos":expected_infos(case),"samples":case.values.iter().enumerate().map(|(index,value)|
         json!([case.start_ms + i64::try_from(index).expect("bounded fixture") * 15000,value])).collect::<Vec<_>>()})
 }
 
@@ -100,8 +110,12 @@ fn canonical_response(case: &ReplayCase, response: &Value) -> TestResult<Value> 
     if response["status"] != "success"
         || response["data"]["resultType"] != expected_type
         || result.len() != 1
-        || response.get("warnings").is_some()
-        || response.get("infos").is_some()
+        || response
+            .get("warnings")
+            .cloned()
+            .unwrap_or_else(|| json!([]))
+            != json!([])
+        || response.get("infos").cloned().unwrap_or_else(|| json!([])) != expected_infos(case)
     {
         return Err(
             format!("unexpected Prometheus result shape or annotations: {response}").into(),
@@ -203,6 +217,15 @@ fn canonical_frames(response: &Value, expected: &Value) -> TestResult<Value> {
         meta.remove("stats");
         meta.remove("executedQueryString");
     }
+    let notices = expected["infos"]
+        .as_array()
+        .ok_or("annotation ledger missing")?
+        .iter()
+        .map(|message| json!({"severity":"info","text":message}))
+        .collect::<Vec<_>>();
+    if meta.get("notices").cloned().unwrap_or_else(|| json!([])) != json!(notices) {
+        return Err("Grafana notices differ from annotation ledger".into());
+    }
     Ok(json!({"fields":fields,"data":frame["data"],"meta":meta}))
 }
 
@@ -252,6 +275,7 @@ pub async fn run(
     let mut report = json!({"suite":"grafana-prometheus-client-replay","status":"running","planned":CASES.len(),
         "grafana_image_tag":std::env::var("KRABKA_GRAFANA_IMAGE_TAG").ok(),
         "prometheus_image_tag":std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG").ok(),
+        "settings":{"oracle":{"enable_type_and_unit_labels":true},"candidate":{"enable_type_and_unit_labels":true}},
         "fixture":{"timestamps_ms":[0,15000,30000,45000],"GET":[0,30,75,120],"POST":[0,3,5,8]},"cases":[]});
     let mut failures = Vec::new();
     for case in CASES {

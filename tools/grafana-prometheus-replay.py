@@ -19,6 +19,14 @@ CASES = {
     # Zero extrapolation caps the left padding at ten seconds at t=30.
     "range-rate": (RATE, True, 30000, [2.5, 3.0], RATE_LABELS),
 }
+RATE_INFO = 'PromQL info: metric might not be a counter, __type__ label is not set to "counter" or "histogram", got "": "http_requests_total" (1:6)'
+SETTINGS = {side: {"enable_type_and_unit_labels": True} for side in ("oracle", "candidate")}
+
+
+def infos(case):
+    return [RATE_INFO] if case[0] == RATE else []
+
+
 FIXTURE = {"timestamps_ms": [0, 15000, 30000, 45000], "GET": [0, 30, 75, 120], "POST": [0, 3, 5, 8]}
 
 
@@ -40,13 +48,14 @@ def number(value):
 
 def ledger(case):
     _, _, start, values, labels = case
-    return {"labels": labels, "samples": [[start + index * 15000, value] for index, value in enumerate(values)]}
+    return {"labels": labels, "infos": infos(case), "samples": [[start + index * 15000, value] for index, value in enumerate(values)]}
 
 
 def query_response(case, response):
     _, is_range, _, _, _ = case
-    if response["status"] != "success" or "warnings" in response or "infos" in response:
-        raise ValueError("backend query did not succeed without annotations")
+    if (response["status"] != "success" or response.get("warnings", []) != []
+            or not typed_equal(response.get("infos", []), infos(case))):
+        raise ValueError("backend status or annotations differ from ledger")
     result = response["data"]["result"]
     if response["data"]["resultType"] != ("matrix" if is_range else "vector") or len(result) != 1:
         raise ValueError("backend result type or series count differs")
@@ -56,11 +65,14 @@ def query_response(case, response):
         if len(point) != 2 or type(point[1]) is not str:
             raise ValueError("backend sample tuple differs")
         samples.append([number(point[0]) * 1000, number(float(point[1]))])
-    return {"labels": result[0]["metric"], "samples": samples}
+    return {"labels": result[0]["metric"], "infos": response.get("infos", []), "samples": samples}
 
 
 def equal_ledger(expected, actual):
-    if not typed_equal(expected["labels"], actual["labels"]) or len(expected["samples"]) != len(actual["samples"]):
+    if (not typed_equal(expected["labels"], actual["labels"])
+            or not typed_equal(expected["infos"], actual["infos"])):
+        return False
+    if len(expected["samples"]) != len(actual["samples"]):
         return False
     return all(len(point) == 2 and all(number(a) == number(b) for a, b in zip(golden, point))
                for golden, point in zip(expected["samples"], actual["samples"]))
@@ -79,11 +91,14 @@ def frame_response(response, expected):
     value_index = next(index for index, field in enumerate(fields) if field["type"] == "number")
     if len(columns[time_index]) != len(columns[value_index]):
         raise ValueError("Grafana frame timestamp/value lengths differ")
-    actual = {"labels": fields[value_index].get("labels", {}),
+    meta = copy.deepcopy(frame["schema"].get("meta", {}))
+    notices = [{"severity": "info", "text": message} for message in expected["infos"]]
+    if not typed_equal(meta.get("notices", []), notices):
+        raise ValueError("Grafana notices differ from annotation ledger")
+    actual = {"labels": fields[value_index].get("labels", {}), "infos": expected["infos"],
               "samples": list(map(list, zip(columns[time_index], columns[value_index])))}
     if not equal_ledger(expected, actual):
         raise ValueError("Grafana frame differs from independent ledger")
-    meta = copy.deepcopy(frame["schema"].get("meta", {}))
     meta.pop("stats", None)
     meta.pop("executedQueryString", None)
     return {"fields": fields, "data": frame["data"], "meta": meta}
@@ -95,7 +110,8 @@ def binding_errors(report, root):
         if (report["suite"] != "grafana-prometheus-client-replay" or report["status"] != "passed"
                 or type(report["planned"]) is not int or report["planned"] != len(CASES)
                 or len(rows) != len(CASES) or {row["id"] for row in rows} != set(CASES)
-                or not typed_equal(report["fixture"], FIXTURE)):
+                or not typed_equal(report["fixture"], FIXTURE)
+                or not typed_equal(report.get("settings"), SETTINGS)):
             raise ValueError("incomplete client case set or changed input fixture")
         pin = re.search(r'\("prometheus", "[^"]+", "[^"]+", "([^"]+)"', (root / "MODULE.bazel").read_text())
         if pin is None or report.get("prometheus_image_tag") != pin[1]:
@@ -158,18 +174,23 @@ def self_check(root):
         points = [[(start + index * 15000) / 1000, str(value)] for index, value in enumerate(values)]
         answer = {"status": "success", "data": {"resultType": "matrix" if is_range else "vector",
                   "result": [{"metric": labels, "values" if is_range else "value": points if is_range else points[0]}]}}
+        if infos(case):
+            answer["infos"] = infos(case)
         frame = {"status": 200, "body": {"results": {"A": {"frames": [{"schema": {"fields": [
             {"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": labels}]},
             "data": {"values": [[start + index * 15000 for index in range(len(values))], values]}}]}}}}
+        if infos(case):
+            frame["body"]["results"]["A"]["frames"][0]["schema"]["meta"] = {
+                "notices": [{"severity": "info", "text": message} for message in infos(case)]}
         rows.append({"id": identity, "expression": expression, "status": "matched", "independent_expected": ledger(case),
             "dashboard_requests": inputs, "generated_requests": {side: [copy.deepcopy(request)] for side in ("oracle", "candidate")},
             "oracle": copy.deepcopy(answer), "candidate": copy.deepcopy(answer),
             "grafana_responses": {side: copy.deepcopy(frame) for side in ("oracle", "candidate")}})
     pin = re.search(r'\("prometheus", "[^"]+", "[^"]+", "([^"]+)"', (root / "MODULE.bazel").read_text())[1]
     report = {"suite": "grafana-prometheus-client-replay", "status": "passed", "planned": 6,
-              "prometheus_image_tag": pin, "fixture": FIXTURE, "cases": rows}
+              "prometheus_image_tag": pin, "settings": SETTINGS, "fixture": FIXTURE, "cases": rows}
     assert not binding_errors(report, root)
-    for mutation in ("missing", "duplicate", "request", "tenant", "bounds", "annotation", "both-wrong", "frame", "both-frames", "type", "fixture", "rate", "nan"):
+    for mutation in ("missing", "duplicate", "request", "tenant", "bounds", "annotation", "both-wrong", "frame", "both-frames", "type", "fixture", "rate", "nan", "settings", "missing-infos", "changed-infos", "missing-notices", "changed-notices"):
         changed = copy.deepcopy(report)
         row = changed["cases"][0]
         if mutation == "missing": changed["cases"].pop()
@@ -187,6 +208,14 @@ def self_check(root):
                 frame = row["grafana_responses"][side]["body"]["results"]["A"]["frames"][0]
                 if mutation == "type": frame["schema"]["fields"][1]["type"] = "string"
                 else: frame["data"]["values"][1][0] = 121
+        elif mutation == "settings": changed["settings"]["oracle"]["enable_type_and_unit_labels"] = False
+        elif mutation.endswith("infos"):
+            for side in ("oracle", "candidate"):
+                changed["cases"][-1][side]["infos"] = [] if mutation == "missing-infos" else ["wrong"]
+        elif mutation.endswith("notices"):
+            for side in ("oracle", "candidate"):
+                meta = changed["cases"][-1]["grafana_responses"][side]["body"]["results"]["A"]["frames"][0]["schema"]["meta"]
+                meta["notices"] = [] if mutation == "missing-notices" else [{"severity": "info", "text": "wrong"}]
         elif mutation == "fixture": changed["fixture"]["GET"][1] = 31
         else:
             row = changed["cases"][-1]

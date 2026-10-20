@@ -77,7 +77,10 @@ crate_tests(
     docker = {
         "diff_mimir": ["mimir"],
         "diff_prometheus": ["prometheus"],
-        "grafana_integration": ["grafana", "prometheus"],
+        "grafana_integration": [
+            "grafana",
+            "prometheus",
+        ],
         "metrics_deployment": [
             "krabka",
             "broker",

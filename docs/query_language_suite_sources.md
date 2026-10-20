@@ -165,6 +165,11 @@ counter's extrapolation toward zero caps the left padding at ten seconds:
 requests, raw backend answers and Grafana frames. The report gate checks the
 complete fixture, expressions, form parameters, timestamps, values and labels.
 Frame comparisons keep the metric name, field types and semantic metadata.
-Unexpected warnings, infos and non-finite samples fail the positive suite.
+Both backends enable `type-and-unit-labels`, matching the shipped Krabka service
+profile; the report records this setting explicitly. Rate queries must retain
+the exact upstream info annotation about the missing counter type label, both
+in backend responses and in Grafana notices. Unexpected annotations and
+non-finite samples fail the positive suite. The default-off upstream profile
+remains outside this client suite.
 Independent comparator controls reject equal but wrong backend or frame values.
 This is backend plugin replay; it does not establish browser builder coverage.

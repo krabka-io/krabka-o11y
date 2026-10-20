@@ -25,7 +25,7 @@
 //! `with_host(.., Host::HostGateway)`. Docker exposes the host to a container
 //! this way on Linux, macOS, and Windows.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, fmt::Write as _, time::Duration};
 
 use krabka_promql::WalHead;
 use serde_json::{Value, json};
@@ -155,7 +155,8 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     // Real Grafana with the provisioned datasource.
     let mut datasource_yaml =
         DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &candidate_proxy.port.to_string());
-    datasource_yaml.push_str(&format!(
+    write!(
+        datasource_yaml,
         r"  - name: Prometheus
     type: prometheus
     access: proxy
@@ -168,7 +169,7 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
       httpHeaderValue1: grafana
 ",
         oracle_proxy.port
-    ));
+    )?;
     let grafana = start_grafana(&datasource_yaml).await?;
     let base = mapped_base_url(&grafana, GRAFANA_PORT).await?;
     wait_for_http_ok(
@@ -1545,6 +1546,7 @@ async fn start_prometheus_oracle() -> TestResult<testcontainers::ContainerAsync<
                 "--config.file=/etc/prometheus/prometheus.yml",
                 "--storage.tsdb.path=/prometheus",
                 "--web.enable-remote-write-receiver",
+                "--enable-feature=type-and-unit-labels",
             ])
             .start(),
     )
