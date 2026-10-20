@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "issue": "https://github.com/krabka-io/krabka-o11y/issues/378",
+  "base_commit": "b357b2bec7a1466f11c06bee1398cec5620cd8dc",
+  "source_sha256": "9e01c49bf9c2140f7512dcad4c8c73299fef4ca84784ea46f1e740ee75ca2667",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "build": "Cargo dev test profile, unoptimized; one binary for all modes.",
+  "fixture": "32768 sample rows in 16 row groups. One selected series, inclusive [80000, 80002] milliseconds. Alternating profile types; binary trace and WAL identities; high-bit compacted partitions.",
+  "io": "Bytes returned by the production object-store range reader, including the footer when metadata is cold. Measured through AsyncFileReader. Predicate rows count rows decoded for the filter; output rows count selected payload rows.",
+  "scope": "Local file store, with warm OS page cache. Cold metadata parses the footer during the query. Warm metadata supplies a preloaded footer; the production reader does not add a footer cache. No network latency, symbol loading, or end-to-end API measurements.",
+  "memory": "Whole-process peak RSS from wait4, in KiB. Fixture generation runs in a separate process.",
+  "latency": "Three fresh processes per mode and metadata state, alternating mode order. Shared host; diagnostic timings only. The full and full-metadata modes reproduce the previous full-download/full-width decode/filter paths.",
+  "reproduce": "cargo test -p krabka-profiles --lib --locked --no-run; python3 qualification/evidence/profile-cold-parquet-378/measure.py <test-binary> qualification/profile-cold-parquet-378.json",
+  "range_reads": [
+    {
+      "metadata_only": false,
+      "warm_metadata": false,
+      "fetched_bytes": 909442,
+      "file_bytes": 14206306,
+      "predicate_rows": 2048,
+      "file_rows": 32768,
+      "output_rows": 2
+    },
+    {
+      "metadata_only": false,
+      "warm_metadata": true,
+      "fetched_bytes": 886296,
+      "file_bytes": 14206306,
+      "predicate_rows": 2048,
+      "file_rows": 32768,
+      "output_rows": 2
+    },
+    {
+      "metadata_only": true,
+      "warm_metadata": false,
+      "fetched_bytes": 42434,
+      "file_bytes": 14206306,
+      "predicate_rows": 2048,
+      "file_rows": 32768,
+      "output_rows": 3
+    },
+    {
+      "metadata_only": true,
+      "warm_metadata": true,
+      "fetched_bytes": 19288,
+      "file_bytes": 14206306,
+      "predicate_rows": 2048,
+      "file_rows": 32768,
+      "output_rows": 3
+    }
+  ],
+  "measurements": [
+    {
+      "trial": 0,
+      "mode": "full",
+      "warm_metadata": false,
+      "elapsed_us": 82715,
+      "peak_rss_kib": 66628
+    },
+    {
+      "trial": 0,
+      "mode": "range",
+      "warm_metadata": false,
+      "elapsed_us": 13670,
+      "peak_rss_kib": 57052
+    },
+    {
+      "trial": 0,
+      "mode": "full-metadata",
+      "warm_metadata": false,
+      "elapsed_us": 85362,
+      "peak_rss_kib": 62500
+    },
+    {
+      "trial": 0,
+      "mode": "metadata",
+      "warm_metadata": false,
+      "elapsed_us": 7222,
+      "peak_rss_kib": 52528
+    },
+    {
+      "trial": 0,
+      "mode": "full",
+      "warm_metadata": true,
+      "elapsed_us": 108550,
+      "peak_rss_kib": 67688
+    },
+    {
+      "trial": 0,
+      "mode": "range",
+      "warm_metadata": true,
+      "elapsed_us": 15579,
+      "peak_rss_kib": 57388
+    },
+    {
+      "trial": 0,
+      "mode": "full-metadata",
+      "warm_metadata": true,
+      "elapsed_us": 83140,
+      "peak_rss_kib": 63724
+    },
+    {
+      "trial": 0,
+      "mode": "metadata",
+      "warm_metadata": true,
+      "elapsed_us": 1935,
+      "peak_rss_kib": 53104
+    },
+    {
+      "trial": 1,
+      "mode": "metadata",
+      "warm_metadata": false,
+      "elapsed_us": 7922,
+      "peak_rss_kib": 53080
+    },
+    {
+      "trial": 1,
+      "mode": "full-metadata",
+      "warm_metadata": false,
+      "elapsed_us": 97641,
+      "peak_rss_kib": 62216
+    },
+    {
+      "trial": 1,
+      "mode": "range",
+      "warm_metadata": false,
+      "elapsed_us": 20336,
+      "peak_rss_kib": 56916
+    },
+    {
+      "trial": 1,
+      "mode": "full",
+      "warm_metadata": false,
+      "elapsed_us": 93004,
+      "peak_rss_kib": 66436
+    },
+    {
+      "trial": 1,
+      "mode": "metadata",
+      "warm_metadata": true,
+      "elapsed_us": 4044,
+      "peak_rss_kib": 52856
+    },
+    {
+      "trial": 1,
+      "mode": "full-metadata",
+      "warm_metadata": true,
+      "elapsed_us": 79635,
+      "peak_rss_kib": 64360
+    },
+    {
+      "trial": 1,
+      "mode": "range",
+      "warm_metadata": true,
+      "elapsed_us": 12965,
+      "peak_rss_kib": 56956
+    },
+    {
+      "trial": 1,
+      "mode": "full",
+      "warm_metadata": true,
+      "elapsed_us": 84876,
+      "peak_rss_kib": 67856
+    },
+    {
+      "trial": 2,
+      "mode": "full",
+      "warm_metadata": false,
+      "elapsed_us": 93237,
+      "peak_rss_kib": 66620
+    },
+    {
+      "trial": 2,
+      "mode": "range",
+      "warm_metadata": false,
+      "elapsed_us": 12612,
+      "peak_rss_kib": 56548
+    },
+    {
+      "trial": 2,
+      "mode": "full-metadata",
+      "warm_metadata": false,
+      "elapsed_us": 86750,
+      "peak_rss_kib": 62320
+    },
+    {
+      "trial": 2,
+      "mode": "metadata",
+      "warm_metadata": false,
+      "elapsed_us": 9584,
+      "peak_rss_kib": 53080
+    },
+    {
+      "trial": 2,
+      "mode": "full",
+      "warm_metadata": true,
+      "elapsed_us": 93015,
+      "peak_rss_kib": 68344
+    },
+    {
+      "trial": 2,
+      "mode": "range",
+      "warm_metadata": true,
+      "elapsed_us": 16279,
+      "peak_rss_kib": 56572
+    },
+    {
+      "trial": 2,
+      "mode": "full-metadata",
+      "warm_metadata": true,
+      "elapsed_us": 77336,
+      "peak_rss_kib": 64140
+    },
+    {
+      "trial": 2,
+      "mode": "metadata",
+      "warm_metadata": true,
+      "elapsed_us": 4470,
+      "peak_rss_kib": 53012
+    }
+  ]
+}
