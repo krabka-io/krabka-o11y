@@ -16,8 +16,10 @@ import urllib.parse
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+PROMETHEUS_REPLAY = runpy.run_path(str(ROOT / "tools/grafana-prometheus-replay.py"))
 EVIDENCE_TYPED_EQUAL = runpy.run_path(str(ROOT / "tools/query-language-evidence.py"))["typed_equal"]
 REQUIRED = {
+    "grafana-loki-client-replay.json", "grafana-prometheus-client-replay.json",
     "promql-3.14.0-qualification.json",
     "promql-http-compliance-summary.json",
     "loki-remote-range.json",
@@ -43,7 +45,14 @@ PROMQL_TARGETS = {
     False: "//crates/promql:upstream_qualification_test",
     True: "//crates/promql:upstream_qualification_experimental_test",
 }
+CLIENT_TARGETS = {
+    "//crates/metrics-service:grafana_integration_docker_test": "grafana",
+    "//crates/metrics-service:grafana_integration_previous_docker_test": "grafana_previous",
+    "//crates/observability:grafana_e2e_docker_test": "grafana",
+    "//crates/observability:grafana_e2e_previous_docker_test": "grafana_previous",
+}
 REQUIRED_TARGETS = {
+    *CLIENT_TARGETS,
     *PROMQL_TARGETS.values(),
     "//crates/metrics-service:diff_prometheus_docker_test",
     "//crates/metrics-service:diff_mimir_docker_test",
@@ -57,6 +66,41 @@ REQUIRED_TARGETS = {
 }
 
 
+SUITE_REPORTS = {
+    **{target: {"grafana-prometheus-client-replay.json" if target.startswith("//crates/metrics-service:") else "grafana-loki-client-replay.json"} for target in CLIENT_TARGETS},
+    **{target: {"promql-3.14.0-qualification.json"} for target in PROMQL_TARGETS.values()},
+    "//crates/metrics-service:diff_prometheus_docker_test": {
+        "diff_prometheus-report.json", "promql-http-compliance-summary.json",
+        "promql-generated-differential.json", "promql-rejections-generated-differential.json"},
+    "//crates/metrics-service:diff_mimir_docker_test": {"diff_mimir-report.json"},
+    "//crates/observability:loki_differential_docker_test": {
+        "loki-remote-range.json", "loki-remote-instant.json", "loki-supported-template-functions.json",
+        "loki-experimental-query-conformance.json", "logql-generated-differential.json",
+        "logql-rejections-generated-differential.json"},
+    "//crates/traces:tempo_differential_docker_test": {
+        name for name in REQUIRED if name.startswith("tempo-") and not name.endswith("-query-transitions.json")
+        or name.startswith("traceql-")},
+    "//crates/profiles:pyroscope_differential_docker_test": {
+        "pyroscope-populated-rpcs.json", "pyroscope-v2-fields.json", "pyroscope-v1-aggregation.json",
+        "pyroscope-v2-async-disabled.json", "pyroscope-generated-differential.json",
+        "pyroscope-rejections-generated-differential.json"},
+    "//crates/metrics-service:metrics_deployment_docker_test": {
+        "metrics-v1-query-transitions.json", "metrics-v2-query-transitions.json"},
+    "//crates/traces:tempo_deployment_docker_test": {
+        "tempo-structural-query-transitions.json", "tempo-tenant-query-transitions.json"},
+    # This target has storage assertions and raw logs, but no query report.
+    "//crates/profiles:pyroscope_deployment_docker_test": set(),
+    "//crates/integration:backup_restore_test": {"backup-query-invariance.json"},
+}
+
+
+SUITE_REPORT_ALIASES = {
+    "//crates/metrics-service:diff_prometheus_previous_docker_test": "//crates/metrics-service:diff_prometheus_docker_test",
+    "//crates/traces:tempo_differential_previous_docker_test": "//crates/traces:tempo_differential_docker_test",
+    "//crates/profiles:pyroscope_differential_previous_docker_test": "//crates/profiles:pyroscope_differential_docker_test",
+}
+
+
 def missing_suites(artifacts, targets):
     missing = REQUIRED - {artifact["name"] for artifact in artifacts}
     missing |= REQUIRED_TARGETS - targets
@@ -64,6 +108,20 @@ def missing_suites(artifacts, targets):
                       if artifact["name"] == "promql-3.14.0-qualification.json"}
     missing |= {f"promql-full-{mode}" for mode in ("default", "experimental") if mode not in configurations}
     return sorted(missing)
+
+
+def selected_suite_errors(artifacts, suites):
+    """Require query reports in each selected suite, including partial runs."""
+    errors = []
+    for directory, target in suites.items():
+        # Other release suites carry raw logs, without query qualification reports.
+        expected = SUITE_REPORTS.get(SUITE_REPORT_ALIASES.get(target, target), set())
+        names = {artifact["name"] for artifact in artifacts if artifact.get("suite_directory") == directory}
+        if names != expected:
+            errors.append({"suite": directory, "target": target,
+                           "missing_reports": sorted(expected - names),
+                           "unexpected_reports": sorted(names - expected)})
+    return errors
 
 
 def digest(path):
@@ -114,6 +172,8 @@ def verdicts(report):
 
 
 PINNED_COUNTS = {
+    "grafana-loki-client-replay.json": 5,
+    "grafana-prometheus-client-replay.json": 6,
     "diff_mimir-report.json": 1800,  # Includes five numeric last-operation cases.
     "diff_prometheus-report.json": 1795,
     "promql-3.14.0-qualification.json": 2195,
@@ -673,6 +733,153 @@ def tempo_instant_binding_errors(report):
     return errors
 
 
+GRAFANA_REPLAY_CASES = {
+    "logs-forward": ('{app="db"}', "range", "forward", 100, [8, 28, 48]),
+    "logs-backward": ('{app="db"}', "range", "backward", 100, [48, 28, 8]),
+    "logs-filter": ('{app="db"} |= "ERROR"', "range", "forward", 100, [28]),
+    "logs-limit": ('{app="db"}', "range", "backward", 1, [48]),
+    "metric-instant": ('sum(count_over_time({app="db"}[5m]))', "instant", "forward", 100, []),
+}
+GRAFANA_DB_LINES = {8: "INFO connection established", 28: "ERROR deadlock detected on shard 3", 48: "INFO vacuum complete"}
+
+
+def grafana_log_ledger(base, offsets):
+    streams = []
+    for level in ("error", "info"):
+        values = [[str(base + offset * 1_000_000_000), GRAFANA_DB_LINES[offset]]
+                  for offset in offsets if (offset == 28) == (level == "error")]
+        if values:
+            streams.append({"stream": {"app": "db", "env": "staging", "service_name": "db", "detected_level": level}, "values": values})
+    return {"resultType": "streams", "result": streams}
+
+
+def grafana_frames(response):
+    if response.get("status") != 200:
+        raise ValueError("Grafana client request did not succeed")
+    result = response["body"]["results"]["A"]
+    frames = result["frames"]
+    if result.get("error") is not None or not isinstance(frames, list) or not frames:
+        raise ValueError("Grafana client result has errors or no frames")
+    result_frames = []
+    for frame in frames:
+        fields, data = frame["schema"]["fields"], copy.deepcopy(frame["data"])
+        label_index = next((index for index, field in enumerate(fields) if field["name"] == "labels"), None)
+        if label_index is not None:
+            columns = data["values"]
+            count = len(columns[label_index])
+            if len(columns) != len(fields) or any(not isinstance(column, list) or len(column) != count for column in columns):
+                raise ValueError("Grafana frame columns have different lengths")
+            streams = collections.defaultdict(list)
+            for row in zip(*columns):
+                streams[json.dumps(row[label_index], sort_keys=True)].append(row)
+            rows = [row for key in sorted(streams) for row in streams[key]]
+            data["values"] = [[row[index] for row in rows] for index in range(len(fields))]
+        meta = copy.deepcopy(frame["schema"].get("meta", {}))
+        meta.pop("stats", None)
+        meta.pop("executedQueryString", None)
+        result_frames.append({"fields": fields, "data": data, "meta": meta})
+    return sorted(result_frames, key=lambda frame: json.dumps(frame, sort_keys=True))
+
+
+def grafana_replay_binding_errors(report):
+    """Verify client-generated requests and independent input/output ledgers."""
+    try:
+        rows = report["cases"]
+        if (report.get("suite") != "grafana-loki-client-replay" or report.get("status") != "passed"
+                or type(report.get("planned")) is not int or report["planned"] != len(GRAFANA_REPLAY_CASES)
+                or len(rows) != len(GRAFANA_REPLAY_CASES)
+                or {row["id"] for row in rows} != set(GRAFANA_REPLAY_CASES)):
+            raise ValueError("Grafana client replay requires every case exactly once")
+        base = report["timeline_base_ns"]
+        if type(base) is not int or base <= 0 or base % 1_000_000_000:
+            raise ValueError("Grafana fixture timeline missing")
+        db = report["fixture"]["streams"][2]
+        if not EVIDENCE_TYPED_EQUAL(db, {"stream":{"app":"db", "env":"staging"},
+                "values":[[str(base + offset * 1_000_000_000), line] for offset, line in GRAFANA_DB_LINES.items()]}):
+            raise ValueError("Grafana DB input fixture differs from independent seed")
+        pin = re.search(r'\("loki", "[^"]+", "[^"]+", "([^"]+)"', (ROOT / "MODULE.bazel").read_text())
+        if pin is None or report.get("loki_image_tag") != pin[1]:
+            raise ValueError("Grafana replay Loki image differs from pin")
+        for row in rows:
+            expression, query_type, direction, limit, offsets = GRAFANA_REPLAY_CASES[row["id"]]
+            if row.get("status") != "matched" or row.get("error") is not None or row["expression"] != expression:
+                raise ValueError("Grafana replay case did not match its source expression")
+            inputs = row["dashboard_requests"]
+            for side, uid in (("oracle", "real-loki"), ("candidate", "krabka-loki")):
+                request = inputs[side]
+                query = {"refId":"A", "datasource":{"type":"loki", "uid":uid}, "expr":expression,
+                         "queryType":query_type, "direction":direction, "maxLines":limit,
+                         "intervalMs":15000, "maxDataPoints":1000}
+                if set(request) != {"from", "to", "queries"} or not EVIDENCE_TYPED_EQUAL(request["queries"], [query]):
+                    raise ValueError("Grafana dashboard input differs from fixture")
+            start_ms = ((base // 1_000_000_000 - 60) // 15) * 15000
+            end_ms = ((base // 1_000_000_000 + 180 + 14) // 15) * 15000
+            if any(inputs[side]["from"] != str(start_ms) or inputs[side]["to"] != str(end_ms) for side in ("oracle", "candidate")):
+                raise ValueError("Grafana dashboard input window differs from fixture")
+            requests = row["generated_requests"]
+            if len(requests["oracle"]) != 1 or not EVIDENCE_TYPED_EQUAL(requests["oracle"], requests["candidate"]):
+                raise ValueError("Grafana generated request differs between datasources")
+            request = requests["oracle"][0]
+            if request["method"] != "GET" or request["body"] != "" or request["tenant"] != "tenant-a":
+                raise ValueError("Grafana generated method/body/tenant differs from fixture")
+            uri = urllib.parse.urlsplit(request["uri"])
+            params = urllib.parse.parse_qs(uri.query, keep_blank_values=True, strict_parsing=True)
+            path = "/loki/api/v1/query" if query_type == "instant" else "/loki/api/v1/query_range"
+            if uri.scheme or uri.netloc or uri.path != path or params.get("query") != [expression]:
+                raise ValueError("Grafana generated query/path differs from fixture")
+            expected_params = {"query":[expression], "direction":[direction], "limit":[str(limit)]}
+            if query_type == "range":
+                expected_params.update(start=[str(start_ms * 1_000_000)], end=[str(end_ms * 1_000_000)], step=["15000ms"])
+            else:
+                expected_params["time"] = [str(end_ms * 1_000_000)]
+            if params != expected_params:
+                raise ValueError("Grafana generated query bounds/step/direction/limit differ from fixture")
+            oracle, candidate = row["oracle"], row["candidate"]
+            if not EVIDENCE_TYPED_EQUAL(oracle, candidate):
+                raise ValueError("Grafana replay responses differ")
+            if offsets:
+                expected = grafana_log_ledger(base, offsets)
+                if not EVIDENCE_TYPED_EQUAL(oracle, expected) or not EVIDENCE_TYPED_EQUAL(row["independent_expected"], expected):
+                    raise ValueError("Grafana log replay differs from independent ledger")
+            else:
+                entries = oracle["result"]
+                if (oracle["resultType"] != "vector" or len(entries) != 1 or entries[0]["metric"] != {}
+                        or len(entries[0]["values"]) != 1 or len(entries[0]["values"][0]) != 2
+                        or not EVIDENCE_TYPED_EQUAL(entries[0]["values"][0][0], end_ms // 1000)
+                        or entries[0]["values"][0][1] != "3"
+                        or not EVIDENCE_TYPED_EQUAL(row["independent_expected"], {"resultType":"vector", "metric":{}, "value":3})):
+                    raise ValueError("Grafana metric replay differs from three-entry ledger")
+            responses = row["grafana_responses"]
+            canonical = [grafana_frames(responses[side]) for side in ("oracle", "candidate")]
+            if not EVIDENCE_TYPED_EQUAL(*canonical):
+                raise ValueError("Grafana client frame schema or values differ")
+            for frames in canonical:
+                observed = []
+                for frame in frames:
+                    fields, columns = frame["fields"], frame["data"]["values"]
+                    if len(fields) != len(columns):
+                        raise ValueError("Grafana frame columns differ from schema")
+                    name = "line" if offsets else "value"
+                    value_index = next(index for index, field in enumerate(fields) if field["name"].lower() == name)
+                    if offsets:
+                        time_index = next(index for index, field in enumerate(fields) if field["type"] == "time")
+                        if len(columns[time_index]) != len(columns[value_index]):
+                            raise ValueError("Grafana frame timestamp/value lengths differ")
+                        observed.extend(map(list, zip(columns[time_index], columns[value_index])))
+                    else:
+                        time_index = next(index for index, field in enumerate(fields) if field["type"] == "time")
+                        if not EVIDENCE_TYPED_EQUAL(columns[time_index], [end_ms]):
+                            raise ValueError("Grafana metric frame timestamp differs from requested endpoint")
+                        observed.extend(columns[value_index])
+                expected = [[(base + offset * 1_000_000_000) // 1_000_000, GRAFANA_DB_LINES[offset]] for offset in offsets] if offsets else [3]
+                order = lambda value: json.dumps(value, sort_keys=True)
+                if not EVIDENCE_TYPED_EQUAL(sorted(observed, key=order), sorted(expected, key=order)):
+                    raise ValueError("Grafana frame values differ from independent input ledger")
+    except (AttributeError, KeyError, TypeError, ValueError, IndexError, StopIteration) as error:
+        return [f"Grafana client replay invalid: {error}"]
+    return []
+
+
 def qualification_counts(name, report, generated_count=None):
     errors = []
     try:
@@ -700,6 +907,10 @@ def qualification_counts(name, report, generated_count=None):
     expected = PINNED_COUNTS.get(name)
     errors.extend(pyroscope_binding_errors(name, report))
     errors.extend(experimental_query_binding_errors(name, report))
+    if name == "grafana-prometheus-client-replay.json":
+        errors.extend(PROMETHEUS_REPLAY["binding_errors"](report, ROOT))
+    if name == "grafana-loki-client-replay.json":
+        errors.extend(grafana_replay_binding_errors(report))
     if name == "tempo-instant-bounds-conformance.json":
         errors.extend(tempo_instant_binding_errors(report))
     if name == "tempo-expression-output-conformance.json":
@@ -961,6 +1172,7 @@ def valid_execution_evidence(report, allow_partial=False):
         and (allow_partial or not report["missing_suites"])
         and not report["unbound_artifacts"] and not report["unsuccessful_runs"] and not report["invalid_reports"]
         and not report["integrity_errors"] and not report["runner_binding_errors"]
+        and not report["selected_suite_errors"]
         and all(all(status in allowed or count == 0 for status, count in artifact["counts"].items()) for artifact in report["artifacts"])
     )
 
@@ -970,6 +1182,75 @@ def usable_evidence(reference, kind, executed, rejected_cases):
 
 
 def self_check():
+    PROMETHEUS_REPLAY["self_check"](ROOT)
+    client_base = 1700000000 * 1_000_000_000
+    replay_rows = []
+    for case_id, (expression, query_type, direction, limit, offsets) in GRAFANA_REPLAY_CASES.items():
+        ledger = grafana_log_ledger(client_base, offsets) if offsets else {"resultType":"vector", "metric":{}, "value":3}
+        answer = ledger if offsets else {"resultType":"vector", "result":[{"metric":{}, "values":[[1700000190,"3"]]}]}
+        inputs = {side: {"from":str(((1700000000 - 60) // 15) * 15000), "to":str(((1700000000 + 194) // 15) * 15000),
+                        "queries":[{"refId":"A", "datasource":{"type":"loki", "uid":uid}, "expr":expression,
+                                    "queryType":query_type, "direction":direction, "maxLines":limit,
+                                    "intervalMs":15000, "maxDataPoints":1000}]}
+                  for side, uid in (("oracle", "real-loki"), ("candidate", "krabka-loki"))}
+        path = "query_range" if offsets else "query"
+        params = {"query":expression,"direction":direction,"limit":limit}
+        if offsets:
+            params.update(start=str(int(inputs["oracle"]["from"]) * 1_000_000), end=str(int(inputs["oracle"]["to"]) * 1_000_000), step="15000ms")
+        else:
+            params["time"] = str(int(inputs["oracle"]["to"]) * 1_000_000)
+        uri = "/loki/api/v1/" + path + "?" + urllib.parse.urlencode(params)
+        request = {"method":"GET", "uri":uri, "tenant":"tenant-a", "body":""}
+        fields = [{"name":"Time", "type":"time"}, {"name":"Line", "type":"string"}] if offsets else [{"name":"Time", "type":"time"}, {"name":"Value", "type":"number"}]
+        values = [[(client_base + offset * 1_000_000_000) // 1_000_000 for offset in offsets], [GRAFANA_DB_LINES[offset] for offset in offsets]] if offsets else [[int(inputs["oracle"]["to"])], [3]]
+        response = {"status":200, "body":{"results":{"A":{"frames":[{"schema":{"fields":fields}, "data":{"values":values}}]}}}}
+        replay_rows.append({"id":case_id, "expression":expression, "status":"matched", "dashboard_requests":inputs,
+            "generated_requests":{side:[copy.deepcopy(request)] for side in ("oracle", "candidate")},
+            "oracle":copy.deepcopy(answer), "candidate":copy.deepcopy(answer), "independent_expected":copy.deepcopy(ledger),
+            "grafana_responses":{side:copy.deepcopy(response) for side in ("oracle", "candidate")}})
+    replay_report = {"suite":"grafana-loki-client-replay", "status":"passed", "planned":5,
+                     "loki_image_tag":"3.7.7", "timeline_base_ns":client_base,
+                     "fixture":{"streams":[{}, {}, {"stream":{"app":"db", "env":"staging"},
+                        "values":[[str(client_base + offset * 1_000_000_000), line] for offset, line in GRAFANA_DB_LINES.items()]}]},
+                     "cases":replay_rows}
+    assert not grafana_replay_binding_errors(replay_report)
+    for mutation in ("missing", "duplicate", "input", "window", "request", "tenant", "path", "both-wrong", "both-frames-wrong", "generated-window", "frame", "empty", "failed", "image"):
+        altered = copy.deepcopy(replay_report)
+        row = altered["cases"][0]
+        if mutation == "missing":
+            altered["cases"].pop()
+        elif mutation == "duplicate":
+            altered["cases"][-1] = copy.deepcopy(row)
+        elif mutation == "input":
+            row["dashboard_requests"]["oracle"]["queries"][0]["maxLines"] = 1
+        elif mutation == "window":
+            for side in ("oracle", "candidate"):
+                row["dashboard_requests"][side]["to"] = "1"
+        elif mutation == "request":
+            row["generated_requests"]["candidate"] = []
+        elif mutation in ("tenant", "path"):
+            for side in ("oracle", "candidate"):
+                row["generated_requests"][side][0]["tenant" if mutation == "tenant" else "uri"] = "wrong"
+        elif mutation == "generated-window":
+            for side in ("oracle", "candidate"):
+                row["generated_requests"][side][0]["uri"] += "&end=1"
+        elif mutation == "both-wrong":
+            for field in ("oracle", "candidate", "independent_expected"):
+                row[field]["result"][0]["values"][0][1] = "wrong line"
+        elif mutation == "both-frames-wrong":
+            for side in ("oracle", "candidate"):
+                row["grafana_responses"][side]["body"]["results"]["A"]["frames"][0]["data"]["values"][0][0] = 1
+        elif mutation in ("frame", "empty"):
+            frames = row["grafana_responses"]["candidate"]["body"]["results"]["A"]["frames"]
+            if mutation == "frame":
+                frames[0]["data"]["values"][0][0] = "wrong value"
+            else:
+                frames.clear()
+        elif mutation == "failed":
+            row["status"] = "failed"
+        else:
+            altered["loki_image_tag"] = "unbound"
+        assert grafana_replay_binding_errors(altered), mutation
     anchor = 1700000000
     instant_rows = []
     for name, params in tempo_instant_requests(anchor).items():
@@ -1188,6 +1469,25 @@ def self_check():
         else:
             changed["raw_candidate"]["status"] = 500
         assert experimental_query_binding_errors("loki-experimental-query-conformance.json", altered)
+    assert set(SUITE_REPORTS) == REQUIRED_TARGETS
+    assert set.union(*SUITE_REPORTS.values()) == REQUIRED
+    suite_artifacts = [{"name": name, "suite_directory": target}
+                       for target, names in SUITE_REPORTS.items() for name in names]
+    suites = {target: target for target in SUITE_REPORTS}
+    assert not selected_suite_errors(suite_artifacts, suites)
+    for alias, target in SUITE_REPORT_ALIASES.items():
+        artifacts = [{"name": name, "suite_directory": alias} for name in SUITE_REPORTS[target]]
+        assert not selected_suite_errors(artifacts, {alias: alias})
+        assert selected_suite_errors(artifacts[:-1], {alias: alias})
+    for artifact in suite_artifacts:
+        missing = [row for row in suite_artifacts if row is not artifact]
+        assert selected_suite_errors(missing, suites)
+        # A report from another bundle cannot replace a missing local report.
+        assert selected_suite_errors(missing + [dict(artifact, suite_directory="other")], suites)
+    assert not selected_suite_errors([], {"bundle": "//crates/other:test"})
+    assert selected_suite_errors([], {"bundle": PROMQL_TARGETS[False]})
+    assert selected_suite_errors(suite_artifacts + [{"name": "loki-remote-range.json",
+        "suite_directory": PROMQL_TARGETS[False]}], suites)
     complete_artifacts = [{"name": name} for name in REQUIRED]
     complete_artifacts += [{"name": "promql-3.14.0-qualification.json", "configuration": mode}
                            for mode in ("default", "experimental")]
@@ -1197,7 +1497,7 @@ def self_check():
     assert profile_target in missing_suites(complete_artifacts, REQUIRED_TARGETS - {profile_target})
     bound = {"integrity_errors_checked": ["suite"], "dirty_checkout": False, "missing_suites": [],
              "unbound_artifacts": [], "unsuccessful_runs": [], "invalid_reports": [],
-             "integrity_errors": {}, "runner_binding_errors": {},
+             "integrity_errors": {}, "runner_binding_errors": {}, "selected_suite_errors": [],
              "artifacts": [{"counts": {"matched": 88, "unsupported-oracle": 1, "feature_disabled": 117, "expected-divergence": 4}}]}
     assert valid_execution_evidence(bound)
     assert not is_complete(bound["artifacts"][0]["counts"])
@@ -1205,7 +1505,8 @@ def self_check():
     for field, wrong in [("dirty_checkout", True), ("missing_suites", ["suite"]),
                          ("unbound_artifacts", ["artifact"]), ("unsuccessful_runs", ["suite"]),
                          ("invalid_reports", ["report"]), ("integrity_errors", {"suite": ["error"]}),
-                         ("runner_binding_errors", {"runner": ["error"]})]:
+                         ("runner_binding_errors", {"runner": ["error"]}),
+                         ("selected_suite_errors", [{"missing_reports": ["report.json"]}])]:
         assert not valid_execution_evidence(dict(bound, **{field: wrong}))
     assert valid_execution_evidence(dict(bound, missing_suites=["other-suite"]), allow_partial=True)
     for status in ("failed", "mismatch", "not_run", "uncovered", "invalid-rejection", "skipped"):
@@ -1591,6 +1892,7 @@ def main():
     invalid_reports = []
     runner_errors = {}
     targets = set()
+    suites = {}
 
     def record_executed(reference, status, case, report_name, report, path):
         errors = evidence_helpers["runtime_errors"](registry, reference, report_name, case, report)
@@ -1611,6 +1913,10 @@ def main():
             integrity_errors[str(directory)] = ["missing artifact commit binding"]
         for binding in sorted(bindings):
             if binding.is_file():
+                try:
+                    suites[str(binding.parent)] = (binding.parent / "target").read_text().strip()
+                except (OSError, UnicodeError):
+                    suites[str(binding.parent)] = None
                 integrity_errors[str(binding.parent)] = verify_manifest(binding.parent)
                 if not integrity_errors[str(binding.parent)]:
                     targets.add((binding.parent / "target").read_text().strip())
@@ -1640,6 +1946,12 @@ def main():
                 report = {}
                 counts, errors = collections.Counter(uncovered=1), [f"unreadable or invalid report: {error}"]
             configuration = None
+            if path.name in ("grafana-loki-client-replay.json", "grafana-prometheus-client-replay.json"):
+                target = suites.get(str(binding_directory))
+                configuration = CLIENT_TARGETS.get(target)
+                image = re.search(r'\("' + str(configuration) + r'", "[^\"]+", "[^\"]+", "([^\"]+)"', (ROOT / "MODULE.bazel").read_text())
+                if image is None or report.get("grafana_image_tag") != image[1]:
+                    errors.append("Grafana client image differs from selected suite")
             if path.name == "promql-3.14.0-qualification.json":
                 experimental = report.get("experimental_functions")
                 configuration = "experimental" if experimental is True else "default"
@@ -1682,6 +1994,8 @@ def main():
                                         metadata[name], path.name, report, path)
             elif "cases" in report:
                 namespace = f"storage/transitions/{path.stem}" if path.name.endswith("-query-transitions.json") else f"traceql/metrics/{path.stem}" if metric_result or path.name.startswith("tempo-numeric-") or path.name.startswith("tempo-live-exemplar-") or path.name.startswith("tempo-typed-group-") or path.name.startswith("tempo-field-arithmetic-") else "pyroscope/v2" if path.name == "pyroscope-v2-fields.json" else "pyroscope/v1-aggregation" if path.name == "pyroscope-v1-aggregation.json" else "pyroscope/v2-async-disabled" if path.name == "pyroscope-v2-async-disabled.json" else {"loki-experimental-query-conformance.json":"logql/experimental", "tempo-pipeline-hint-conformance.json":"traceql/pipeline", "tempo-instant-bounds-conformance.json":"traceql/instant", "diff_mimir-report.json":"promql/mimir", "diff_prometheus-report.json":"promql/prometheus", "backup-query-invariance.json":"storage/restore"}.get(path.name, "pyroscope/rpc")
+                if path.name in ("grafana-loki-client-replay.json", "grafana-prometheus-client-replay.json"):
+                    namespace = f"clients/{path.stem}/{configuration}"
                 for ordinal, case in enumerate(report["cases"], 1):
                     identity = case.get("stableid", case.get("id", ordinal))
                     reference = f"{namespace}/{identity}"
@@ -1689,7 +2003,7 @@ def main():
                     if case.get("expected_rejection") or case.get("classification") == "paired-expected-error":
                         rejected_cases.add(reference)
             artifacts.append({"path": str(path), "name": path.name, "sha256": digest(path),
-                              "configuration": configuration,
+                              "configuration": configuration, "suite_directory": str(binding_directory),
                               "counts": counts, "discovered": sum(counts.values()),
                               "validation_errors": errors,
                               "complete_corpus": not errors and is_complete(counts)})
@@ -1720,6 +2034,8 @@ def main():
         "fixture_sources": {str(path.relative_to(ROOT)): digest(path) for pattern in (
             "crates/promql/tests/testdata/upstream-3.14.0/*.test",
             "crates/*/tests/support/*fixture.rs", "crates/*/tests/*differential.rs",
+            "crates/observability/tests/grafana_e2e.rs", "crates/observability/tests/support/grafana_client_replay.rs",
+            "crates/metrics-service/tests/grafana_integration.rs", "crates/metrics-service/tests/support/*client_replay*.rs",
             "crates/metrics-service/tests/diff_*.rs", "crates/*/tests/*deployment.rs",
             "crates/integration/tests/backup_restore.rs",
             "crates/traceql/tests/testdata/traceql/*.case",
@@ -1737,9 +2053,11 @@ def main():
             for feature in surface["features"]}
             for language, surface in inventory["surfaces"].items()},
         "missing_suites": missing, "artifacts": artifacts,
+        "selected_suite_errors": selected_suite_errors(artifacts, suites),
         "unresolved_evidence": unresolved_evidence, "executed_case_ids": executed,
         "complete_versioned_conformance": not dirty and not missing and not unbound and not unsuccessful_runs
             and not any(integrity_errors.values()) and not any(runner_errors.values())
+            and not selected_suite_errors(artifacts, suites)
             and not invalid_reports and all(artifact["complete_corpus"] for artifact in artifacts)
             and all(set(counts) <= {"mapped"} for counts in features.values())
             and not unresolved_evidence,

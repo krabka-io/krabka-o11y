@@ -25,7 +25,7 @@
 //! `with_host(.., Host::HostGateway)`. Docker exposes the host to a container
 //! this way on Linux, macOS, and Windows.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, fmt::Write as _, time::Duration};
 
 use krabka_promql::WalHead;
 use serde_json::{Value, json};
@@ -39,8 +39,14 @@ use testcontainers::{
 // does it, so all metrics differential suites share one corpus definition. This
 // integration only needs `seed_dataset`; the differ/corpus helpers are unused
 // here, so allow dead code on the included module.
+#[path = "support/client_replay_proxy.rs"]
+mod client_replay_proxy;
 #[path = "support/pinned_grafana_image.rs"]
 mod pinned_grafana_image;
+#[path = "support/pinned_prometheus_image.rs"]
+mod pinned_prometheus_image;
+#[path = "support/prometheus_client_replay.rs"]
+mod prometheus_client_replay;
 #[path = "support/seed_remote_write.rs"]
 mod seed_remote_write;
 #[path = "support/upstream_http.rs"]
@@ -97,6 +103,7 @@ datasources:
     url: http://host.docker.internal:{PORT}
     isDefault: true
     jsonData:
+      httpMethod: POST
       httpHeaderName1: X-Scope-OrgID
     secureJsonData:
       httpHeaderValue1: grafana
@@ -122,10 +129,47 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     .await?;
     wait_for_query_ready(&client, &krabka.base_url, TENANT, "up").await?;
 
+    let prometheus = start_prometheus_oracle().await?;
+    let oracle_base = mapped_base_url(&prometheus, 9090).await?;
+    wait_for_http_ok(
+        &client,
+        &format!("{oracle_base}/-/ready"),
+        Duration::from_mins(1),
+    )
+    .await?;
+    post_remote_write(
+        &client,
+        RemoteWrite {
+            base: &oracle_base,
+            path: "/api/v1/write",
+            tenant: Some(TENANT),
+            body: &remote_write_body(),
+        },
+    )
+    .await?;
+    wait_for_query_ready(&client, &oracle_base, TENANT, "up").await?;
+    let candidate_proxy =
+        client_replay_proxy::RecordingProxy::start(krabka.base_url.clone()).await?;
+    let oracle_proxy = client_replay_proxy::RecordingProxy::start(oracle_base.clone()).await?;
+
     // Real Grafana with the provisioned datasource.
-    let address_parts = krabka.base_url.rsplit_once(':');
-    let port = address_parts.map_or("", |parts| parts.1);
-    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace("{PORT}", port);
+    let mut datasource_yaml =
+        DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &candidate_proxy.port.to_string());
+    write!(
+        datasource_yaml,
+        r"  - name: Prometheus
+    type: prometheus
+    access: proxy
+    uid: real-prom
+    url: http://host.docker.internal:{}
+    jsonData:
+      httpMethod: POST
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: grafana
+",
+        oracle_proxy.port
+    )?;
     let grafana = start_grafana(&datasource_yaml).await?;
     let base = mapped_base_url(&grafana, GRAFANA_PORT).await?;
     wait_for_http_ok(
@@ -137,6 +181,7 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     // /api/health ("database: ok") can race ahead of datasource provisioning; a
     // query before the datasource UID resolves returns 404. Poll until present.
     wait_for_datasource(&client, &base, DATASOURCE_UID).await?;
+    wait_for_datasource(&client, &base, "real-prom").await?;
 
     // Collect every mismatch so one run reports all problems rather than aborting
     // on the first.
@@ -146,7 +191,23 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     check_range_query_shapes(&client, &base, &mut fails).await?;
     check_resource_surfaces(&client, &base, &mut fails).await?;
 
+    let replay_result = prometheus_client_replay::run(
+        &client,
+        &base,
+        prometheus_client_replay::ReplayBackend {
+            base: &oracle_base,
+            proxy: &oracle_proxy,
+            uid: "real-prom",
+        },
+        prometheus_client_replay::ReplayBackend {
+            base: &krabka.base_url,
+            proxy: &candidate_proxy,
+            uid: DATASOURCE_UID,
+        },
+    )
+    .await;
     krabka.shutdown();
+    replay_result?;
 
     if fails.is_empty() {
         Ok(())
@@ -1470,6 +1531,23 @@ async fn start_grafana(
             .with_env_var("GF_AUTH_ANONYMOUS_ENABLED", "true")
             .with_env_var("GF_AUTH_ANONYMOUS_ORG_ROLE", "Admin")
             .with_env_var("GF_AUTH_BASIC_ENABLED", "false")
+            .start(),
+    )
+    .await??)
+}
+
+async fn start_prometheus_oracle() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
+    Ok(tokio::time::timeout(
+        CONTAINER_START_TIMEOUT,
+        pinned_prometheus_image::pinned_prometheus_image()
+            .with_exposed_port(9090.tcp())
+            .with_copy_to("/etc/prometheus/prometheus.yml", b"global: {}\n".to_vec())
+            .with_cmd([
+                "--config.file=/etc/prometheus/prometheus.yml",
+                "--storage.tsdb.path=/prometheus",
+                "--web.enable-remote-write-receiver",
+                "--enable-feature=type-and-unit-labels",
+            ])
             .start(),
     )
     .await??)

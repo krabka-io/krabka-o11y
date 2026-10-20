@@ -25,6 +25,10 @@
 //!
 //! `cargo test -p krabka-observability --test grafana_e2e -- --ignored --nocapture`
 
+#[path = "../../metrics-service/tests/support/client_replay_proxy.rs"]
+mod client_replay_proxy;
+#[path = "support/grafana_client_replay.rs"]
+mod grafana_client_replay;
 #[path = "support/grafana_loki.rs"]
 mod grafana_loki;
 
@@ -174,9 +178,14 @@ async fn grafana_reads_the_same_answer_from_krabka_and_from_loki() -> TestResult
 
     let krabka = serve_pushed(&payload).await?;
 
+    let oracle_backend = format!("http://127.0.0.1:{loki_port}");
+    let candidate_backend = format!("http://127.0.0.1:{}", krabka.host_port);
+    let oracle_proxy = grafana_client_replay::RecordingProxy::start(oracle_backend.clone()).await?;
+    let candidate_proxy =
+        grafana_client_replay::RecordingProxy::start(candidate_backend.clone()).await?;
     let datasources = DATASOURCES_YAML_TEMPLATE
-        .replace("{KRABKA_PORT}", &krabka.host_port.to_string())
-        .replace("{LOKI_PORT}", &loki_port.to_string());
+        .replace("{KRABKA_PORT}", &candidate_proxy.port.to_string())
+        .replace("{LOKI_PORT}", &oracle_proxy.port.to_string());
     let grafana = start_grafana(&datasources).await?;
     let base = format!(
         "http://127.0.0.1:{}",
@@ -212,7 +221,18 @@ async fn grafana_reads_the_same_answer_from_krabka_and_from_loki() -> TestResult
         }
     }
 
+    let replay_result = grafana_client_replay::run(
+        &client,
+        &base,
+        &timeline,
+        &oracle_proxy,
+        &candidate_proxy,
+        &oracle_backend,
+        &candidate_backend,
+    )
+    .await;
     krabka.shutdown();
+    replay_result?;
     println!(
         "grafana_e2e: {total} case(s); {} agreed with Loki, {} are recorded divergences",
         total - KNOWN_DIVERGENCE.len(),
