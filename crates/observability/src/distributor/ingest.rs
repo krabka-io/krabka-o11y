@@ -370,6 +370,58 @@ pub(crate) fn decode_loki_http_body(
     ))
 }
 
+// Object fields are decoded as Values so unknown fields get the same JSON
+// validation (including number range and recursion limits) as stream fields.
+// Only the top-level streams field rejects duplicates; nested objects retain
+// Value's last-field-wins behavior.
+struct LokiJsonPushVisitor;
+
+impl<'de> serde::de::Visitor<'de> for LokiJsonPushVisitor {
+    type Value = LokiPushRequest;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a Loki push object")
+    }
+
+    fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+        let mut streams = None;
+        let mut seen_streams = false;
+        while let Some(key) = map.next_key::<String>()? {
+            let value = map.next_value::<Value>()?;
+            if key == "streams" {
+                if seen_streams {
+                    return Err(serde::de::Error::duplicate_field("streams"));
+                }
+                seen_streams = true;
+                streams = (!value.is_null()).then_some(value);
+            }
+        }
+        Ok(LokiPushRequest { streams })
+    }
+}
+
+fn decode_loki_json_push(body: &[u8]) -> Result<LokiPushRequest, DistributorError> {
+    // Inspect only the opening token. Non-objects still need a complete decode:
+    // malformed JSON must fail before the top-level type validation.
+    if body.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
+        let payload: Value =
+            serde_json::from_slice(body).map_err(|_| DistributorError::InvalidPushPayload)?;
+        return Err(if payload.is_null() {
+            DistributorError::NoValidStreams
+        } else {
+            DistributorError::InvalidJsonPushValueSyntax(loki_json_push_payload_parse_error(body))
+        });
+    }
+
+    let mut deserializer = serde_json::Deserializer::from_slice(body);
+    let payload = serde::Deserializer::deserialize_map(&mut deserializer, LokiJsonPushVisitor)
+        .map_err(|_| DistributorError::InvalidPushPayload)?;
+    deserializer
+        .end()
+        .map_err(|_| DistributorError::InvalidPushPayload)?;
+    Ok(payload)
+}
+
 pub(crate) fn normalize_loki_http_push(
     tenant: &TenantId,
     headers: &HeaderMap,
@@ -378,18 +430,7 @@ pub(crate) fn normalize_loki_http_push(
 ) -> Result<Vec<WalLogRecord>, DistributorError> {
     let body = decode_loki_http_body(headers, body)?;
     if is_loki_json_content_type(headers)? {
-        let raw_payload: Value =
-            serde_json::from_slice(&body).map_err(|_| DistributorError::InvalidPushPayload)?;
-        if raw_payload.is_null() {
-            return Err(DistributorError::NoValidStreams);
-        }
-        if !raw_payload.is_object() {
-            return Err(DistributorError::InvalidJsonPushValueSyntax(
-                loki_json_push_payload_parse_error(&body),
-            ));
-        }
-        let payload =
-            serde_json::from_slice(&body).map_err(|_| DistributorError::InvalidPushPayload)?;
+        let payload = decode_loki_json_push(&body)?;
         let payload = validate_loki_json_push_stream_objects(payload, &body)?;
         validate_loki_json_push_value_arrays(&payload, &body)?;
         validate_loki_json_push_timestamp_types(&payload, &body)?;
@@ -429,7 +470,7 @@ pub(crate) fn validate_loki_json_push_stream_objects(
     let Some(streams) = payload.streams else {
         return Err(DistributorError::NoValidStreams);
     };
-    let Some(raw_streams) = streams.as_array() else {
+    let Value::Array(raw_streams) = streams else {
         return Err(DistributorError::InvalidJsonPushValueSyntax(
             loki_json_push_streams_parse_error(body, &streams),
         ));
@@ -441,7 +482,7 @@ pub(crate) fn validate_loki_json_push_stream_objects(
     for stream in raw_streams {
         if !stream.is_object() {
             return Err(DistributorError::InvalidJsonPushValueSyntax(
-                loki_json_push_stream_parse_error(body, stream),
+                loki_json_push_stream_parse_error(body, &stream),
             ));
         }
         if let Some(labels) = stream.get("stream")
@@ -459,8 +500,8 @@ pub(crate) fn validate_loki_json_push_stream_objects(
                 loki_json_push_values_field_parse_error(body, values),
             ));
         }
-        let stream = serde_json::from_value(stream.clone())
-            .map_err(|_| DistributorError::InvalidPushPayload)?;
+        let stream =
+            serde_json::from_value(stream).map_err(|_| DistributorError::InvalidPushPayload)?;
         streams.push(stream);
     }
 
@@ -505,3 +546,7 @@ pub(crate) fn validate_loki_json_structured_metadata_value_types(
         Ok(())
     })
 }
+
+#[cfg(test)]
+#[path = "ingest_tests.rs"]
+mod tests;
