@@ -992,7 +992,7 @@ mod range_query_scans_store_once_per_matcher_set_not_per_step {
         }
 
         let mut inner = InMemoryMetricStore::new();
-        for i in 0..20 {
+        for i in -240..=120 {
             inner.push_float(
                 "t",
                 labels(&[
@@ -1014,32 +1014,50 @@ mod range_query_scans_store_once_per_matcher_set_not_per_step {
             EngineOpts::default(),
         );
 
-        // 20 steps at 15s. Without the union-window cache the driver scans the
-        // store about twice per step (float and histogram probe) and resolves the
-        // series once per step. With it, one store scan answers the histogram
-        // probe and the float read of every step, and one series resolution
-        // answers every step.
-        let result = engine
-            .eval_range_via_planner_forced(
-                "t",
-                "count({job=\"broker\"})",
-                0,
-                19 * 15_000,
-                millis(15_000),
-            )
-            .await
-            .unwrap();
-        assert2::assert!(matches!(result, QueryResult::RangeMatrix(_)));
-        check!(
-            scans.load(Ordering::SeqCst) == 1,
-            "store scans should collapse to one union scan, got {}",
-            scans.load(Ordering::SeqCst)
-        );
-        check!(
-            series_calls.load(Ordering::SeqCst) == 1,
-            "series resolution should be cached across steps, got {}",
-            series_calls.load(Ordering::SeqCst)
-        );
+        for query in [
+            "count({job=\"broker\"})",
+            "deriv(up[5m])",
+            "deriv(up[1h])",
+            "deriv(up[1h] offset 10m)",
+            "deriv(up[1h] offset -10m)",
+            "deriv(up[1h] @ 285)",
+            "deriv(up[5m]) + deriv(up[1h] offset 10m)",
+        ] {
+            scans.store(0, Ordering::SeqCst);
+            series_calls.store(0, Ordering::SeqCst);
+            let result = engine
+                .query_range(&tenant_id("t"), query, 0, 1_800_000, millis(60_000))
+                .await
+                .unwrap();
+            let QueryResult::RangeMatrix(matrix) = result else {
+                panic!("expected a range matrix");
+            };
+            check!(scans.load(Ordering::SeqCst) == 1, "{query}");
+            check!(series_calls.load(Ordering::SeqCst) == 1, "{query}");
+            for step in 0..31 {
+                let time_ms = step * 60_000;
+                let instant = engine
+                    .query_instant(&tenant_id("t"), query, time_ms)
+                    .await
+                    .unwrap();
+                let QueryResult::InstantVector(expected) = instant else {
+                    panic!("expected an instant vector");
+                };
+                let actual = matrix
+                    .iter()
+                    .flat_map(|series| {
+                        series
+                            .samples
+                            .iter()
+                            .filter(move |sample| sample.timestamp_ms == time_ms)
+                    })
+                    .collect::<Vec<_>>();
+                assert2::assert!(actual.len() == expected.len(), "{query} at {time_ms}");
+                for (actual, expected) in actual.iter().zip(expected) {
+                    assert2::assert!(actual.value == expected.value, "{query} at {time_ms}");
+                }
+            }
+        }
     }
 }
 
@@ -1535,5 +1553,129 @@ mod a_range_query_over_or_matchers_counts_a_doubly_matched_series_once {
                 .collect::<Vec<_>>()
                 == vec![(0, 2.0), (60_000, 2.0), (120_000, 2.0)]
         );
+    }
+}
+
+#[tokio::test]
+async fn residual_range_cache_preserves_window_limits_and_left_open_boundaries() {
+    let mut store = InMemoryMetricStore::new();
+    for minute in 0_i32..=30 {
+        store.push_float(
+            "t",
+            labels(&[crate::test_support::TestLabelPair::new(
+                "__name__",
+                "temperature",
+            )]),
+            i64::from(minute) * 60_000,
+            if minute == 0 { 1e9 } else { f64::from(minute) },
+        );
+    }
+    let store = Arc::new(store);
+    for max_samples in [4, 6] {
+        let engine = PromqlEngine::new(
+            Arc::clone(&store),
+            EngineOpts {
+                max_samples,
+                ..EngineOpts::default()
+            },
+        );
+        let result = engine
+            .query_range(
+                &tenant_id("t"),
+                "deriv(temperature[5m])",
+                300_000,
+                1_800_000,
+                millis(60_000),
+            )
+            .await;
+        if max_samples == 4 {
+            assert2::assert!(matches!(
+                result,
+                Err(PromqlError::Limit(
+                    krabka_metrics::LimitError::SamplesPerQueryExceeded { .. }
+                ))
+            ));
+        } else {
+            let QueryResult::RangeMatrix(matrix) = result.unwrap() else {
+                panic!("expected a range matrix");
+            };
+            assert2::assert!(matrix.len() == 1);
+            assert2::assert!(matrix[0].samples.len() == 26);
+            for sample in &matrix[0].samples {
+                let SampleValue::Float(value) = sample.value else {
+                    panic!("expected a float");
+                };
+                assert2::assert!((value - 1.0 / 60.0).abs() < 1e-12);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn residual_range_cache_applies_series_limits_to_each_window() {
+    let mut store = InMemoryMetricStore::new();
+    for (job, start) in [("a", 0), ("b", 600_000)] {
+        let series = labels(&[
+            crate::test_support::TestLabelPair::new("__name__", "temperature"),
+            crate::test_support::TestLabelPair::new("job", job),
+        ]);
+        for sample in 0_i32..3 {
+            store.push_float(
+                "t",
+                series.clone(),
+                start + i64::from(sample) * 60_000,
+                f64::from(sample),
+            );
+        }
+    }
+    let engine = PromqlEngine::new(
+        Arc::new(store),
+        EngineOpts {
+            max_fetched_series: 1,
+            ..EngineOpts::default()
+        },
+    );
+    let QueryResult::RangeMatrix(matrix) = engine
+        .query_range(
+            &tenant_id("t"),
+            "deriv(temperature[5m])",
+            120_000,
+            720_000,
+            millis(600_000),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("expected a range matrix");
+    };
+    assert2::assert!(matrix.len() == 2);
+    for series in matrix {
+        assert2::assert!(series.samples.len() == 1);
+    }
+}
+
+#[tokio::test]
+async fn residual_range_cache_preserves_histogram_annotations() {
+    let mut store = InMemoryMetricStore::new();
+    let series = labels(&[crate::test_support::TestLabelPair::new(
+        "__name__",
+        "temperature",
+    )]);
+    store.push_histogram("t", series.clone(), 0, super::native_histogram(1.0, 1.0));
+    store.push_float("t", series.clone(), 60_000, 1.0);
+    store.push_float("t", series, 120_000, 2.0);
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let query = "deriv(temperature[1h])";
+    let actual = engine
+        .query_range_with_annotations(&tenant_id("t"), query, 120_000, 1_800_000, millis(60_000))
+        .await
+        .unwrap();
+    assert2::assert!(!actual.annotations.infos.is_empty());
+    for minute in 2..=30 {
+        let instant = engine
+            .query_instant_with_annotations(&tenant_id("t"), query, minute * 60_000)
+            .await
+            .unwrap();
+        assert2::assert!(instant.annotations == actual.annotations);
     }
 }

@@ -5,6 +5,8 @@ use super::{
     SORT_KEY_OPTIONS, SchemaRef, SortField, concat_batches,
 };
 
+const NO_RUN: usize = usize::MAX;
+
 struct RunHead<'a> {
     index: usize,
     key: Row<'a>,
@@ -27,6 +29,12 @@ pub struct SortedMerge {
     key_indices: Vec<usize>,
     runs: Vec<RunCursor>,
     batch_rows: usize,
+    // A tournament tree holds run indices. Updates do not copy or allocate keys.
+    // After initialization, only the consumed run's path needs an update.
+    heads: Vec<usize>,
+    // Resume initialization here after a read error or a cancelled load.
+    initialized: usize,
+    pending: Option<usize>,
 }
 
 impl SortedMerge {
@@ -77,6 +85,9 @@ impl SortedMerge {
             key_indices,
             runs: runs.into_iter().map(RunCursor::new).collect(),
             batch_rows: batch_rows.max(1),
+            heads: Vec::new(),
+            initialized: 0,
+            pending: None,
         })
     }
 
@@ -91,9 +102,7 @@ impl SortedMerge {
         let mut rows = 0;
 
         while rows < self.batch_rows {
-            for run in &mut self.runs {
-                run.load(&self.converter, &self.key_indices).await?;
-            }
+            self.load_heads().await?;
 
             let Some(winner) = self.lowest_head() else {
                 break;
@@ -110,6 +119,8 @@ impl SortedMerge {
             };
             rows += take;
             slices.push(self.runs[winner].take(take));
+            // Defer the next read until the caller needs another slice.
+            self.pending = Some(winner);
         }
 
         if slices.is_empty() {
@@ -120,32 +131,75 @@ impl SortedMerge {
             .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
     }
 
-    /// The run holding the lowest key, ties going to the earliest run.
-    fn lowest_head(&self) -> Option<usize> {
-        let mut lowest: Option<RunHead<'_>> = None;
-        for (index, run) in self.runs.iter().enumerate() {
-            if let Some(key) = run.head()
-                && lowest.as_ref().is_none_or(|head| key < head.key)
-            {
-                lowest = Some(RunHead { index, key });
+    async fn load_heads(&mut self) -> Result<()> {
+        if self.heads.is_empty() {
+            while self.initialized < self.runs.len() {
+                self.runs[self.initialized]
+                    .load(&self.converter, &self.key_indices)
+                    .await?;
+                self.initialized += 1;
             }
+            let leaves = self.runs.len().next_power_of_two();
+            self.heads = vec![NO_RUN; leaves * 2];
+            for (index, run) in self.runs.iter().enumerate() {
+                if run.head().is_some() {
+                    self.heads[leaves + index] = index;
+                }
+            }
+            for node in (1..leaves).rev() {
+                self.heads[node] = self.lower(self.heads[node * 2], self.heads[node * 2 + 1]);
+            }
+        } else if let Some(index) = self.pending {
+            // Keep pending until load succeeds, including across cancellation.
+            self.runs[index]
+                .load(&self.converter, &self.key_indices)
+                .await?;
+            let mut node = self.heads.len() / 2 + index;
+            self.heads[node] = if self.runs[index].head().is_some() {
+                index
+            } else {
+                NO_RUN
+            };
+            while node > 1 {
+                node /= 2;
+                self.heads[node] = self.lower(self.heads[node * 2], self.heads[node * 2 + 1]);
+            }
+            self.pending = None;
         }
-        lowest.map(|head| head.index)
+        Ok(())
     }
 
-    /// The lowest key held by any run other than `winner`.
-    fn next_lowest_head(&self, winner: usize) -> Option<RunHead<'_>> {
-        let mut lowest: Option<RunHead<'_>> = None;
-        for (index, run) in self.runs.iter().enumerate() {
-            if index == winner {
-                continue;
-            }
-            if let Some(key) = run.head()
-                && lowest.as_ref().is_none_or(|head| key < head.key)
-            {
-                lowest = Some(RunHead { index, key });
-            }
+    fn lower(&self, left: usize, right: usize) -> usize {
+        if left == NO_RUN {
+            return right;
         }
-        lowest
+        if right == NO_RUN {
+            return left;
+        }
+        let left_key = self.runs[left].head().expect("an active run has a head");
+        let right_key = self.runs[right].head().expect("an active run has a head");
+        if (left_key, left) <= (right_key, right) {
+            left
+        } else {
+            right
+        }
+    }
+
+    fn lowest_head(&self) -> Option<usize> {
+        (self.heads[1] != NO_RUN).then_some(self.heads[1])
+    }
+
+    fn next_lowest_head(&self, winner: usize) -> Option<RunHead<'_>> {
+        // The sibling subtrees on the winner's path cover every other run.
+        let mut node = self.heads.len() / 2 + winner;
+        let mut next = NO_RUN;
+        while node > 1 {
+            next = self.lower(next, self.heads[node ^ 1]);
+            node /= 2;
+        }
+        (next != NO_RUN).then(|| RunHead {
+            index: next,
+            key: self.runs[next].head().expect("an active run has a head"),
+        })
     }
 }

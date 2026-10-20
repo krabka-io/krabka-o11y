@@ -6,7 +6,7 @@ use super::{Arc, NativeResolver, NativeSymbol, ObjectStore, Path, ProfileIndex, 
 use crate::metrics::{ServiceMetrics, SymbolizerCacheLookup};
 
 struct UploadedResolver<'a> {
-    uploaded: &'a HashMap<String, krabka_pprof::ObjectSymbolResolver>,
+    uploaded: &'a HashMap<String, Option<krabka_pprof::ObjectSymbolResolver>>,
     configured: &'a dyn NativeResolver,
 }
 
@@ -14,6 +14,7 @@ impl NativeResolver for UploadedResolver<'_> {
     fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
         self.uploaded
             .get(&request.build_id.to_ascii_lowercase())
+            .and_then(Option::as_ref)
             .and_then(|resolver| resolver.symbolize(request))
             .or_else(|| self.configured.symbolize(request))
     }
@@ -31,6 +32,7 @@ pub async fn symbolize_blocks_once(
     metrics: &ServiceMetrics,
 ) -> Result<usize, crate::ProfilesError> {
     let mut updated = 0;
+    // Cache failed lookups only for this pass so the next pass sees new uploads.
     let mut uploaded_by_tenant = HashMap::<String, HashMap<_, _>>::new();
     for block in index.all_blocks() {
         let key = Path::from(format!("{}.symdb", block.object_key));
@@ -55,6 +57,7 @@ pub async fn symbolize_blocks_once(
                 continue;
             }
             metrics.record_symbolizer_cache(SymbolizerCacheLookup::Miss);
+            uploaded.insert(build_id.clone(), None);
             let object = match store
                 .get(&Path::from(format!(
                     "debug-info/{}/{}/exe",
@@ -69,7 +72,7 @@ pub async fn symbolize_blocks_once(
                 continue;
             };
             if let Ok(object) = krabka_pprof::ObjectSymbolResolver::from_bytes(&bytes) {
-                uploaded.insert(build_id, object);
+                uploaded.insert(build_id, Some(object));
             }
         }
         let resolver = UploadedResolver {

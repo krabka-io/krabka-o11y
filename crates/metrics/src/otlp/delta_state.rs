@@ -1,3 +1,5 @@
+use std::collections::BinaryHeap;
+
 use super::{
     Arc, AtomicU64, BTreeMap, DashMap, DecodedSeries, Instant, Labels, Limits, Mutex,
     NativeHistogram, Ordering, OtlpError, TenantId, Time, TimeExt, add_compatible_native_histogram,
@@ -23,9 +25,18 @@ pub struct DeltaAccumulator {
     next_prune: Instant,
 }
 
-struct OldestStream {
-    key: DeltaKey,
+// Field order preserves eviction ties: sums before histograms, then label keys.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct OldestStream<'a> {
     last_seen: Instant,
+    kind: StreamKind,
+    key: &'a DeltaKey,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum StreamKind {
+    Sum,
+    Histogram,
 }
 
 impl Default for DeltaAccumulator {
@@ -81,46 +92,62 @@ impl DeltaAccumulator {
     /// Evicts the least recently seen streams until at most `max_streams`
     /// remain. A cap of `0` turns the eviction off.
     ///
-    /// This runs only on the cold path, where the tenant is already at its
-    /// stream cap. `max_streams` bounds the linear scan, and the scan never
-    /// runs on the steady-state hot path.
+    /// For N streams and K excess streams, selection takes O(N log(K + 1))
+    /// time and O(K) space. Streams within the cap need no scan or allocation.
     fn evict_if_over_cap(&mut self, max_streams: u64) {
         if max_streams == 0 {
             return;
         }
         let max_streams = usize::try_from(max_streams).unwrap_or(usize::MAX);
-        while self.sums.len() + self.histograms.len() > max_streams {
-            let oldest_sum = self
-                .sums
-                .iter()
-                .min_by_key(|entry| entry.1.last_seen)
-                .map(|entry| OldestStream {
-                    key: entry.0.clone(),
-                    last_seen: entry.1.last_seen,
-                });
-            let oldest_histogram = self
-                .histograms
-                .iter()
-                .min_by_key(|entry| entry.1.last_seen)
-                .map(|entry| OldestStream {
-                    key: entry.0.clone(),
-                    last_seen: entry.1.last_seen,
-                });
-            match oldest_sum {
-                Some(sum) => match oldest_histogram {
-                    Some(histogram) if histogram.last_seen < sum.last_seen => {
-                        self.histograms.remove(&histogram.key);
-                    }
-                    Some(_) | None => {
-                        self.sums.remove(&sum.key);
-                    }
-                },
-                None => match oldest_histogram {
-                    Some(histogram) => {
-                        self.histograms.remove(&histogram.key);
-                    }
-                    None => break,
-                },
+        let excess = (self.sums.len() + self.histograms.len()).saturating_sub(max_streams);
+        if excess == 0 {
+            return;
+        }
+
+        let sums = self.sums.iter().map(|(key, state)| OldestStream {
+            last_seen: state.last_seen,
+            kind: StreamKind::Sum,
+            key,
+        });
+        let histograms = self.histograms.iter().map(|(key, state)| OldestStream {
+            last_seen: state.last_seen,
+            kind: StreamKind::Histogram,
+            key,
+        });
+        let streams = sums.chain(histograms);
+        let mut victims = BinaryHeap::with_capacity(excess);
+        if excess == 1 {
+            // Iteration already puts sums first and keys in ascending order.
+            // A single victim needs only time comparisons and no heap updates.
+            if let Some(stream) = streams.min_by_key(|stream| stream.last_seen) {
+                victims.push(stream);
+            }
+        } else {
+            // The newest selected victim is the root. A stream replaces it
+            // only when that stream would be evicted first.
+            for stream in streams {
+                if victims.len() < excess {
+                    victims.push(stream);
+                } else if let Some(mut newest) = victims.peek_mut()
+                    && stream < *newest
+                {
+                    *newest = stream;
+                }
+            }
+        }
+        // Clone only the selected keys and release map borrows before removal.
+        let victims: Vec<_> = victims
+            .into_iter()
+            .map(|stream| (stream.kind, stream.key.clone()))
+            .collect();
+        for (kind, key) in victims {
+            match kind {
+                StreamKind::Sum => {
+                    self.sums.remove(&key);
+                }
+                StreamKind::Histogram => {
+                    self.histograms.remove(&key);
+                }
             }
         }
     }
@@ -344,3 +371,6 @@ pub(crate) fn accumulate_delta_float_series(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

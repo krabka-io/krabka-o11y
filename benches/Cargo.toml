@@ -85,6 +85,7 @@ tower = { version = "0.5", features = ["util"] }
 allocation-counter = "0.8.1"
 async-trait = "0.1"
 bytes = "1"
+futures = "0.3"
 opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "metrics"] }
 prost = "0.14"
 assert2 = "0.4"
