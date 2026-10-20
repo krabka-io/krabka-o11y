@@ -102,3 +102,106 @@ async fn residual_range_queries_read_persisted_blocks_once() {
         );
     }
 }
+
+#[tokio::test]
+async fn disjoint_selector_windows_do_not_probe_gap_blocks() {
+    for gap_state in ["missing", "unreadable", "dense"] {
+        let backing: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let base = url::Url::parse("memory:///").unwrap();
+        let writer = BlockStore::new(Arc::clone(&backing), base.clone());
+        let series = up_api_labels();
+        let mut manifests = Vec::new();
+        for end_ms in [3_600_000, 90_000_000] {
+            let rows = [
+                float_sample_row(series.fingerprint(), end_ms - 60_000, 1.0, None),
+                float_sample_row(series.fingerprint(), end_ms, 2.0, None),
+            ];
+            manifests.push(
+                sidecar_manifest(
+                    &writer,
+                    MetricBlockKind::Float,
+                    &format!("metrics/float/{end_ms}.parquet"),
+                    float_sample_schema(),
+                    encode_float_samples(&rows).unwrap(),
+                    &series,
+                )
+                .await,
+            );
+        }
+        let gap_key = "metrics/float/gap.parquet";
+        let gap_rows = (0..1_000)
+            .map(|sample| float_sample_row(series.fingerprint(), 43_200_000 + sample, 1.0, None))
+            .collect::<Vec<_>>();
+        manifests.push(
+            sidecar_manifest(
+                &writer,
+                MetricBlockKind::Float,
+                gap_key,
+                float_sample_schema(),
+                encode_float_samples(&gap_rows).unwrap(),
+                &series,
+            )
+            .await,
+        );
+        match gap_state {
+            "missing" => backing.delete(&ObjectPath::from(gap_key)).await.unwrap(),
+            "unreadable" => {
+                backing
+                    .put(
+                        &ObjectPath::from(gap_key),
+                        PutPayload::from_static(b"invalid parquet"),
+                    )
+                    .await
+                    .unwrap();
+            }
+            "dense" => {}
+            _ => unreachable!(),
+        }
+        for (query, shift_ms) in [
+            ("deriv(up[1h])", 0),
+            ("deriv(up[1h] offset 10m)", 600_000),
+            ("deriv(up[1h] offset -10m)", -600_000),
+        ] {
+            let counting = CountingObjectStore::wrap(Arc::clone(&backing));
+            let store = MetricBlockStore::from_compaction_manifests(
+                BlockStore::new(Arc::clone(&counting.store), base.clone()),
+                None,
+                &manifests,
+            );
+            let engine = PromqlEngine::new(
+                Arc::new(store),
+                EngineOpts {
+                    max_samples: 10,
+                    ..EngineOpts::default()
+                },
+            );
+            let actual = engine
+                .query_range_with_annotations(
+                    &tenant_id("tenant-a"),
+                    query,
+                    3_600_000 + shift_ms,
+                    90_000_000 + shift_ms,
+                    millis(86_400_000),
+                )
+                .await
+                .unwrap();
+            assert2::assert!(
+                actual.annotations == Annotations::default(),
+                "{gap_state}: {query}"
+            );
+            let QueryResult::RangeMatrix(matrix) = actual.result else {
+                panic!("expected a range matrix");
+            };
+            assert2::assert!(matrix.len() == 1);
+            assert2::assert!(matrix[0].samples.len() == 2);
+            for sample in &matrix[0].samples {
+                let SampleValue::Float(value) = sample.value else {
+                    panic!("expected a float");
+                };
+                assert2::assert!((value - 1.0 / 60.0).abs() < 1e-12);
+            }
+            let requests = *counting.counts.lock().unwrap();
+            assert2::assert!(requests.heads == 2, "{gap_state}: {query}: {requests:?}");
+        }
+    }
+}

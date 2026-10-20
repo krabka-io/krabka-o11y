@@ -28,9 +28,9 @@ pub(crate) struct RangeScanCacheInner {
 }
 
 impl RangeScanCacheInner {
-    pub(crate) fn range(unions: HashMap<String, TimeWindow>, start_ms: i64, end_ms: i64) -> Self {
+    pub(crate) fn range(unions: HashMap<String, TimeWindow>, fallback: Option<TimeWindow>) -> Self {
         let mut cache = Self::new(Some(unions));
-        cache.fallback = Some(TimeWindow { start_ms, end_ms });
+        cache.fallback = fallback;
         cache
     }
 

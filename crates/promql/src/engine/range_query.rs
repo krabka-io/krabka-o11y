@@ -11,7 +11,9 @@ use super::{
     planner_support::range_expr_routes_through_planner,
     query_stats_step,
     result_utils::{finalize_metric_names, validate_unique_instant_labelsets},
-    row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner, selector_windows},
+    row_cache::{
+        RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner, TimeWindow, selector_windows,
+    },
     step_vectors::{RANGE_STEP_VECTORS, StepVectorCache, StepVectorCacheInner},
 };
 #[cfg(feature = "experimental-functions")]
@@ -225,14 +227,19 @@ impl<S: MetricStore> PromqlEngine<S> {
             expr,
             start_ms,
             end_ms,
+            step,
             self.opts.lookback_delta.millis_i64(),
         )?;
-        let cache: RangeScanCache =
-            std::sync::Arc::new(std::sync::Mutex::new(RangeScanCacheInner::range(
-                unions,
-                start_ms.saturating_sub(self.opts.lookback_delta.millis_i64()),
-                end_ms,
-            )));
+        // Dynamic selectors can share the lookback union only on a dense grid.
+        let fallback = (step <= self.opts.lookback_delta).then_some(TimeWindow {
+            start_ms: start_ms.saturating_sub(self.opts.lookback_delta.millis_i64()),
+            end_ms,
+        });
+        // Without a connected union, retain only each requested scan window.
+        let cache_inner = unions.map_or_else(RangeScanCacheInner::instant, |unions| {
+            RangeScanCacheInner::range(unions, fallback)
+        });
+        let cache: RangeScanCache = std::sync::Arc::new(std::sync::Mutex::new(cache_inner));
         // Plan each operator leaf once over the whole grid rather than once per
         // step, and let the loop read the memo. Scoped like the scan cache
         // above, so a nested range evaluation (a subquery's own grid) shadows it
