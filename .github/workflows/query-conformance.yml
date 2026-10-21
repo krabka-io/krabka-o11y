@@ -29,7 +29,7 @@ concurrency:
 jobs:
   suites:
     name: ${{ matrix.suite }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 300
     strategy:
       fail-fast: false
@@ -104,6 +104,8 @@ jobs:
       KRABKA_GENERATED_CASES: '512'
       KRABKA_GENERATED_NIGHTLY: '1'
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
@@ -194,9 +196,11 @@ jobs:
     name: aggregate query qualification
     needs: suites
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}

@@ -10,7 +10,7 @@ permissions:
 jobs:
   gates:
     name: qualification · ${{ matrix.id }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     env:
       CARGO_PROFILE_DEV_DEBUG: 0
@@ -94,6 +94,8 @@ jobs:
             gate: scale
             command: bazel test --config=scale --flaky_test_attempts=1 //crates/integration:soak_envelope_docker_test
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           # Kubernetes and migration gates use HEAD^ for the baseline image.
@@ -164,9 +166,11 @@ jobs:
   report:
     name: immutable compatibility report
     needs: gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:

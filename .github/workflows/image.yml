@@ -7,7 +7,7 @@ name: image
 # the same sources inside a `rust:` container -- see //bazel/images/krabka for
 # why that distinction is the point.
 #
-# Cost: one ubuntu-latest job, the same 90-minute budget the `ci` job carries.
+# Cost: one ubuntu-26.04 job, the same 90-minute budget the `ci` job carries.
 # It compiles the workspace at `-c opt`, which `ci` does not -- that job builds
 # fastbuild -- so the two do not share a cache. The job it replaces ran a full
 # `cargo build --locked --release` inside buildx on every trigger with no
@@ -62,12 +62,14 @@ jobs:
 
   release-gate:
     name: qualified release gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     outputs:
       qualified-run: ${{ steps.qualification.outputs.run }}
       source-sha: ${{ steps.qualification.outputs.source-sha }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release_tag || github.ref }}
@@ -104,9 +106,11 @@ jobs:
   # half, which is a config key that names no flag.
   manifests:
     name: render
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - name: kustomize
         run: kubectl kustomize deploy > /dev/null
@@ -117,11 +121,13 @@ jobs:
     name: build · publish
     if: ${{ !cancelled() && !inputs.release_tag && needs.manifests.result == 'success' && needs.release-gate.result == 'success' && (needs.release-tests.result == 'success' || needs.release-tests.result == 'skipped') }}
     needs: [manifests, release-gate, release-tests]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     outputs:
       digest: ${{ steps.digest.outputs.digest }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
@@ -203,7 +209,7 @@ jobs:
     name: release · qualify published digest
     if: ${{ !cancelled() && needs.release-tests.result == 'success' && needs.release-gate.result == 'success' && (startsWith(github.ref, 'refs/tags/') && needs.image.result == 'success' || inputs.release_tag && inputs.release_digest) }}
     needs: [image, release-gate, release-tests]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     permissions:
       actions: read
@@ -218,6 +224,8 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
       SOURCE_SHA: ${{ needs.release-gate.outputs.source-sha }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release_tag || github.ref }}

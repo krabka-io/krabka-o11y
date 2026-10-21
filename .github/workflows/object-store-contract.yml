@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     environment: object-store-${{ inputs.provider }}
     env:
@@ -31,6 +31,8 @@ jobs:
       AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}
       AZURE_STORAGE_ACCOUNT_KEY: ${{ secrets.AZURE_STORAGE_ACCOUNT_KEY }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:

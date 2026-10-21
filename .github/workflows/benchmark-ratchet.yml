@@ -20,11 +20,13 @@ concurrency:
 
 jobs:
   select:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       shards: ${{ steps.shards.outputs.shards }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - id: shards
         name: select every benchmark group
@@ -56,7 +58,7 @@ jobs:
   benchmark-ratchet:
     name: benchmark ratchet · ${{ matrix.shard.group }}
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # BuildBuddy's free tier kills each remote run after one hour. Measure one
     # Criterion group per invocation, including index_load in index_prune.
     timeout-minutes: 120
@@ -70,6 +72,8 @@ jobs:
       BENCH_TARGET: ${{ matrix.shard.target }}
       BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - name: install BuildBuddy CLI
         run: curl -fsSL https://install.buildbuddy.io | bash
