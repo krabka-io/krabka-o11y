@@ -180,7 +180,7 @@ PINNED_COUNTS = {
     "promql-http-compliance-summary.json": 539,
     "loki-remote-range.json": 104,
     "loki-remote-instant.json": 81,
-    "loki-supported-template-functions.json": 171,
+    "loki-supported-template-functions.json": 178,
     "loki-experimental-query-conformance.json": 40,
     "tempo-pipeline-hint-conformance.json": 15,
     "tempo-forest-conformance.json": 8,
@@ -1743,6 +1743,8 @@ def self_check():
         template_rows.append({"id":case_id, "name":case_id, "expression":expression, "request":{"method":"GET", "path":"/loki/api/v1/query_range", "tenant":"parsers", "query":query}, "oracle":ledger, "candidate":ledger, "independent_expected":ledger, "raw_oracle":ledger, "raw_candidate":ledger, "status":"matched"})
     template_report = {"planned":len(template_rows), "timeline_base_ns":1_000_000_000, "upstream_source":"7a40404f32b3e6464c9cfc6cc7dd75a40f3931da", "cases":template_rows}
     assert not loki_template_binding_errors(template_report)
+    counts, errors = qualification_counts("loki-supported-template-functions.json", template_report)
+    assert is_complete(counts) and not errors
     for mutation in ("duplicate", "query", "expression", "ledger", "http-float", "http-bool", "missing-seed", "duplicate-seed", "wrong-level", "wrong-timestamp", "wrong-raw-line", "missing-anchor", "float-anchor"):
 
         changed = copy.deepcopy(template_report)
