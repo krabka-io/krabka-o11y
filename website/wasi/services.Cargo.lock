@@ -3865,7 +3865,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-blockstore"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arrow",
  "assert2",
@@ -4155,7 +4155,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-integration"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arc-swap",
  "assert2",
@@ -4240,7 +4240,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-logql"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "assert2",
  "base64 0.23.1",
@@ -4288,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-metrics"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arrow",
  "assert2",
@@ -4348,7 +4348,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-metrics-service"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arrow",
  "assert2",
@@ -4399,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-o11y-verified"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "assert2",
  "creusot-std",
@@ -4428,7 +4428,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-observability"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "assert2",
  "async-trait",
@@ -4501,7 +4501,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-pprof"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "addr2line 0.27.1",
  "arrow",
@@ -4532,7 +4532,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-profiles"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arrow",
  "assert2",
@@ -4604,7 +4604,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-promql"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "ahash",
  "arrow",
@@ -4666,7 +4666,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-query-frontend"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "assert2",
  "async-trait",
@@ -4938,7 +4938,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-traceql"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arrow",
  "assert2",
@@ -4963,7 +4963,7 @@ dependencies = [
 
 [[package]]
 name = "krabka-traces"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arc-swap",
  "arrow",

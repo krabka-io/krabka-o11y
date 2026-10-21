@@ -25,12 +25,12 @@ experimental-functions = []
 ahash = { workspace = true }
 assert2 = { workspace = true }
 base64 = { workspace = true }
-krabka-blockstore = { path = "../blockstore", version = "0.4.1" }
+krabka-blockstore = { path = "../blockstore", version = "0.4.2" }
 krabka-ids = { version = "0.6.0" }
-krabka-logql = { path = "../logql", version = "0.4.1" }
-krabka-metrics = { path = "../metrics", version = "0.4.1" }
-krabka-observability = { path = "../observability", version = "0.4.1" }
-krabka-query-frontend = { path = "../query-frontend", version = "0.4.1" }
+krabka-logql = { path = "../logql", version = "0.4.2" }
+krabka-metrics = { path = "../metrics", version = "0.4.2" }
+krabka-observability = { path = "../observability", version = "0.4.2" }
+krabka-query-frontend = { path = "../query-frontend", version = "0.4.2" }
 krabka-units = { workspace = true }
 arrow = { workspace = true }
 datafusion = { workspace = true }
