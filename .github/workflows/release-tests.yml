@@ -26,11 +26,13 @@ jobs:
   # Why3 and the provers; this repository supplies the explicit package list.
   proofs:
     name: creusot proofs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       CREUSOT_IMAGE: ghcr.io/krabka-io/creusot@sha256:15834cde90d902a148d08ec6c8d9a03336ac353d24fa05d3beb32e69bb5cb51b
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
@@ -49,12 +51,14 @@ jobs:
   # slowest suite rather than the sum of all of them.
   docker-select:
     name: select container suites
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     outputs:
       suites: ${{ steps.select.outputs.suites }}
       any: ${{ steps.select.outputs.any }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
@@ -102,7 +106,7 @@ jobs:
     name: container · ${{ matrix.suite.name }}
     needs: docker-select
     if: needs.docker-select.outputs.any == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     strategy:
       # One suite failing should not cancel the rest -- the point of the shard
@@ -114,6 +118,8 @@ jobs:
       KRABKA_GENERATED_CASES: '16'
       KRABKA_GENERATED_NIGHTLY: '0'
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
@@ -216,7 +222,7 @@ jobs:
   # under load makes them slow, not red, which is what lets them gate a release.
   scale:
     name: scale · ${{ matrix.suite.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A bound, not an estimate, the same way the jobs above treat theirs.
     timeout-minutes: 90
     strategy:
@@ -237,6 +243,8 @@ jobs:
           - name: soak
             target: //crates/integration:soak_envelope_docker_test
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}

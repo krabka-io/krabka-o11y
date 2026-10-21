@@ -25,10 +25,12 @@ jobs:
     name: CI gate
     if: always() && github.event_name != 'schedule'
     needs: [ci, cargo, deny, tools, docs, website]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - name: require successful checks
         env:
           RESULTS: ${{ toJSON(needs) }}
@@ -40,7 +42,7 @@ jobs:
   ci:
     name: build · test · lint · format
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Three separate remote invocations, each below the one-hour plan limit.
     timeout-minutes: 180
     env:
@@ -48,6 +50,8 @@ jobs:
       # Forks do not receive organization secrets and keep a local build path.
       BUILDBUDDY_REQUIRED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - name: install BuildBuddy CLI
         if: env.BUILDBUDDY_API_KEY != ''
@@ -128,7 +132,7 @@ jobs:
   # ignored under Cargo and run in release-tests.yml.
   cargo:
     name: cargo
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     # Debug info is the bulk of what a `cargo test --workspace` writes, and
     # none of it is read here: nothing debugs a CI run, and a backtrace from a
@@ -138,6 +142,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       # The toolchain comes from `rust-toolchain.toml` rather than being named
       # again here. The action needs the input, so it is read out of the file
@@ -240,9 +246,11 @@ jobs:
   deny:
     name: cargo-deny
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - id: toolchain
         run: |
@@ -273,9 +281,11 @@ jobs:
   tools:
     name: tool self-tests
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
@@ -345,12 +355,14 @@ jobs:
   fuzz-build:
     name: fuzz targets compile
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A cold run checks the whole DataFusion pin. A warm one takes minutes.
     timeout-minutes: 60
     env:
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
@@ -363,12 +375,14 @@ jobs:
   bench-build:
     name: benchmarks compile
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A cold run checks the whole DataFusion pin. A warm one takes minutes.
     timeout-minutes: 60
     env:
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       # Stable, from `rust-toolchain.toml`, unlike the fuzz jobs above: nothing
       # here needs nightly, and the benchmarks measure what the pinned
@@ -395,9 +409,11 @@ jobs:
   coverage:
     name: coverage
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
@@ -463,9 +479,11 @@ jobs:
   docs:
     name: docgen
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - id: toolchain
         run: |
@@ -491,7 +509,7 @@ jobs:
     name: website · static checks
     if: github.event_name != 'schedule'
     needs: docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -500,6 +518,9 @@ jobs:
         working-directory: website
         shell: bash
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        working-directory: ${{ runner.temp }}
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -577,12 +598,14 @@ jobs:
   fuzz:
     name: fuzz
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A bound, not an estimate.
     # A cold run links fourteen instrumented binaries on top of the DataFusion
     # pin; a warm one spends most of the time fuzzing.
     timeout-minutes: 150
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
@@ -663,11 +686,13 @@ jobs:
   bench:
     name: benchmarks
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A bound, not an estimate, the same way the `fuzz` job treats its own.
     # A cold run builds the whole DataFusion pin at opt-level 3.
     timeout-minutes: 120
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - id: toolchain
         run: |

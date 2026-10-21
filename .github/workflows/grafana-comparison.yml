@@ -92,6 +92,8 @@ jobs:
       group: grafana-comparison-${{ inputs.profiling || 'none' }}-${{ matrix.signal }}
       cancel-in-progress: false
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - name: Validate comparison and profiling inputs
         env:

@@ -46,6 +46,8 @@ jobs:
     runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 300
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
@@ -134,6 +136,8 @@ jobs:
     runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 300
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - name: Validate qualification inputs
         if: inputs.scope != 'image'
@@ -273,6 +277,8 @@ jobs:
     runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 120
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:

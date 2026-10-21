@@ -25,9 +25,11 @@ concurrency:
 jobs:
   docs:
     name: docgen
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
@@ -52,7 +54,7 @@ jobs:
   website:
     name: website · full WASI lab
     needs: docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     permissions:
       contents: read
@@ -63,6 +65,9 @@ jobs:
         working-directory: website
         shell: bash
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        working-directory: ${{ runner.temp }}
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
@@ -216,12 +221,14 @@ jobs:
   publish-docs:
     name: publish website and rustdoc
     needs: [docs, website]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Keep temporary files off the size-limited /tmp tmpfs
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
