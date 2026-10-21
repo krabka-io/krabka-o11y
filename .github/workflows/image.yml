@@ -281,7 +281,10 @@ jobs:
           SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
         run: |
           tag="${RELEASE_TAG}"
-          test -f "docs/releases/${tag}.md"
+          notes=(--generate-notes)
+          if [[ -f "docs/releases/${tag}.md" ]]; then
+            notes=(--notes-file "docs/releases/${tag}.md")
+          fi
           gh run download "${QUALIFICATION_RUN}" \
             --name "milestone-21-qualification-${SOURCE_SHA}" --dir release-assets
           if [[ -n "${PROVENANCE_BUNDLE}" ]]; then
@@ -297,7 +300,7 @@ jobs:
             sort -z | xargs -0 sha256sum > SHA256SUMS)
           gh release create "${tag}" release-assets/* \
             --verify-tag --title "krabka-o11y ${tag}" \
-            --notes-file "docs/releases/${tag}.md"
+            "${notes[@]}"
 
   website:
     name: publish released website and WASI lab
