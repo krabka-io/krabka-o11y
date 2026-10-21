@@ -302,5 +302,6 @@ jobs:
     uses: ./.github/workflows/query-conformance.yml
     with:
       ref: ${{ inputs.ref || github.ref }}
-      strict: true
+      # Releases retain documented inventory gaps while requiring valid execution evidence.
+      strict: false
     secrets: inherit

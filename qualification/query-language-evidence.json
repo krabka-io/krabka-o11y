@@ -7534,7 +7534,7 @@
         "independent_expected": {
           "label_key": "name",
           "group_count": 3,
-          "each_total": 1
+          "each_total": 1.0
         }
       },
       "expected_outcome": "query-result",
@@ -7562,7 +7562,7 @@
         "independent_expected": {
           "label_key": "name",
           "group_count": 3,
-          "each_total": 1
+          "each_total": 1.0
         }
       },
       "expected_outcome": "query-result",

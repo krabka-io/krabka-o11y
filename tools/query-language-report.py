@@ -1181,7 +1181,41 @@ def usable_evidence(reference, kind, executed, rejected_cases):
     return executed.get(reference) in ("matched", "pass", "passed") and (kind == "negative" or reference not in rejected_cases)
 
 
+def report_case_reference(report_name, case, ordinal, namespace):
+    identity = case.get("stableid", case.get("id", ordinal))
+    if report_name == "loki-supported-template-functions.json":
+        return f"logql/templates/{identity}"
+    if report_name == "tempo-expression-output-conformance.json":
+        return "traceql/outputs/" + str(identity).removeprefix("tempo-live-output-")
+    if report_name == "tempo-supported-scopes-conformance.json":
+        return "traceql/scopes/" + str(identity).removeprefix("tempo-live-supported-")
+    return f"{namespace}/{identity}"
+
+
 def self_check():
+    registry = json.loads((ROOT / "qualification/query-language-evidence.json").read_text())
+    runtime_errors = runpy.run_path(str(ROOT / "tools/query-language-evidence.py"))["runtime_errors"]
+    for reference in ("logql/templates/add", "traceql/outputs/aggregate-arithmetic",
+                      "traceql/scopes/event-arithmetic-types", "traceql/outputs/bare-name-label",
+                      "traceql/outputs/scoped-name-label"):
+        descriptor = registry["cases"][reference]
+        case = dict.fromkeys(descriptor["required_case_fields"], {})
+        case.update(copy.deepcopy(descriptor["identity"]))
+        case.update(copy.deepcopy(descriptor.get("exact_case_values", {})))
+        case["status"] = "matched"
+        report = descriptor.get("required_report_values", {})
+        routed = report_case_reference(descriptor["report"], case, 1, "pyroscope/rpc")
+        assert routed == reference
+        assert not runtime_errors(registry, routed, descriptor["report"], case, report)
+        if "each_total" in case.get("independent_expected", {}):
+            assert type(case["independent_expected"]["each_total"]) is float
+            changed = copy.deepcopy(case)
+            changed["independent_expected"]["each_total"] = 1
+            assert runtime_errors(registry, routed, descriptor["report"], changed, report)
+        del case["independent_expected"]
+        assert runtime_errors(registry, routed, descriptor["report"], case, report)
+    assert report_case_reference("other.json", {"id": "case"}, 1, "pyroscope/rpc") == "pyroscope/rpc/case"
+    assert report_case_reference("other.json", {}, 2, "other") == "other/2"
     PROMETHEUS_REPLAY["self_check"](ROOT)
     client_base = 1700000000 * 1_000_000_000
     replay_rows = []
@@ -1999,8 +2033,7 @@ def main():
                 if path.name in ("grafana-loki-client-replay.json", "grafana-prometheus-client-replay.json"):
                     namespace = f"clients/{path.stem}/{configuration}"
                 for ordinal, case in enumerate(report["cases"], 1):
-                    identity = case.get("stableid", case.get("id", ordinal))
-                    reference = f"{namespace}/{identity}"
+                    reference = report_case_reference(path.name, case, ordinal, namespace)
                     record_executed(reference, case_verdict(case), case, path.name, report, path)
                     if case.get("expected_rejection") or case.get("classification") == "paired-expected-error":
                         rejected_cases.add(reference)
