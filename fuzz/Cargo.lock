@@ -8173,3 +8173,8 @@ source = "git+https://github.com/krabka-io/krabka-schema-registry?rev=5257ce0fd4
 name = "krabka-voters"
 version = "0.6.0"
 source = "git+https://github.com/krabka-io/krabka-protocol?rev=574e0e385f5d5187979049aa0578f1abf3fa123b#574e0e385f5d5187979049aa0578f1abf3fa123b"
+
+[[patch.unused]]
+name = "testcontainers"
+version = "0.28.0"
+source = "git+https://github.com/testcontainers/testcontainers-rs?rev=dba4383d9bdbaed68d499f6e3ba933a289ba0a4a#dba4383d9bdbaed68d499f6e3ba933a289ba0a4a"
