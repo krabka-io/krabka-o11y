@@ -20,6 +20,66 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
+  changes:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      image: ${{ steps.paths.outputs.image }}
+      remote-smoke: ${{ steps.paths.outputs.remote-smoke }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6
+        id: paths
+        with:
+          base: ${{ github.event.merge_group.base_sha || github.event.before || github.ref }}
+          filters: |
+            image:
+              - '.github/workflows/image.yml'
+              - 'MODULE.bazel'
+              - 'MODULE.bazel.lock'
+              - 'bazel/images/krabka/**'
+              - 'deploy/**'
+              - 'docs/releases/**'
+              - 'qualification/**'
+              - 'tools/qualification-gate.py'
+              - 'tools/qualification-report.py'
+              - 'tools/release-smoke.sh'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/**'
+            remote-smoke:
+              - '.github/workflows/buildbuddy-smoke.yml'
+              - '.github/workflows/ci.yml'
+              - 'tools/remote-bazel.sh'
+              - '.github/workflows/benchmark-ratchet.yml'
+
+  image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    uses: ./.github/workflows/image.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      actions: read
+      artifact-metadata: write
+      issues: read
+
+  remote-smoke:
+    needs: changes
+    if: needs.changes.outputs.remote-smoke == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    uses: ./.github/workflows/buildbuddy-smoke.yml
+    secrets: inherit
+    permissions:
+      contents: read
+
   # Require only this stable check in branch protection. Always evaluate the
   # results so a failed, cancelled, or skipped dependency cannot pass the gate.
   ci:
@@ -739,10 +799,11 @@ jobs:
   gate:
     name: gate
     if: always() && github.event_name != 'schedule'
-    needs: [ci, cargo, deny, tools, docs, website]
+    needs: [changes, image, remote-smoke, ci, cargo, deny, tools, docs, website]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - uses: krabka-io/tooling/actions/gate@a42cceef18200f4f282ae5a090856f63125a12ff
+      - uses: krabka-io/tooling/actions/gate@1fb9d942c2def2fcfa20c19ed8ae8a7d8f220f65
         with:
           results: ${{ toJSON(needs) }}
+          allow-skipped: image, remote-smoke

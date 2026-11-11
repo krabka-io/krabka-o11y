@@ -1,12 +1,7 @@
 name: buildbuddy smoke
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/buildbuddy-smoke.yml
-      - .github/workflows/ci.yml
-      - tools/remote-bazel.sh
-      - .github/workflows/benchmark-ratchet.yml
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -14,7 +9,7 @@ permissions:
 
 jobs:
   remote-runner:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
