@@ -48,10 +48,6 @@ ignore = [
     # `async-dnssd`, which does not reach this workspace. Drop this once
     # `async-dnssd` or `sspi` moves off pin-utils.
     "RUSTSEC-2026-0441",
-    # astral-tokio-tar is unmaintained, not vulnerable. It is used only by
-    # testcontainers 0.28 in dev-dependencies; no replacement release exists.
-    # Remove this when testcontainers replaces its tar dependency.
-    "RUSTSEC-2026-0440",
 ]
 
 [licenses]
@@ -119,4 +115,5 @@ allow-git = [
     "https://github.com/krabka-io/krabka-rebalancer",
     "https://github.com/krabka-io/krabka-schema-registry",
     "https://github.com/krabka-io/krabka-streams-rs",
+    "https://github.com/testcontainers/testcontainers-rs",
 ]

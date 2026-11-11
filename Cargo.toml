@@ -208,6 +208,8 @@ krabka-units = "0.6.0"
 # tools/check-sibling-members.sh checks this table and the SIBLING_MEMBERS
 # dict in MODULE.bazel against the siblings at the pinned revisions.
 [patch.crates-io]
+# Remove the unmaintained async tar implementation used by testcontainers.
+testcontainers = { git = "https://github.com/testcontainers/testcontainers-rs", rev = "dba4383d9bdbaed68d499f6e3ba933a289ba0a4a" }
 # Keep the RPC error small for async handlers under Rust 1.98.
 # `krabka-broker` depends on `krabka-schema-serde`, so the git dependency
 # above needs it patched here too. Resolved from krabka-schema-registry, the
