@@ -88,7 +88,6 @@ futures = "0.3"
 url = "2"
 async-trait = "0.1"
 bytes = "1"
-futures = "0.3"
 opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "metrics"] }
 prost = "0.14"
 assert2 = "0.4"
@@ -171,6 +170,8 @@ name = "log_query_frontend"
 harness = false
 
 [patch.crates-io]
+# Remove the unmaintained async tar implementation used by testcontainers.
+testcontainers = { git = "https://github.com/testcontainers/testcontainers-rs", rev = "dba4383d9bdbaed68d499f6e3ba933a289ba0a4a" }
 # Keep the RPC error small for async handlers under Rust 1.98.
 # `krabka-broker` depends on `krabka-schema-serde`, so the git dependency
 # above needs it patched here too. Resolved from krabka-schema-registry, the

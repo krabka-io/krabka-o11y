@@ -14,23 +14,8 @@ name: image
 # Bazel cache at all, so a warm run here is cheaper and a cold run comparable.
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/image.yml
-      - MODULE.bazel
-      - MODULE.bazel.lock
-      - bazel/images/krabka/**
-      - deploy/**
-      - docs/releases/**
-      - qualification/**
-      - tools/qualification-gate.py
-      - tools/qualification-report.py
-      - tools/release-smoke.sh
-      - Cargo.lock
-      - Cargo.toml
-      - crates/**
+  workflow_call:
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -139,7 +124,7 @@ jobs:
           api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
           client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
           client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
-          upload: ${{ github.event_name != 'pull_request' }}
+          upload: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       # The same reclamation the `ci` job does, for the same reason: the runner
       # ships ~25 GB of toolchains no Bazel action touches, and an opt build of
       # this workspace does not fit beside them.
@@ -165,7 +150,7 @@ jobs:
           fi
           manifest="$(bazel cquery -c opt //bazel/images/krabka:${target} --output=files)"
           echo "digest=sha256:$(sha256sum "${manifest}" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -198,7 +183,7 @@ jobs:
             test "${actual}" = "${EXPECTED_DIGEST}"
           done
       - name: attest provenance
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ghcr.io/krabka-io/krabka-o11y

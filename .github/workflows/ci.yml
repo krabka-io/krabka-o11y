@@ -1,6 +1,7 @@
 name: ci
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
   schedule:
@@ -19,26 +20,69 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
+  changes:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      image: ${{ steps.paths.outputs.image }}
+      remote-smoke: ${{ steps.paths.outputs.remote-smoke }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6
+        id: paths
+        with:
+          base: ${{ github.event.merge_group.base_sha || github.event.before || github.ref }}
+          filters: |
+            image:
+              - '.github/workflows/image.yml'
+              - 'MODULE.bazel'
+              - 'MODULE.bazel.lock'
+              - 'bazel/images/krabka/**'
+              - 'deploy/**'
+              - 'docs/releases/**'
+              - 'qualification/**'
+              - 'tools/qualification-gate.py'
+              - 'tools/qualification-report.py'
+              - 'tools/release-smoke.sh'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/**'
+            remote-smoke:
+              - '.github/workflows/buildbuddy-smoke.yml'
+              - '.github/workflows/ci.yml'
+              - 'tools/remote-bazel.sh'
+              - '.github/workflows/benchmark-ratchet.yml'
+
+  image:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.image == 'true'
+    uses: ./.github/workflows/image.yml
+    secrets: inherit
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+      actions: read
+      artifact-metadata: write
+      issues: read
+      pages: write
+
+  remote-smoke:
+    needs: changes
+    if: needs.changes.outputs.remote-smoke == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    uses: ./.github/workflows/buildbuddy-smoke.yml
+    secrets: inherit
+    permissions:
+      contents: read
+
   # Require only this stable check in branch protection. Always evaluate the
   # results so a failed, cancelled, or skipped dependency cannot pass the gate.
-  gate:
-    name: CI gate
-    if: always() && github.event_name != 'schedule'
-    needs: [ci, cargo, deny, tools, docs, website]
-    runs-on: ubuntu-26.04
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Keep temporary files off the size-limited /tmp tmpfs
-        run: echo "TMPDIR=${RUNNER_TEMP}" >> "${GITHUB_ENV}"
-      - name: require successful checks
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: |
-          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"${RESULTS}"
-          jq -e 'all(.[]; .result == "success")' <<<"${RESULTS}"
-  # The main Bazel lane runs on BuildBuddy remote runners. Keep the existing
-  # non-container test set and report its result through the same CI gate.
   ci:
     name: build · test · lint · format
     if: github.event_name != 'schedule'
@@ -75,7 +119,7 @@ jobs:
           api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
           client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
           client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
-          upload: ${{ github.event_name != 'pull_request' }}
+          upload: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       # Only fork PRs compile on the GitHub runner. Remote builds have their
       # own CPU, memory and disk allocation and do not need this reclamation.
       - name: free disk
@@ -427,7 +471,7 @@ jobs:
           api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
           client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
           client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
-          upload: ${{ github.event_name != 'pull_request' }}
+          upload: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       # Instrumented binaries are far larger than a normal build, and this job
       # links every test target in the workspace. It ran the runner's disk to
       # 15 MB free and the link died as `clang++: Bus error (core dumped)`,
@@ -752,3 +796,15 @@ jobs:
       # validates inventory only. The recorded runner applies numeric baselines.
       - name: ratchet
         run: tools/bench-ratchet.py --record
+
+  gate:
+    name: gate
+    if: always() && github.event_name != 'schedule'
+    needs: [changes, image, remote-smoke, ci, cargo, deny, tools, docs, website]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: krabka-io/tooling/actions/gate@1fb9d942c2def2fcfa20c19ed8ae8a7d8f220f65
+        with:
+          results: ${{ toJSON(needs) }}
+          allow-skipped: image, remote-smoke
