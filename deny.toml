@@ -10,15 +10,6 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = [
-    # quick-xml denial-of-service advisories: a quadratic duplicate-attribute
-    # check, and an unbounded namespace-declaration allocation. quick-xml 0.41
-    # fixes both. The only copy in this graph is 0.39 under `object_store`,
-    # which parses the XML that S3 and Azure return. That input comes from the
-    # object-store endpoint the operator configured, not from a query, so no
-    # client chooses the document. Drop these once `object_store` takes 0.41.
-    # Do not extend this reasoning to a parser a query can reach.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
     # RSA "Marvin" timing side-channel. `picky` pulls `rsa` in, and `picky` is
     # a hard dependency of `sspi`, which `krabka-security` uses for the
     # Kerberos path. That path authenticates over AES keytab keys and does no
